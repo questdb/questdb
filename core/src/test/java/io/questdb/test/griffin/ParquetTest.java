@@ -31,8 +31,8 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
-import io.questdb.cairo.sql.ParquetDecodeMetrics;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.ParquetDecodeMetrics;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -46,8 +46,8 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
-import org.junit.Before;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -2028,6 +2028,49 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheInitDiskSpillDirCreatesMissingDir() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            String missingDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "nope-" + System.nanoTime();
+            try (Path p = new Path()) {
+                Assert.assertFalse(ff.exists(p.of(missingDir).$()));
+                PageFrameMemoryPool.initDiskSpillDir(ff, missingDir, configuration.getMkDirMode());
+                Assert.assertTrue(ff.exists(p.of(missingDir).$()));
+            }
+        });
+    }
+
+    @Test
+    public void testParquetCacheInitDiskSpillDirRemovesPrefixedFilesOnly() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            String dir = temp.getRoot().getAbsolutePath();
+            try (Path path = new Path()) {
+                path.of(dir).slash().put("questdb.log").$();
+                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd >= 0);
+                ff.close(fd);
+                for (int i = 0; i < 3; i++) {
+                    path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
+                            .put(1L).put('-').put(i).$();
+                    fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue(fd >= 0);
+                    ff.close(fd);
+                }
+
+                PageFrameMemoryPool.initDiskSpillDir(ff, dir, configuration.getMkDirMode());
+                path.of(dir).slash().put("questdb.log").$();
+                Assert.assertTrue(ff.exists(path.$()));
+                for (int i = 0; i < 3; i++) {
+                    path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
+                            .put(1L).put('-').put(i).$();
+                    Assert.assertFalse(ff.exists(path.$()));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetCacheManyPartitionsSpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
@@ -2046,7 +2089,6 @@ public class ParquetTest extends AbstractCairoTest {
                       (x * 31 + 7)::long,
                       timestamp_sequence('2024-01-01', 18_000_000)
                     from long_sequence(10000)""");
-            drainWalQueue();
             execute("alter table src convert partition to parquet where ts >= 0");
             drainWalQueue();
             execute("""
@@ -2124,50 +2166,6 @@ public class ParquetTest extends AbstractCairoTest {
 
             Assert.assertTrue("spill path never fired on varchar workload [spills=" + metrics.spills() + "]", metrics.spills() > 0);
             Assert.assertTrue("restore path never fired on varchar workload [restores=" + metrics.restores() + "]", metrics.restores() > 0);
-        });
-    }
-
-    @Test
-    public void testParquetCacheInitDiskSpillDirCreatesMissingDir() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            String missingDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "nope-" + System.nanoTime();
-            try (Path p = new Path()) {
-                Assert.assertFalse(ff.exists(p.of(missingDir).$()));
-                PageFrameMemoryPool.initDiskSpillDir(ff, missingDir, 0755);
-                Assert.assertTrue(ff.exists(p.of(missingDir).$()));
-            }
-        });
-    }
-
-    @Test
-    public void testParquetCacheInitDiskSpillDirRemovesPrefixedFilesOnly() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            String dir = temp.getRoot().getAbsolutePath();
-            try (Path path = new Path()) {
-                path.of(dir).slash().put("questdb.log").$();
-                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-                Assert.assertTrue(fd >= 0);
-                ff.close(fd);
-                for (int i = 0; i < 3; i++) {
-                    path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
-                            .put(1L).put('-').put(i).$();
-                    fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-                    Assert.assertTrue(fd >= 0);
-                    ff.close(fd);
-                }
-
-                PageFrameMemoryPool.initDiskSpillDir(ff, dir, 0755);
-
-                path.of(dir).slash().put("questdb.log").$();
-                Assert.assertTrue(ff.exists(path.$()));
-                for (int i = 0; i < 3; i++) {
-                    path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
-                            .put(1L).put('-').put(i).$();
-                    Assert.assertFalse(ff.exists(path.$()));
-                }
-            }
         });
     }
 

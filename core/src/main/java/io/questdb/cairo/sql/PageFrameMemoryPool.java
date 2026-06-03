@@ -410,16 +410,25 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void decodeAndAccount(int frameIndex, ParquetBuffers parquetBuffers) {
-        if (spillManager != null && spillManager.restore(parquetBuffers, frameIndex)) {
+        if (spillManager != null) {
+            boolean restored;
             try {
-                parquetBuffers.remapColumns();
+                restored = spillManager.restore(parquetBuffers, frameIndex, parquetColumns);
             } catch (Throwable th) {
                 evictHalfInitialized(parquetBuffers);
                 throw th;
             }
-            cachedBytes += parquetBuffers.decodedBytes;
-            enforceBudget();
-            return;
+            if (restored) {
+                try {
+                    parquetBuffers.remapColumns();
+                } catch (Throwable th) {
+                    evictHalfInitialized(parquetBuffers);
+                    throw th;
+                }
+                cachedBytes += parquetBuffers.decodedBytes;
+                enforceBudget();
+                return;
+            }
         }
         final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
         final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
@@ -550,22 +559,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public static final class SpillManager implements QuietCloseable {
-        // File layout written by spill() and read by restore():
-        //   header @ 0:
-        //     int32  slotCount
-        //     for s in 0..slotCount:
-        //       int32  columnType[s]
-        //       long   dataSize[s]
-        //       long   auxSize[s]
-        //   body @ HEADER_FIXED + slotCount * SLOT_META:
-        //     for s in 0..slotCount:
-        //       bytes data[s] (dataSize[s]) -- for varchar slots, the
-        //               materialized string blob; aux entries reference offsets
-        //               within it, which restore() rebases to absolute pointers
-        //       bytes aux[s]  (auxSize[s])
+        // Spill file:
+        //   header: int32 slotCount, then per slot { int32 parquetIdx, int32 colType, long ds, long as }
+        //   body:   per slot { ds bytes data, as bytes aux }
+        // Data for VARCHAR_SLICE slots is materialized into a contiguous blob
+        // (aux entries hold offsets into it); restore rebases to absolute pointers.
         private static final int HEADER_FIXED = Integer.BYTES;
         private static final int MAX_SPILL_SLOTS = 65_536;
-        private static final int SLOT_META = Integer.BYTES + 2 * Long.BYTES;
+        private static final int SLOT_META = 2 * Integer.BYTES + 2 * Long.BYTES;
         private final long cursorId;
         private final CharSequence dir;
         private final long diskBudget;
@@ -615,24 +616,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return true;
         }
 
-        private void buildPath(Path path, int frameIndex) {
-            path.slash().put(SPILL_FILE_PREFIX).put(cursorId).put('-').put(frameIndex);
-        }
-
-        private void dropSpilledEntry(int idx) {
-            if (idx < 0 || idx >= spilledFrameIndexes.size()) {
-                return;
-            }
-            final int frameIndex = spilledFrameIndexes.getQuick(idx);
-            final long bytes = spilledFrameBytes.getQuick(idx);
-            spilledFrameIndexes.removeIndex(idx);
-            spilledFrameBytes.removeIndex(idx);
-            spilledBytes -= bytes;
-            Path path = Path.getThreadLocal(dir);
-            buildPath(path, frameIndex);
-            ff.removeQuiet(path.$());
-        }
-
         private static void rebaseVarcharAux(long auxBase, long auxSize, long delta) {
             if (delta == 0) {
                 return;
@@ -649,8 +632,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
-        // Walks aux to compute the total number of bytes referenced by non-null
-        // varchar entries. Matches what materializeVarchar will copy.
         private static long sumVarcharStringBytes(long auxBase, long auxSize) {
             if (auxSize <= 0) {
                 return 0;
@@ -666,6 +647,24 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 total += hdr >>> 4;
             }
             return total;
+        }
+
+        private void buildPath(Path path, int frameIndex) {
+            path.slash().put(SPILL_FILE_PREFIX).put(cursorId).put('-').put(frameIndex);
+        }
+
+        private void dropSpilledEntry(int idx) {
+            if (idx < 0 || idx >= spilledFrameIndexes.size()) {
+                return;
+            }
+            final int frameIndex = spilledFrameIndexes.getQuick(idx);
+            final long bytes = spilledFrameBytes.getQuick(idx);
+            Path path = Path.getThreadLocal(dir);
+            buildPath(path, frameIndex);
+            ff.removeQuiet(path.$());
+            spilledFrameIndexes.removeIndex(idx);
+            spilledFrameBytes.removeIndex(idx);
+            spilledBytes -= bytes;
         }
 
         private void ensureHeaderScratch(long needed) {
@@ -693,11 +692,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return -1;
         }
 
-        // Copies bytes referenced by non-null varchar aux entries into
-        // varcharScratch in row order. Rewrites each non-null entry's pointer
-        // field with its offset within varcharScratch. The buffer's aux memory
-        // is owned by buffers and will be freed when buffers.close() runs
-        // immediately after spill; in-place rewriting is safe.
         private void materializeVarchar(long auxBase, long auxSize, long totalBytes) {
             if (totalBytes <= 0) {
                 return;
@@ -727,22 +721,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (findSpilled(buffers.frameIndex) >= 0) {
                 return;
             }
-            // Pre-pass: build header (per-slot colType, dataSize, auxSize) and
-            // accumulate the real bodyBytes. Varchar slots have their string
-            // bytes materialized at write time and the materialized total
-            // becomes the slot's dataSize; non-varchar slots reuse the decoded
-            // data chunk verbatim.
             final long headerBytes = HEADER_FIXED + (long) slotCount * SLOT_META;
             ensureHeaderScratch(headerBytes);
             Unsafe.putInt(headerScratch, slotCount);
             long mPtr = headerScratch + HEADER_FIXED;
             long bodyBytes = 0;
             for (int s = 0; s < slotCount; s++) {
+                final int parquetIdx = buffers.getSlotParquetIdx(s);
                 final int colType = buffers.getSlotColumnType(s);
                 final long as = buffers.getSlotAuxSize(s);
-                final long ds = ColumnType.isVarSize(colType)
+                final long ds = colType == ColumnType.VARCHAR_SLICE
                         ? sumVarcharStringBytes(buffers.getSlotAuxPtr(s), as)
                         : buffers.getSlotDataSize(s);
+                Unsafe.putInt(mPtr, parquetIdx);
+                mPtr += Integer.BYTES;
                 Unsafe.putInt(mPtr, colType);
                 mPtr += Integer.BYTES;
                 Unsafe.putLong(mPtr, ds);
@@ -766,7 +758,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         .$(", path=").$(path).I$();
                 return;
             }
-            boolean spillOk = false;
+            boolean isSpillOk = false;
             try {
                 if (!ff.allocate(fd, fileBytes)) {
                     LOG.error().$("could not allocate spill file [errno=").$(ff.errno())
@@ -781,6 +773,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 mPtr = headerScratch + HEADER_FIXED;
                 long off = headerBytes;
                 for (int s = 0; s < slotCount; s++) {
+                    mPtr += Integer.BYTES;
                     final int colType = Unsafe.getInt(mPtr);
                     mPtr += Integer.BYTES;
                     final long ds = Unsafe.getLong(mPtr);
@@ -789,7 +782,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     mPtr += Long.BYTES;
                     if (ds > 0) {
                         final long dataSrc;
-                        if (ColumnType.isVarSize(colType)) {
+                        if (colType == ColumnType.VARCHAR_SLICE) {
                             materializeVarchar(buffers.getSlotAuxPtr(s), as, ds);
                             dataSrc = varcharScratch;
                         } else {
@@ -814,13 +807,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 spilledFrameIndexes.add(buffers.frameIndex);
                 spilledFrameBytes.add(fileBytes);
                 spilledBytes += fileBytes;
-                spillOk = true;
+                isSpillOk = true;
                 if (metrics != null) {
                     metrics.incSpills();
                 }
             } finally {
                 ff.close(fd);
-                if (!spillOk) {
+                if (!isSpillOk) {
                     ff.removeQuiet(path.$());
                 }
             }
@@ -854,21 +847,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (spilledFrameIndexes.size() == 0) {
                 return;
             }
-            Path path = Path.getThreadLocal(dir);
             for (int i = 0, n = spilledFrameIndexes.size(); i < n; i++) {
+                Path path = Path.getThreadLocal(dir);
                 buildPath(path, spilledFrameIndexes.getQuick(i));
                 ff.removeQuiet(path.$());
             }
-
             spilledFrameIndexes.clear();
             spilledFrameBytes.clear();
             spilledBytes = 0;
         }
 
-        // Reads the spill file for frameIndex back into a fresh native scratch
-        // owned by buffers. After this returns true the caller must invoke
-        // buffers.remapColumns() to publish addresses to the per-query lists.
-        boolean restore(ParquetBuffers buffers, int frameIndex) {
+        boolean restore(ParquetBuffers buffers, int frameIndex, DirectIntList parquetColumns) {
             final int idx = findSpilled(frameIndex);
             if (idx < 0) {
                 return false;
@@ -905,15 +894,27 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     dropSpilledEntry(idx);
                     return false;
                 }
+                final int currentSlotCount = (int) (parquetColumns.size() / 2);
+                if (currentSlotCount != slotCount) {
+                    dropSpilledEntry(idx);
+                    return false;
+                }
                 long bodyBytes = 0;
                 long mPtr = headerScratch + HEADER_FIXED;
                 for (int s = 0; s < slotCount; s++) {
+                    final int spilledParquetIdx = Unsafe.getInt(mPtr);
+                    mPtr += Integer.BYTES;
                     final int colType = Unsafe.getInt(mPtr);
                     mPtr += Integer.BYTES;
                     final long ds = Unsafe.getLong(mPtr);
                     mPtr += Long.BYTES;
                     final long as = Unsafe.getLong(mPtr);
                     mPtr += Long.BYTES;
+                    if (spilledParquetIdx != (int) parquetColumns.get(2L * s)
+                            || colType != (int) parquetColumns.get(2L * s + 1)) {
+                        dropSpilledEntry(idx);
+                        return false;
+                    }
                     if (ds < 0 || as < 0) {
                         LOG.error().$("negative slot size in spill header [slot=").$(s)
                                 .$(", colType=").$(colType).$(", dataSize=").$(ds).$(", auxSize=").$(as)
@@ -931,7 +932,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     return false;
                 }
                 final long bodyPtr = Unsafe.malloc(bodyBytes, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                boolean ok = false;
+                boolean isOk = false;
                 try {
                     if (ff.read(fd, bodyPtr, bodyBytes, headerBytes) != bodyBytes) {
                         LOG.error().$("could not read spill body [errno=").$(ff.errno())
@@ -939,11 +940,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         dropSpilledEntry(idx);
                         return false;
                     }
+                    // setupRestored hands bodyPtr to buffers; freeing here would double-free.
                     buffers.setupRestored(slotCount, bodyPtr, bodyBytes);
-                    ok = true;
+                    isOk = true;
                     long off = 0;
                     mPtr = headerScratch + HEADER_FIXED;
                     for (int s = 0; s < slotCount; s++) {
+                        final int parquetIdx = Unsafe.getInt(mPtr);
+                        mPtr += Integer.BYTES;
                         final int colType = Unsafe.getInt(mPtr);
                         mPtr += Integer.BYTES;
                         final long ds = Unsafe.getLong(mPtr);
@@ -954,17 +958,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         off += ds;
                         final long auxPtr = as > 0 ? bodyPtr + off : 0;
                         off += as;
-                        if (ColumnType.isVarSize(colType) && auxPtr != 0 && dataPtr != 0) {
+                        if (colType == ColumnType.VARCHAR_SLICE && auxPtr != 0 && dataPtr != 0) {
                             rebaseVarcharAux(auxPtr, as, dataPtr);
                         }
-                        buffers.setRestoredSlot(s, colType, dataPtr, ds, auxPtr, as);
+                        buffers.setRestoredSlot(s, parquetIdx, colType, dataPtr, ds, auxPtr, as);
                     }
                     if (metrics != null) {
                         metrics.incRestores();
                     }
                     return true;
                 } finally {
-                    if (!ok) {
+                    if (!isOk) {
                         Unsafe.free(bodyPtr, bodyBytes, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     }
                 }
@@ -1110,6 +1114,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private final DirectLongList restoredSlotMeta;
         private final RowGroupBuffers rowGroupBuffers;
         private final IntList slotColumnTypes = new IntList();
+        private final IntList slotParquetIndexes = new IntList();
         private long decodedBytes;
         private int frameIndex = -1;
         private boolean isRestored;
@@ -1138,6 +1143,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             Misc.free(rowGroupBuffers);
             freeRestoredScratch();
             slotColumnTypes.clear();
+            slotParquetIndexes.clear();
             isRestored = false;
             slotCount = 0;
             usageFlags = 0;
@@ -1145,21 +1151,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             decodedBytes = 0;
         }
 
-        public int getSlotColumnType(int slot) {
-            return slotColumnTypes.getQuick(slot);
-        }
-
         public void decode(ParquetDecoder decoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi) {
             clearAddresses();
             freeRestoredScratch();
             isRestored = false;
             slotColumnTypes.clear();
+            slotParquetIndexes.clear();
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
                 slotCount = (int) (parquetColumns.size() / 2);
                 decodedBytes = sumChunkBytes(0, slotCount);
                 for (int s = 0; s < slotCount; s++) {
-                    slotColumnTypes.add(parquetColumns.get(2L * s + 1));
+                    slotParquetIndexes.add((int) parquetColumns.get(2L * s));
+                    slotColumnTypes.add((int) parquetColumns.get(2L * s + 1));
                 }
             } else {
                 slotCount = 0;
@@ -1215,6 +1219,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return rowGroupBuffers.getChunkAuxSize(slot);
         }
 
+        public int getSlotColumnType(int slot) {
+            return slotColumnTypes.getQuick(slot);
+        }
+
         public long getSlotDataPtr(int slot) {
             if (isRestored) {
                 return restoredSlotMeta.get((long) slot * 4);
@@ -1229,6 +1237,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return rowGroupBuffers.getChunkDataSize(slot);
         }
 
+        public int getSlotParquetIdx(int slot) {
+            return slotParquetIndexes.getQuick(slot);
+        }
+
         @Override
         public void reopen() {
             pageAddresses.reopen();
@@ -1239,12 +1251,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             rowGroupBuffers.reopen();
         }
 
-        public void setRestoredSlot(int slot, int columnType, long dataPtr, long dataSize, long auxPtr, long auxSize) {
+        public void setRestoredSlot(int slot, int parquetIdx, int columnType, long dataPtr, long dataSize, long auxPtr, long auxSize) {
             final long base = (long) slot * 4;
             restoredSlotMeta.set(base, dataPtr);
             restoredSlotMeta.set(base + 1, dataSize);
             restoredSlotMeta.set(base + 2, auxPtr);
             restoredSlotMeta.set(base + 3, auxSize);
+            slotParquetIndexes.setQuick(slot, parquetIdx);
             slotColumnTypes.setQuick(slot, columnType);
         }
 
@@ -1254,6 +1267,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             restoredSlotMeta.setCapacity((long) slotCount * 4);
             restoredSlotMeta.setPos((long) slotCount * 4);
             slotColumnTypes.setPos(slotCount);
+            slotParquetIndexes.setPos(slotCount);
             this.slotCount = slotCount;
             this.restoredScratch = scratchPtr;
             this.restoredScratchSize = scratchSize;
