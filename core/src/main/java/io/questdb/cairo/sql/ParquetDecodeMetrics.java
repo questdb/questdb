@@ -36,21 +36,28 @@ import io.questdb.std.Mutable;
  */
 public class ParquetDecodeMetrics implements Mutable {
     private final Counter restoresCounter;
+    private final Counter spillFailuresCounter;
     private final Counter spillsCounter;
 
     public ParquetDecodeMetrics(MetricsRegistry metricsRegistry) {
         this.spillsCounter = metricsRegistry.newCounter("parquet_decode_buffer_spills");
+        this.spillFailuresCounter = metricsRegistry.newCounter("parquet_decode_buffer_spill_failures");
         this.restoresCounter = metricsRegistry.newCounter("parquet_decode_buffer_restores");
     }
 
     @Override
     public void clear() {
         spillsCounter.reset();
+        spillFailuresCounter.reset();
         restoresCounter.reset();
     }
 
     public void incRestores() {
         restoresCounter.add(1);
+    }
+
+    public void incSpillFailures() {
+        spillFailuresCounter.add(1);
     }
 
     public void incSpills() {
@@ -59,6 +66,10 @@ public class ParquetDecodeMetrics implements Mutable {
 
     public long restores() {
         return restoresCounter.getValue();
+    }
+
+    public long spillFailures() {
+        return spillFailuresCounter.getValue();
     }
 
     public long spills() {

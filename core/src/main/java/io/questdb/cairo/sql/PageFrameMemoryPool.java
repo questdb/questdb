@@ -141,6 +141,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         this(maxCacheBytes, 0L, null, null, 0, null);
     }
 
+    public static PageFrameMemoryPool forConfiguration(CairoConfiguration configuration) {
+        return forConfiguration(configuration, configuration.getSqlParquetCacheMemorySize());
+    }
+
+    public static PageFrameMemoryPool forConfiguration(CairoConfiguration configuration, long maxCacheBytes) {
+        return new PageFrameMemoryPool(
+                maxCacheBytes,
+                configuration.getSqlParquetCacheDiskSize(),
+                configuration.getSqlParquetCacheDiskDir(),
+                configuration.getFilesFacade(),
+                configuration.getMkDirMode(),
+                configuration.getMetrics().parquetDecodeMetrics()
+        );
+    }
+
     public PageFrameMemoryPool(
             long maxCacheBytes,
             long diskSpillBytes,
@@ -321,8 +336,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return frameMemory;
     }
 
+    // Preserves the current accessPattern. A factory wrapping this cursor sets
+    // its hint via setParquetDecodeHint() after getCursor() returns; without
+    // this, a re-init triggered by toTop / reused cursor would silently revert
+    // the hint to MONOTONIC and shrink the byte budget mid-query.
     public void of(PageFrameAddressCache addressCache) {
-        of(addressCache, ParquetDecodeHint.MONOTONIC);
+        of(addressCache, accessPattern);
     }
 
     public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint) {
@@ -391,6 +410,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     try {
                         spillManager.spill(victim);
                     } catch (Throwable th) {
+                        spillManager.recordSpillFailure();
                         LOG.error().$("parquet spill failed; discarding buffer [frameIndex=").$(victim.frameIndex)
                                 .$(", error=").$(th).I$();
                     }
@@ -647,15 +667,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public static final class SpillManager implements QuietCloseable {
-        // Spill file:
-        //   header: int32 slotCount, int64 originalDecodedBytes,
+        // Spill file layout:
+        //   header: int32 magic, int32 version, int32 slotCount, int64 originalDecodedBytes,
         //           then per slot { int32 parquetIdx, int32 colType, long ds, long as }
         //   body:   per slot { ds bytes data, as bytes aux }
-        // VARCHAR_SLICE slots are materialized into a contiguous blob (aux entries hold
-        // offsets into it); restore rebases to absolute pointers. originalDecodedBytes
-        // preserves the pre-spill chunk size so the budget accounting survives the
+        // VARCHAR_SLICE slots materialize into a contiguous blob (aux entries hold
+        // offsets); restore rebases to absolute pointers. originalDecodedBytes
+        // preserves the pre-spill chunk size so budget accounting survives the
         // materialize step (which strictly shrinks VARCHAR_SLICE data).
-        private static final int HEADER_PREFIX = Integer.BYTES + Long.BYTES;
+        static final int SPILL_FILE_MAGIC = 0x51445042; // 'QDPB' (QuestDB Parquet Buffer)
+        static final int SPILL_FILE_VERSION = 1;
+        private static final int HEADER_PREFIX = 2 * Integer.BYTES + Integer.BYTES + Long.BYTES;
         private static final int MAX_SPILL_SLOTS = 65_536;
         private static final int SLOT_META = 2 * Integer.BYTES + 2 * Long.BYTES;
         private final long cursorId;
@@ -664,6 +686,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private final FilesFacade ff;
         private final ParquetDecodeMetrics metrics;
         private final LongList spilledFrameBytes = new LongList();
+        private final IntIntHashMap spilledFrameIndexToSlot = new IntIntHashMap();
         private final IntList spilledFrameIndexes = new IntList();
         private long headerScratch;
         private long headerScratchSize;
@@ -759,10 +782,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             Path path = Path.getThreadLocal(dir);
             buildPath(path, frameIndex);
             ff.removeQuiet(path.$());
+            spilledFrameIndexToSlot.remove(frameIndex);
             final int last = n - 1;
             if (idx != last) {
-                spilledFrameIndexes.setQuick(idx, spilledFrameIndexes.getQuick(last));
+                final int movedFrameIndex = spilledFrameIndexes.getQuick(last);
+                spilledFrameIndexes.setQuick(idx, movedFrameIndex);
                 spilledFrameBytes.setQuick(idx, spilledFrameBytes.getQuick(last));
+                spilledFrameIndexToSlot.put(movedFrameIndex, idx);
             }
             spilledFrameIndexes.setPos(last);
             spilledFrameBytes.setPos(last);
@@ -786,12 +812,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         private int findSpilled(int frameIndex) {
-            for (int i = 0, n = spilledFrameIndexes.size(); i < n; i++) {
-                if (spilledFrameIndexes.getQuick(i) == frameIndex) {
-                    return i;
-                }
+            return spilledFrameIndexToSlot.get(frameIndex);
+        }
+
+        void recordSpillFailure() {
+            if (metrics != null) {
+                metrics.incSpillFailures();
             }
-            return -1;
         }
 
         private void materializeVarchar(long auxBase, long auxSize, long totalBytes) {
@@ -816,6 +843,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
+        // Destructive on VARCHAR_SLICE aux: rewrites entry pointer fields with offsets
+        // into varcharScratch. Caller must overwrite or close the buffer immediately.
         private void spill(ParquetBuffers buffers) {
             final int slotCount = buffers.slotCount;
             if (slotCount <= 0) {
@@ -826,8 +855,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             final long headerBytes = HEADER_PREFIX + (long) slotCount * SLOT_META;
             ensureHeaderScratch(headerBytes);
-            Unsafe.putInt(headerScratch, slotCount);
-            Unsafe.putLong(headerScratch + Integer.BYTES, buffers.decodedBytes);
+            Unsafe.putInt(headerScratch, SPILL_FILE_MAGIC);
+            Unsafe.putInt(headerScratch + Integer.BYTES, SPILL_FILE_VERSION);
+            Unsafe.putInt(headerScratch + 2L * Integer.BYTES, slotCount);
+            Unsafe.putLong(headerScratch + 3L * Integer.BYTES, buffers.decodedBytes);
             long mPtr = headerScratch + HEADER_PREFIX;
             long bodyBytes = 0;
             for (int s = 0; s < slotCount; s++) {
@@ -858,6 +889,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             buildPath(path, buffers.frameIndex);
             final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
             if (fd < 0) {
+                recordSpillFailure();
                 LOG.error().$("could not open spill file [errno=").$(ff.errno())
                         .$(", path=").$(path).I$();
                 return;
@@ -865,11 +897,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             boolean isSpillOk = false;
             try {
                 if (!ff.allocate(fd, fileBytes)) {
+                    recordSpillFailure();
                     LOG.error().$("could not allocate spill file [errno=").$(ff.errno())
                             .$(", size=").$(fileBytes).$(", path=").$(path).I$();
                     return;
                 }
                 if (ff.write(fd, headerScratch, headerBytes, 0) != headerBytes) {
+                    recordSpillFailure();
                     LOG.error().$("could not write spill header [errno=").$(ff.errno())
                             .$(", path=").$(path).I$();
                     return;
@@ -893,6 +927,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                             dataSrc = buffers.getSlotDataPtr(s);
                         }
                         if (ff.write(fd, dataSrc, ds, off) != ds) {
+                            recordSpillFailure();
                             LOG.error().$("could not write spill data [errno=").$(ff.errno())
                                     .$(", slot=").$(s).$(", path=").$(path).I$();
                             return;
@@ -901,6 +936,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     }
                     if (as > 0) {
                         if (ff.write(fd, buffers.getSlotAuxPtr(s), as, off) != as) {
+                            recordSpillFailure();
                             LOG.error().$("could not write spill aux [errno=").$(ff.errno())
                                     .$(", slot=").$(s).$(", path=").$(path).I$();
                             return;
@@ -908,6 +944,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         off += as;
                     }
                 }
+                spilledFrameIndexToSlot.put(buffers.frameIndex, spilledFrameIndexes.size());
                 spilledFrameIndexes.add(buffers.frameIndex);
                 spilledFrameBytes.add(fileBytes);
                 spilledBytes += fileBytes;
@@ -956,6 +993,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 buildPath(path, spilledFrameIndexes.getQuick(i));
                 ff.removeQuiet(path.$());
             }
+            spilledFrameIndexToSlot.clear();
             spilledFrameIndexes.clear();
             spilledFrameBytes.clear();
             spilledBytes = 0;
@@ -987,14 +1025,28 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     dropSpilledEntry(idx);
                     return false;
                 }
-                final int slotCount = Unsafe.getInt(headerScratch);
+                final int magic = Unsafe.getInt(headerScratch);
+                if (magic != SPILL_FILE_MAGIC) {
+                    LOG.error().$("spill file magic mismatch [magic=0x").$hex(magic)
+                            .$(", path=").$(path).I$();
+                    dropSpilledEntry(idx);
+                    return false;
+                }
+                final int version = Unsafe.getInt(headerScratch + Integer.BYTES);
+                if (version != SPILL_FILE_VERSION) {
+                    LOG.error().$("unsupported spill file version [version=").$(version)
+                            .$(", path=").$(path).I$();
+                    dropSpilledEntry(idx);
+                    return false;
+                }
+                final int slotCount = Unsafe.getInt(headerScratch + 2L * Integer.BYTES);
                 if (slotCount <= 0 || slotCount > MAX_SPILL_SLOTS) {
                     LOG.error().$("invalid spill slotCount [slotCount=").$(slotCount)
                             .$(", path=").$(path).I$();
                     dropSpilledEntry(idx);
                     return false;
                 }
-                final long originalDecodedBytes = Unsafe.getLong(headerScratch + Integer.BYTES);
+                final long originalDecodedBytes = Unsafe.getLong(headerScratch + 3L * Integer.BYTES);
                 if (originalDecodedBytes < 0) {
                     LOG.error().$("negative originalDecodedBytes in spill header [bytes=").$(originalDecodedBytes)
                             .$(", path=").$(path).I$();
