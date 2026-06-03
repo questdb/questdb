@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
@@ -38,17 +39,21 @@ import org.junit.Test;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the
- * tracker-aware keyed parallel GROUP BY operator
- * {@link AsyncGroupByRecordCursorFactory} in
- * {@code io.questdb.griffin.engine.table}, with its {@code GroupByShardingContext}
- * / {@code GroupByMapFragment} maps and the owner/per-worker
- * {@code FastGroupByAllocator}s.
+ * tracker-aware parallel GROUP BY operators in
+ * {@code io.questdb.griffin.engine.table}.
  * <p>
- * The non-keyed parallel atom is intentionally not covered: non-keyed aggregates
- * that reach {@code AsyncGroupByNotKeyedRecordCursorFactory} hold only bounded
- * state (a single {@code SimpleMapValue}), and the unbounded ones (e.g.
- * {@code count_distinct}) do not route to it, so there is no unbounded non-keyed
- * allocation to charge.
+ * The keyed operator {@link AsyncGroupByRecordCursorFactory} is covered with its
+ * {@code GroupByShardingContext} / {@code GroupByMapFragment} maps and the
+ * owner/per-worker {@code FastGroupByAllocator}s.
+ * <p>
+ * The non-keyed operator {@link AsyncGroupByNotKeyedRecordCursorFactory} is
+ * covered through {@code array_agg}: it carries no key map, but its single-group
+ * list grows without bound and is allocated through the owner/per-worker
+ * {@code FastGroupByAllocator}s, which the atom binds to the active workload's
+ * tracker in {@code reopen()} (and unbinds in {@code close()}). Bounded non-keyed
+ * aggregates such as {@code count_distinct} hold only a {@code SimpleMapValue} and
+ * never route here, so {@code array_agg} is the vehicle for the unbounded
+ * non-keyed path.
  * <p>
  * Each query runs on a dedicated {@link WorkerPool} via {@link TestUtils#execute},
  * which builds a fresh {@code CairoEngine} from the test configuration; the
@@ -156,6 +161,90 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
                                     rows++;
                                 }
                                 Assert.assertEquals(5, rows);
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelNotKeyedArrayAggFailsOnLargeSet() throws Exception {
+        // Non-keyed parallel array_agg accumulates every input value into a single
+        // growing list, allocated through the owner/per-worker FastGroupByAllocators
+        // of AsyncGroupByNotKeyedRecordCursorFactory. The atom binds those allocators
+        // to the per-query tracker in reopen(), so the combined per-worker reduce and
+        // owner merge growth trips the limit and surfaces with isOutOfMemory() set.
+        // Without the binding the list grows unbounded and escapes the limit (the
+        // GROUP BY allocator caps only the chunk size, not the total), so the query
+        // would complete and Assert.fail below would fire.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, v DOUBLE) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 1000)::timestamp, x::double FROM long_sequence(2_000_000)",
+                                sqlExecutionContext
+                        );
+                        try (RecordCursorFactory factory = compiler.compile("SELECT array_agg(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncGroupByNotKeyedRecordCursorFactory.class);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                    // drain until breach
+                                }
+                                Assert.fail("expected per-query memory breach");
+                            } catch (CairoException e) {
+                                Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelNotKeyedArrayAggReleasesAllocations() throws Exception {
+        // A small non-keyed array_agg fits the per-query limit; the owner and
+        // per-worker allocators are bound to the tracker on each open and must
+        // release every byte on close. Repeated getCursor/close cycles on the same
+        // factory, wrapped by assertMemoryLeak, would expose a malloc/free asymmetry
+        // between the bound allocators and the retained allocator index, or a tracker
+        // imbalance from the close()-time unbinding.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, v DOUBLE) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 1000)::timestamp, x::double FROM long_sequence(50_000)",
+                                sqlExecutionContext
+                        );
+                        try (RecordCursorFactory factory = compiler.compile("SELECT array_agg(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncGroupByNotKeyedRecordCursorFactory.class);
+                            for (int i = 0; i < 10; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    long rows = 0;
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.assertEquals("iteration " + i, 1, rows);
+                                }
                             }
                         }
                     },

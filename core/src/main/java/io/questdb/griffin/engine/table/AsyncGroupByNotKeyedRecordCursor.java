@@ -53,7 +53,11 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
         this.groupByFunctions = groupByFunctions;
         this.recordA = new VirtualRecord(groupByFunctions);
-        this.isOpen = true;
+        // Start closed so the first of() runs atom.reopen(), which opens the lazy
+        // (openOnInit=false) allocators and binds the per-query tracker before any
+        // allocation. Skipping reopen() on the first cursor would leave the allocator's
+        // chunk index unallocated.
+        this.isOpen = false;
     }
 
     @Override
