@@ -188,7 +188,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     //
                     // This mat-view exemption is safe only because no row-order-dependent structural change
                     // can reach a mat view: a column type conversion - the one such operation - is rejected on
-                    // a mat view (SqlCompilerImpl.checkMatViewModification), and the column alters a mat view
+                    // a mat view (SqlCompilerImpl.checkMatViewModification), and the column alters that a mat view
                     // does permit (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit
                     // as walId > 0 SQL transactions and stay hard barriers via the futureType != SQL check
                     // below. Making a row-dependent op structural and allowing it on a mat view would reopen

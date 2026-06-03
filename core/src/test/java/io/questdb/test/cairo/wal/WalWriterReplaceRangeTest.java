@@ -116,7 +116,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (s1 symbol, s2 symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
 
-            // The column alters a mat view is permitted to run must be non-structural -> SQL hard barrier.
+            // The column alters that a mat view is permitted to run must be non-structural -> SQL hard barrier.
             assertAlterIsStructural("alter table t alter column s1 add index", false);
             assertAlterIsStructural("alter table t alter column s2 drop index", false);
             assertAlterIsStructural("alter table t alter column s1 symbol capacity 256", false);
@@ -480,8 +480,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // regressed and treated SQL as a soft barrier on a mat view, the scan would record the barrier, reach the
         // truncate, and skip the insert (clamped to the barrier) - so its rows would never reach disk.
         //
-        // STRICT guard: the truncate wipes the insert either way so the rendered data is identical, but applying
-        // vs skipping the insert changes the physically-written row count, which the assertion pins.
+        // Future-mutation tripwire, NOT a regression guard for this PR's change: reverting the generalized barrier
+        // leaves this green (the pre-fix scan also broke at an SQL transaction), so it fails ONLY if the
+        // futureType != SQL carve-out is later dropped and SQL becomes a soft barrier on a mat view. It pins that
+        // carve-out via physically-written rows: the truncate wipes the insert either way so the rendered data is
+        // identical, but applying vs skipping the insert changes the row count.
         assertMemoryLeak(() -> {
             execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
