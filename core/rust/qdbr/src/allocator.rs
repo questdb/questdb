@@ -384,7 +384,11 @@ impl QdbAllocator {
         self.tagged_used().fetch_sub(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(delta, COUNTER_ORDERING);
         if let Some(tracker_used) = self.tracker_used() {
-            tracker_used.fetch_sub(delta, COUNTER_ORDERING);
+            let prev = tracker_used.fetch_sub(delta, COUNTER_ORDERING);
+            debug_assert!(
+                prev >= delta,
+                "per-query memory underflow on shrink: used={prev}, delta={delta}"
+            );
         }
         self.realloc_count().fetch_add(1, COUNTER_ORDERING);
     }
@@ -393,7 +397,11 @@ impl QdbAllocator {
         self.tagged_used().fetch_sub(freed_size, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(freed_size, COUNTER_ORDERING);
         if let Some(tracker_used) = self.tracker_used() {
-            tracker_used.fetch_sub(freed_size, COUNTER_ORDERING);
+            let prev = tracker_used.fetch_sub(freed_size, COUNTER_ORDERING);
+            debug_assert!(
+                prev >= freed_size,
+                "per-query memory underflow on deallocate: used={prev}, delta={freed_size}"
+            );
         }
         self.free_count().fetch_add(1, COUNTER_ORDERING);
     }
