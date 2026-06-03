@@ -885,6 +885,7 @@ public class QueryAssertion {
         final boolean sizeExpected = testCase.getExpectSizeOverride() != null
                 ? testCase.getExpectSizeOverride()
                 : expectSize;
+        assertFactoryShape(factory, randomAccess, sizeExpected, sizeCanBeVariable, executionContext);
         assertTimestamp(expectedTimestamp, resolveTimestampOrder(testCase), factory, executionContext);
         assertCursor(testCase.getExpected(), factory, randomAccess, sizeExpected, sizeCanBeVariable, executionContext);
         // re-open with the same binds and reproduce the same outcome
@@ -1335,6 +1336,61 @@ public class QueryAssertion {
         }
     }
 
+    /**
+     * Pre-flight check of the cheap, data-independent factory-shape properties - random-access support
+     * and cursor size. Both are collected and reported together so a single run surfaces every flag
+     * that needs adjusting, instead of failing fast on the first one and hiding the rest. Each line
+     * names the fix (e.g. add/remove {@code .noRandomAccess()} / {@code .expectSize()}). Row-data
+     * mismatches still need a full pass and are left to the detailed cursor assertions.
+     */
+    private void assertFactoryShape(
+            RecordCursorFactory factory,
+            boolean supportsRandomAccess,
+            boolean sizeExpected,
+            boolean sizeCanBeVariable,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final StringSink shapeErrors = new StringSink();
+        int mismatchCount = 0;
+
+        final boolean actualRandomAccess = factory.recordCursorSupportsRandomAccess();
+        if (actualRandomAccess != supportsRandomAccess) {
+            if (mismatchCount++ > 0) {
+                shapeErrors.put('\n');
+            }
+            shapeErrors.put("  - supports random access: expected ").put(supportsRandomAccess)
+                    .put(" but was ").put(actualRandomAccess)
+                    .put(actualRandomAccess ? " (remove .noRandomAccess())" : " (add .noRandomAccess())");
+        }
+
+        if (!sizeCanBeVariable) {
+            long size;
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    // Drain the cursor: some factories resolve size() only after a full pass. This
+                    // mirrors how returns()/assertBinds() read size after iterating once.
+                }
+                cursor.toTop();
+                size = cursor.size();
+            }
+            if (sizeExpected && size == -1) {
+                if (mismatchCount++ > 0) {
+                    shapeErrors.put('\n');
+                }
+                shapeErrors.put("  - cursor size: expected a known size but was -1 (remove .expectSize())");
+            } else if (!sizeExpected && size > 0) {
+                if (mismatchCount++ > 0) {
+                    shapeErrors.put('\n');
+                }
+                shapeErrors.put("  - cursor size: expected an undetermined size but was ").put(size).put(" (add .expectSize())");
+            }
+        }
+
+        if (mismatchCount > 0) {
+            Assert.fail((mismatchCount > 1 ? mismatchCount + " factory-shape mismatches:\n" : "factory-shape mismatch:\n") + shapeErrors);
+        }
+    }
+
     private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         engine.clear();
         TestUtils.assertMemoryLeak(() -> {
@@ -1388,6 +1444,7 @@ public class QueryAssertion {
         snapshotMemoryUsage();
         RecordCursorFactory factory = compileSelect();
         try {
+            assertFactoryShape(factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
             assertBaseFactoryClass(factory);
             assertColumnTypes(factory);
             assertTimestamp(expectedTimestamp, expectedTimestampOrder, factory, context);
@@ -1806,7 +1863,14 @@ public class QueryAssertion {
                 if (testCase.isExpectedToFail()) {
                     assertBindFailure(factory, testCase, caseContext);
                 } else {
-                    assertBindSuccess(factory, testCase, caseContext);
+                    try {
+                        assertBindSuccess(factory, testCase, caseContext);
+                    } catch (AssertionError e) {
+                        // Tag generic per-cursor assertions (size, random access, row data) with the
+                        // offending case, so a failure names the tuple instead of just the symptom.
+                        throw new AssertionError(
+                                "bind-variable case #" + i + " (" + testCase.getDescription() + "): " + e.getMessage(), e);
+                    }
                 }
             }
         }
