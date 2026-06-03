@@ -75,6 +75,8 @@ import static io.questdb.TelemetryEvent.*;
 import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.WalTxnDetails.dedupModeOf;
+import static io.questdb.cairo.wal.WalTxnDetails.walTxnTypeOf;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -126,6 +128,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static long calculateSkipTransactionCount(TableToken tableToken, long initialSeqTxn, WalTxnDetails walTxnDetails) {
         // Check all future transactions to see if any fully replace this transaction's range or table is truncated
         final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
+        // Loop-invariant for the whole scan; hoisted out of the inner loop below.
+        final boolean isMatView = tableToken.isMatView();
 
         // Initial loop condition, as if the previous transaction was skipped
         for (long seqTxn = initialSeqTxn; seqTxn < lastSeqTxn; seqTxn++) {
@@ -152,9 +156,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             // barriers (the mat-view exemption below keeps scanning past non-data transactions).
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
+                // Read the packed type+flags slot once when present: both the txn type and the dedup mode
+                // (checked further below) decode from it, so the dedup check does not re-read the same slot.
                 // NONE for structural (walId < 1) transactions, which carry no data txn type; the barrier
                 // check below treats them by walId, so the exact value is irrelevant there.
-                byte futureType = futureWalId > 0 ? walTxnDetails.getWalTxnType(futureSeqTxn) : NONE;
+                long futureTypeAndFlags = futureWalId > 0 ? walTxnDetails.getWalTxnTypeAndFlags(futureSeqTxn) : 0L;
+                byte futureType = futureWalId > 0 ? walTxnTypeOf(futureTypeAndFlags) : NONE;
                 if (futureType == TRUNCATE) {
                     // Truncate fully removes any prior data, no point applying it first. Skip straight to the
                     // truncate, but not past a non-skippable transaction recorded before it. For a regular table
@@ -187,7 +194,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // below. Making a row-dependent op structural and allowing it on a mat view would reopen
                     // the cross-instance divergence; WalWriterReplaceRangeTest's
                     // testMatViewPermittedColumnAltersStayNonStructural guards the non-structural half.
-                    if (tableToken.isMatView() && futureType != SQL) {
+                    if (isMatView && futureType != SQL) {
                         firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
                         continue;
                     }
@@ -195,8 +202,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 // If the future transaction is a replace range operation
-                byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
-                if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                if (dedupModeOf(futureTypeAndFlags) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
                     long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
                     long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
 
