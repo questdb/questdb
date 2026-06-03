@@ -3144,6 +3144,76 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetLinksPostingIndexFiles() throws Exception {
+        // Regression: linkPartitionIndexFiles hard-linked only the bitmap
+        // .k / .v files. A posting-indexed symbol column has no .v -- its
+        // data lives in .pv.<colTxn>.<sealTxn> plus the .pci / .pc<N>.*
+        // sidecars
+        assertMemoryLeak(() -> {
+            final String tableName = "posting_switch";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL).symbolCapacity(16).indexed(true, 256, IndexType.POSTING)
+                    .timestamp("ts", timestampType);
+            AbstractCairoTest.create(model);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = timestampDriver.fromMicros(60_000L * 1000L);
+
+            // Populate across multiple partitions so partition 0 is
+            // non-active and has data for the posting-indexed column.
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                for (int i = 0; i < 2_000; i++) {
+                    TableWriter.Row r = writer.newRow(ts += interval);
+                    r.putSym(0, rnd.nextString(4));
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            final TableToken token;
+            long partitionTs;
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Empty data.parquet + _pm stubs are enough -- the switch
+                // only checks existence and hard-links them, same trick as
+                // the sister LinksPmSidecar test.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch
+                // creates a distinct destination dir.
+                TableWriter.Row r = writer.newRow(tx.getMaxTimestamp() + interval);
+                r.putSym(0, rnd.nextString(4));
+                r.append();
+                writer.commit();
+
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
+                Assert.assertTrue(
+                        "partition must be parquet after the switch",
+                        writer.getTxWriter().isPartitionParquet(partitionIndex)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSwitchNativePartitionWithParquetMissingPmDoesNotOrphanNewDir() throws Exception {
         assertMemoryLeak(() -> {
             int N = 10000;
@@ -3433,21 +3503,29 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.newRow(timestampDriver.fromHours(1) + 1).append();
             writer.commit();
         }
-        assertSql(replaceTimestampSuffix("""
-                ts
-                1970-01-01T00:00:00.000001Z
-                1970-01-01T01:00:00.000001Z
-                """, ColumnType.nameOf(timestampType)), "tango");
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(replaceTimestampSuffix("""
+                        ts
+                        1970-01-01T00:00:00.000001Z
+                        1970-01-01T01:00:00.000001Z
+                        """, ColumnType.nameOf(timestampType)));
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(timestampDriver.fromHours(2) + 1).append();
             writer.enforceTtl();
             writer.commit();
         }
-        assertSql(replaceTimestampSuffix("""
-                ts
-                1970-01-01T01:00:00.000001Z
-                1970-01-01T02:00:00.000001Z
-                """, ColumnType.nameOf(timestampType)), "tango");
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(replaceTimestampSuffix("""
+                        ts
+                        1970-01-01T01:00:00.000001Z
+                        1970-01-01T02:00:00.000001Z
+                        """, ColumnType.nameOf(timestampType)));
     }
 
     @Test

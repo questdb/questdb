@@ -1276,13 +1276,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        col_a\tts
-                        1000\t1970-01-01T00:00:00.001000Z
-                        2000\t1970-01-01T00:00:00.002000Z
-                        3000\t1970-01-01T00:00:00.003000Z
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                col_a\tts
+                                1000\t1970-01-01T00:00:00.001000Z
+                                2000\t1970-01-01T00:00:00.002000Z
+                                3000\t1970-01-01T00:00:00.003000Z
+                                """);
             }
         });
     }
@@ -1335,13 +1338,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        col_b\tcol_a
-                        1000\t1000
-                        2000\t2000
-                        3000\t3000
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                col_b\tcol_a
+                                1000\t1000
+                                2000\t2000
+                                3000\t3000
+                                """);
             }
         });
     }
@@ -1698,21 +1704,24 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        ts\tvalue
-                        1970-01-01T00:01:40.000000Z\t1000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                ts\tvalue
+                                1970-01-01T00:01:40.000000Z\t1000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                """);
             }
         });
     }
@@ -1890,13 +1899,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        geo1\tgeo2\tgeo4\tgeo8\tgeo2b
-                        \t\t\t\t
-                        q\tque\tquestd\tquestdb12345\t10
-                        u\tu10\tu10m99\tu10m99dd3pbj\t11
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                geo1\tgeo2\tgeo4\tgeo8\tgeo2b
+                                \t\t\t\t
+                                q\tque\tquestd\tquestdb12345\t10
+                                u\tu10\tu10m99\tu10m99dd3pbj\t11
+                                """);
             }
         });
     }
@@ -1904,7 +1916,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportGeoHashesForNewTable() throws Exception {
         new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler(); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+            try (SqlCompiler _ = engine.getSqlCompiler(); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                         POST /upload?name=test&forceHeader=true HTTP/1.1\r
                         Host: localhost:9000\r
@@ -1958,13 +1970,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(compiler, executionContext, "test", sink, """
-                        geo1\tgeo2\tgeo4\tgeo8\tgeo2b
-                        \t\t\t\t
-                        q\tque\tquestd\tquestdb12345\t10
-                        u\tu10\tu10m99\tu10m99dd3pbj\t11
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                geo1\tgeo2\tgeo4\tgeo8\tgeo2b
+                                \t\t\t\t
+                                q\tque\tquestd\tquestdb12345\t10
+                                u\tu10\tu10m99\tu10m99dd3pbj\t11
+                                """);
             }
         });
     }
@@ -2017,15 +2032,18 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        ip1\tip2
-                        \t0.0.0.42
-                        \t
-                        \t
-                        127.0.0.1\t2.135.87.178
-                        127.0.0.1\t
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                ip1\tip2
+                                \t0.0.0.42
+                                \t
+                                \t
+                                127.0.0.1\t2.135.87.178
+                                127.0.0.1\t
+                                """);
             }
         });
     }
@@ -2077,13 +2095,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        d1\td2\td3
-                        2000-12-31T00:00:00.000Z\t2000-12-31T12:49:59.000Z\t2000-12-31T13:39:49.000Z
-                        2001-12-31T00:00:00.000Z\t2001-12-31T12:49:59.000Z\t2001-12-31T13:39:49.000Z
-                        2002-12-31T00:00:00.000Z\t2002-12-31T12:49:59.000Z\t2002-12-31T13:39:49.000Z
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                d1\td2\td3
+                                2000-12-31T00:00:00.000Z\t2000-12-31T12:49:59.000Z\t2000-12-31T13:39:49.000Z
+                                2001-12-31T00:00:00.000Z\t2001-12-31T12:49:59.000Z\t2001-12-31T13:39:49.000Z
+                                2002-12-31T00:00:00.000Z\t2002-12-31T12:49:59.000Z\t2002-12-31T13:39:49.000Z
+                                """);
             }
         });
     }
@@ -4445,12 +4466,7 @@ public class IODispatcherTest extends AbstractTest {
                 \r
                 """, 1, true);
 
-        final String expectedEvent = """
-                100\t1
-                1\t2
-                101\t1
-                """;
-        assertTelemetryEventAndOrigin(expectedEvent);
+        assertTelemetryEventAndOrigin();
     }
 
     @Test
@@ -4480,12 +4496,7 @@ public class IODispatcherTest extends AbstractTest {
                 \r
                 """, 2, true);
 
-        final String expected = """
-                100	1
-                1	2
-                101	1
-                """;
-        assertTelemetryEventAndOrigin(expected);
+        assertTelemetryEventAndOrigin();
     }
 
     @Test
@@ -7060,8 +7071,11 @@ public class IODispatcherTest extends AbstractTest {
                 queryError.set(new Exception());//stop wal thread
                 stopped.await();
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "select count(*) from tab where b=false", sink, "count\n1000\n");
+                assertQuery("select count(*) from tab where b=false")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("count\n1000\n");
 
             } finally {
                 engine.getQueryRegistry().setListener(null);
@@ -7190,8 +7204,11 @@ public class IODispatcherTest extends AbstractTest {
 
             // run query in separate engine so it doesn't time out
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root)); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "select count(*) from tab where b=false", sink, "count\n3000\n");
+                assertQuery("select count(*) from tab where b=false")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("count\n3000\n");
             }
 
         });
@@ -7313,7 +7330,7 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    private void assertTelemetryEventAndOrigin(CharSequence expected) {
+    private void assertTelemetryEventAndOrigin() {
         final String baseDir = root;
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
@@ -7327,11 +7344,11 @@ public class IODispatcherTest extends AbstractTest {
             final StringSink sink = new StringSink();
             sink.clear();
             printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
-            TestUtils.assertEquals(expected, sink);
+            TestUtils.assertEquals("100\t1\n1\t2\n101\t1\n", sink);
             cursor.toTop();
             sink.clear();
             printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
-            TestUtils.assertEquals(expected, sink);
+            TestUtils.assertEquals("100\t1\n1\t2\n101\t1\n", sink);
         }
     }
 

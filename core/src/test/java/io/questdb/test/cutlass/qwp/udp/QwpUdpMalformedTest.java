@@ -196,10 +196,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM rcvbuf_test"
-            );
+            assertQuery("SELECT count() FROM rcvbuf_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -298,10 +297,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM dup_test"
-            );
+            assertQuery("SELECT count() FROM dup_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -323,10 +321,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM bad_flags"
-            );
+            assertQuery("SELECT count() FROM bad_flags")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -342,10 +339,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM magic_zeros"
-            );
+            assertQuery("SELECT count() FROM magic_zeros")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -365,10 +361,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM magic_ilp3"
-            );
+            assertQuery("SELECT count() FROM magic_ilp3")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -405,11 +400,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
 
                 drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM noise_then_valid");
+                assertQuery("SELECT count() FROM noise_then_valid")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
             }
 
             drainWalQueue();
-            assertSql("count\n1\n", "SELECT count() FROM noise_then_valid");
+            assertQuery("SELECT count() FROM noise_then_valid")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -437,10 +436,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM multi_bad"
-            );
+            assertQuery("SELECT count() FROM multi_bad")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -456,10 +454,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM ooo_test"
-            );
+            assertQuery("SELECT count() FROM ooo_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -479,10 +476,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM trunc_test"
-            );
+            assertQuery("SELECT count() FROM trunc_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -505,10 +501,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM too_large"
-            );
+            assertQuery("SELECT count() FROM too_large")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -551,10 +546,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM random_test"
-            );
+            assertQuery("SELECT count() FROM random_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -570,10 +564,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM short_test"
-            );
+            assertQuery("SELECT count() FROM short_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -589,10 +582,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM short11"
-            );
+            assertQuery("SELECT count() FROM short11")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -633,10 +625,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM trunc_col"
-            );
+            assertQuery("SELECT count() FROM trunc_col")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -660,10 +651,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM trunc_name"
-            );
+            assertQuery("SELECT count() FROM trunc_name")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -683,10 +673,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM version_test"
-            );
+            assertQuery("SELECT count() FROM version_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -706,10 +695,9 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM zero_payload"
-            );
+            assertQuery("SELECT count() FROM zero_payload")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
