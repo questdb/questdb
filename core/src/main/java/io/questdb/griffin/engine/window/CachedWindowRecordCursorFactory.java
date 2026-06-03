@@ -540,10 +540,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (!isOpen) {
                 isOpen = true;
                 recordChain.setSymbolTableResolver(this);
-                reopenTrees(executionContext);
-                // Bind the per-query tracker on each window function's per-partition
-                // map before reopen() allocates the map backing under it.
+                // Bind the per-query tracker on the record store and each window function's
+                // per-partition map before their backing is allocated under it. The record
+                // store materializes every input row and is typically the dominant allocation,
+                // so it must be charged to the per-query counter like its sibling structures.
                 final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                recordChain.setMemoryTracker(memoryTracker);
+                reopenTrees(executionContext);
                 for (int i = 0, n = allFunctions.size(); i < n; i++) {
                     allFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }

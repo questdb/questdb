@@ -69,6 +69,11 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
         // sort allocations on small inputs, small enough that a runaway sort
         // breaches after one or two heap doublings.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
+        // Shrink the CachedWindow record store page (default 1 MiB) so its
+        // tracker-bound RecordArray fits under the limit on small partitions; a
+        // large partition still grows it past the limit. The defaults would
+        // breach on the very first record-store page.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64 * 1024L);
     }
 
     @Test
@@ -86,7 +91,7 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
             try (SqlExecutionContext parallelCtx = TestUtils.createSqlExecutionCtx(engine, 4);
                  SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(sql, parallelCtx).getRecordCursorFactory()) {
-                assertInBaseChain(factory, AsyncTopKRecordCursorFactory.class);
+                assertInTree(factory, AsyncTopKRecordCursorFactory.class);
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(parallelCtx)) {
                         Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
@@ -271,7 +276,7 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertInBaseChain(RecordCursorFactory factory, Class<?> factoryClass) {
+    private static void assertInTree(RecordCursorFactory factory, Class<?> factoryClass) {
         RecordCursorFactory cur = factory;
         while (cur != null) {
             if (factoryClass.isInstance(cur)) {

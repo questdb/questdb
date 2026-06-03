@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * RecordArray is similar to RecordChain, except that it stores the record's startOffset in a separate memory
@@ -106,6 +108,15 @@ public class RecordArray extends RecordChain {
         long offset = beginRecord();
         recordSink.copy(record, this);
         return offset;
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // The parent binds the data region (mem); the startOffset region (auxMem)
+        // is RecordArray-specific and must be bound here too, otherwise it escapes
+        // the per-query limit while growing with every materialized record.
+        super.setMemoryTracker(tracker);
+        auxMem.setMemoryTracker(tracker);
     }
 
     @Override

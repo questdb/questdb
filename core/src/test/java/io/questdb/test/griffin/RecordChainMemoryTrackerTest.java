@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -151,6 +152,63 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
                             "3\t3\n",
                     "SELECT master.k, slave.v FROM master ASOF JOIN slave ON k"
             );
+        });
+    }
+
+    @Test
+    public void testCachedWindowRecordChainFailsOnLargeInput() throws Exception {
+        // A window aggregate over the whole set (no ORDER BY, no PARTITION BY) routes to a
+        // CachedWindowRecordCursor with no order-by trees, so the RecordArray that materializes
+        // every input row is the sole growth vector (the avg state is O(1)). With the RecordArray
+        // bound to the per-query tracker (both its data and aux regions) a large input breaches
+        // the limit; without the binding the materialization escapes the limit and the query
+        // would complete, so the Assert.fail below catches a regression.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k, x AS v FROM long_sequence(200_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT k, avg(v) OVER () AS a FROM tab",
+                        sqlExecutionContext
+                );
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                    while (cursor.hasNext()) {
+                        // drain until breach
+                    }
+                    Assert.fail("expected per-query memory breach");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowRecordChainSucceedsOnSmallInput() throws Exception {
+        // The same whole-set window aggregate on a small input fits the limit; the RecordArray
+        // malloc/free pairs (data and aux regions) stay balanced under the bound tracker, which
+        // assertMemoryLeak verifies.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k, x AS v FROM long_sequence(5))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT k, avg(v) OVER () AS a FROM tab",
+                         sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(5, rows);
+                }
+            }
         });
     }
 
@@ -408,5 +466,20 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertInTree(RecordCursorFactory factory, Class<?> factoryClass) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (factoryClass.isInstance(cur)) {
+                return;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
     }
 }
