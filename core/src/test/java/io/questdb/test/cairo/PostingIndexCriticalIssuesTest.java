@@ -4338,10 +4338,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             2
                             """);
 
-            // Truth from the non-covering fallback path.
-            printSql("SELECT /*+ no_covering */ count(), sum(price) FROM t_squash_spill WHERE sym = 'A'");
-            String truth = sink.toString();
-
             engine.releaseAllWriters();
             try (TableWriter w = TestUtils.getWriter(engine, "t_squash_spill")) {
                 // Squash reseals the covering posting index for the target
@@ -4360,11 +4356,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             1
                             """);
 
-            // The covering path must return the same rows as the fallback.
-            printSql("SELECT count(), sum(price) FROM t_squash_spill WHERE sym = 'A'");
-            TestUtils.assertEquals(
-                    "covering result after squash must match the no_covering fallback",
-                    truth, sink.toString());
+            // The covering path must return every 'A' row: 400 (sum 1..400 =
+            // 80200) plus the 20:00 sentinel (1000000) = 401 rows, sum 1080200.
+            assertQuery("SELECT count(), sum(price) FROM t_squash_spill WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n401\t1080200.0\n");
         });
     }
 
@@ -4418,9 +4414,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             + "squashSplitPartitions to merge, got " + splitCount,
                     splitCount > 2);
 
-            printSql("SELECT /*+ no_covering */ count(), sum(price) FROM t_multisplit WHERE sym = 'A'");
-            String truth = sink.toString();
-
             engine.releaseAllWriters();
             try (TableWriter w = TestUtils.getWriter(engine, "t_multisplit")) {
                 // squashPartitions() -> squashPartitionForce -> squashSplitPartitions
@@ -4437,10 +4430,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             1
                             """);
 
-            printSql("SELECT count(), sum(price) FROM t_multisplit WHERE sym = 'A'");
-            TestUtils.assertEquals(
-                    "covering result after multi-split squash must match the no_covering fallback",
-                    truth, sink.toString());
+            // 400 'A' rows (sum 1..400 = 80200) plus the 23:00 sentinel
+            // (1000000) = 401 rows, sum 1080200.
+            assertQuery("SELECT count(), sum(price) FROM t_multisplit WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n401\t1080200.0\n");
         });
     }
 
@@ -4487,20 +4481,17 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     ('2024-01-01T19:00:00.000000Z', 'B', -1.0)
                     """);
 
-            // 401 'A' rows total (400 + the 20:00 sentinel).
-            printSql("SELECT /*+ no_covering */ count() FROM t_squash_spill_nc WHERE sym = 'A'");
-            String truth = sink.toString();
-
             engine.releaseAllWriters();
             try (TableWriter w = TestUtils.getWriter(engine, "t_squash_spill_nc")) {
                 w.squashPartitions();
             }
 
-            // Index-driven count must still see every 'A' rowid after the reseal.
-            printSql("SELECT count() FROM t_squash_spill_nc WHERE sym = 'A'");
-            TestUtils.assertEquals(
-                    "indexed count after squash must keep every rowid (no orphaned gen)",
-                    truth, sink.toString());
+            // Index-driven count must still see every 'A' rowid after the reseal:
+            // 400 rows plus the 20:00 sentinel = 401. Without the fix the orphaned
+            // gen drops the pre-flush rowids and this comes back short.
+            assertQuery("SELECT count() FROM t_squash_spill_nc WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n401\n");
         });
     }
 
@@ -4552,12 +4543,65 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            printSql("SELECT /*+ no_covering */ count(), sum(price) FROM t_wal_squash_spill WHERE sym = 'A'");
-            String truth = sink.toString();
-            printSql("SELECT count(), sum(price) FROM t_wal_squash_spill WHERE sym = 'A'");
-            TestUtils.assertEquals(
-                    "covering result after WAL auto-squash must match the no_covering fallback",
-                    truth, sink.toString());
+            // 400 'A' rows (sum 1..400 = 80200) plus the 23:00 sentinel (1000000)
+            // = 401 rows, sum 1080200, served through the covering index.
+            assertQuery("SELECT count(), sum(price) FROM t_wal_squash_spill WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n401\t1080200.0\n");
+        });
+    }
+
+    /**
+     * Exercises the commitDense consolidation fix through the plain O3 commit
+     * reseal -- sealPostingIndexesForO3Partitions ->
+     * sealPostingIndexForPartition(..., canSkipRebuild=false) -> discardForRebuild
+     * -> index() -> commitDense() -- with no squashPartitions() involved. This is
+     * the most common production trigger of the reseal: an O3 insert whose
+     * timestamps land inside the existing partition range makes
+     * partitionMutates=true, so the covering posting index rebuilds the whole
+     * partition from sym.d. With the tiny spill budget the rebuild's index() loop
+     * trips compactIfOverBudget mid-stream, so commitDense must consolidate the
+     * orphaned sparse gen instead of dropping it. SIGSEGVs without the fix; with
+     * it, both the hot key and the O3-inserted rows resolve through the index.
+     */
+    @Test
+    public void testO3CommitCoveringPostingResealWithMidStreamSpillFlush() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_reseal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Hot key 'A', 400 in-order rows across 2024-01-01 [00:00:01, 00:06:40].
+            execute("""
+                    INSERT INTO t_o3_reseal
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            // O3 insert: timestamps inside the existing range -> partitionMutates
+            // -> canSkipRebuild=false reseal of the whole partition (no squash).
+            execute("""
+                    INSERT INTO t_o3_reseal VALUES
+                    ('2024-01-01T00:03:00.000000Z', 'B', -1.0),
+                    ('2024-01-01T00:03:30.000000Z', 'B', -2.0),
+                    ('2024-01-01T00:04:00.000000Z', 'B', -3.0)
+                    """);
+
+            // The hot key (which drove the mid-stream spill) and the O3-inserted
+            // rows must both come back intact through the covering index. The
+            // aggregates are deterministic: 'A' = 400 rows, sum(1..400) = 80200;
+            // 'B' = 3 rows, sum(-1,-2,-3) = -6.
+            assertQuery("SELECT count(), sum(price) FROM t_o3_reseal WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n400\t80200.0\n");
+            assertQuery("SELECT count(), sum(price) FROM t_o3_reseal WHERE sym = 'B'")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n3\t-6.0\n");
         });
     }
 
