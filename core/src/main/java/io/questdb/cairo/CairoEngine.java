@@ -271,12 +271,10 @@ public class CairoEngine implements Closeable, WriterSource {
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
-            if (configuration.getSqlParquetCacheDiskSize() > 0) {
-                PageFrameMemoryPool.cleanStaleDiskSpillFiles(
-                        configuration.getFilesFacade(),
-                        configuration.getSqlParquetCacheDiskDir()
-                );
-            }
+            PageFrameMemoryPool.cleanStaleDiskSpillFiles(
+                    configuration.getFilesFacade(),
+                    configuration.getSqlParquetCacheDiskDir()
+            );
 
             // IMPORTANT: Do not reorder statements!
             // The backup recovery process needs the `dataID` (since it will set it),

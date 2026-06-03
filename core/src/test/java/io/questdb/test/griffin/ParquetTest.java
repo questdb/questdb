@@ -2246,7 +2246,6 @@ public class ParquetTest extends AbstractCairoTest {
                     timestamp(ts) partition by hour wal""");
             drainWalQueue();
 
-            // Filtered (where) → Selected (k,v) → Sorted (order by k) → Limit
             assertSqlCursors(
                     "select k, v from src_native where v > 0 order by k limit 200",
                     "select k, v from src where v > 0 order by k limit 200"

@@ -221,6 +221,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public long size() {
             return isMapBuilt ? mapCursor.size() : -1;
         }

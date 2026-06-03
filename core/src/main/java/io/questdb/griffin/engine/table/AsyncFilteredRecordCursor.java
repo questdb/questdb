@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -73,18 +73,23 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long rowsRemaining;
 
     public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
-        this.filter = filter;
-        this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        this.frameMemoryPool = new PageFrameMemoryPool(
-                configuration.getSqlParquetCacheMemorySize(),
-                configuration.getSqlParquetCacheDiskSize(),
-                configuration.getSqlParquetCacheDiskDir(),
-                configuration.getFilesFacade(),
-                configuration.getMkDirMode(),
-                configuration.getMetrics().parquetDecodeMetrics()
-        );
-        this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
+        try {
+            this.filter = filter;
+            this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+            this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            this.frameMemoryPool = new PageFrameMemoryPool(
+                    configuration.getSqlParquetCacheMemorySize(),
+                    configuration.getSqlParquetCacheDiskSize(),
+                    configuration.getSqlParquetCacheDiskDir(),
+                    configuration.getFilesFacade(),
+                    configuration.getMkDirMode(),
+                    configuration.getMetrics().parquetDecodeMetrics()
+            );
+            this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
