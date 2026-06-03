@@ -159,8 +159,13 @@ public class QueryRegistry {
 
         // Acquire a per-workload memory tracker if no outer workload has already
         // bound one on the execution context. Nested registrations (subquery
-        // recompiles, mat-view-refresh / WAL-apply paths once those are wired)
-        // inherit the outer tracker via SqlExecutionContext.
+        // recompiles, or queries under a mat-view-refresh / WAL-apply job, which
+        // bind their tracker on the context first) inherit the outer tracker.
+        //
+        // Acquire a tracker even when the QUERY limit is 0 (unlimited) so that
+        // accounting stays on and query_activity.memory_used reports live usage
+        // for every query. A null tracker when unlimited would save one atomic
+        // on the tracked allocation path, at the cost of that observability.
         if (executionContext.getMemoryTracker() == null) {
             final MemoryTrackerProvider provider = executionContext.getCairoEngine().getMemoryTrackerProvider();
             final MemoryTracker tracker = provider.acquire(
@@ -233,6 +238,15 @@ public class QueryRegistry {
         // Non-null only when this register() call acquired the tracker. Nested
         // registrations that inherit an outer tracker leave this null so that
         // the matching unregister() does not touch the context's tracker.
+        //
+        // query_activity reads this cross-thread (unsynchronized) via
+        // getMemoryUsed / getMemoryLimit. Like the other Entry columns the read
+        // is best-effort: under register/unregister churn the Entry can be
+        // recycled to another query between the reader resolving it and reading
+        // the column, so a row may briefly report a different query's bytes. The
+        // read is never unsafe -- the tracker's native block outlives release
+        // (freed only when the provider closes), so a stale read returns a
+        // valid-but-wrong number, never a fault.
         private MemoryTracker memoryTracker;
         private CharSequence poolName;
         private CharSequence principal;
@@ -267,7 +281,8 @@ public class QueryRegistry {
         }
 
         // For query_activity: the per-query limit, or NULL when no tracker is
-        // bound (nested registration) or the limit is 0 (unlimited).
+        // bound (nested registration) or the limit is 0 (unlimited). Best-effort
+        // cross-thread read; see the memoryTracker field.
         public long getMemoryLimit() {
             final MemoryTracker t = memoryTracker;
             final long limit = t != null ? t.getLimit() : 0;
@@ -275,7 +290,8 @@ public class QueryRegistry {
         }
 
         // For query_activity: bytes charged to the per-query tracker, or NULL
-        // when no tracker is bound (nested registration).
+        // when no tracker is bound (nested registration). Best-effort
+        // cross-thread read; see the memoryTracker field.
         public long getMemoryUsed() {
             final MemoryTracker t = memoryTracker;
             return t != null ? t.getUsed() : Numbers.LONG_NULL;

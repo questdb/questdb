@@ -25,9 +25,25 @@
 package io.questdb.test.griffin.engine.functions.activity;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Misc;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Verifies that the {@code memory_limit} column of {@code query_activity}
@@ -37,6 +53,12 @@ import org.junit.Test;
  * counterpart (memory_limit NULL) lives in
  * {@link QueryActivityFunctionFactoryTest}, which runs with the default
  * unlimited config.
+ * <p>
+ * Also pins the read-safety of the {@code memory_used} / {@code memory_limit}
+ * columns under concurrent query churn: those columns deref the registry
+ * Entry's tracker from a different thread than the one that registered it, so
+ * the value is best-effort but the read must never fault or corrupt the
+ * tracker pool.
  */
 public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
 
@@ -57,5 +79,114 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .returns("used_ok\tmemory_limit\n" +
                         "true\t134217728\n");
+    }
+
+    /**
+     * query_activity reads {@code memory_used} / {@code memory_limit} off the
+     * registry Entry from a different thread than the one that registered it,
+     * without synchronization. Under register/unregister churn an Entry can be
+     * recycled to another query between the reader resolving it and reading the
+     * column, so a row may briefly report another query's bytes -- best-effort,
+     * exactly like the existing text columns. This pins the one guarantee that
+     * is not best-effort: the read is always safe.
+     * <p>
+     * A tight register/unregister storm recycles Entry objects (and their pooled
+     * trackers) as fast as possible while reader threads hammer query_activity,
+     * dereferencing both memory columns on every visible Entry. The storm drives
+     * {@link QueryRegistry} directly rather than through full query execution:
+     * that recycles the (thread-local) Entry pool far faster than real queries
+     * would, widening the race window, while the read side stays the real
+     * production path. The values are deliberately not asserted; the contract
+     * under test is no crash, no {@code -ea} abort, no leak, and a balanced
+     * tracker pool.
+     */
+    @Test
+    public void testMemoryColumnReadsAreSafeUnderChurn() throws Exception {
+        final int producerThreads = 6;
+        final int readerThreads = 2;
+        final int iterations = 20_000;
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            // One factory per reader: the activity cursor is a single reused
+            // instance, so sharing a factory across threads would race the cursor
+            // rather than the registry.
+            final RecordCursorFactory[] readerFactories = new RecordCursorFactory[readerThreads];
+            for (int i = 0; i < readerThreads; i++) {
+                readerFactories[i] = engine.select("SELECT memory_used, memory_limit FROM query_activity()", sqlExecutionContext);
+            }
+
+            final AtomicInteger errors = new AtomicInteger();
+            final AtomicLong scans = new AtomicLong();
+            final AtomicBoolean running = new AtomicBoolean(true);
+            final CyclicBarrier barrier = new CyclicBarrier(producerThreads + readerThreads);
+            final SOCountDownLatch producersHalt = new SOCountDownLatch(producerThreads);
+            final SOCountDownLatch readersHalt = new SOCountDownLatch(readerThreads);
+
+            // Producers: each register() acquires a tracker and binds the Entry;
+            // unregister() releases the tracker and returns the Entry to the
+            // thread-local pool, which the next register() immediately recycles.
+            for (int p = 0; p < producerThreads; p++) {
+                new Thread(() -> {
+                    TestUtils.await(barrier);
+                    try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                        for (int j = 0; j < iterations; j++) {
+                            final long id = registry.register("churn", ctx);
+                            registry.unregister(id, ctx);
+                        }
+                    } catch (Throwable e) {
+                        e.printStackTrace(System.out);
+                        errors.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
+                        producersHalt.countDown();
+                    }
+                }).start();
+            }
+
+            // Readers: scan query_activity until the storm ends, forcing the
+            // memory_used (col 0) and memory_limit (col 1) deref on every visible
+            // Entry. The do/while guarantees at least one scan even if the storm
+            // finishes first.
+            for (int r = 0; r < readerThreads; r++) {
+                final RecordCursorFactory factory = readerFactories[r];
+                new Thread(() -> {
+                    TestUtils.await(barrier);
+                    try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                        do {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                final Record record = cursor.getRecord();
+                                while (cursor.hasNext()) {
+                                    record.getLong(0);
+                                    record.getLong(1);
+                                }
+                            }
+                            scans.incrementAndGet();
+                        } while (running.get());
+                    } catch (Throwable e) {
+                        e.printStackTrace(System.out);
+                        errors.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
+                        readersHalt.countDown();
+                    }
+                }).start();
+            }
+
+            producersHalt.await();
+            running.set(false);
+            readersHalt.await();
+            Misc.free(readerFactories);
+
+            Assert.assertEquals("unexpected errors", 0, errors.get());
+            Assert.assertTrue("expected query_activity scans to run", scans.get() > 0);
+
+            // Pool integrity: the storm is perfectly balanced (every register() is
+            // paired with an unregister()), so the tracker pool must be
+            // non-negative and bounded by peak concurrency. A negative or runaway
+            // count would mean a double-release or a lost tracker.
+            Assert.assertTrue(engine.getMemoryTrackerProvider() instanceof PerQueryMemoryTrackerProvider);
+            final int pooled = ((PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider()).getPooledCount();
+            Assert.assertTrue("pooled=" + pooled, pooled >= 0 && pooled <= producerThreads + readerThreads + 1);
+        });
     }
 }

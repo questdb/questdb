@@ -641,6 +641,9 @@ public final class Unsafe {
         return 31 - Integer.numberOfLeadingZeros(value);
     }
 
+    // Updates the per-query counter on every tracked alloc/free, with no
+    // limit > 0 gate (unlike checkPerQueryAllocLimit), so query_activity
+    // reports live usage even for unlimited queries. See QueryRegistry.register().
     private static void recordPerQueryMemAlloc(long size, MemoryTracker tracker) {
         final long addr = tracker.nativeAddress();
         if (addr != 0) {
