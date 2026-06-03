@@ -198,7 +198,16 @@ public class ServerMain implements Closeable {
             }
             // Signal long-running task to exit ASAP
             engine.signalClose();
-            // workerPoolManager.halt() removed -- orchestrator's worker-pool-manager.stop() owns this.
+            // Halt the worker pool before freeing the engine so no worker thread can fire
+            // a telemetry or WAL-listener callback while the engine's resources are being
+            // released by freeOnExit.close() below. Without this halt, TelemetryJob.close()
+            // (registered last in freeOnExit, so freed first in LIFO order) runs while the
+            // shared write pool is still live -- a concurrent worker runSerially() call
+            // writes to the same WAL file descriptors and causes a double-close fd race.
+            // The halt is idempotent: WorkerPool.halt() is CAS-guarded, so the orchestrator's
+            // later WorkerPoolManagerEnvelope.stop() halt becomes a no-op second call with
+            // no behavioural effect.
+            workerPoolManager.halt();
             freeOnExit.close();
         }
     }
@@ -1540,7 +1549,10 @@ public class ServerMain implements Closeable {
 
         @Override
         public void stop() {
-            // Replaces ServerMain.close() line :194 -- workerPoolManager.halt().
+            // Halts the worker pool as part of the orchestrator's reverse-topo stop.
+            // ServerMain.close() also calls workerPoolManager.halt() before freeOnExit.close()
+            // to ensure the pool is quiesced before engine resources are freed. WorkerPool.halt()
+            // is CAS-guarded, so whichever call arrives second is a no-op.
             if (ServerMain.this.workerPoolManager != null) {
                 ServerMain.this.workerPoolManager.halt();
             }
