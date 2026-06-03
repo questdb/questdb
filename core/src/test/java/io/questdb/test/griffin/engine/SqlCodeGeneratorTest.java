@@ -2472,15 +2472,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("create table l as( select x from long_sequence(100) )");
             execute("create table rr as( select x + 50 as y from long_sequence(100) )");
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    """
+            assertQuery("""
                             select x, y
                             from l left join rr on l.x = rr.y
-                            where y > 0 or y > 10""",
-                    sink,
-                    """
+                            where y > 0 or y > 10""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             x\ty
                             51\t51
                             52\t52
@@ -2532,19 +2530,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             98\t98
                             99\t99
                             100\t100
-                            """
-            );
+                            """);
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    """
+            assertQuery("""
                             select x, y
                             from l right join rr on l.x = rr.y
                             where y > 0 or y > 10
-                            order by y""",
-                    sink,
-                    """
+                            order by y""")
+                    .noLeakCheck()
+                    .returns("""
                             x\ty
                             51\t51
                             52\t52
@@ -2646,8 +2640,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             null\t148
                             null\t149
                             null\t150
-                            """
-            );
+                            """);
         });
     }
 
@@ -3047,12 +3040,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "from long_sequence(1000)"
             );
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "trips where id > 0 latest on ts partition by vendor order by ts",
-                    sink,
-                    """
+            assertQuery("trips where id > 0 latest on ts partition by vendor order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tvendor\tts
                             1878619626\tKK\t1970-01-01T00:01:39.200000Z
                             666152026\tZZ\t1970-01-01T00:01:39.500000Z
@@ -3061,8 +3053,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             1699760758\tPP\t1970-01-03T00:01:39.100000Z
                             415357759\tCC\t1970-01-03T00:01:39.200000Z
                             1176091947\tQQ\t1970-01-03T00:01:39.400000Z
-                            """
-            );
+                            """);
         });
     }
 
@@ -3641,12 +3632,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "from long_sequence(1000)"
             );
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "trips where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') latest on ts partition by vendor order by ts",
-                    sink,
-                    """
+            assertQuery("trips where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') latest on ts partition by vendor order by ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             id\tvendor\tts
                             -1243990650\tZZ\t1970-01-01T00:01:39.900000Z
                             1878619626\tKK\t1970-01-01T00:01:39.200000Z
@@ -3655,8 +3643,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             -1808277542\tCC\t1970-01-03T00:01:39.900000Z
                             -610460127\tQQ\t1970-01-03T00:01:39.500000Z
                             1699760758\tPP\t1970-01-03T00:01:39.100000Z
-                            """
-            );
+                            """);
         });
     }
 
@@ -3783,12 +3770,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     "from long_sequence(1000)"
                     );
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "trips latest on ts partition by vendor order by ts",
-                            sink,
-                            """
+                    assertQuery("trips latest on ts partition by vendor order by ts")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
                                     id\tvendor\tts
                                     1878619626\tKK\t1970-01-01T00:01:39.200000Z
                                     -1243990650\tZZ\t1970-01-01T00:01:39.900000Z
@@ -3797,8 +3783,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     1699760758\tPP\t1970-01-03T00:01:39.100000Z
                                     -610460127\tQQ\t1970-01-03T00:01:39.500000Z
                                     -1808277542\tCC\t1970-01-03T00:01:39.900000Z
-                                    """
-                    );
+                                    """);
                 }
         );
     }
@@ -3879,12 +3864,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     "from long_sequence(1000)"
                     );
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "trips latest on ts partition by vendor order by ts",
-                            sink,
-                            """
+                    assertQuery("trips latest on ts partition by vendor order by ts")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
                                     id\tvendor\tts
                                     1878619626\tKK\t1970-01-01T00:01:39.200000Z
                                     -1243990650\tZZ\t1970-01-01T00:01:39.900000Z
@@ -3893,8 +3877,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     1699760758\tPP\t1970-01-03T00:01:39.100000Z
                                     -610460127\tQQ\t1970-01-03T00:01:39.500000Z
                                     -1808277542\tCC\t1970-01-03T00:01:39.900000Z
-                                    """
-                    );
+                                    """);
                 }
         );
     }
@@ -3952,19 +3935,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
             execute("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    """
+            assertQuery("""
                             SELECT * FROM balances\s
                             WHERE cust_id = 'c1' and balance_ccy='EUR'\s
-                            LATEST ON timestamp PARTITION BY cust_id, balance_ccy""",
-                    sink,
-                    """
+                            LATEST ON timestamp PARTITION BY cust_id, balance_ccy""")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             cust_id\tbalance_ccy\tbalance\ttimestamp
                             c1\tEUR\t782.0\t2021-09-14T17:35:04.000000Z
-                            """
-            );
+                            """);
         });
     }
 
@@ -5685,10 +5664,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             PARTITION BY MONTH;"""
             );
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    """
+            assertQuery("""
                             SELECT ts, a.city, a.make, avg(temp)
                             FROM readings timestamp(ts)
                             JOIN
@@ -5697,9 +5673,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 WHERE city='Miami' AND make='Omron') a
                             ON readings.sensorId = a.sensId
                             WHERE ts in '2019-10-21;1d'
-                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION;""",
-                    sink,
-                    """
+                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION;""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tcity\tmake\tavg
                             2019-10-21T00:00:33.400000Z\tMiami\tOmron\t18.932566749129236
                             2019-10-21T01:00:33.400000Z\tMiami\tOmron\t18.802647154761893
@@ -5725,8 +5703,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             2019-10-21T21:00:33.400000Z\tMiami\tOmron\t18.880447260735636
                             2019-10-21T22:00:33.400000Z\tMiami\tOmron\t18.931106673084784
                             2019-10-21T23:00:33.400000Z\tMiami\tOmron\t18.893692358480305
-                            """
-            );
+                            """);
         });
     }
 
@@ -7262,19 +7239,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testRecordJoinExpansion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x(a int)");
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)",
-                    sink,
-                    """
+            assertQuery("select pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             x1\tcolumn
                             \t11
                             \t2200
                             \t11
                             \t2200
-                            """
-            );
+                            """);
         });
     }
 
@@ -8393,29 +8367,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     execute("create TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);");
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
-                            sink,
-                            """
+                    assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
                                     1\tпривет от штиблет\t\tNONE\t1000\t300000000
-                                    """
-                    );
+                                    """);
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "show columns from 'привет от штиблет'",
-                            sink,
-                            """
+                    assertQuery("show columns from 'привет от штиблет'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("""
                                     column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                                     f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                                     штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                                     f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                                    """
-                    );
+                                    """);
                 }
         );
     }
@@ -9183,19 +9152,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
             execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    """
+            assertQuery("""
                             select metric, sum(value) from x\s
                             where node in ('node1', 'node2') and metric in ('cpu')\s
-                            latest on ts partition by node""",
-                    sink,
-                    """
+                            latest on ts partition by node""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             metric\tsum
                             cpu\t175
-                            """
-            );
+                            """);
         });
     }
 
@@ -9364,20 +9330,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
             execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    """
+            assertQuery("""
                             select * from x\s
                             where node in ('node2') and metric in ('cpu', 'memory')\s
-                            latest on ts partition by node, metric""",
-                    sink,
-                    """
+                            latest on ts partition by node, metric""")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             ts\tnode\tmetric\tvalue
                             2021-11-17T17:35:03.000000Z\tnode2\tcpu\t75
                             2021-11-17T17:35:03.000000Z\tnode2\tmemory\t3000
-                            """
-            );
+                            """);
         });
     }
 
