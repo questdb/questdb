@@ -140,7 +140,12 @@ public class PostingIndexBenchmarkSuite {
             results = new Runner(builder.build()).run();
             printSummary(results);
         }
-        runPageFaultAnalysis();
+        // Page-fault projection is part of the broad/IO sweeps; skip it for
+        // focused single-benchmark runs (e.g. -Dquestdb.suite.bench=sqlLimit)
+        // so iteration stays fast.
+        if ("all".equals(filter) || "core".equals(filter) || "io".equals(filter)) {
+            runPageFaultAnalysis();
+        }
     }
 
     /**
@@ -275,6 +280,35 @@ public class PostingIndexBenchmarkSuite {
                                 };
                             }
                         }
+                    }
+                }
+            }
+        }
+        return sum;
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public long sqlLimit(LimitState s) throws Exception {
+        // One LIMIT query end to end. The first hasNext() triggers
+        // fetchAllFrames(); for a covering LIMIT that includes buildAddressCache()
+        // materializing the whole matching-key result set up front -- the M1 cost.
+        // Reads every projected column so the VARCHAR copy is on the hot path too.
+        long sum = 0;
+        var meta = s.factory.getMetadata();
+        int cols = meta.getColumnCount();
+        try (RecordCursor cursor = s.factory.getCursor(LimitState.ctx)) {
+            Record rec = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int c = 0; c < cols; c++) {
+                    switch (ColumnType.tagOf(meta.getColumnType(c))) {
+                        case ColumnType.DOUBLE -> sum += (long) rec.getDouble(c);
+                        case ColumnType.VARCHAR -> {
+                            var v = rec.getVarcharA(c);
+                            sum += v == null ? 0 : v.size();
+                        }
+                        default -> sum++;
                     }
                 }
             }
@@ -740,6 +774,22 @@ public class PostingIndexBenchmarkSuite {
                 if (v != null) {
                     out.printf("    %-28s %,12.0f ops/s%n", group[i], v);
                 }
+            }
+        }
+
+        // --- Limit by covered-column type (M1: covering over-materialization) ---
+        if (scores.get("sqlLimit/neg_cov_double") != null) {
+            out.println();
+            out.println("── LIMIT by covered type (us/op, lower=better; cov=covering, pl=plain) ────────────");
+            out.printf("  %-9s %11s %11s %11s %11s%n", "shape", "neg cov", "neg pl", "pos cov", "pos pl");
+            for (String shape : new String[]{"double", "varchar", "both"}) {
+                Double nc = scores.get("sqlLimit/neg_cov_" + shape);
+                Double np = scores.get("sqlLimit/neg_plain_" + shape);
+                Double pc = scores.get("sqlLimit/pos_cov_" + shape);
+                Double pp = scores.get("sqlLimit/pos_plain_" + shape);
+                out.printf("  %-9s %,11.1f %,11.1f %,11.1f %,11.1f%n", shape,
+                        nc != null ? nc : 0, np != null ? np : 0,
+                        pc != null ? pc : 0, pp != null ? pp : 0);
             }
         }
 
@@ -1570,6 +1620,126 @@ public class PostingIndexBenchmarkSuite {
             Misc.free(compiler);
             Misc.free(engine);
             deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    /**
+     * LIMIT over a covering index vs a plain index, across covered-column
+     * shapes, on a reasonably large hot-key dataset: {@link #ROWS} rows over
+     * {@link #KEYS} symbols spread across ~{@code ROWS/86400} DAY partitions,
+     * so each key has ~{@code ROWS/KEYS} matching rows.
+     * <p>
+     * The grid is direction (neg/pos) x index (cov/plain) x shape
+     * (double/varchar/both). A covering LIMIT materializes the whole
+     * matching-key result set up front (buildAddressCache drains every
+     * sub-frame before a row is returned); the plain twin shares the data
+     * shape, so the gap is the covering materialization cost. The shape axis
+     * exposes how that cost scales with the covered column type -- an 8-byte
+     * DOUBLE store vs a variable-length VARCHAR copy (M1's worst case).
+     * <p>
+     * The covering table covers BOTH name (VARCHAR) and price (DOUBLE); the
+     * plain twin has the same columns without INCLUDE. Both tables are built
+     * ONCE and shared across every param combination, so the grid costs only a
+     * query compile per cell, not another multi-million-row load. ROWS/KEYS are
+     * overridable via {@code -Dquestdb.limit.bench.rows} /
+     * {@code -Dquestdb.limit.bench.keys}.
+     */
+    @State(Scope.Benchmark)
+    public static class LimitState {
+        static final int KEYS = Integer.getInteger("questdb.limit.bench.keys", 16);
+        static final int ROWS = Integer.getInteger("questdb.limit.bench.rows", 5_000_000);
+        private static String covKey;
+        private static SqlExecutionContextImpl ctx;
+        private static String ncKey;
+        private static java.nio.file.Path sharedDir;
+        private static CairoEngine sharedEngine;
+
+        RecordCursorFactory factory;
+        @Param({
+                "neg_cov_double", "neg_plain_double", "pos_cov_double", "pos_plain_double",
+                "neg_cov_varchar", "neg_plain_varchar", "pos_cov_varchar", "pos_plain_varchar",
+                "neg_cov_both", "neg_plain_both", "pos_cov_both", "pos_plain_both"
+        })
+        String queryType;
+
+        // Build the two large tables exactly once and share them across every
+        // param combination -- adding shapes/directions then costs only a
+        // compile, not another load.
+        private static synchronized void ensureData() throws Exception {
+            if (sharedEngine != null) {
+                return;
+            }
+            sharedDir = Files.createTempDirectory("suite-limit");
+            CairoConfiguration config = new DefaultCairoConfiguration(sharedDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 8192;
+                }
+            };
+            CairoEngine engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                // Covering table: posting index on sym, INCLUDE covers both the
+                // VARCHAR (name) and DOUBLE (price), so any projection is served
+                // from the sidecar. Plain twin: same columns, bitmap index, no
+                // INCLUDE -- projected/filtered columns come from the base.
+                engine.execute("CREATE TABLE lim (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (name, price), name VARCHAR, price DOUBLE) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("INSERT INTO lim SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP, " +
+                        "rnd_symbol(" + KEYS + ", 4, 8, 0), rnd_varchar(10, 30, 0), rnd_double() * 1000 " +
+                        "FROM long_sequence(" + ROWS + ")", ctx);
+                engine.execute("CREATE TABLE lim_nc (ts TIMESTAMP, sym SYMBOL INDEX, name VARCHAR, price DOUBLE) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("INSERT INTO lim_nc SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP, " +
+                        "rnd_symbol(" + KEYS + ", 4, 8, 0), rnd_varchar(10, 30, 0), rnd_double() * 1000 " +
+                        "FROM long_sequence(" + ROWS + ")", ctx);
+                engine.releaseAllWriters();
+                covKey = resolveKey(compiler, ctx, "lim");
+                ncKey = resolveKey(compiler, ctx, "lim_nc");
+            }
+            sharedEngine = engine;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                Misc.free(sharedEngine);
+                deleteDirRecursive(sharedDir.toFile());
+            }));
+        }
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            ensureData();
+            boolean covering = queryType.contains("_cov_");
+            String table = covering ? "lim" : "lim_nc";
+            String key = covering ? covKey : ncKey;
+            String limit = queryType.startsWith("neg") ? " LIMIT -5" : " LIMIT 5";
+            String proj;
+            String filter;
+            if (queryType.endsWith("double")) {
+                proj = "price";
+                filter = "price > 500";
+            } else if (queryType.endsWith("varchar")) {
+                proj = "name";
+                filter = "name != 'x'";
+            } else {
+                proj = "name, price";
+                filter = "price > 500";
+            }
+            String sql = "SELECT " + proj + " FROM " + table + " WHERE sym = '" + key + "' AND " + filter + limit;
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(sharedEngine)) {
+                factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+            }
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            factory = Misc.free(factory);
         }
     }
 
