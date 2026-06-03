@@ -1104,11 +1104,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
-     * C5: many unique symbols across multiple batches -> exercises both the per-batch dict
-     * growth and the schema-reference (mode 0x01) path on batches 2+.
+     * C5: many unique symbols across multiple batches -> exercises the per-batch
+     * dict growth on batches 2+ (each batch carries the full inline schema).
      */
     @Test
-    public void testManyUniqueSymbolsSchemaReference() throws Exception {
+    public void testManyUniqueSymbolsAcrossBatches() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE sym_t(s SYMBOL, ts TIMESTAMP) "
