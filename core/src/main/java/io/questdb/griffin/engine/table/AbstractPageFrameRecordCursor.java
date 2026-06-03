@@ -60,6 +60,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
                 configuration.getSqlParquetCacheDiskSize(),
                 configuration.getSqlParquetCacheDiskDir(),
                 configuration.getFilesFacade(),
+                configuration.getMkDirMode(),
                 configuration.getMetrics().parquetDecodeMetrics()
         );
     }

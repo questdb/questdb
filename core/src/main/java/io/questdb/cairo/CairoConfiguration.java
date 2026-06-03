@@ -782,8 +782,8 @@ public interface CairoConfiguration {
 
     /**
      * @deprecated Replaced by {@link #getSqlParquetCacheMemorySize()}.
-     * Kept for binary compatibility; the byte budget is the sole eviction trigger,
-     * the entry-count limit no longer applies.
+     * The value is still read by existing config wiring but no longer controls
+     * eviction; the byte budget is the sole trigger.
      */
     @Deprecated
     int getSqlParquetFrameCacheCapacity();

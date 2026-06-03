@@ -271,10 +271,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
-            PageFrameMemoryPool.initDiskSpillDir(
+            PageFrameMemoryPool.cleanStaleDiskSpillFiles(
                     configuration.getFilesFacade(),
-                    configuration.getSqlParquetCacheDiskDir(),
-                    configuration.getMkDirMode()
+                    configuration.getSqlParquetCacheDiskDir()
             );
 
             // IMPORTANT: Do not reorder statements!

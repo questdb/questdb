@@ -81,6 +81,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 configuration.getSqlParquetCacheDiskSize(),
                 configuration.getSqlParquetCacheDiskDir(),
                 configuration.getFilesFacade(),
+                configuration.getMkDirMode(),
                 configuration.getMetrics().parquetDecodeMetrics()
         );
         this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();

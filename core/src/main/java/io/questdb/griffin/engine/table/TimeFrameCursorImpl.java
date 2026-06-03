@@ -112,6 +112,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                     configuration.getSqlParquetCacheDiskSize(),
                     configuration.getSqlParquetCacheDiskDir(),
                     configuration.getFilesFacade(),
+                    configuration.getMkDirMode(),
                     configuration.getMetrics().parquetDecodeMetrics()
             );
             this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);

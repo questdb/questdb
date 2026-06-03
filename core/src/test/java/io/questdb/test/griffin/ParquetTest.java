@@ -47,7 +47,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -147,15 +146,6 @@ public class ParquetTest extends AbstractCairoTest {
             "    ]" +
             "  ]" +
             "]";
-
-    @Before
-    public void recreateParquetSpillDir() {
-        PageFrameMemoryPool.initDiskSpillDir(
-                configuration.getFilesFacade(),
-                configuration.getSqlParquetCacheDiskDir(),
-                configuration.getMkDirMode()
-        );
-    }
 
     @After
     public void resetForceColdParquetPartition() {
@@ -280,7 +270,7 @@ public class ParquetTest extends AbstractCairoTest {
                     """
                             create table x as (
                               select array[42] arr, timestamp_sequence(0,1000000) as ts
-                              from long_sequence(10000)
+                              from long_sequence(10_000)
                             ) timestamp(ts) partition by day;"""
             );
             // create new active partition
@@ -2028,20 +2018,20 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetCacheInitDiskSpillDirCreatesMissingDir() throws Exception {
+    public void testParquetCacheCleanStaleSpillFilesNoOpWhenDirMissing() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             String missingDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "nope-" + System.nanoTime();
             try (Path p = new Path()) {
                 Assert.assertFalse(ff.exists(p.of(missingDir).$()));
-                PageFrameMemoryPool.initDiskSpillDir(ff, missingDir, configuration.getMkDirMode());
-                Assert.assertTrue(ff.exists(p.of(missingDir).$()));
+                PageFrameMemoryPool.cleanStaleDiskSpillFiles(ff, missingDir);
+                Assert.assertFalse(ff.exists(p.of(missingDir).$()));
             }
         });
     }
 
     @Test
-    public void testParquetCacheInitDiskSpillDirRemovesPrefixedFilesOnly() throws Exception {
+    public void testParquetCacheCleanStaleSpillFilesRemovesPrefixedFilesOnly() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             String dir = temp.getRoot().getAbsolutePath();
@@ -2058,7 +2048,7 @@ public class ParquetTest extends AbstractCairoTest {
                     ff.close(fd);
                 }
 
-                PageFrameMemoryPool.initDiskSpillDir(ff, dir, configuration.getMkDirMode());
+                PageFrameMemoryPool.cleanStaleDiskSpillFiles(ff, dir);
                 path.of(dir).slash().put("questdb.log").$();
                 Assert.assertTrue(ff.exists(path.$()));
                 for (int i = 0; i < 3; i++) {
@@ -2088,7 +2078,7 @@ public class ParquetTest extends AbstractCairoTest {
                       x::double,
                       (x * 31 + 7)::long,
                       timestamp_sequence('2024-01-01', 18_000_000)
-                    from long_sequence(10000)""");
+                    from long_sequence(10_000)""");
             execute("alter table src convert partition to parquet where ts >= 0");
             drainWalQueue();
             execute("""
@@ -2118,7 +2108,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("""
                     insert into src
                     select (x % 17)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
-                    from long_sequence(3000)""");
+                    from long_sequence(3_000)""");
             drainWalQueue();
             execute("alter table src convert partition to parquet where ts >= 0");
             drainWalQueue();
@@ -2150,7 +2140,7 @@ public class ParquetTest extends AbstractCairoTest {
                       (x % 50)::int,
                       ('row-' || lpad(x::varchar, 10, '0'))::varchar,
                       timestamp_sequence('2024-01-01', 36_000_000)
-                    from long_sequence(5000)""");
+                    from long_sequence(5_000)""");
             drainWalQueue();
             execute("alter table src convert partition to parquet where ts >= 0");
             drainWalQueue();
@@ -2179,7 +2169,7 @@ public class ParquetTest extends AbstractCairoTest {
             execute("""
                     insert into src
                     select (x % 17)::int, x::double, timestamp_sequence('2024-01-01', 60_000_000)
-                    from long_sequence(1500)""");
+                    from long_sequence(1_500)""");
             drainWalQueue();
             execute("alter table src convert partition to parquet where ts >= 0");
             drainWalQueue();

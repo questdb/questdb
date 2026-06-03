@@ -89,6 +89,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
                     configuration.getSqlParquetCacheDiskSize(),
                     configuration.getSqlParquetCacheDiskDir(),
                     configuration.getFilesFacade(),
+                    configuration.getMkDirMode(),
                     configuration.getMetrics().parquetDecodeMetrics()
             );
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);

@@ -94,6 +94,7 @@ public class AsyncFilterContext implements Closeable {
                     configuration.getSqlParquetCacheDiskSize(),
                     configuration.getSqlParquetCacheDiskDir(),
                     configuration.getFilesFacade(),
+                    configuration.getMkDirMode(),
                     configuration.getMetrics().parquetDecodeMetrics()
             );
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -116,6 +117,7 @@ public class AsyncFilterContext implements Closeable {
                         configuration.getSqlParquetCacheDiskSize(),
                         configuration.getSqlParquetCacheDiskDir(),
                         configuration.getFilesFacade(),
+                        configuration.getMkDirMode(),
                         configuration.getMetrics().parquetDecodeMetrics()
                 ));
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));

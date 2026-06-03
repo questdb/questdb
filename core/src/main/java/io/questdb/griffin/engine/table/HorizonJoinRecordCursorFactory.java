@@ -39,6 +39,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -167,6 +168,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         try {
             TimeFrameCursor slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             try {
+                slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
                 cursor.of(masterCursor, slaveCursor, executionContext);
                 return cursor;
             } catch (Throwable th) {
