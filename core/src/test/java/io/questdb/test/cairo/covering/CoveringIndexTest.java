@@ -3832,8 +3832,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             label
                             hello
-                            foo
                             world
+                            foo
                             """);
         });
     }
@@ -3859,15 +3859,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list with covering VARCHAR — results grouped by key (A first, then B)
+            // IN list with covering VARCHAR -- rows in ascending timestamp order.
             assertQuery("SELECT name, price FROM t_in_varchar WHERE sym IN ('A', 'B')")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             name\tprice
                             alice\t10.0
-                            anna\t30.0
                             bob\t20.0
+                            anna\t30.0
                             """);
         });
     }
@@ -6975,15 +6975,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list uses CoveringIndex — results grouped by key (A first, then B)
+            // IN list uses CoveringIndex -- rows in ascending timestamp order.
             assertQuery("SELECT price FROM t_in WHERE sym IN ('A', 'B')")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             price
                             10.5
-                            11.5
                             20.5
+                            11.5
                             """);
 
             // Verify plan shows CoveringIndex
@@ -7019,7 +7019,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list across 3 partitions — keys grouped per partition (A first, then B)
+            // IN list across 3 partitions -- rows in ascending timestamp order.
             assertQuery("SELECT price FROM t_in_mp WHERE sym IN ('A', 'B')")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -7028,8 +7028,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             1.0
                             2.0
                             3.0
-                            6.0
                             5.0
+                            6.0
                             """);
         });
     }
@@ -7117,15 +7117,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list with sym in SELECT — sym value should vary per key
+            // IN list with sym in SELECT -- sym varies per row, in timestamp order.
             assertQuery("SELECT sym, price FROM t_in_sym WHERE sym IN ('A', 'B')")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             sym\tprice
                             A\t10.5
-                            A\t11.5
                             B\t20.5
+                            A\t11.5
                             """);
         });
     }
@@ -7893,15 +7893,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // SYMBOL include with IN list
+            // SYMBOL include with IN list -- rows in ascending timestamp order.
             assertQuery("SELECT sym, tag FROM t_sym_incl_in WHERE sym IN ('A', 'B')")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             sym\ttag
                             A\thot
-                            A\twarm
                             B\tcold
+                            A\twarm
                             """);
         });
     }
@@ -15212,8 +15212,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             name
                             alpha
-                            delta
                             beta
+                            delta
                             """);
         });
     }
@@ -16282,6 +16282,155 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertFalse("Plan should not contain '" + "CoveringIndex" + "':\n" + planText,
                     planText.contains("CoveringIndex"));
         }
+    }
+
+    /**
+     * Regression for the LIMIT -N over a covering index with a residual
+     * filter. The covering factory used to ignore the requested scan order in
+     * getPageFrameCursor and always opened ascending partition frames, so the
+     * parallel negative-limit machinery collected the lowest-timestamp rows
+     * while believing they were the highest, silently returning the first N
+     * rows instead of the last N.
+     */
+    @Test
+    public void testNegativeLimitSingleKeyReturnsLastRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_neg (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_neg
+                    SELECT dateadd('d', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A', x::DOUBLE
+                    FROM long_sequence(10)
+                    """);
+            execute("ALTER TABLE t_neg ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            // The residual price > 0 routes the query through the parallel
+            // filter wrapper, which absorbs the limit (no separate Limit node).
+            assertSql(
+                    "price\n8.0\n9.0\n10.0\n",
+                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3"
+            );
+            // The parallel path stays in effect for single-key queries.
+            assertTrue(getPlan("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3").contains("Async Filter"));
+
+            // A filter that eliminates the low rows still returns the true tail.
+            assertSql(
+                    "price\n8.0\n9.0\n10.0\n",
+                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 5 LIMIT -3"
+            );
+            // Larger negative limit spanning all partitions.
+            assertSql(
+                    "price\n1.0\n2.0\n3.0\n4.0\n5.0\n6.0\n7.0\n8.0\n9.0\n10.0\n",
+                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -20"
+            );
+        });
+    }
+
+    /**
+     * Like {@link #testNegativeLimitSingleKeyReturnsLastRows} but with several
+     * matching rows per partition and a per-frame cap of 2, so each partition
+     * is split into multiple sub-frames. A fix that merely reversed partition
+     * order while leaving the sub-frames ascending within a partition would
+     * still return the wrong rows here; only a true backward scan that emits
+     * the high row-range sub-frame first passes.
+     */
+    @Test
+    public void testNegativeLimitSingleKeyMultiFramePerPartition() throws Exception {
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(2);
+        try {
+            assertMemoryLeak(() -> {
+                // Single partition (PARTITION BY YEAR), 10 matching rows -> with a
+                // 2-row cap the partition splits into 5 row-range sub-frames.
+                execute("CREATE TABLE t_neg_mf (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+                execute("""
+                        INSERT INTO t_neg_mf
+                        SELECT dateadd('h', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A', x::DOUBLE
+                        FROM long_sequence(10)
+                        """);
+                execute("ALTER TABLE t_neg_mf ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+                assertSql(
+                        "price\n8.0\n9.0\n10.0\n",
+                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -3"
+                );
+                // A sub-frame boundary-aligned limit (-4) and an odd one (-5).
+                assertSql(
+                        "price\n7.0\n8.0\n9.0\n10.0\n",
+                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -4"
+                );
+                assertSql(
+                        "price\n6.0\n7.0\n8.0\n9.0\n10.0\n",
+                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -5"
+                );
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    /**
+     * A bind-variable limit has an unknown sign at compile time. Single-key
+     * covering still serves it through the parallel backward scan: a negative
+     * value resolved at runtime must return the last N rows.
+     */
+    @Test
+    public void testNegativeLimitSingleKeyBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_neg_bv (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_neg_bv
+                    SELECT dateadd('d', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A', x::DOUBLE
+                    FROM long_sequence(10)
+                    """);
+            execute("ALTER TABLE t_neg_bv ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            bindVariableService.clear();
+            bindVariableService.setLong("lim", -3);
+            assertSql(
+                    "price\n8.0\n9.0\n10.0\n",
+                    "SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim"
+            );
+            // The same compiled query with a positive value returns the head.
+            bindVariableService.setLong("lim", 3);
+            assertSql(
+                    "price\n1.0\n2.0\n3.0\n",
+                    "SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim"
+            );
+        });
+    }
+
+    /**
+     * Multi-key covering is not globally timestamp-ordered, so codegen routes
+     * its negative limits to the serial path (LimitRecordCursorFactory over a
+     * FilteredRecordCursorFactory), which computes the last N via size + skip.
+     * The data here keeps each key in a disjoint timestamp range so the tail is
+     * unambiguous. The query must NOT take the parallel Async Filter path and
+     * must NOT return the first N rows.
+     */
+    @Test
+    public void testNegativeLimitMultiKeyFallsBackToSerial() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_neg_mk (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 2024-01-02..06 -> 'A' price 1..5; 2024-01-07..11 -> 'B' price 6..10
+            execute("""
+                    INSERT INTO t_neg_mk
+                    SELECT dateadd('d', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                           CASE WHEN x <= 5 THEN 'A' ELSE 'B' END,
+                           x::DOUBLE
+                    FROM long_sequence(10)
+                    """);
+            execute("ALTER TABLE t_neg_mk ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            String plan = getPlan("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3");
+            assertFalse("multi-key negative limit must not use the parallel path:\n" + plan, plan.contains("Async Filter"));
+            assertTrue("multi-key negative limit must still read the covering index:\n" + plan, plan.contains("CoveringIndex"));
+
+            assertSql(
+                    "price\n8.0\n9.0\n10.0\n",
+                    "SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3"
+            );
+            // Positive limit over multi-key still uses the parallel path.
+            assertTrue(getPlan("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3").contains("Async Filter"));
+        });
     }
 
     private String getPlan(String query) throws SqlException {
