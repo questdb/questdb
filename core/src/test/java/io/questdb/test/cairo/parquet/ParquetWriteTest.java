@@ -662,9 +662,12 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("count\n8000\n", "select count() from tab");
+            // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
+            // materialized group-by rather than count() over a filtered subquery, which
+            // trips an unrelated count fast-path bug (questdb/questdb#7201).
             assertSql(
-                    "dups\n0\n",
-                    "select count() dups from (select ts, s, count() c from tab) where c > 1"
+                    "max\n1\n",
+                    "select max(c) from (select ts, s, count() c from tab)"
             );
         });
     }
@@ -710,9 +713,12 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("count\n12\n", "select count() from tab");
+            // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
+            // materialized group-by rather than count() over a filtered subquery, which
+            // trips an unrelated count fast-path bug (questdb/questdb#7201).
             assertSql(
-                    "dups\n0\n",
-                    "select count() dups from (select ts, s, count() c from tab) where c > 1"
+                    "max\n1\n",
+                    "select max(c) from (select ts, s, count() c from tab)"
             );
         });
     }
