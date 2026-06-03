@@ -78,6 +78,8 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             RecordCursorFactory slaveFactory
     ) {
         try {
+            // True during construction so the catch below can close() a partially built
+            // cursor and free what was already allocated.
             this.isOpen = true;
             this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.messageBus = messageBus;
@@ -86,6 +88,11 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
+            // Construction succeeded: start closed so the first of() runs atom.reopen(),
+            // which opens the lazy (openOnInit=false) allocators and ASOF maps and binds the
+            // per-query tracker before any allocation. Skipping reopen() on the first cursor
+            // would leave the allocator's chunk index unallocated and the tracker unbound.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;

@@ -70,6 +70,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
             ObjList<RecordCursorFactory> slaveFactories
     ) {
         try {
+            // True during construction so the catch below can close() a partially built
+            // cursor and free what was already allocated.
             this.isOpen = true;
             this.groupByFunctions = groupByFunctions;
             this.slaveFactories = slaveFactories;
@@ -84,6 +86,11 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
             for (int s = 0; s < slaveCount; s++) {
                 slaveTimeFrameStates.add(new ConcurrentTimeFrameState());
             }
+            // Construction succeeded: start closed so the first of() runs atom.reopen(),
+            // which opens the lazy (openOnInit=false) allocators and ASOF maps and binds the
+            // per-query tracker before any allocation. Skipping reopen() on the first cursor
+            // would leave the allocator's chunk index unallocated and the tracker unbound.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;
