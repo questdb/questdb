@@ -213,7 +213,10 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             // Validate against initialKeyCapacity so both eager and lazy modes catch the
             // overflow up front, before any cursor opens.
             validateBatchAddressable(entrySize * this.initialKeyCapacity);
-            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
+            // Honor the lazy contract: when openOnInit is false the key arena stays
+            // unallocated until the first reopen() (which inflates it via
+            // restoreInitialCapacity), so a never-opened map allocates nothing.
+            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag, !openOnInit);
 
             if (openOnInit) {
                 this.keyCapacity = this.initialKeyCapacity;
@@ -235,7 +238,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
             cursor = new UnorderedVarcharMapCursor(record, this);
             key = new Key();
-            allocator = new FastGroupByAllocator(allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
+            // Honor the lazy contract: when openOnInit is false the allocator's chunk
+            // index stays unallocated until the first reopen(), so a never-opened map
+            // (e.g. a hash-join factory built at codegen but never executed) leaks
+            // nothing when its owner skips close() for an unopened cursor.
+            allocator = new FastGroupByAllocator(allocatorDefaultChunkSize, allocatorMaxChunkSize, false, openOnInit);
         } catch (Throwable th) {
             close();
             throw th;

@@ -115,6 +115,31 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinFactoryBuiltButNeverExecutedDoesNotLeak() throws Exception {
+        // A light hash join over a varchar key builds its lazy UnorderedVarcharMap
+        // when the cursor is constructed at codegen time, but the cursor's close()
+        // frees that map only when of() has run (the isOpen guard). A query compiled
+        // but never executed - which happens repeatedly during server boot - must
+        // therefore allocate nothing at map construction; otherwise the unopened
+        // map's key arena and GROUP BY allocator chunk index leak (under tag
+        // NATIVE_GROUP_BY_FUNCTION) when its owner skips close().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
+            execute("CREATE TABLE slave AS (SELECT cast(x AS varchar) k, x AS v FROM long_sequence(20))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("SELECT master.k, slave.v FROM master JOIN slave ON k", sqlExecutionContext);
+                // Build the factory (and its inner hash-join cursor + lazy map), then
+                // close without ever calling getCursor(): of() never binds a tracker
+                // or reopens, so the cursor's close() leaves the unopened map untouched.
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    Assert.assertNotNull(factory);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinFailsOnLargeBuildSide() throws Exception {
         // Hash join's build map allocates against the per-query tracker. Both
         // tables are large so the smaller-side swap still leaves a sizable
