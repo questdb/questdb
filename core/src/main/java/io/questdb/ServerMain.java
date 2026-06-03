@@ -207,7 +207,12 @@ public class ServerMain implements Closeable {
             // The halt is idempotent: WorkerPool.halt() is CAS-guarded, so the orchestrator's
             // later WorkerPoolManagerEnvelope.stop() halt becomes a no-op second call with
             // no behavioural effect.
-            workerPoolManager.halt();
+            // Guard for the case where close() is called before the worker pool manager is
+            // constructed (e.g. an exception during engine load). WorkerPoolManagerEnvelope.stop()
+            // already applies this guard; the check here keeps the two call sites consistent.
+            if (workerPoolManager != null) {
+                workerPoolManager.halt();
+            }
             freeOnExit.close();
         }
     }
