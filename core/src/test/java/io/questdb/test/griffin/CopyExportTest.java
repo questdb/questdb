@@ -903,8 +903,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t913.0 B\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t918.0 B\n");
+                                        "price_1h" + File.separator + "2023-09.parquet\t917.0 B\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t922.0 B\n");
                     });
 
             testCopyExport(stmt, test);

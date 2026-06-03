@@ -308,6 +308,36 @@ mod tests {
         save_to_file(bytes);
     }
 
+    #[test]
+    fn test_symbol_column_populates_dictionary_page_offset() {
+        // Regression guard: a dict-encoded (symbol) column must declare
+        // dictionary_page_offset, with data_page_offset pointing past it.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = vec![0, 1, i32::MIN, 2, 4];
+        let (col_chars, offsets) =
+            serialize_as_symbols(vec!["foo", "bar", "baz", "notused", "plus"]);
+        serialize_to_parquet(&mut buf, col1, col_chars, offsets);
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let col_meta = metadata.row_groups[0].columns()[0].metadata();
+        let dict_offset = col_meta
+            .dictionary_page_offset
+            .expect("symbol column must declare dictionary_page_offset");
+        assert!(
+            col_meta.data_page_offset > dict_offset,
+            "data_page_offset {} must be past dictionary_page_offset {}",
+            col_meta.data_page_offset,
+            dict_offset
+        );
+    }
+
     fn serialize_to_parquet(
         mut buf: &mut Cursor<Vec<u8>>,
         col1: Vec<i32>,
