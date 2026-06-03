@@ -16178,23 +16178,44 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // The residual price > 0 routes the query through the parallel
             // filter wrapper, which absorbs the limit (no separate Limit node).
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3"
-            );
             // The parallel path stays in effect for single-key queries.
-            assertTrue(getPlan("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3").contains("Async Filter"));
-
+            assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Async Filter")
+                    .returns("""
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """);
             // A filter that eliminates the low rows still returns the true tail.
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 5 LIMIT -3"
-            );
+            assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 5 LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """);
             // Larger negative limit spanning all partitions.
-            assertSql(
-                    "price\n1.0\n2.0\n3.0\n4.0\n5.0\n6.0\n7.0\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -20"
-            );
+            assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -20")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            4.0
+                            5.0
+                            6.0
+                            7.0
+                            8.0
+                            9.0
+                            10.0
+                            """);
         });
     }
 
@@ -16221,19 +16242,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         """);
                 execute("ALTER TABLE t_neg_mf ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
 
-                assertSql(
-                        "price\n8.0\n9.0\n10.0\n",
-                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -3"
-                );
+                assertQuery("SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                price
+                                8.0
+                                9.0
+                                10.0
+                                """);
                 // A sub-frame boundary-aligned limit (-4) and an odd one (-5).
-                assertSql(
-                        "price\n7.0\n8.0\n9.0\n10.0\n",
-                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -4"
-                );
-                assertSql(
-                        "price\n6.0\n7.0\n8.0\n9.0\n10.0\n",
-                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -5"
-                );
+                assertQuery("SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -4")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                price
+                                7.0
+                                8.0
+                                9.0
+                                10.0
+                                """);
+                assertQuery("SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -5")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                price
+                                6.0
+                                7.0
+                                8.0
+                                9.0
+                                10.0
+                                """);
             });
         } finally {
             CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
@@ -16256,18 +16295,35 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE t_neg_bv ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
 
-            bindVariableService.clear();
-            bindVariableService.setLong("lim", -3);
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim"
-            );
-            // The same compiled query with a positive value returns the head.
-            bindVariableService.setLong("lim", 3);
-            assertSql(
-                    "price\n1.0\n2.0\n3.0\n",
-                    "SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim"
-            );
+            // assertBinds compiles the query once and rebinds per case, so the
+            // runtime-resolved limit sign must steer the same factory between the
+            // tail (negative) and the head (positive). The negative limit buffers
+            // the tail, so its size is known; the positive limit streams, so its
+            // size stays undetermined - hence the per-case expectSize below.
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "lim=-3 returns the last 3 rows",
+                    """
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """,
+                    bindVariableService -> bindVariableService.setLong("lim", -3)
+            ).expectSize(true));
+            cases.add(BindVarTuple.ok(
+                    "lim=3 returns the first 3 rows",
+                    """
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    bindVariableService -> bindVariableService.setLong("lim", 3)
+            ).expectSize(false));
+            assertQuery("SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim")
+                    .noLeakCheck()
+                    .assertBinds(cases);
         });
     }
 
@@ -16293,24 +16349,24 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE t_neg_mk ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
 
-            String plan = getPlan("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3");
-            assertFalse("multi-key negative limit must not use the parallel path:\n" + plan, plan.contains("Async Filter"));
-            assertTrue("multi-key negative limit must still read the covering index:\n" + plan, plan.contains("CoveringIndex"));
-
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3"
-            );
+            // Multi-key negative limit must not use the parallel path, but must
+            // still read the covering index.
+            assertQuery("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .withPlanNotContaining("Async Filter")
+                    .returns("""
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """);
             // Positive limit over multi-key still uses the parallel path.
-            assertTrue(getPlan("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3").contains("Async Filter"));
+            assertQuery("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Filter");
         });
-    }
-
-    private String getPlan(String query) throws SqlException {
-        try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
-            planSink.clear();
-            factory.toPlan(planSink);
-            return planSink.getSink().toString();
-        }
     }
 }
