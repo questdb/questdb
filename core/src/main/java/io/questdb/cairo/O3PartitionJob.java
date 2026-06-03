@@ -210,6 +210,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final double bloomFilterFpp = cairoConfiguration.getPartitionEncoderParquetBloomFilterFpp();
                 final double minCompressionRatio = cairoConfiguration.getPartitionEncoderParquetMinCompressionRatio();
 
+                // When a timestamp value straddles a row-group boundary that the O3 batch
+                // also lands on, computeMergeActions coalesces the tied row groups into a
+                // single multi-group MERGE. That merge re-encodes fewer (or differently
+                // sized) row groups than it consumed, which update mode cannot express
+                // (it has no remove primitive), so it requires the rewrite path.
+                final int tieTimestampParquetIdx = tableToParquetIdx.getQuick(timestampIndex);
+                final boolean hasCoalescableTie = tieTimestampParquetIdx >= 0
+                        && hasCoalescableBoundaryTie(
+                        partitionDecoder,
+                        parquetMeta,
+                        rowGroupCount,
+                        tieTimestampParquetIdx,
+                        sortedTimestampsAddr,
+                        srcOooLo,
+                        srcOooHi
+                );
+
                 // Decide whether to rewrite the file or update in-place.
                 // A single-row-group file always triggers a rewrite: any O3 merge
                 // replaces its only row group, leaving 100% of the original payload
@@ -220,6 +237,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Parquet file.
                 isRewrite = hasSchemaChange
                         || rowGroupCount == 1
+                        || hasCoalescableTie
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
                         || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
@@ -416,17 +434,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE -> {
-                                final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                // A coalesced action spans row groups [rowGroupIndex..rowGroupIndexHi]
+                                // (a single group when they are equal). Sum their row counts so the
+                                // merge decodes and dedups the whole run as one unit.
+                                long rgRowCount = 0;
+                                for (int g = action.rowGroupIndex; g <= action.rowGroupIndexHi; g++) {
+                                    rgRowCount += partitionDecoder.metadata().getRowGroupSize(g);
+                                }
                                 assert rgRowCount <= Integer.MAX_VALUE;
                                 final int rgSize = (int) rgRowCount;
                                 LOG.info()
                                         .$("parquet merge row group [table=").$(tableWriter.getTableToken())
                                         .$(", partition=").$ts(partitionTimestamp)
                                         .$(", rg=").$(action.rowGroupIndex)
+                                        .$(", rgHi=").$(action.rowGroupIndexHi)
                                         .$(", dataRows=").$(rgSize)
                                         .$(", o3Rows=").$(action.o3Hi - action.o3Lo + 1)
                                         .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
-                                        .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
+                                        .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndexHi))
                                         .I$();
                                 final long mergeResult = mergeRowGroup(
                                         chunkDescriptor,
@@ -439,6 +464,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         rgSize,
                                         rowGroupBuffers,
                                         action.rowGroupIndex,
+                                        action.rowGroupIndexHi,
                                         timestampIndex,
                                         partitionTimestamp,
                                         action.o3Lo,
@@ -1894,6 +1920,57 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
+    /**
+     * Returns true if any two adjacent row groups share a boundary timestamp
+     * (rg[i].max == rg[i+1].min) that the sorted O3 batch [srcOooLo, srcOooHi] also
+     * contains. In that case computeMergeActions will coalesce the tied row groups
+     * into one multi-group MERGE, which requires the rewrite path.
+     */
+    private static boolean hasCoalescableBoundaryTie(
+            ParquetPartitionDecoder partitionDecoder,
+            ParquetMetaFileReader meta,
+            int rowGroupCount,
+            int timestampParquetIdx,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        if (rowGroupCount < 2 || srcOooHi < srcOooLo) {
+            return false;
+        }
+        long prevMax = readRowGroupTimestampBound(partitionDecoder, meta, 0, timestampParquetIdx, true);
+        for (int rg = 1; rg < rowGroupCount; rg++) {
+            final long curMin = readRowGroupTimestampBound(partitionDecoder, meta, rg, timestampParquetIdx, false);
+            if (prevMax == curMin) {
+                final long idx = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, curMin, srcOooLo, srcOooHi, Vect.BIN_SEARCH_SCAN_DOWN);
+                if (idx >= srcOooLo && Unsafe.getLong(sortedTimestampsAddr + idx * TIMESTAMP_MERGE_ENTRY_BYTES) == curMin) {
+                    return true;
+                }
+            }
+            prevMax = readRowGroupTimestampBound(partitionDecoder, meta, rg, timestampParquetIdx, true);
+        }
+        return false;
+    }
+
+    private static long readRowGroupTimestampBound(
+            ParquetPartitionDecoder partitionDecoder,
+            ParquetMetaFileReader meta,
+            int rowGroupIndex,
+            int timestampParquetIdx,
+            boolean wantMax
+    ) {
+        final int statFlags = meta.getChunkStatFlags(rowGroupIndex, timestampParquetIdx);
+        final boolean hasTimestampStats = (statFlags & 0x03) == 0x03 && (statFlags & 0x18) == 0x18;
+        if (hasTimestampStats) {
+            return wantMax
+                    ? meta.getChunkMaxStat(rowGroupIndex, timestampParquetIdx)
+                    : meta.getChunkMinStat(rowGroupIndex, timestampParquetIdx);
+        }
+        return wantMax
+                ? partitionDecoder.rowGroupMaxTimestamp(rowGroupIndex, timestampParquetIdx)
+                : partitionDecoder.rowGroupMinTimestamp(rowGroupIndex, timestampParquetIdx);
+    }
+
     private static long createMergeIndex(
             long srcDataTimestampAddr,
             long sortedTimestampsAddr,
@@ -2184,6 +2261,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int rowGroupSize,
             RowGroupBuffers rowGroupBuffers,
             int rowGroupIndex,
+            int rowGroupIndexHi,
             int timestampIndex,
             long partitionTimestamp,
             long mergeRangeLo,
@@ -2228,7 +2306,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             activeColCount++;
         }
 
-        decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
+        if (rowGroupIndexHi > rowGroupIndex) {
+            // Coalesced run: a timestamp value straddles the boundaries of row groups
+            // [rowGroupIndex..rowGroupIndexHi]. Decode them all into one buffer so the
+            // dedup compares the shared-timestamp key against every existing copy.
+            final long decoded = decoder.decodeRowGroupRange(rowGroupBuffers, parquetColumns, rowGroupIndex, rowGroupIndexHi);
+            assert decoded == rowGroupSize : "decoded " + decoded + " rows, expected " + rowGroupSize;
+        } else {
+            decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
+        }
 
         assert timestampColumnChunkIndex > -1;
         final long timestampDataPtr = rowGroupBuffers.getChunkDataPtr(timestampColumnChunkIndex);

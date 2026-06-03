@@ -93,6 +93,92 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceSingleTimestampAcrossThreeRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // Three row groups, all holding only timestamp 200 (a single value split 3 ways).
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 200, 4);
+
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+            long addr = allocateSortedTimestamps(200);
+            try {
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 0,
+                        1, Integer.MAX_VALUE, actionsBuf, new LongList(), new LongList()
+                );
+                // The three tied row groups coalesce into one merge unit so the dedup
+                // sees every existing copy of timestamp 200.
+                Assert.assertEquals(1, n);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(2, actionsBuf.get(0).rowGroupIndexHi);
+                Assert.assertEquals(0, actionsBuf.get(0).rgLo);
+                Assert.assertEquals(11, actionsBuf.get(0).rgHi);
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testCoalesceTieAcrossTwoRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // rg0 ends at 200, rg1 starts at 200: timestamp 200 straddles the boundary.
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 300, 4);
+
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+            long addr = allocateSortedTimestamps(200);
+            try {
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 0,
+                        1, Integer.MAX_VALUE, actionsBuf, new LongList(), new LongList()
+                );
+                // O3 lands on the shared boundary 200 -> both groups merge as one unit.
+                Assert.assertEquals(1, n);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(1, actionsBuf.get(0).rowGroupIndexHi);
+                Assert.assertEquals(0, actionsBuf.get(0).rgLo);
+                Assert.assertEquals(7, actionsBuf.get(0).rgHi);
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testNoCoalesceWhenO3MissesBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // Same shared boundary (200), but O3 lands at 150 (inside rg0 only).
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 300, 4);
+
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+            long addr = allocateSortedTimestamps(150);
+            try {
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 0,
+                        1, Integer.MAX_VALUE, actionsBuf, new LongList(), new LongList()
+                );
+                // The tie is latent (O3 does not touch 200), so the groups stay independent.
+                Assert.assertEquals(2, n);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndexHi);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(1).type);
+                Assert.assertEquals(1, actionsBuf.get(1).rowGroupIndex);
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+        });
+    }
+
+    @Test
     public void testMaxRowGroupSizeSplitting() throws Exception {
         assertMemoryLeak(() -> {
             ObjList<MergeAction> actionsBuf = new ObjList<>();

@@ -56,15 +56,17 @@ impl ColumnChunkBuffers {
     }
 
     pub fn refresh_ptrs(&mut self) {
-        if self.data_ptr.is_null() {
-            self.data_size = self.data_vec.len();
-            self.data_ptr = self.data_vec.as_mut_ptr();
-        }
-
-        if self.aux_ptr.is_null() {
-            self.aux_size = self.aux_vec.len();
-            self.aux_ptr = self.aux_vec.as_mut_ptr();
-        }
+        // Always recompute the exposed pointer/size from the backing vectors.
+        // Appending additional column chunks into the same buffer (see
+        // decode_row_group_range, which decodes a run of row groups without
+        // resetting between them) can reallocate data_vec/aux_vec, moving the
+        // allocation and invalidating any pointer cached by an earlier refresh.
+        // The vectors are the single source of truth, so recomputing every time
+        // is correct and yields identical results for the single-chunk callers.
+        self.data_size = self.data_vec.len();
+        self.data_ptr = self.data_vec.as_mut_ptr();
+        self.aux_size = self.aux_vec.len();
+        self.aux_ptr = self.aux_vec.as_mut_ptr();
     }
 
     pub fn reset(&mut self) {
