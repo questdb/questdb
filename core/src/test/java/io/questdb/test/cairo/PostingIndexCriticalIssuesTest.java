@@ -4369,6 +4369,82 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Squashes MULTIPLE split sub-partitions in one squashSplitPartitions call,
+     * matching the reported failure shape more closely than the 2-sub-partition
+     * testSquashCoveringPostingWithMidStreamSpillFlush. The reported crash fired
+     * from squashSplitPartitions (the IIIZ overload) -> sealPostingIndexForPartition
+     * during WAL housekeep; squashPartitions() reaches the same overload via
+     * squashPartitionForce, so this drives that exact reseal deterministically.
+     * Four O3 prefixes build four split sub-partitions of one day over the hot
+     * key 'A'; squashPartitions() merges them, and with the 256-byte spill budget
+     * the merge's reseal index() loop flushes mid-stream -- the path that
+     * SIGSEGVd before the commitDense consolidation fix.
+     */
+    @Test
+    public void testSquashSplitPartitionsCoveringPostingMultiSplitSpill() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_multisplit (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Hot key 'A' across the early day.
+            execute("""
+                    INSERT INTO t_multisplit
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            // Late sentinel keeps the day's max at 23:00 so each O3 prefix below
+            // lands inside the range and splits rather than appends.
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T23:00:00.000000Z', 'A', 1000000.0)");
+            // Four O3 prefixes at distinct late minutes build several split
+            // sub-partitions of 2024-01-01.
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:10:00.000000Z', 'B', -1.0)");
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:20:00.000000Z', 'B', -2.0)");
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:30:00.000000Z', 'B', -3.0)");
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:40:00.000000Z', 'B', -4.0)");
+
+            final long splitCount = selectLong("SELECT count() FROM table_partitions('t_multisplit')");
+            Assert.assertTrue(
+                    "test setup must produce more than two split sub-partitions for "
+                            + "squashSplitPartitions to merge, got " + splitCount,
+                    splitCount > 2);
+
+            printSql("SELECT /*+ no_covering */ count(), sum(price) FROM t_multisplit WHERE sym = 'A'");
+            String truth = sink.toString();
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_multisplit")) {
+                // squashPartitions() -> squashPartitionForce -> squashSplitPartitions
+                // -> sealPostingIndexForPartition (the reported reseal path).
+                w.squashPartitions();
+            }
+
+            assertQuery("SELECT count() FROM table_partitions('t_multisplit')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+
+            printSql("SELECT count(), sum(price) FROM t_multisplit WHERE sym = 'A'");
+            TestUtils.assertEquals(
+                    "covering result after multi-split squash must match the no_covering fallback",
+                    truth, sink.toString());
+        });
+    }
+
+    /**
      * Non-covering twin of testSquashCoveringPostingWithMidStreamSpillFlush.
      * The non-covering squash reseal also runs discardForRebuild -> index() ->
      * commitDense; the same mid-stream flushAllPending orphans the early sparse

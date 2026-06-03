@@ -107,6 +107,9 @@ public class PostingIndexBenchmarkSuite {
         //   "wal":             walFastLag* and walLargePartition*
         //   "wal_o3":          walLargePartitionO3* — O3 commit paths
         //                      (commitDense + rebuildSidecarsByCopy)
+        //   "wal_o3_spill":    walLargePartitionO3SpillReseal — reseal cost as
+        //                      the spill budget forces mid-stream flushes
+        //                      (commitDense's flushAllPendingDense vs seal())
         //   "io":              page-fault analysis only (skip JMH benchmarks)
         //   anything else:     literal regex body, expanded to
         //                      "PostingIndexBenchmarkSuite\.(<token>)$"
@@ -119,6 +122,7 @@ public class PostingIndexBenchmarkSuite {
             case "wal" -> suiteName + "\\.(walFastLag|walLargePartition).*";
             case "wal_o3" -> suiteName + "\\.walLargePartitionO3.*";
             case "wal_o3_append" -> suiteName + "\\.walLargePartitionO3AppendInsert.*";
+            case "wal_o3_spill" -> suiteName + "\\.walLargePartitionO3SpillReseal.*";
             case "io" -> null;
             default -> suiteName + "\\.(" + filter + ")$";
         };
@@ -128,7 +132,7 @@ public class PostingIndexBenchmarkSuite {
             org.openjdk.jmh.runner.options.ChainedOptionsBuilder builder = new OptionsBuilder()
                     .include(includePattern)
                     .resultFormat(ResultFormatType.TEXT);
-            if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter)) {
+            if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter) || "wal_o3_spill".equals(filter)) {
                 builder.forks(1)
                         .warmupIterations(1)
                         .measurementIterations(2);
@@ -484,6 +488,38 @@ public class PostingIndexBenchmarkSuite {
                 ", 0), '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
                 "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
                 "FROM long_sequence(" + WalLargePartitionO3State.BATCH_ROWS + ")";
+        s.engine.execute(sql, s.ctx);
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    @Fork(1)
+    @Warmup(iterations = 1)
+    @Measurement(iterations = 3)
+    public void walLargePartitionO3SpillReseal(WalLargePartitionO3SpillState s) throws Exception {
+        // Same O3-mutating insert as walLargePartitionO3Insert (forces
+        // sealPostingIndexForPartition's canSkipRebuild=false reseal:
+        // discardForRebuild + index + commitDense + rebuildSidecars), but with
+        // cairo.posting.index.indexer.spill.bytes.max parameterised so the
+        // reseal's index() loop spills a controlled number of times:
+        //   - spillBytesMax=256MiB: no mid-stream flush. commitDense stays on
+        //     flushAllPendingDense (the unchanged fast path) -- a no-op for the
+        //     fix, so this column is the no-regression baseline.
+        //   - spillBytesMax=2MiB / 256KiB: re-indexing the ~1M-row partition
+        //     trips compactIfOverBudget, so commitDense routes through seal()
+        //     (flushAllPending + sealFull consolidation). This is the path the
+        //     fix added; before the fix it crashed (covering) or dropped rows
+        //     (non-covering), so there is no pre-fix number to compare against.
+        // Single shot on a freshly preloaded partition (Level.Iteration setup).
+        String sql = "INSERT INTO walbench(ts, sym, " + s.extraColumns + ") " +
+                "SELECT dateadd('u', rnd_int(1, " + WalLargePartitionO3SpillState.PRELOAD_TS_LIMIT_US +
+                ", 0), '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
+                "FROM long_sequence(" + WalLargePartitionO3SpillState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
         s.checkJob.run(0);
@@ -2248,6 +2284,105 @@ public class PostingIndexBenchmarkSuite {
             // The benchmark body then interleaves new rows across this
             // entire range, forcing O3 mutation on every commit.
             int batches = partitionSize / BATCH_ROWS;
+            for (int i = 0; i < batches; i++) {
+                int batchOffsetUs = i * BATCH_ROWS + 1;
+                String batchSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
+                        "SELECT dateadd('u', x::INT + " + batchOffsetUs + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                        "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
+                        "FROM long_sequence(" + BATCH_ROWS + ")";
+                engine.execute(batchSql, ctx);
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
+            }
+        }
+
+        @TearDown(Level.Iteration)
+        public void tearDown() {
+            Misc.free(applyJob);
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    /**
+     * State for {@code walLargePartitionO3SpillReseal}: preload a single ~1M-row
+     * DAY partition, then let the benchmark O3-mutate it so the posting index
+     * reseals from the column file. {@code keyCount} is small so each symbol is
+     * hot and re-indexing the partition spills enough rowids to cross the small
+     * {@link #spillBytesMax} budgets. {@code spillBytesMax} controls how often
+     * the reseal's index() loop flushes mid-stream, selecting commitDense's
+     * fast path (no flush) vs its seal() consolidation path (>=1 flush).
+     */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class WalLargePartitionO3SpillState {
+        static final int BATCH_ROWS = 100_000;
+        static final int PARTITION_SIZE = 1_000_000;
+        // Matches the preload span (1us spacing over PARTITION_SIZE rows) so the
+        // benchmark's O3 rows land inside the existing data and force mutation
+        // (canSkipRebuild=false), not a pure append.
+        static final int PRELOAD_TS_LIMIT_US = PARTITION_SIZE;
+
+        ApplyWal2TableJob applyJob;
+        CheckWalTransactionsJob checkJob;
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        CairoEngine engine;
+        String extraColumns;
+        String extraValues;
+        @Param({"posting_covering", "posting"})
+        String indexType;
+        int keyCount = 100;
+        // cairo.posting.index.indexer.spill.bytes.max. 256MiB never flushes
+        // mid-stream (flushAllPendingDense fast path = no-regression baseline);
+        // 2MiB and 256KiB trip compactIfOverBudget so commitDense routes through
+        // seal() (the path the fix added).
+        @Param({"268435456", "2097152", "262144"})
+        long spillBytesMax;
+        java.nio.file.Path tmpDir;
+
+        @Setup(Level.Iteration)
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-largepart-o3-spill");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public long getPostingIndexerSpillBytesMax() {
+                    return spillBytesMax;
+                }
+
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            String ddl = switch (indexType) {
+                case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                default -> throw new IllegalArgumentException(indexType);
+            };
+            extraColumns = "price, name";
+            extraValues = "rnd_double() * 1000, rnd_varchar(10, 20, 0)";
+            engine.execute(ddl, ctx);
+            applyJob = new ApplyWal2TableJob(engine, 0);
+            checkJob = new CheckWalTransactionsJob(engine);
+
+            int batches = PARTITION_SIZE / BATCH_ROWS;
             for (int i = 0; i < batches; i++) {
                 int batchOffsetUs = i * BATCH_ROWS + 1;
                 String batchSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
