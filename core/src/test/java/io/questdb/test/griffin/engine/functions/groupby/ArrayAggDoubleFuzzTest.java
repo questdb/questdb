@@ -247,13 +247,11 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                         expected.append(g).append("\t").append(rowsPerGroup).append("\n");
                     }
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "SELECT grp, array_count(array_agg(val)) cnt FROM t ORDER BY grp",
-                            sink,
-                            expected
-                    );
+                    assertQuery("SELECT grp, array_count(array_agg(val)) cnt FROM t ORDER BY grp")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce(expected);
                 }
             }, configuration, LOG);
         });

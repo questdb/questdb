@@ -316,13 +316,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                 for (int g = 0; g < 5; g++) {
                     expected.append('g').append(g).append('\t').append(grpRows[g] * 2).append('\n');
                 }
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "SELECT grp, array_count(array_agg(arr)) cnt FROM tab ORDER BY grp",
-                        sink,
-                        expected
-                );
+                assertQuery("SELECT grp, array_count(array_agg(arr)) cnt FROM tab ORDER BY grp")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected);
             }, configuration, LOG);
         });
     }
@@ -439,19 +438,11 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                             .append(base + 4).append(".0])");
                 }
                 engine.execute(sb.toString(), sqlExecutionContext);
-                try {
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "SELECT array_agg(arr) FROM tab",
-                            sink,
-                            ""
-                    );
-                    org.junit.Assert.fail("expected CairoException with maxArrayElementCount=49999");
-                } catch (io.questdb.cairo.CairoException ex) {
-                    TestUtils.assertContains(ex.getMessage(),
-                            "array_agg: array size exceeds configured maximum [maxArrayElementCount=49999]");
-                }
+                assertQuery("SELECT array_agg(arr) FROM tab")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .failsWith("array_agg: array size exceeds configured maximum [maxArrayElementCount=49999]");
             }, configuration, LOG);
         });
     }
@@ -582,20 +573,19 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                 }
                 engine.execute(sb.toString(), sqlExecutionContext);
                 // 200 arrays * 2 elements each = 400 elements per group
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab ORDER BY grp",
-                        sink,
-                        """
+                assertQuery("SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab ORDER BY grp")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 grp\tcnt\ttotal
                                 g0\t400\t199200.0
                                 g1\t400\t199600.0
                                 g2\t400\t200000.0
                                 g3\t400\t200400.0
                                 g4\t400\t200800.0
-                                """
-                );
+                                """);
             }, configuration, LOG);
         });
     }
@@ -618,16 +608,15 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                 }
                 engine.execute(sb.toString(), sqlExecutionContext);
                 // sum(0..399) = 399 * 400 / 2 = 79800
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab",
-                        sink,
-                        """
+                assertQuery("SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 grp\tcnt\ttotal
                                 g0\t400\t79800.0
-                                """
-                );
+                                """);
             }, configuration, LOG);
         });
     }
@@ -678,16 +667,15 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                 engine.execute(sb.toString(), sqlExecutionContext);
                 // 100 real values: rows 300..399.
                 // sum = (300+399)*100/2 = 34950
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab",
-                        sink,
-                        """
+                assertQuery("SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 grp\tcnt\ttotal
                                 g0\t100\t34950.0
-                                """
-                );
+                                """);
             }, configuration, LOG);
         });
     }
@@ -723,13 +711,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     }
                     expected.append("]\n");
                 }
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
-                        sink,
-                        expected
-                );
+                assertQuery("SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected);
             }, configuration, LOG);
         });
     }
