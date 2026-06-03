@@ -175,11 +175,14 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence) {
         final AsyncTopKAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so that, if a per-query memory breach trips mid-reopen,
+        // close() can drain the sequence and free the chains the reopen had already
+        // allocated under the bound tracker.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.frameMemoryPool = atom.getFilterContext().getOwnerMemoryPool();
         this.recordA = atom.getOwnerRecordA();
         this.recordB = atom.getOwnerRecordB();

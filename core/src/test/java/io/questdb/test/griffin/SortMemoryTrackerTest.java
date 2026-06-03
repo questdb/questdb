@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -67,6 +69,34 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
         // sort allocations on small inputs, small enough that a runaway sort
         // breaches after one or two heap doublings.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
+    }
+
+    @Test
+    public void testAsyncTopKOpenFailureReleasesAllocations() throws Exception {
+        // Inflate the sort key page above the limit so AsyncTopKAtom.reopen() breaches on the
+        // owner chain's key heap during the cursor's of(). A parallel execution context routes
+        // ORDER BY ... LIMIT N through the parallel top-K factory, building one tree chain per
+        // worker. Reusing one factory across opens catches the failed-open cleanup: without it
+        // the page frame sequence is never reset and the next open trips a stale-state assertion.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 2 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x, x::timestamp ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT * FROM tab WHERE x > 0 ORDER BY x LIMIT 10";
+            try (SqlExecutionContext parallelCtx = TestUtils.createSqlExecutionCtx(engine, 4);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, parallelCtx).getRecordCursorFactory()) {
+                assertInBaseChain(factory, AsyncTopKRecordCursorFactory.class);
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(parallelCtx)) {
+                        Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -239,5 +269,20 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertInBaseChain(RecordCursorFactory factory, Class<?> factoryClass) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (factoryClass.isInstance(cur)) {
+                return;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
     }
 }

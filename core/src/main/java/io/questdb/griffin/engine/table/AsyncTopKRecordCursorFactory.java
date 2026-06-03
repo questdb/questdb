@@ -139,8 +139,16 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence);
-        return cursor;
+        try {
+            cursor.of(frameSequence);
+            return cursor;
+        } catch (Throwable th) {
+            // cursor.of() binds the per-query tracker on every per-worker tree chain and reopens them;
+            // a breach mid-reopen leaves some chains allocated. close() drains the sequence and frees
+            // them under that tracker, also resetting isOpen so the factory is reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override

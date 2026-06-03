@@ -118,6 +118,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker and reopens the join map before it can throw;
+            // close() frees it under that tracker and resets isOpen so the factory is reusable.
+            Misc.free(cursor);
             throw ex;
         }
         return cursor;

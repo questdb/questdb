@@ -237,6 +237,39 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullHashJoinOpenFailureReleasesAllocations() throws Exception {
+        // Inflate the join-key map far above the limit so the full HashJoinRecord's of()
+        // breaches on the joinKeyMap.reopen() with isOpen already set (setFullFatJoins forces
+        // the full variant for a random-access slave). Reusing one factory across opens catches
+        // the isOpen desync: without freeing the cursor on the failed open, the next open skips
+        // reopen() and no longer breaches.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (k LONG, v LONG)");
+            execute("CREATE TABLE slave (k LONG, w LONG)");
+            execute("INSERT INTO master SELECT x, x FROM long_sequence(20)");
+            execute("INSERT INTO slave SELECT x, x * 10 FROM long_sequence(20)");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT master.k, slave.w FROM master JOIN slave ON k",
+                        sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    for (int i = 0; i < 5; i++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHashOuterJoinFailsOnLargeBuildSide() throws Exception {
         // Force HashOuterJoinRecordCursorFactory (full-fat) for a LEFT JOIN.
         // The slave RecordChain stores entire rows; a moderately sized slave

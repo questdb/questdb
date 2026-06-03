@@ -185,6 +185,9 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the slave chain, join map and match-ids map
+            // before it can throw; close() frees them under that tracker and resets isOpen for reuse.
+            Misc.free(cursor);
             throw e;
         }
     }
