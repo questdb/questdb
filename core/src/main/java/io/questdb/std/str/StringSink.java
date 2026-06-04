@@ -32,6 +32,7 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
     private char[] buffer;
     private int pos;
     private int[] ryuE10;
+
     public StringSink() {
         this(16);
     }

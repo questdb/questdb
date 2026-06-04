@@ -82,6 +82,7 @@ public class Decimal64 implements Sinkable, Decimal {
     private int[] ryuE10;
     private int scale;   // Number of decimal places
     private long value;  // The decimal value as an unscaled long
+
     /**
      * Default constructor - creates zero with scale 0
      */

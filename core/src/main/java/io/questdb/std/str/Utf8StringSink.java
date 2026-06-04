@@ -40,6 +40,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
     private byte[] buffer;
     private int pos;
     private int[] ryuE10;
+
     public Utf8StringSink() {
         this(32);
     }

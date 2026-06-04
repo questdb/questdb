@@ -43,6 +43,7 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private NameAssemblerCharSequence next = null;
     private int[] ryuE10;
     private int size = 0;
+
     public CharacterStore(int capacity, int poolCapacity) {
         this.capacity = capacity;
         this.chars = new char[Numbers.ceilPow2(capacity)];

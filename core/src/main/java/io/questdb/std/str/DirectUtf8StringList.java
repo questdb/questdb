@@ -47,6 +47,7 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
     private final DirectUtf8StringView view = new DirectUtf8StringView();
     private boolean currentElemAscii = true;
     private int[] ryuE10;
+
     public DirectUtf8StringList(long initialCapacity, long initialElementCount) {
         this(initialCapacity, initialElementCount, false);
     }

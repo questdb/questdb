@@ -72,6 +72,7 @@ final class AsyncLogRecord implements LogRecord {
     Sequence seq;
     LogRecordUtf8Sink sink;
     private int[] ryuE10;
+
     AsyncLogRecord(Clock clock, CharSequence name) {
         this.clock = clock;
         this.abandonedLogRecordError = createAbandonedLogError();

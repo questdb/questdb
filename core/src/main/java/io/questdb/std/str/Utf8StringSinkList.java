@@ -43,6 +43,7 @@ public class Utf8StringSinkList implements Mutable, Utf8Sink {
     private boolean currentElemAscii = true;
     private int pos;
     private int[] ryuE10;
+
     public Utf8StringSinkList(int initialCapacity) {
         this.buffer = new byte[initialCapacity];
         this.pos = 0;

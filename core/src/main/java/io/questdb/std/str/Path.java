@@ -67,6 +67,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private long headPtr;
     private int[] ryuE10;
     private long tailPtr;
+
     public Path() {
         this(255);
     }

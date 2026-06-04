@@ -345,6 +345,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private long bufStart;
         private long bufStartOfData;
         private int[] ryuE10;
+
         private ChunkUtf8Sink(int bufSize) {
             this.bufSize = bufSize;
         }
@@ -584,6 +585,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private boolean chunked;
         private int code;
         private int[] ryuE10;
+
         public HttpResponseHeaderImpl(MillisecondClock clock) {
             this.clock = clock;
         }

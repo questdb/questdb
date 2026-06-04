@@ -210,6 +210,7 @@ public class Decimal128 implements Sinkable, Decimal {
     private long low;   // Low 64 bits
     private int[] ryuE10;
     private int scale;  // Number of decimal places
+
     /**
      * Default constructor - creates zero with scale 0
      */

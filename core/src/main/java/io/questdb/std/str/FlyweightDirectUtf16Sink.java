@@ -34,6 +34,7 @@ public class FlyweightDirectUtf16Sink implements MutableUtf16Sink, DirectCharSeq
     private long lo;
     private long ptr;
     private int[] ryuE10;
+
     public FlyweightDirectUtf16Sink() {
         lo = hi = ptr = 0;
     }

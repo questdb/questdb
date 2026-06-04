@@ -50,6 +50,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     private boolean done = false;
     private int level;
     private int[] ryuE10;
+
     public LogRecordUtf8Sink(long address, long addressSize) {
         this.address = _wptr = address;
         this.lim = address + addressSize;
