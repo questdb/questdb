@@ -54,6 +54,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlTimeoutException;
+import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -488,6 +489,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 // executes against a demoting node (write-loss). CREATE_USER/ALTER_USER are
                 // intentionally excluded: they are ACL ops gated by the enterprise ACL permission
                 // layer, not the table-write class this gate covers.
+                // The pg-wire gate exempts one DROP shape -- the HTTP parquet exporter's temp table --
+                // and this gate matches it: a read-only replica still exports parquet (it materializes
+                // a temp table behind a SELECT), and the admin drops the leftover temp table when the
+                // replica's own cleanup fails. That drop is a local operation the replica security
+                // context already permits, so the eager gate must let it pass and rely on the
+                // downstream authorizeTableDrop check, which still refuses every genuine client DROP.
                 if (engine.isReadOnlyMode()
                         && (cc.getType() == CompiledQuery.INSERT
                         || cc.getType() == CompiledQuery.INSERT_AS_SELECT
@@ -502,7 +509,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                         || cc.getType() == CompiledQuery.CREATE_VIEW
                         || cc.getType() == CompiledQuery.ALTER_VIEW
                         || cc.getType() == CompiledQuery.ALTER_STORAGE_POLICY
-                        || cc.getType() == CompiledQuery.DROP)) {
+                        || (cc.getType() == CompiledQuery.DROP && !isExportTempTableDrop(cc)))) {
                     // The compiled query holds a native op (InsertOperation, UpdateOperation,
                     // AlterOperation, or an Operation subtype for CREATE/DROP). The per-type
                     // executors that normally free these ops are not reached when we throw here,
@@ -777,6 +784,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     code
             );
         }
+    }
+
+    private boolean isExportTempTableDrop(CompiledQuery cc) {
+        return cc.getOperation() instanceof GenericDropOperation
+                && ((GenericDropOperation) cc.getOperation()).isExportTempTableDrop(engine.getConfiguration().getParquetExportTableNamePrefix());
     }
 
     private boolean parseUrl(

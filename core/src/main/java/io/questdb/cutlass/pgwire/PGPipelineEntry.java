@@ -52,6 +52,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
+import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -639,6 +640,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // engine.execute(), mutating a demoting node (write-loss). CREATE_USER/ALTER_USER are
             // intentionally NOT listed: they are ACL ops gated by the enterprise ACL permission
             // layer, not the table-write class this gate covers.
+            // One DROP shape is exempt: a DROP that targets the HTTP parquet exporter's temp table.
+            // A read-only replica still runs parquet export (it materializes a temp table behind a
+            // SELECT), and when its own cleanup fails the admin drops the leftover temp table. That
+            // drop is a purely local operation the replica security context already permits, so the
+            // eager gate here would refuse it too early; let it pass and rely on the downstream
+            // authorizeTableDrop check, which still refuses every genuine client DROP.
             if (engine.isReadOnlyMode()
                     && (this.sqlType == CompiledQuery.INSERT
                     || this.sqlType == CompiledQuery.INSERT_AS_SELECT
@@ -653,7 +660,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     || this.sqlType == CompiledQuery.CREATE_VIEW
                     || this.sqlType == CompiledQuery.ALTER_VIEW
                     || this.sqlType == CompiledQuery.ALTER_STORAGE_POLICY
-                    || this.sqlType == CompiledQuery.DROP)) {
+                    || (this.sqlType == CompiledQuery.DROP && !isExportTempTableDrop()))) {
                 throw CairoException.authorization().put("replica access is read-only");
             }
             switch (this.sqlType) {
@@ -1362,6 +1369,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return sqlType == CompiledQuery.SELECT
                 || sqlType == CompiledQuery.EXPLAIN
                 || sqlType == CompiledQuery.PSEUDO_SELECT;
+    }
+
+    private boolean isExportTempTableDrop() {
+        return operation instanceof GenericDropOperation
+                && ((GenericDropOperation) operation).isExportTempTableDrop(engine.getConfiguration().getParquetExportTableNamePrefix());
     }
 
     private boolean isTextFormat() {
