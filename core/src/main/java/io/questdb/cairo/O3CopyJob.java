@@ -194,7 +194,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable th) {
             // Notify table writer of error before clocking down done counters
-            tableWriterView.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriterView.bumpErrorCount(CairoException.isCairoOomError(th));
 
             // We cannot close / unmap fds here. Other copy jobs may still be running and using them.
             // exception handling code of the stack will check if all the parts are finished before closing the memory / fds.
@@ -656,7 +656,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
-            final int commitMode = tableWriterView.o3CommitMode();
+            final int commitMode = tableWriterView.getCommitMode();
             if (commitMode != CommitMode.NOSYNC) {
                 syncColumns(
                         columnCounter,
@@ -757,7 +757,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("sync error [table=").$(tableWriterView.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriterView.o3BumpErrorCount(false);
+            tableWriterView.bumpErrorCount(false);
             unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -849,7 +849,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("index error [table=").$(tableWriterView.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriterView.o3BumpErrorCount(false);
+            tableWriterView.bumpErrorCount(false);
             unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -925,7 +925,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             if (timestampMergeIndexAddr != 0) {
                 Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
             }
-            tableWriterView.o3CountDownDoneLatch();
+            tableWriterView.countDownDoneLatch();
         }
     }
 
@@ -972,8 +972,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
             }
         } finally {
-            tableWriterView.o3ClockDownPartitionUpdateCount();
-            tableWriterView.o3CountDownDoneLatch();
+            tableWriterView.clockDownPartitionUpdateCount();
+            tableWriterView.countDownDoneLatch();
         }
     }
 
@@ -1058,7 +1058,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
                 .$();
 
-        tableWriterView.o3ClockDownPartitionUpdateCount();
+        tableWriterView.clockDownPartitionUpdateCount();
     }
 
     static void unmapAndClose(

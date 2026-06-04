@@ -73,6 +73,11 @@ public final class O3TableWriterView {
         return tableWriter.allowMixedIO();
     }
 
+    // safety: atomic increment + one-way boolean flag flip
+    void bumpErrorCount(boolean oom) {
+        tableWriter.o3BumpErrorCount(oom);
+    }
+
     // safety: contract of the downstream method: This method is thread safe, e.g. can be triggered from multiple partition merge tasks
     boolean checkDedupCommitIdenticalToPartition(
             long partitionTimestamp,
@@ -119,9 +124,24 @@ public final class O3TableWriterView {
         );
     }
 
-    // safety: read-only lookups
-    long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
-        return tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+    // safety: TODO
+    // assumption: each worker (columns) gets a unique and non-overlapping dedupColSinkAddr so it should be good
+    // to be validated
+    void clearDedupBlock(long dedupColSinkAddr) {
+        final DedupColumnCommitAddresses dedupColumnCommitAddresses = tableWriter.getDedupCommitAddresses();
+        if (dedupColumnCommitAddresses != null) {
+            dedupColumnCommitAddresses.clear(dedupColSinkAddr);
+        }
+    }
+
+    // safety: atomic decrement
+    void clockDownPartitionUpdateCount() {
+        tableWriter.o3ClockDownPartitionUpdateCount();
+    }
+
+    // safety: latch can be counted down by multiple threads
+    void countDownDoneLatch() {
+        tableWriter.o3CountDownDoneLatch();
     }
 
     // safety: read-only metadata lookups
@@ -137,6 +157,11 @@ public final class O3TableWriterView {
     // safety: read-only metadata lookups
     String getColumnName(int columnIndex) {
         return tableWriter.getMetadata().getColumnName(columnIndex);
+    }
+
+    // safety: read-only lookups
+    long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
+        return tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
     }
 
     // safety: read-only metadata lookups
@@ -164,6 +189,16 @@ public final class O3TableWriterView {
         return tableWriter.getMetadata().getWriterIndex(columnIndex);
     }
 
+    // safety: read only config lookup
+    int getCommitMode() {
+        return tableWriter.getConfiguration().getCommitMode();
+    }
+
+    // safety: config lookup
+    String getDbRoot() {
+        return tableWriter.getConfiguration().getDbRoot();
+    }
+
     // safety: read-only lookups
     int getDedupColumnCount() {
         final DedupColumnCommitAddresses dedupColumnCommitAddresses = tableWriter.getDedupCommitAddresses();
@@ -175,26 +210,14 @@ public final class O3TableWriterView {
         return tableWriter.getFilesFacade();
     }
 
-    /**
-     * Opens an O3 task-owned index writer on file descriptors prepared by the
-     * open-column job.
-     * <p>
-     * The {@code indexWriter} argument must be detached from {@link TableWriter}
-     * state, typically supplied by {@link O3Basket#nextIndexer(byte)} and carried
-     * through the O3 task payload. This method mutates the writer passed to it,
-     * so it must not be used with a shared writer returned from
-     * {@link TableWriter#getIndexWriter(int)}. Shared last-partition index writer
-     * access is intentionally isolated behind
-     * {@link #o3UnsafeGetIndexWriterForLastPartitionOnly(int)} until that path is
-     * removed.
-     */
-    void openIndexWriter(IndexWriter indexWriter, long keyFd, long valueFd, boolean isInit, int indexBlockCapacity) {
-        indexWriter.of(tableWriter.getConfiguration(), keyFd, valueFd, isInit, indexBlockCapacity);
-    }
-
     // safety: read-only metadata lookups
     int getIndexValueBlockCapacity(int columnIndex) {
         return tableWriter.getMetadata().getIndexValueBlockCapacity(columnIndex);
+    }
+
+    // safety: config lookup
+    int getMkDirMode() {
+        return tableWriter.getConfiguration().getMkDirMode();
     }
 
     // safety: MP Sequence
@@ -206,7 +229,6 @@ public final class O3TableWriterView {
     RingQueue<O3CopyTask> getO3CopyQueue() {
         return tableWriter.getO3CopyQueue();
     }
-
 
     // safety: MP Sequence
     Sequence getO3OpenColumnPubSeq() {
@@ -223,6 +245,46 @@ public final class O3TableWriterView {
         return tableWriter.getPartitionBy();
     }
 
+    // safety: config lookup
+    double getPartitionEncoderParquetBloomFilterFpp() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetBloomFilterFpp();
+    }
+
+    // safety: config lookup
+    int getPartitionEncoderParquetCompressionCodec() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetCompressionCodec();
+    }
+
+    // safety: config lookup
+    int getPartitionEncoderParquetCompressionLevel() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetCompressionLevel();
+    }
+
+    // safety: config lookup
+    int getPartitionEncoderParquetDataPageSize() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetDataPageSize();
+    }
+
+    // safety: config lookup
+    double getPartitionEncoderParquetMinCompressionRatio() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetMinCompressionRatio();
+    }
+
+    // safety: config lookup
+    long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+    }
+
+    // safety: config lookup
+    double getPartitionEncoderParquetO3RewriteUnusedRatio() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetO3RewriteUnusedRatio();
+    }
+
+    // safety: config lookup
+    int getPartitionEncoderParquetRowGroupSize() {
+        return tableWriter.getConfiguration().getPartitionEncoderParquetRowGroupSize();
+    }
+
     // safety: read only lookup
     int getPartitionIndexByTimestamp(long timestamp) {
         return tableWriter.getPartitionIndexByTimestamp(timestamp);
@@ -236,6 +298,21 @@ public final class O3TableWriterView {
     // safety: read-only lookups
     long getPartitionParquetFileSize(int partitionIndex) {
         return tableWriter.getPartitionParquetFileSize(partitionIndex);
+    }
+
+    // safety: TODO
+    int getSymbolCount(int columnIndex) {
+        return tableWriter.getSymbolMapWriter(columnIndex).getSymbolCount();
+    }
+
+    // safety: each Worker has its own column index
+    MemoryR getSymbolOffsetsMemory(int columnIndex) {
+        return tableWriter.getSymbolMapWriter(columnIndex).getSymbolOffsetsMemory();
+    }
+
+    // safety: each Worker has its own column index
+    MemoryR getSymbolValuesMemory(int columnIndex) {
+        return tableWriter.getSymbolMapWriter(columnIndex).getSymbolValuesMemory();
     }
 
     // safety: tokens are immutable
@@ -257,6 +334,17 @@ public final class O3TableWriterView {
     // TODO: validate it
     long getTxn() {
         return tableWriter.getTxn();
+    }
+
+    // safety: TODO
+    // assumptions: called from just the last partition -> not multithreaded for the same column index
+    IndexWriter getUnsafeGetIndexWriterForLastPartitionOnly(int columnIndex) {
+        return tableWriter.getIndexWriter(columnIndex);
+    }
+
+    // safety: read-only config lookup
+    int getWriterFileOpenOpts() {
+        return tableWriter.getConfiguration().getWriterFileOpenOpts();
     }
 
     // safety: read-only metadata lookup
@@ -284,124 +372,35 @@ public final class O3TableWriterView {
         return tableWriter.getMetadata().isDedupKey(columnIndex);
     }
 
-    // safety: atomic increment + one-way boolean flag flip
-    void o3BumpErrorCount(boolean oom) {
-        tableWriter.o3BumpErrorCount(oom);
-    }
-
-    // safety: TODO
-    // assumption: each worker (columns) gets a unique and non-overlapping dedupColSinkAddr so it should be good
-    // to be validated
-    void o3ClearDedupBlock(long dedupColSinkAddr) {
-        final DedupColumnCommitAddresses dedupColumnCommitAddresses = tableWriter.getDedupCommitAddresses();
-        if (dedupColumnCommitAddresses != null) {
-            dedupColumnCommitAddresses.clear(dedupColSinkAddr);
-        }
-    }
-
-    // safety: atomic decrement
-    void o3ClockDownPartitionUpdateCount() {
-        tableWriter.o3ClockDownPartitionUpdateCount();
-    }
-
-    // safety: latch can be counted down by multiple threads
-    void o3CountDownDoneLatch() {
-        tableWriter.o3CountDownDoneLatch();
-    }
-
-    // safety: read only config lookup
-    int o3CommitMode() {
-        return tableWriter.getConfiguration().getCommitMode();
-    }
-
     // safety: config lookup
-    String o3DbRoot() {
-        return tableWriter.getConfiguration().getDbRoot();
-    }
-
-    // safety: config lookup
-    int o3MkDirMode() {
-        return tableWriter.getConfiguration().getMkDirMode();
-    }
-
-    // safety: config lookup
-    int o3PartitionEncoderParquetCompressionCodec() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetCompressionCodec();
-    }
-
-    // safety: config lookup
-    int o3PartitionEncoderParquetCompressionLevel() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetCompressionLevel();
-    }
-
-    // safety: config lookup
-    int o3PartitionEncoderParquetDataPageSize() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetDataPageSize();
-    }
-
-    // safety: config lookup
-    double o3PartitionEncoderParquetBloomFilterFpp() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetBloomFilterFpp();
-    }
-
-    // safety: config lookup
-    double o3PartitionEncoderParquetMinCompressionRatio() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetMinCompressionRatio();
-    }
-
-    // safety: config lookup
-    long o3PartitionEncoderParquetO3RewriteUnusedMaxBytes() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
-    }
-
-    // safety: config lookup
-    double o3PartitionEncoderParquetO3RewriteUnusedRatio() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetO3RewriteUnusedRatio();
-    }
-
-    // safety: config lookup
-    boolean o3PartitionEncoderParquetRawArrayEncoding() {
+    boolean isPartitionEncoderParquetRawArrayEncoding() {
         return tableWriter.getConfiguration().isPartitionEncoderParquetRawArrayEncoding();
     }
 
     // safety: config lookup
-    int o3PartitionEncoderParquetRowGroupSize() {
-        return tableWriter.getConfiguration().getPartitionEncoderParquetRowGroupSize();
-    }
-
-    // safety: config lookup
-    boolean o3PartitionEncoderParquetStatisticsEnabled() {
+    boolean isPartitionEncoderParquetStatisticsEnabled() {
         return tableWriter.getConfiguration().isPartitionEncoderParquetStatisticsEnabled();
     }
 
+    /**
+     * Opens an O3 task-owned index writer on file descriptors prepared by the
+     * open-column job.
+     * <p>
+     * The {@code indexWriter} argument must be detached from {@link TableWriter}
+     * state, typically supplied by {@link O3Basket#nextIndexer(byte)} and carried
+     * through the O3 task payload. This method mutates the writer passed to it,
+     * so it must not be used with a shared writer returned from
+     * {@link TableWriter#getIndexWriter(int)}. Shared last-partition index writer
+     * access is intentionally isolated behind
+     * {@link #getUnsafeGetIndexWriterForLastPartitionOnly(int)} until that path is
+     * removed.
+     */
+    void openIndexWriter(IndexWriter indexWriter, long keyFd, long valueFd, boolean isInit, int indexBlockCapacity) {
+        indexWriter.of(tableWriter.getConfiguration(), keyFd, valueFd, isInit, indexBlockCapacity);
+    }
+
     // safety: TODO
-    boolean o3SymbolHasNull(int columnIndex) {
+    boolean symbolHasNull(int columnIndex) {
         return tableWriter.getSymbolMapWriter(columnIndex).getNullFlag();
-    }
-
-    // safety: TODO
-    int o3SymbolCount(int columnIndex) {
-        return tableWriter.getSymbolMapWriter(columnIndex).getSymbolCount();
-    }
-
-    // safety: each Worker has its own column index
-    MemoryR o3SymbolOffsetsMemory(int columnIndex) {
-        return tableWriter.getSymbolMapWriter(columnIndex).getSymbolOffsetsMemory();
-    }
-
-    // safety: each Worker has its own column index
-    MemoryR o3SymbolValuesMemory(int columnIndex) {
-        return tableWriter.getSymbolMapWriter(columnIndex).getSymbolValuesMemory();
-    }
-
-    // safety: TODO
-    // assumptions: called from just the last partition -> not multithreaded for the same column index
-    IndexWriter o3UnsafeGetIndexWriterForLastPartitionOnly(int columnIndex) {
-        return tableWriter.getIndexWriter(columnIndex);
-    }
-
-    // safety: read-only config lookup
-    int o3WriterFileOpenOpts() {
-        return tableWriter.getConfiguration().getWriterFileOpenOpts();
     }
 }

@@ -185,15 +185,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 assert ColumnType.isTimestamp(timestampColumnType);
 
                 // for API completeness, we'll use the same configuration as the initial partition encoder.
-                final int compressionCodec = tableWriterView.o3PartitionEncoderParquetCompressionCodec();
-                final int compressionLevel = tableWriterView.o3PartitionEncoderParquetCompressionLevel();
-                final int rowGroupSize = tableWriterView.o3PartitionEncoderParquetRowGroupSize();
+                final int compressionCodec = tableWriterView.getPartitionEncoderParquetCompressionCodec();
+                final int compressionLevel = tableWriterView.getPartitionEncoderParquetCompressionLevel();
+                final int rowGroupSize = tableWriterView.getPartitionEncoderParquetRowGroupSize();
                 assert rowGroupSize >= 4;
-                final int dataPageSize = tableWriterView.o3PartitionEncoderParquetDataPageSize();
-                final boolean statisticsEnabled = tableWriterView.o3PartitionEncoderParquetStatisticsEnabled();
-                final boolean rawArrayEncoding = tableWriterView.o3PartitionEncoderParquetRawArrayEncoding();
-                final double bloomFilterFpp = tableWriterView.o3PartitionEncoderParquetBloomFilterFpp();
-                final double minCompressionRatio = tableWriterView.o3PartitionEncoderParquetMinCompressionRatio();
+                final int dataPageSize = tableWriterView.getPartitionEncoderParquetDataPageSize();
+                final boolean statisticsEnabled = tableWriterView.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = tableWriterView.isPartitionEncoderParquetRawArrayEncoding();
+                final double bloomFilterFpp = tableWriterView.getPartitionEncoderParquetBloomFilterFpp();
+                final double minCompressionRatio = tableWriterView.getPartitionEncoderParquetMinCompressionRatio();
 
                 // Decide whether to rewrite the file or update in-place.
                 // A single-row-group file always triggers a rewrite: any O3 merge
@@ -205,8 +205,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Parquet file.
                 isRewrite = hasSchemaChange
                         || rowGroupCount == 1
-                        || (parquetSize > 0 && (double) unusedBytes / parquetSize > tableWriterView.o3PartitionEncoderParquetO3RewriteUnusedRatio())
-                        || unusedBytes > tableWriterView.o3PartitionEncoderParquetO3RewriteUnusedMaxBytes();
+                        || (parquetSize > 0 && (double) unusedBytes / parquetSize > tableWriterView.getPartitionEncoderParquetO3RewriteUnusedRatio())
+                        || unusedBytes > tableWriterView.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
                 if (isRewrite) {
                     LOG.info().$("parquet o3 partition rewrite [table=").$(tableWriterView.getTableToken())
@@ -218,7 +218,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .I$();
                 }
 
-                final int opts = tableWriterView.o3WriterFileOpenOpts();
+                final int opts = tableWriterView.getWriterFileOpenOpts();
                 // Two separate file descriptors are required: one for reading (metadata,
                 // row group slicing) and one for writing (appending new row groups).
                 // They must be distinct OS fds even when pointing to the same file,
@@ -237,7 +237,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // The old directory (srcNameTxn) is left intact and queued for removal on commit.
                         Path newPath = Path.getThreadLocal2(pathToTable);
                         setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
-                        ff.mkdirs(newPath.slash(), tableWriterView.o3MkDirMode());
+                        ff.mkdirs(newPath.slash(), tableWriterView.getMkDirMode());
                         newPath.concat(PARQUET_PARTITION_NAME).$();
                         writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
                         writerFdOs = Files.detach(writerFd);
@@ -320,7 +320,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // that this symbol column has no nulls, so it can emit a fast
                         // all-ones RLE run for definition levels. It does NOT change
                         // the parquet schema Repetition — symbols are always Optional.
-                        if (ColumnType.isSymbol(colType) && !tableWriterView.o3SymbolHasNull(i)) {
+                        if (ColumnType.isSymbol(colType) && !tableWriterView.symbolHasNull(i)) {
                             colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
                         final int colId = tableWriterView.getColumnWriterIndex(i);
@@ -520,7 +520,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Persist _pm before _txn references the new parquet_meta_file_size.
                 // _txn commit follows in TableWriter; without this fsync a power
                 // loss could leave _txn pointing at a footer the page cache loses.
-                if (tableWriterView.o3CommitMode() != CommitMode.NOSYNC) {
+                if (tableWriterView.getCommitMode() != CommitMode.NOSYNC) {
                     partitionUpdater.syncParquetMeta();
                 }
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
@@ -583,7 +583,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Update mode: truncate both parquet and _pm to their pre-merge sizes.
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                long fd = TableUtils.openRW(ff, path.$(), LOG, tableWriterView.o3WriterFileOpenOpts());
+                long fd = TableUtils.openRW(ff, path.$(), LOG, tableWriterView.getWriterFileOpenOpts());
                 if (!ff.truncate(fd, parquetSize)) {
                     LOG.error().$("could not truncate partition file [path=").$(path).I$();
                 }
@@ -593,7 +593,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long oldParquetMetaFileSize = parquetMetaReader.getFileSize();
                     path.of(pathToTable);
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                    fd = TableUtils.openRW(ff, path.$(), LOG, tableWriterView.o3WriterFileOpenOpts());
+                    fd = TableUtils.openRW(ff, path.$(), LOG, tableWriterView.getWriterFileOpenOpts());
                     // Rust patches parquet_meta_file_size at offset 0 last, so when
                     // updateFileMetadata throws after that patch the on-disk header
                     // claims a size larger than the pre-merge file. Restore the old
@@ -615,14 +615,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     // Make the restored header durable so that crash recovery does
                     // not resurrect the bad post-patch header out of the page cache.
-                    if (tableWriterView.o3CommitMode() != CommitMode.NOSYNC) {
+                    if (tableWriterView.getCommitMode() != CommitMode.NOSYNC) {
                         ff.fsync(fd);
                     }
                     ff.close(fd);
                 }
             }
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
-            tableWriterView.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriterView.bumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
             // Release the reader's native handle (which borrows from the mmap) before munmap.
             // See ParquetMetaFileReader lifecycle contract.
@@ -650,8 +650,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
 
 
-            tableWriterView.o3CountDownDoneLatch();
-            tableWriterView.o3ClockDownPartitionUpdateCount();
+            tableWriterView.countDownDoneLatch();
+            tableWriterView.clockDownPartitionUpdateCount();
         }
     }
 
@@ -742,14 +742,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn - 1
                     );
-                    createDirsOrFail(ff, path, tableWriterView.o3MkDirMode());
+                    createDirsOrFail(ff, path, tableWriterView.getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").$(tableWriterView.getTableToken())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriterView.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                    tableWriterView.o3ClockDownPartitionUpdateCount();
-                    tableWriterView.o3CountDownDoneLatch();
+                    tableWriterView.bumpErrorCount(CairoException.isCairoOomError(e));
+                    tableWriterView.clockDownPartitionUpdateCount();
+                    tableWriterView.countDownDoneLatch();
                     throw e;
                 }
             }
@@ -848,7 +848,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     // also track the fd that we need to eventually close
                     // Open src timestamp column as RW in case append happens
-                    srcTimestampFd = openRW(ff, dFile(path, tableWriterView.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE), LOG, tableWriterView.o3WriterFileOpenOpts());
+                    srcTimestampFd = openRW(ff, dFile(path, tableWriterView.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE), LOG, tableWriterView.getWriterFileOpenOpts());
                     srcTimestampAddr = mapRW(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                     dataTimestampHi = Unsafe.getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
@@ -1430,7 +1430,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn
                     );
-                    createDirsOrFail(ff, path, tableWriterView.o3MkDirMode());
+                    createDirsOrFail(ff, path, tableWriterView.getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {
@@ -1443,9 +1443,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
-                tableWriterView.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                tableWriterView.o3ClockDownPartitionUpdateCount();
-                tableWriterView.o3CountDownDoneLatch();
+                tableWriterView.bumpErrorCount(CairoException.isCairoOomError(e));
+                tableWriterView.clockDownPartitionUpdateCount();
+                tableWriterView.countDownDoneLatch();
                 throw e;
             }
 
@@ -1709,10 +1709,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long valuesMemSize;
                     int encodeColumnType;
                     try {
-                        offsetsMem = tableWriterView.o3SymbolOffsetsMemory(columnIndex);
-                        valuesMem = tableWriterView.o3SymbolValuesMemory(columnIndex);
+                        offsetsMem = tableWriterView.getSymbolOffsetsMemory(columnIndex);
+                        valuesMem = tableWriterView.getSymbolValuesMemory(columnIndex);
 
-                        symbolCount = tableWriterView.o3SymbolCount(columnIndex);
+                        symbolCount = tableWriterView.getSymbolCount(columnIndex);
                         final long offset = SymbolMapWriter.keyToOffset(symbolCount);
                         assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
                         valuesMemSize = offsetsMem.getLong(offset);
@@ -1720,7 +1720,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         // High bit = no-null hint for def level encoding, not schema Repetition.
                         encodeColumnType = columnType;
-                        if (!tableWriterView.o3SymbolHasNull(columnIndex)) {
+                        if (!tableWriterView.symbolHasNull(columnIndex)) {
                             encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
                     } catch (Throwable th) {
@@ -1915,7 +1915,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         int mapMemTag = MemoryTag.MMAP_O3;
         try {
-            tableWriterView.o3ClearDedupBlock(dedupColSinkAddr);
+            tableWriterView.clearDedupBlock(dedupColSinkAddr);
             for (int i = 0; i < tableWriterView.getColumnCount(); i++) {
                 int columnType = tableWriterView.getColumnType(i);
                 if (columnType > 0 && tableWriterView.isDedupKey(i) && i != tableWriterView.getTimestampIndex()) {
@@ -2190,7 +2190,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                 } else {
                     int dedupColumnIndex = 0;
-                    tableWriterView.o3ClearDedupBlock(dedupColSinkAddr);
+                    tableWriterView.clearDedupBlock(dedupColSinkAddr);
                     for (int ai = 0; ai < activeColCount; ai++) {
                         int columnIndex = activeColIndices.getQuick(ai);
                         int columnType = tableWriterView.getColumnType(columnIndex);
@@ -2474,10 +2474,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
 
                         if (ColumnType.isSymbol(columnType)) {
-                            final MemoryR offsetsMem = tableWriterView.o3SymbolOffsetsMemory(columnIndex);
-                            final MemoryR valuesMem = tableWriterView.o3SymbolValuesMemory(columnIndex);
+                            final MemoryR offsetsMem = tableWriterView.getSymbolOffsetsMemory(columnIndex);
+                            final MemoryR valuesMem = tableWriterView.getSymbolValuesMemory(columnIndex);
 
-                            final int symbolCount = tableWriterView.o3SymbolCount(columnIndex);
+                            final int symbolCount = tableWriterView.getSymbolCount(columnIndex);
                             final long offset = SymbolMapWriter.keyToOffset(symbolCount);
                             assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
                             final long valuesMemSize = offsetsMem.getLong(offset);
@@ -2485,7 +2485,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
-                            if (!tableWriterView.o3SymbolHasNull(columnIndex)) {
+                            if (!tableWriterView.symbolHasNull(columnIndex)) {
                                 encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                             }
                             chunkDescriptor.addColumn(
@@ -2861,7 +2861,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                 } else if (tableWriterView.isCommitDedupMode()) {
                     final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
-                    final Path tempTablePath = Path.getThreadLocal(tableWriterView.o3DbRoot()).concat(tableWriterView.getTableToken());
+                    final Path tempTablePath = Path.getThreadLocal(tableWriterView.getDbRoot()).concat(tableWriterView.getTableToken());
 
                     final long dedupRows = getDedupRows(
                             oldPartitionTimestamp,
@@ -3016,7 +3016,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     throw new IllegalStateException("commit mode not supported");
                 }
             } catch (Throwable e) {
-                tableWriterView.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                tableWriterView.bumpErrorCount(CairoException.isCairoOomError(e));
                 LOG.critical().$("open column error [table=").$(tableWriterView.getTableToken())
                         .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                         .$(", e=").$(e)
@@ -3198,7 +3198,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                     }
                 } catch (Throwable e) {
-                    tableWriterView.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                    tableWriterView.bumpErrorCount(CairoException.isCairoOomError(e));
                     LOG.critical().$("open column error [table=").$(tableWriterView.getTableToken())
                             .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .$(", e=").$(e)
@@ -3446,8 +3446,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
         O3Utils.close(ff, srcTimestampFd);
 
-        tableWriterView.o3ClockDownPartitionUpdateCount();
-        tableWriterView.o3CountDownDoneLatch();
+        tableWriterView.clockDownPartitionUpdateCount();
+        tableWriterView.countDownDoneLatch();
     }
 
     private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
