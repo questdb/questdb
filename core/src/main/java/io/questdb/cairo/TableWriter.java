@@ -13105,13 +13105,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // files after switch.
         updateIndexes();
         // Flush posting index sidecar data before the partition switch.
-        // PostingIndexWriter reads covered column values from the MemoryMA
-        // objects that were set via configureCovering(). Those MemoryMA
-        // objects are the TableWriter's column memories — the same Java
-        // objects get remapped to the new partition's files in openPartition().
-        // Any unflushed pending/spill data still holds row IDs from the
-        // current partition, so we must write the sidecar gen block now,
-        // while the MemoryMA still points to the correct file.
+        // Unflushed pending/spill data still holds row IDs from the CURRENT
+        // partition, and PostingIndexWriter resolves covered column values by
+        // NAME against that partition's files -- a fresh read-only mmap opened
+        // in mapColumnFile, keyed by coveredPartitionPath, NOT the TableWriter's
+        // live MemoryMA column memories. openPartition() below re-points the
+        // indexer at the new partition's path, so we must write the sidecar gen
+        // block now, while the writer still resolves covered columns against the
+        // current partition's files.
         final int sealThreshold = configuration.getPostingSealGenThreshold();
         // The seal here runs before the upcoming switchPartitions/commit, so
         // tag any chain entry the seal publishes with txnAtSeal=getTxn()+1
