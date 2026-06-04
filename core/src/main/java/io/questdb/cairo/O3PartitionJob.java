@@ -3338,6 +3338,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
 
                         indexWriter.of(path.trimTo(pLen), columnName, columnNameTxn, indexBlockCapacity);
+                        // The 4-arg of(...) above does not carry the partition
+                        // identity, but a deferred seal-purge needs it to find the
+                        // .pv directory later. srcNameTxn is this rebuild's dir
+                        // name-txn (the new txn dir in rewrite mode, srcNameTxn in
+                        // update-in-place mode).
+                        indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn);
 
                         // In rewrite mode all columns exist in the new parquet file
                         // (the Rust encoder fills missing columns with NULLs),
@@ -3395,28 +3401,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // commitDense may have sealed (spill-driven reseal),
                             // rotating the .pv and recording a purge for the
                             // superseded file. The pooled writer is freed below
-                            // without draining that outbox through a TableWriter,
-                            // so the superseded value file would leak. Reclaim it
-                            // inline -- but ONLY in rewrite mode, where the index
-                            // is built into a fresh txn-named directory that is
-                            // invisible to readers until the commit bumps _txn
-                            // (the old dir stays at srcNameTxn): no committed
-                            // reader can pick the superseded prev gen, whose entry
-                            // is tagged with the pre-seal txn. In update-in-place
-                            // mode the directory is the live committed one, where
-                            // a reader pinned at the pre-commit txn could still
-                            // walk to and map the superseded .pv, so it is NOT
-                            // safe to unlink here. That far-rarer case keeps one
-                            // superseded .pv on disk -- bounded, not growing: the
-                            // next in-place rebuild's of(isInit) truncates and
-                            // reuses it, so the on-disk count stays at two
-                            // (.pv.0 + active). That is a known gap (full
-                            // reclamation needs a scoreboard-gated deferred purge
-                            // routed to the writer thread), still strictly better
-                            // than the pre-fix data loss it replaces.
-                            if (isRewrite) {
-                                indexWriter.unlinkPendingSealPurgesDirect();
-                            }
+                            // without ever draining that outbox through a
+                            // TableWriter (the native reseal does, this path
+                            // didn't), so the superseded .pv would leak. Hand the
+                            // purge to the writer's deferred queue: it is published
+                            // after the commit and the scoreboard-gated job deletes
+                            // the .pv only once no reader is pinned in its txn
+                            // window -- safe for both the rewrite (fresh dir) and
+                            // update-in-place (live committed dir) cases. Tagged
+                            // with getTxn() as the current (pre-commit) txn so the
+                            // seal's getTxn()+1 entry is treated as finite-future.
+                            tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
                         } else {
                             indexWriter.commit();
                         }

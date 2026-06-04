@@ -4616,10 +4616,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * to a new sealTxn. Unlike the native reseal, the pooled parquet writer is
      * freed (close() -> releasePendingPurges) without ever draining its pending
      * seal-purge, so the superseded intermediate .pv would leak on disk
-     * permanently (no directory sweep, no recovery-walk reclaim). The fix unlinks
-     * the superseded value file inline -- safe because the parquet rebuild is a
-     * fresh, uncommitted index whose prev gens are never picked by a committed
-     * reader. After a spill-driven CONVERT, exactly one .pv must remain.
+     * permanently (no directory sweep, no recovery-walk reclaim). The fix hands
+     * the purge to the TableWriter's deferred queue; after the commit, the
+     * scoreboard-gated PostingSealPurgeJob reclaims the superseded .pv. After a
+     * spill-driven CONVERT + O3 rewrite and a purge-job pass, exactly one .pv
+     * must remain.
      */
     @Test
     public void testConvertToParquetPostingResealSpillDoesNotLeakValueFile() throws Exception {
@@ -4702,19 +4703,106 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Concurrent-read safety guard for the parquet reseal value-file reclaim
-     * (unlinkPendingSealPurgesDirect). Background threads continuously query the
-     * posting index on a parquet partition while the main thread repeatedly
-     * O3-rewrites it under a tiny spill budget, so every rewrite drives
-     * commitDense -> seal -> the inline reclaim (gated on isRewrite). The reclaim
-     * DELETES a value file; if it ever deleted one a reader still resolves, a
-     * concurrent count() would fail to open it or return a short count -- so the
-     * 'A' count (rows are only added) must stay monotonic, never below the
-     * initial 2010, with no reader crash. This catches a reclaim that unlinks a
-     * still-live file (fault injection: deleting the active .pv makes it fail).
-     * The trailing single-.pv assertion additionally guards against the reclaim
-     * regressing into a leak across many rewrites; the deterministic counterpart
-     * is testConvertToParquetPostingResealSpillDoesNotLeakValueFile.
+     * Update-in-place twin of testConvertToParquetPostingResealSpillDoesNotLeakValueFile.
+     * Forcing many small row groups plus disabled rewrite thresholds makes the O3
+     * insert update the parquet file in place (isRewrite=false), so the posting
+     * index rebuilds into the LIVE committed directory. The spill-driven reseal's
+     * superseded .pv cannot be unlinked inline there (a reader pinned at the
+     * pre-commit txn could still map it), so it is routed to the scoreboard-gated
+     * deferred purge instead. After the commit and a purge-job run, exactly one
+     * value file must remain -- the case that leaked before the deferred purge.
+     */
+    @Test
+    public void testInPlaceParquetPostingResealSpillReclaimsValueFile() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        // Multi-row-group + rewrite triggers off -> O3 updates the parquet file
+        // in place (isRewrite=false) rather than rewriting to a new directory.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_inplace (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pq_inplace
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(2000)
+                    """);
+            execute("""
+                    INSERT INTO t_pq_inplace
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_inplace CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // O3 into the parquet partition; with the config above this updates in
+            // place (isRewrite=false) and rebuilds the index over all 2000+ 'A'
+            // rows, tripping the spill budget -> commitDense seals -> deferred purge.
+            execute("""
+                    INSERT INTO t_pq_inplace VALUES
+                    ('2024-01-01T00:10:00.500000Z', 'A'),
+                    ('2024-01-01T00:20:00.500000Z', 'A')
+                    """);
+            drainWalQueue();
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT count() FROM t_pq_inplace WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2012\n");
+
+            final TableToken token = engine.getTableTokenIfExists("t_pq_inplace");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final java.io.File dir = new java.io.File(path.toString());
+                final String[] names = dir.list();
+                Assert.assertNotNull("partition dir must exist: " + dir, names);
+                int pvCount = 0;
+                for (String n : names) {
+                    if (n.startsWith("sym.pv.")) {
+                        pvCount++;
+                    }
+                }
+                Assert.assertEquals(
+                        "exactly one value file must remain after the in-place reseal; the "
+                                + "superseded intermediate must be reclaimed by the deferred purge: "
+                                + java.util.Arrays.toString(names),
+                        1, pvCount);
+            }
+        });
+    }
+
+    /**
+     * Concurrent-read integration test for the parquet reseal value-file reclaim
+     * (deferParquetPostingSealPurges -> scoreboard-gated PostingSealPurgeJob).
+     * Background threads continuously query the posting index on a parquet
+     * partition while the main thread repeatedly O3-rewrites it under a tiny
+     * spill budget, so every rewrite drives commitDense -> seal -> a deferred
+     * purge. The 'A' count (rows are only added) must stay monotonic, never below
+     * the initial 2010, with no reader crash -- the reclaim is scoreboard-gated,
+     * so it must never delete a .pv a reader still resolves. The trailing
+     * single-.pv assertion (after a purge-job pass with nothing pinned) guards
+     * against the reclaim regressing into a leak across many rewrites; the
+     * deterministic counterpart is
+     * testConvertToParquetPostingResealSpillDoesNotLeakValueFile.
      */
     @Test
     public void testParquetPostingSpillConcurrentReadFuzz() throws Exception {
@@ -4813,7 +4901,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             // The reclaim must also have kept the partition free of leaked
             // intermediates across every rewrite: exactly one value file remains.
+            // The rewrite purges are deferred and scoreboard-gated, so with the
+            // readers stopped and writers released (nothing pinned) a purge-job
+            // pass reclaims every superseded .pv.
             engine.releaseAllWriters();
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
             final TableToken token = engine.getTableTokenIfExists("xq");
             Assert.assertNotNull("table must exist", token);
             long partitionTs;
