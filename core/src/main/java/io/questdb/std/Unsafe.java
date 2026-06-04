@@ -56,15 +56,15 @@ public final class Unsafe {
     public static final long MEMORY_TRACKER_BLOCK_SIZE = Misc.CACHE_LINE_SIZE;
     public static final long MEMORY_TRACKER_LIMIT_OFFSET = 8;
     public static final long MEMORY_TRACKER_USED_OFFSET = 0;
-    // Size of the native QdbAllocator block. Layout: {mem_tracking, memory_tracker, tagged_used, memory_tag}.
-    // Must match `struct QdbAllocator` (#[repr(C, packed)]) in `allocator.rs`.
-    private static final long QDB_ALLOCATOR_SIZE = 8 + 8 + 8 + 4;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final long FREE_COUNT_ADDR;
     private static final long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
     private static final long NON_RSS_MEM_USED_ADDR;
+    // Size of the native QdbAllocator block. Layout: {mem_tracking, memory_tracker, tagged_used, memory_tag}.
+    // Must match `struct QdbAllocator` (#[repr(C, packed)]) in `allocator.rs`.
+    private static final long QDB_ALLOCATOR_SIZE = 8 + 8 + 8 + 4;
     private static final long REALLOC_COUNT_ADDR;
     private static final long RSS_MEM_LIMIT_ADDR;
     private static final long RSS_MEM_USED_ADDR;

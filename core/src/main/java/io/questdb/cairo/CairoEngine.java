@@ -224,15 +224,15 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    // Lazily initialized on first call to getMemoryTrackerProvider(), because the
+    // FactoryProvider that produces it is not bound until config.init(engine, ...)
+    // runs -- which is *after* the engine constructor returns.
+    private volatile MemoryTrackerProvider memoryTrackerProvider;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
-    // Lazily initialized on first call to getMemoryTrackerProvider(), because the
-    // FactoryProvider that produces it is not bound until config.init(engine, ...)
-    // runs -- which is *after* the engine constructor returns.
-    private volatile MemoryTrackerProvider memoryTrackerProvider;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, new QdbrWalLocker());

@@ -111,7 +111,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "INSERT INTO tab SELECT (x * 1000000)::timestamp, x::varchar, x FROM long_sequence(200_000)",
+                                "INSERT INTO tab SELECT (x * 1_000_000)::timestamp, x::varchar, x FROM long_sequence(200_000)",
                                 sqlExecutionContext
                         );
                         try (RecordCursorFactory factory = compiler.compile("SELECT k, count(*) FROM tab GROUP BY k", sqlExecutionContext).getRecordCursorFactory()) {
@@ -150,7 +150,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "INSERT INTO tab SELECT (x * 1000000)::timestamp, (x % 5)::varchar, x FROM long_sequence(100_000)",
+                                "INSERT INTO tab SELECT (x * 1_000_000)::timestamp, (x % 5)::varchar, x FROM long_sequence(100_000)",
                                 sqlExecutionContext
                         );
                         try (RecordCursorFactory factory = compiler.compile("SELECT k, count(*) FROM tab GROUP BY k", sqlExecutionContext).getRecordCursorFactory()) {
@@ -273,7 +273,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "INSERT INTO tab SELECT (x * 1000000)::timestamp, (x % 500)::varchar, x FROM long_sequence(100_000)",
+                                "INSERT INTO tab SELECT (x * 1_000_000)::timestamp, (x % 500)::varchar, x FROM long_sequence(100_000)",
                                 sqlExecutionContext
                         );
                         try (RecordCursorFactory factory = compiler.compile("SELECT k, count(*), sum(v) FROM tab GROUP BY k", sqlExecutionContext).getRecordCursorFactory()) {

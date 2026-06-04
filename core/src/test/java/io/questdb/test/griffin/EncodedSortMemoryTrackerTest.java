@@ -135,7 +135,10 @@ public class EncodedSortMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE tab AS (SELECT (5 - x) AS k FROM long_sequence(5))");
             drainWalQueue();
             assertUsesFactory("SELECT * FROM tab ORDER BY k", EncodedSortLightRecordCursorFactory.class);
-            assertSql("k\n0\n1\n2\n3\n4\n", "SELECT * FROM tab ORDER BY k");
+            assertQuery("SELECT * FROM tab ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\n0\n1\n2\n3\n4\n");
         });
     }
 

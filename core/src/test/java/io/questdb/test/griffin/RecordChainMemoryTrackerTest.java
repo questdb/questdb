@@ -145,13 +145,14 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
                     "INSERT INTO slave SELECT cast(x AS varchar), x, cast(x * 1000 AS TIMESTAMP) FROM long_sequence(3)"
             );
             drainWalQueue();
-            assertSql(
-                    "k\tv\n" +
+            assertQuery("SELECT master.k, slave.v FROM master ASOF JOIN slave ON k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("k\tv\n" +
                             "1\t1\n" +
                             "2\t2\n" +
-                            "3\t3\n",
-                    "SELECT master.k, slave.v FROM master ASOF JOIN slave ON k"
-            );
+                            "3\t3\n");
         });
     }
 
@@ -250,14 +251,14 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(4))");
             drainWalQueue();
-            assertSql(
-                    "k\tcd\n" +
+            assertQuery("SELECT k, cume_dist() OVER (ORDER BY k) AS cd FROM tab ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\tcd\n" +
                             "1\t0.25\n" +
                             "2\t0.5\n" +
                             "3\t0.75\n" +
-                            "4\t1.0\n",
-                    "SELECT k, cume_dist() OVER (ORDER BY k) AS cd FROM tab ORDER BY k"
-            );
+                            "4\t1.0\n");
         });
     }
 

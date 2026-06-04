@@ -87,7 +87,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tab_idx AS (" +
-                            "  SELECT (x * 1000000L)::timestamp ts, ('s' || x)::symbol sym, x v" +
+                            "  SELECT (x * 1_000_000L)::timestamp ts, ('s' || x)::symbol sym, x v" +
                             "  FROM long_sequence(" + HIGH_CARDINALITY + ")" +
                             "), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY"
             );
@@ -108,12 +108,13 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 'b', 4)"
             );
             drainWalQueue();
-            assertSql(
-                    "sym\tv\n" +
+            // Single-pass: returns() re-executes the query, and LATEST BY frees its row lists only
+            // at factory close, so a second pass would breach this class's tight 128 KiB limit.
+            assertQuery("SELECT sym, v FROM tab_idx_small LATEST ON ts PARTITION BY sym ORDER BY sym")
+                    .noLeakCheck()
+                    .returnsOnce("sym\tv\n" +
                             "a\t3\n" +
-                            "b\t4\n",
-                    "SELECT sym, v FROM tab_idx_small LATEST ON ts PARTITION BY sym ORDER BY sym"
-            );
+                            "b\t4\n");
         });
     }
 
@@ -124,7 +125,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tab_noidx AS (" +
-                            "  SELECT (x * 1000000L)::timestamp ts, x k, x v" +
+                            "  SELECT (x * 1_000_000L)::timestamp ts, x k, x v" +
                             "  FROM long_sequence(" + HIGH_CARDINALITY + ")" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
@@ -145,12 +146,13 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 2, 40)"
             );
             drainWalQueue();
-            assertSql(
-                    "k\tv\n" +
+            // Single-pass: returns() re-executes the query, and LATEST BY frees its row lists only
+            // at factory close, so a second pass would breach this class's tight 128 KiB limit.
+            assertQuery("SELECT k, v FROM tab_noidx_small LATEST ON ts PARTITION BY k ORDER BY k")
+                    .noLeakCheck()
+                    .returnsOnce("k\tv\n" +
                             "1\t30\n" +
-                            "2\t40\n",
-                    "SELECT k, v FROM tab_noidx_small LATEST ON ts PARTITION BY k ORDER BY k"
-            );
+                            "2\t40\n");
         });
     }
 
@@ -163,7 +165,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tab_sub AS (" +
-                            "  SELECT (x * 1000000L)::timestamp ts, x k, x v" +
+                            "  SELECT (x * 1_000_000L)::timestamp ts, x k, x v" +
                             "  FROM long_sequence(" + HIGH_CARDINALITY + ")" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
@@ -187,13 +189,14 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 2, 40)"
             );
             drainWalQueue();
-            assertSql(
-                    "k\tv\n" +
+            // Single-pass: returns() re-executes the query, and LATEST BY frees its row lists only
+            // at factory close, so a second pass would breach this class's tight 128 KiB limit.
+            assertQuery("WITH yy AS (SELECT ts, k, max(v) v FROM tab_sub_small SAMPLE BY 1s ALIGN TO FIRST OBSERVATION) " +
+                    "SELECT k, v FROM yy LATEST ON ts PARTITION BY k ORDER BY k")
+                    .noLeakCheck()
+                    .returnsOnce("k\tv\n" +
                             "1\t30\n" +
-                            "2\t40\n",
-                    "WITH yy AS (SELECT ts, k, max(v) v FROM tab_sub_small SAMPLE BY 1s ALIGN TO FIRST OBSERVATION) " +
-                            "SELECT k, v FROM yy LATEST ON ts PARTITION BY k ORDER BY k"
-            );
+                            "2\t40\n");
         });
     }
 
@@ -206,7 +209,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tab_loop AS (" +
-                            "  SELECT (x * 1000000L)::timestamp ts, x % 10 k, x v" +
+                            "  SELECT (x * 1_000_000L)::timestamp ts, x % 10 k, x v" +
                             "  FROM long_sequence(1000)" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
@@ -239,7 +242,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tab_open AS (" +
-                            "  SELECT (x * 1000000L)::timestamp ts, x % 100 k, x v" +
+                            "  SELECT (x * 1_000_000L)::timestamp ts, x % 100 k, x v" +
                             "  FROM long_sequence(1000)" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );

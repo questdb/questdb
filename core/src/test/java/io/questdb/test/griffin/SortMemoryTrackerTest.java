@@ -139,15 +139,15 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(5))");
             drainWalQueue();
-            assertSql(
-                    "k\trn\n" +
+            assertQuery("SELECT k, row_number() OVER (ORDER BY k) AS rn FROM tab ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\trn\n" +
                             "1\t1\n" +
                             "2\t2\n" +
                             "3\t3\n" +
                             "4\t4\n" +
-                            "5\t5\n",
-                    "SELECT k, row_number() OVER (ORDER BY k) AS rn FROM tab ORDER BY k"
-            );
+                            "5\t5\n");
         });
     }
 
@@ -192,7 +192,7 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final CompiledQuery cq = compiler.compile(
-                        "SELECT * FROM tab ORDER BY k DESC LIMIT 50000",
+                        "SELECT * FROM tab ORDER BY k DESC LIMIT 50_000",
                         sqlExecutionContext
                 );
                 try (RecordCursorFactory factory = cq.getRecordCursorFactory();
@@ -219,15 +219,15 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
             drainWalQueue();
-            assertSql(
-                    "k\n" +
+            assertQuery("SELECT * FROM tab ORDER BY k DESC LIMIT 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\n" +
                             "9\n" +
                             "8\n" +
                             "7\n" +
                             "6\n" +
-                            "5\n",
-                    "SELECT * FROM tab ORDER BY k DESC LIMIT 5"
-            );
+                            "5\n");
         });
     }
 
@@ -240,15 +240,15 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT cast(x AS varchar) k FROM long_sequence(5))");
             drainWalQueue();
-            assertSql(
-                    "k\n" +
+            assertQuery("SELECT * FROM tab ORDER BY k DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\n" +
                             "5\n" +
                             "4\n" +
                             "3\n" +
                             "2\n" +
-                            "1\n",
-                    "SELECT * FROM tab ORDER BY k DESC"
-            );
+                            "1\n");
         });
     }
 

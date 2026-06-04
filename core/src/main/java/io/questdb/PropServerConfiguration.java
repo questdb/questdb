@@ -2490,12 +2490,23 @@ public class PropServerConfiguration implements ServerConfiguration {
                 : getIntSize(properties, env, deprecatedMaxPagesKey, Integer.MAX_VALUE);
 
         if (isPropertyExplicitlySet(properties, env, deprecatedMaxPagesKey)) {
-            return pageSize * (long) mainMaxPages;
+            return pagesToBytesSaturating(pageSize, mainMaxPages);
         }
         if (hasAlias && isPropertyExplicitlySet(properties, env, deprecatedAliasMaxPagesKey)) {
-            return pageSize * (long) aliasMaxPages;
+            return pagesToBytesSaturating(pageSize, aliasMaxPages);
         }
         return Long.MAX_VALUE;
+    }
+
+    private static long pagesToBytesSaturating(long pageSize, int maxPages) {
+        final long bytes = pageSize * (long) maxPages;
+        // An absurdly large explicit page size combined with a high deprecated
+        // *_MAX_PAGES value can overflow a signed long; saturate so the derived
+        // byte cap never wraps negative.
+        if (pageSize != 0 && bytes / pageSize != maxPages) {
+            return Long.MAX_VALUE;
+        }
+        return bytes;
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {

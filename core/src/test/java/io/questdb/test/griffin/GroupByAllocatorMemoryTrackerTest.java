@@ -125,12 +125,12 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute("CREATE TABLE tab AS (SELECT x % 2 AS k, x % 10 AS v FROM long_sequence(100))");
             drainWalQueue();
-            assertSql(
-                    "k\tcnt\n" +
+            assertQuery("SELECT k, count_distinct(v) cnt FROM tab GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\tcnt\n" +
                             "0\t5\n" +
-                            "1\t5\n",
-                    "SELECT k, count_distinct(v) cnt FROM tab GROUP BY k ORDER BY k"
-            );
+                            "1\t5\n");
         });
     }
 
@@ -171,10 +171,11 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute("CREATE TABLE tab AS (SELECT x % 5 AS v FROM long_sequence(100))");
             drainWalQueue();
-            assertSql(
-                    "cnt\n5\n",
-                    "SELECT count_distinct(v) cnt FROM tab"
-            );
+            assertQuery("SELECT count_distinct(v) cnt FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n5\n");
         });
     }
 

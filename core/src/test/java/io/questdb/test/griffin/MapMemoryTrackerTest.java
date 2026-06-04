@@ -102,15 +102,15 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute("CREATE TABLE tab AS (SELECT x % 5 AS k, x AS v FROM long_sequence(100))");
             drainWalQueue();
-            assertSql(
-                    "k\tsum\n" +
+            assertQuery("SELECT k, sum(v) FROM tab GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\tsum\n" +
                             "0\t1050\n" +
                             "1\t970\n" +
                             "2\t990\n" +
                             "3\t1010\n" +
-                            "4\t1030\n",
-                    "SELECT k, sum(v) FROM tab GROUP BY k ORDER BY k"
-            );
+                            "4\t1030\n");
         });
     }
 
@@ -173,10 +173,11 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
             execute("CREATE TABLE slave AS (SELECT cast(x AS varchar) k, x AS v FROM long_sequence(20))");
             drainWalQueue();
-            assertSql(
-                    "count\n20\n",
-                    "SELECT count(*) FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)"
-            );
+            assertQuery("SELECT count(*) FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n20\n");
         });
     }
 

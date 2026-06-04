@@ -48,10 +48,11 @@ public interface MemoryTrackerProvider extends Closeable, Mutable {
      * @param securityContext the principal driving the workload; consumed by
      *                        the enterprise provider to look up a per-principal
      *                        quota node, ignored by the OSS provider.
-     * @param queryId         identifier carried in error messages on a limit
-     *                        breach. See the per-workload bind points in the
-     *                        feature doc for what this represents per workload
-     *                        class.
+     * @param queryId         identifier carried in the error message on a limit
+     *                        breach. For {@code QUERY} it is the query registry
+     *                        id (matches {@code query_activity.query_id}); for
+     *                        {@code MAT_VIEW_REFRESH} and {@code WAL_APPLY} it is
+     *                        the target table id.
      * @param workload        the workload class; selects which configured
      *                        limit applies.
      */

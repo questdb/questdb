@@ -107,7 +107,7 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
             );
             execute(
                     "INSERT INTO p_big " +
-                            "SELECT rnd_varchar(200, 256, 0), (x * 1000000L)::timestamp, x " +
+                            "SELECT rnd_varchar(200, 256, 0), (x * 1_000_000L)::timestamp, x " +
                             "FROM long_sequence(" + LARGE_ROWS + ")"
             );
             execute("INSERT INTO p_big VALUES ('z', '1970-01-02T00:00:00.000000Z', -1)");
@@ -131,13 +131,13 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
             );
             execute("ALTER TABLE p_small CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
             // Scan only the (now parquet) first partition through the page-frame pool.
-            assertSql(
-                    "s\tts\tv\n" +
+            assertQuery("SELECT * FROM p_small WHERE ts < '1970-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("s\tts\tv\n" +
                             "aaa\t1970-01-01T00:00:00.000000Z\t1\n" +
                             "bbb\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "ccc\t1970-01-01T00:00:02.000000Z\t3\n",
-                    "SELECT * FROM p_small WHERE ts < '1970-01-02'"
-            );
+                            "ccc\t1970-01-01T00:00:02.000000Z\t3\n");
         });
     }
 
@@ -157,13 +157,13 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x_small AS (SELECT ('s' || x)::varchar s, x v FROM long_sequence(3))");
             encodeToParquet("x_small", "x_small.parquet");
-            assertSql(
-                    "s\tv\n" +
+            assertQuery("SELECT * FROM read_parquet('x_small.parquet')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\tv\n" +
                             "s1\t1\n" +
                             "s2\t2\n" +
-                            "s3\t3\n",
-                    "SELECT * FROM read_parquet('x_small.parquet')"
-            );
+                            "s3\t3\n");
         });
     }
 

@@ -103,7 +103,11 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
             execute("CREATE TABLE b AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
             drainWalQueue();
-            assertSql("count\n10\n", "SELECT count(*) FROM (SELECT k FROM a INTERSECT SELECT k FROM b)");
+            assertQuery("SELECT count(*) FROM (SELECT k FROM a INTERSECT SELECT k FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
         });
     }
 
@@ -150,7 +154,11 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
         // per-query limit: a large input runs to completion.
         assertMemoryLeak(() -> {
             createLargeTables();
-            assertSql("count\n200000\n", "SELECT count(*) FROM (SELECT k FROM a UNION ALL SELECT k FROM b)");
+            assertQuery("SELECT count(*) FROM (SELECT k FROM a UNION ALL SELECT k FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n200000\n");
         });
     }
 
@@ -168,7 +176,11 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
             execute("CREATE TABLE b AS (SELECT cast(x + 5 AS varchar) k FROM long_sequence(10))");
             drainWalQueue();
-            assertSql("count\n15\n", "SELECT count(*) FROM (SELECT k FROM a UNION SELECT k FROM b)");
+            assertQuery("SELECT count(*) FROM (SELECT k FROM a UNION SELECT k FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n15\n");
         });
     }
 

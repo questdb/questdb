@@ -73,8 +73,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // The result is iterated (not count(*), which would short-circuit via
         // calculateSize without building the map) so the map actually grows.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1000000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1000000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_linear(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinLightRecordCursorFactory.class);
@@ -89,8 +89,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // AsOfJoinLight fallback. A small input keeps every other allocation under the limit.
         setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT x AS k, (x * 1000000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT x AS k, (x * 1000000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x AS k, (x * 1_000_000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x AS k, (x * 1_000_000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             assertOpenFailureReleasesAllocations(
                     "SELECT /*+ asof_linear(m s) */ m.k FROM m ASOF JOIN s ON k",
@@ -218,8 +218,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1000000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1000000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT count(*) FROM m SPLICE JOIN s ON k";
             assertUsesFactory(sql, SpliceJoinLightRecordCursorFactory.class);
@@ -234,8 +234,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // allocation under the limit; reusing one factory across opens catches the isOpen desync.
         setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT x AS k, (x * 1000000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT x AS k, (x * 1000000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x AS k, (x * 1_000_000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x AS k, (x * 1_000_000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             assertOpenFailureReleasesAllocations(
                     "SELECT * FROM m SPLICE JOIN s ON k",

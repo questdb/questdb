@@ -443,6 +443,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
         this.validationSecurityContext = null;
+        // QueryRegistry owns the tracker lifecycle; null it defensively so an error
+        // unwinding between register() and unregister() cannot leak it into reuse.
+        this.memoryTracker = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();

@@ -122,13 +122,13 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select(query)) {
                 assertHitsFastPath(factory);
             }
-            assertSql(
-                    "k\tsum\n" +
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tsum\n" +
                             "7\t1.0\n" +
                             "7\tnull\n" +
-                            "7\t2.0\n",
-                    query
-            );
+                            "7\t2.0\n");
         });
     }
 
@@ -149,15 +149,15 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
             createSmallTable();
             // All rows fall in a single 1h bucket, so FILL(LINEAR) adds no
             // interpolated rows; each key's sum passes through unchanged.
-            assertSql(
-                    "k\tsum\n" +
+            assertQuery("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(LINEAR) ORDER BY k, sum")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\tsum\n" +
                             "0\t275.0\n" +
                             "1\t235.0\n" +
                             "2\t245.0\n" +
                             "3\t255.0\n" +
-                            "4\t265.0\n",
-                    "SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(LINEAR) ORDER BY k, sum"
-            );
+                            "4\t265.0\n");
         });
     }
 
@@ -184,18 +184,18 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute(
                     "CREATE TABLE tab AS (" +
-                            "SELECT 7::long AS k, x::double AS v, (x * 3600000000L)::timestamp AS ts " +
+                            "SELECT 7::long AS k, x::double AS v, (x * 3_600_000_000L)::timestamp AS ts " +
                             "FROM long_sequence(3)" +
                             ") TIMESTAMP(ts)"
             );
             drainWalQueue();
-            assertSql(
-                    "k\tsum\n" +
+            assertQuery("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tsum\n" +
                             "7\t1.0\n" +
                             "7\t2.0\n" +
-                            "7\t3.0\n",
-                    "SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION"
-            );
+                            "7\t3.0\n");
         });
     }
 
@@ -263,7 +263,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
             // during the key-discovery build pass.
             execute(
                     "CREATE TABLE tab AS (" +
-                            "SELECT x::long AS k, x::double AS v, (x * 100000L)::timestamp AS ts " +
+                            "SELECT x::long AS k, x::double AS v, (x * 100_000L)::timestamp AS ts " +
                             "FROM long_sequence(60_000)" +
                             ") TIMESTAMP(ts)"
             );
@@ -315,7 +315,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
             // every run completes, exercising the open/build/close cycle.
             execute(
                     "CREATE TABLE tab AS (" +
-                            "SELECT (x % 50)::long AS k, x::double AS v, (x * 10000000L)::timestamp AS ts " +
+                            "SELECT (x % 50)::long AS k, x::double AS v, (x * 10_000_000L)::timestamp AS ts " +
                             "FROM long_sequence(2000)" +
                             ") TIMESTAMP(ts)"
             );
@@ -356,7 +356,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         // 5 keys, 50 rows over ~5 seconds -> a single 1h bucket.
         execute(
                 "CREATE TABLE tab AS (" +
-                        "SELECT (x % 5)::long AS k, x::double AS v, (x * 100000L)::timestamp AS ts " +
+                        "SELECT (x % 5)::long AS k, x::double AS v, (x * 100_000L)::timestamp AS ts " +
                         "FROM long_sequence(50)" +
                         ") TIMESTAMP(ts)"
         );

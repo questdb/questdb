@@ -78,17 +78,6 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
     }
 
     /**
-     * Initializes the tracker for a new workload invocation: resets the
-     * native counter to {@code 0} and stores the workload-appropriate limit.
-     */
-    void init(long queryId, MemoryTrackerWorkload workload, long limit) {
-        this.queryId = queryId;
-        this.workload = workload;
-        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limit);
-    }
-
-    /**
      * Releases all native memory owned by this tracker: the
      * {@code {used, limit}} block and every per-tag Rust allocator block. Called
      * by the provider when the pooled tracker is finally disposed (engine
@@ -97,5 +86,16 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
     void destroy() {
         freeNativeAllocators();
         Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+    }
+
+    /**
+     * Initializes the tracker for a new workload invocation: resets the
+     * native counter to {@code 0} and stores the workload-appropriate limit.
+     */
+    void init(long queryId, MemoryTrackerWorkload workload, long limit) {
+        this.queryId = queryId;
+        this.workload = workload;
+        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
+        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limit);
     }
 }
