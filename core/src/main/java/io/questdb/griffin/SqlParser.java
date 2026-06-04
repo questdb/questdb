@@ -33,6 +33,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -718,41 +719,6 @@ public class SqlParser {
     }
 
     /**
-     * Builds the keep-rows filter for a row-expiry predicate. The stored predicate describes WHEN
-     * a row expires, so the kept rows are the negation of it. For the common timestamp-vs-now()
-     * shapes ({@code col < now()}, {@code col <= now()}, {@code now() > col}, {@code now() >= col})
-     * we emit the equivalent {@code col >= now()} / {@code col > now()} form so the planner can use
-     * an interval/timestamp scan; otherwise we fall back to a generic {@code NOT (...)} wrap.
-     * <p>
-     * Ported verbatim from the expiring-view draft (193dddfd0c) buildTimestampCompareFilter.
-     */
-    private static String buildRowExpiryKeepFilter(String predicate) {
-        final String trimmed = predicate.trim();
-        final String lower = trimmed.toLowerCase();
-
-        if (lower.endsWith("< now()") || lower.endsWith("<now()")) {
-            final String col = trimmed.substring(0, trimmed.lastIndexOf('<')).trim();
-            return col + " >= now()";
-        }
-        if (lower.endsWith("<= now()") || lower.endsWith("<=now()")) {
-            final String col = trimmed.substring(0, trimmed.lastIndexOf('<')).trim();
-            return col + " > now()";
-        }
-        if (lower.startsWith("now() >")) {
-            String rest = trimmed.substring(7).trim();
-            if (rest.startsWith("=")) {
-                // now() >= col means col <= now() is expired, so keep NOT(col <= now()) = col > now()
-                rest = rest.substring(1).trim();
-                return rest + " > now()";
-            }
-            // now() > col means col < now() is expired, so keep col >= now()
-            return rest + " >= now()";
-        }
-        // Fallback to generic negation
-        return "NOT (" + trimmed + ")";
-    }
-
-    /**
      * Rewrites a table reference that carries an EXPIRE ROWS policy into a nested
      * {@code SELECT * FROM "t" WHERE <keep-filter>} sub-query, so expired rows become invisible to
      * all reads. Mirrors {@link #compileViewQuery(IQueryModel, TableToken, int)} and the
@@ -767,7 +733,7 @@ public class SqlParser {
             int position,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final String filterSql = buildRowExpiryKeepFilter(predicate);
+        final String filterSql = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
         // Quote the table name so names that need quoting (or look like keywords) parse correctly.
         final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE " + filterSql;
 

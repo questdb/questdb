@@ -337,6 +337,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TimeZoneRules logTimestampTimezoneRules;
     private final boolean matViewCoveringIndexEnabled;
     private final boolean matViewEnabled;
+    private final boolean rowExpiryEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
     private final int matViewMaxRefreshRetries;
@@ -1479,6 +1480,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+            this.rowExpiryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ROW_EXPIRY_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             // Do not use shared write pool by default for mat-view-refresh, use same worker count as wal-apply
@@ -5148,6 +5150,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewEnabled() {
             return matViewEnabled;
+        }
+
+        @Override
+        public boolean isRowExpiryEnabled() {
+            return rowExpiryEnabled;
         }
 
         @Override

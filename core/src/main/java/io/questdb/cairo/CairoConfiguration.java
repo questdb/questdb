@@ -977,6 +977,13 @@ public interface CairoConfiguration {
 
     boolean isMatViewParallelSqlEnabled();
 
+    /**
+     * When false, tables/materialized views with an EXPIRE ROWS policy are still queryable (the
+     * read-time filter still hides expired rows), but the background row-expiry cleanup job is not
+     * scheduled, so no rows are ever physically reclaimed.
+     */
+    boolean isRowExpiryEnabled();
+
     boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
