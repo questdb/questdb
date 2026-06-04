@@ -127,6 +127,8 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() may breach after reopening tracker-charged join key map(s); close() frees them and resets isOpen for reuse
+            Misc.free(cursor);
             throw e;
         }
     }

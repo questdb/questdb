@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
@@ -201,6 +202,40 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinFullFatOpenFailureReleasesAllocations() throws Exception {
+        // Force the full-fat LtJoinRecordCursorFactory and inflate the join-key map above
+        // the limit so its of() breaches on joinKeyMapA.reopen() with isOpen set; TOLERANCE
+        // adds the second evacuation map. Reusing the factory catches a failed open that
+        // leaves isOpen stuck (a later open would skip reopen() and stop breaching).
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x AS k, (x * 1_000_000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x AS k, (x * 1_000_000L)::timestamp ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT m.k FROM m LT JOIN s ON k TOLERANCE 2s",
+                        sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    Assert.assertTrue(
+                            "expected LtJoinRecordCursorFactory, got: " + factory.getClass().getSimpleName(),
+                            isFactoryInChain(factory, LtJoinRecordCursorFactory.class)
+                    );
+                    for (int i = 0; i < 5; i++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNestedLoopFullJoinFailsOnLargeInput() throws Exception {
         // A one-row master keeps the nested loop cheap while the non-equi FULL
         // OUTER condition matches nearly every slave row, growing the matched-id
@@ -283,18 +318,24 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     private void assertUsesFactory(String sql, Class<?> factoryClass) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            RecordCursorFactory cur = factory;
-            while (cur != null) {
-                if (factoryClass.isInstance(cur)) {
-                    return;
-                }
-                RecordCursorFactory next = cur.getBaseFactory();
-                if (next == cur) {
-                    break;
-                }
-                cur = next;
+            if (!isFactoryInChain(factory, factoryClass)) {
+                Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
             }
-            Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
         }
+    }
+
+    private boolean isFactoryInChain(RecordCursorFactory factory, Class<?> factoryClass) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (factoryClass.isInstance(cur)) {
+                return true;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        return false;
     }
 }

@@ -79,6 +79,8 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         } catch (Throwable ex) {
             Misc.free(cursorA);
             Misc.free(cursorB);
+            // of() may breach after reopening tracker-charged maps; close() frees them and resets isOpen for reuse
+            Misc.free(cursor);
             throw ex;
         }
     }

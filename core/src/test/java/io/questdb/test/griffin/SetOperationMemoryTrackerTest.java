@@ -98,6 +98,20 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntersectOpenFailureReleasesAllocations() throws Exception {
+        // Inflate the maps above the limit so INTERSECT's of() breaches on the first
+        // reopen() with isOpen set; reusing the factory catches a failed open that
+        // leaves isOpen stuck (a later open would skip reopen() and stop breaching).
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
+            execute("CREATE TABLE b AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
+            drainWalQueue();
+            assertOpenFailureReleasesAllocations("SELECT k FROM a INTERSECT SELECT k FROM b");
+        });
+    }
+
+    @Test
     public void testIntersectSucceedsOnSmallInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
@@ -171,6 +185,19 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOpenFailureReleasesAllocations() throws Exception {
+        // Single-map UNION variant of the open-failure check: the failed open must
+        // free the cursor so reopen() runs (and breaches) again on every reuse.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
+            execute("CREATE TABLE b AS (SELECT cast(x + 10 AS varchar) k FROM long_sequence(10))");
+            drainWalQueue();
+            assertOpenFailureReleasesAllocations("SELECT k FROM a UNION SELECT k FROM b");
+        });
+    }
+
+    @Test
     public void testUnionSucceedsOnSmallInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
@@ -182,6 +209,23 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("count\n15\n");
         });
+    }
+
+    private void assertOpenFailureReleasesAllocations(String sql) throws Exception {
+        // Reuse one factory across opens, each expected to breach during the set-op
+        // cursor's of(). Without freeing the cursor on the failed open, isOpen stays
+        // set, a later open skips reopen() and stops breaching, tripping Assert.fail.
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            for (int i = 0; i < 5; i++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+            }
+        }
     }
 
     private void assertQueryBreaches(String sql) throws Exception {
