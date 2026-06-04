@@ -7121,6 +7121,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
+                // Discard any existing chain generations before re-adding from the
+                // parquet. On a fresh ADD INDEX this is a no-op (empty chain); on an
+                // O3/squash reseal of an already-indexed parquet partition it stops the
+                // rebuilt rows being appended on top of the O3 worker's .pv, which would
+                // otherwise double the row count.
+                indexer.getWriter().discardForRebuild();
 
                 final IntList coveringColumnIndices = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
                 final boolean hasCovering = coveringColumnIndices != null && coveringColumnIndices.size() > 0;
@@ -12328,6 +12334,82 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Materialise the covering sidecars (.pci/.pc) for a PARQUET partition's covering
+     * posting indexes. sealPostingIndexForPartition's native reseal reads native column
+     * files (absent on parquet) and skips parquet, but the O3 worker that rewrites a
+     * parquet partition builds only the non-covering .pv. Without rebuilding the
+     * covering here -- in finishO3Commit / squash, before the commit exposes the new
+     * version -- a concurrent reader can open the new parquet version, walk the chain
+     * (count() correct) but find no .pci, report coverCount=0 and resolve covered
+     * values as NULL. indexParquetPartition reads the rewritten parquet and wires up
+     * both the .pv and the covering sidecars.
+     *
+     * @return true if at least one covering posting column was rebuilt.
+     */
+    private boolean resealParquetCoveringForPartition(long partitionTimestamp) {
+        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
+        if (partitionIndex < 0) {
+            return false;
+        }
+        boolean processed = false;
+        long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        int plen = path.size();
+        if (!ff.exists(path.slash().$()) && PartitionBy.isPartitioned(partitionBy)) {
+            path.trimTo(pathSize);
+            partitionNameTxn = txWriter.getTxn();
+            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            plen = path.size();
+        }
+        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        try {
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                    continue;
+                }
+                final IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+                if (coveringCols == null || coveringCols.size() == 0) {
+                    // Non-covering parquet posting: the worker-built .pv stands.
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                if (columnTop == -1 || columnTop >= partitionSize) {
+                    continue;
+                }
+                final ColumnIndexer indexer = indexers.getQuick(colIdx);
+                if (!(indexer instanceof SymbolColumnIndexer)) {
+                    continue;
+                }
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                try {
+                    indexParquetPartition(
+                            (SymbolColumnIndexer) indexer,
+                            metadata.getColumnName(colIdx),
+                            partitionIndex,
+                            colIdx,
+                            columnNameTxn,
+                            metadata.getIndexValueBlockCapacity(colIdx),
+                            metadata.getColumnIndexType(colIdx),
+                            plen,
+                            partitionTimestamp
+                    );
+                    // Publish the seal-purges the rebuild's discardForRebuild queued for
+                    // the superseded .pv/.pc so the scoreboard-gated PostingSealPurgeJob
+                    // reclaims them; otherwise each O3/squash reseal leaks a value file.
+                    deferPendingPostingSealPurges(indexer, txWriter.getTxn());
+                    processed = true;
+                } finally {
+                    indexer.releaseIndexWriter();
+                    path.trimTo(plen);
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+        return processed;
+    }
+
+    /**
      * Per-partition helper for {@link #sealPostingIndexesForO3Partitions()}.
      * Opens each posting-index column on the given partition, folds any O3
      * tentative state into the active view, rolls back stale rowids left over
@@ -12365,7 +12447,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         if (txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp)) {
-            return false;
+            // The native reseal below reads native column files, which a parquet
+            // partition lacks. But an O3/squash rewrite that produces a new parquet
+            // version with a COVERING posting index still needs that version's covering
+            // sidecars (.pci/.pc) materialised -- the O3 worker builds only the
+            // non-covering .pv -- else a reader opening the new version walks the chain
+            // (count() correct) but finds no .pci, reports coverCount=0 and returns NULL
+            // covered values. Rebuild covering from the parquet here, pre-commit.
+            return resealParquetCoveringForPartition(partitionTimestamp);
         }
 
         boolean processed = false;

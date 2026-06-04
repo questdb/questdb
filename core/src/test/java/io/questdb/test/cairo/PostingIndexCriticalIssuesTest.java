@@ -540,6 +540,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final TableToken tableToken = engine.getTableTokenIfExists(tableName);
             Assert.assertNotNull("table must exist", tableToken);
 
+            // Earlier covering-index tests in this class leave purge tasks in the
+            // shared MessageBus ring (no PostingSealPurgeJob drains it in the test
+            // harness), so it can arrive already saturated. Sibling tests clear it
+            // by running a purge job first; this test must instead keep the ring
+            // full via the liveJob below, so drain the residue directly so its own
+            // fillPostingSealPurgeQueue saturation starts from an empty ring.
+            drainPostingSealPurgeQueue();
+
             // A live PostingSealPurgeJob owns the sys.posting_seal_purge_log
             // writer for the entire close, exactly as in a running server. It is
             // not draining concurrently (CPU-starved or in error backoff), so the
@@ -1259,7 +1267,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // Set up the shape produced by the fuzz failure: a non-WAL table
             // with a POSTING symbol index, a renamed indexed column, and a
             // symbol-capacity change before the O3/replace-style insert.
-            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING, sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // sym2 carries an explicit INCLUDE (ts) so the index is covering --
+            // the test asserts a CoveringIndex plan below. A bare INDEX TYPE
+            // POSTING is non-covering and would not produce that plan.
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (ts), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute(insertPostingRowsSql(-85, 0));
             execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO new_col_11");
             execute(insertPostingRowsSql(0, 10));
@@ -1372,10 +1383,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testParquetIndexWriteUsesCommitDense() throws Exception {
-        // O3PartitionJob.updateParquetIndexes goes through commitDense for POSTING.
-        // That path runs when O3 mutates an already-parquet partition. Convert the
-        // first partition to parquet, then O3-insert into it to trigger the rewrite.
-        // After that, the chain head must hold a single dense gen.
+        // O3PartitionJob.updateParquetIndexes goes through commitDense for a
+        // NON-covering POSTING index. That path runs when O3 mutates an
+        // already-parquet partition. A bare INDEX TYPE POSTING (no INCLUDE) is
+        // non-covering, so this exercises commitDense: a covering parquet
+        // partition is instead resealed (resealParquetCoveringForPartition
+        // rebuilds .pv + .pci/.pc), which intentionally rotates the value file.
+        // Convert the first partition to parquet, then O3-insert into it to
+        // trigger the rewrite. After that the chain head must hold a single
+        // dense gen with no rotated .pv.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_parquet_posting (
@@ -2900,10 +2916,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
+            // sym carries an explicit INCLUDE (ts) so the index is covering:
+            // the test arms a fault on the second seal-time .pv rotation, which
+            // only happens for a covering seal. A bare INDEX TYPE POSTING is
+            // non-covering and never rotates .pv at seal time.
             execute("""
                     CREATE TABLE t_c1_chain_head (
                         ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (ts)
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
@@ -5128,26 +5148,19 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * lost or double-freed). The floor is read BEFORE the count so a commit landing
      * mid-read can never make a valid snapshot look short.
      * <p>
-     * IGNORED reproducer for a PARQUET-specific covered-read race (root cause known,
-     * fix pending). Under concurrent O3 rewrite of parquet partitions a reader sees a
-     * correct posting count() but a sum(price) short by whole partitions, because the
-     * covered values read as SQL NULL (count() counts them; sum() skips NULLs).
-     * ROOT CAUSE (fully traced via instrumentation): getCoveredDouble returns NaN ->
-     * keyBlockAddrs == null while isCurrentGenDense == true -> cacheSidecarKeyAddrs
-     * early-returned on coverCount == 0 -> openSidecarFilesIfPresent found the .pci
-     * file MISSING when the reader opened the rewritten parquet partition version. The
-     * parquet O3 rewrite exposes the new partition version (with its sealTxn-versioned
-     * .pv row-ids) to readers BEFORE the writer-thread covering seal
-     * (sealPostingIndexForPartition) writes that version's .pci/.pc sidecars, so a
-     * reader catches a window where the partition is covered but its .pci does not yet
-     * exist, reports coverCount=0, and returns NULL covered values. Native partitions
-     * reseal in place (the .pci is always present), hence they pass. Single-threaded is
-     * correct. Fix belongs writer-side: the covering sidecars must exist before the new
-     * parquet partition version becomes reader-visible. Un-@Ignore to reproduce (~300ms).
+     * Regression for a fixed PARQUET-specific covered-read race. Before the fix, an
+     * O3/squash rewrite of a parquet partition exposed the new version with only the
+     * .pv (so count() was correct) but never materialised its covering .pci/.pc:
+     * sealPostingIndexForPartition skipped parquet, and the O3 worker builds only the
+     * non-covering .pv. A concurrent covered read then opened the new version, found
+     * the .pci missing, reported coverCount=0 and returned NULL covered values (count
+     * right, sum(price) short by whole partitions). Native partitions reseal in place
+     * (the .pci is always present), hence they passed. Fixed by
+     * resealParquetCoveringForPartition, which rebuilds covering for parquet partitions
+     * with a covering index in the seal sweep / squash, before the commit exposes the
+     * version (with discardForRebuild to avoid double-counting and a deferred
+     * seal-purge publish so superseded value files are reclaimed).
      */
-    @Ignore("Open (root-caused): a multi-partition O3/squash commit exposes some rewritten " +
-            "parquet partition versions with only the .pv and no covering .pci, so a concurrent " +
-            "covered read sees coverCount=0 and returns NULL. Native passes.")
     @Test
     public void testMultiThreadedO3CoveringPostingConcurrentReaderFuzz() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
