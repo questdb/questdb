@@ -1763,6 +1763,16 @@ public class SqlParser {
 
         tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, tableOpBuilder, true);
 
+        // Optional: EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]. Mirrors CREATE TABLE:
+        // it sits after the TTL/partition clauses and feeds the SAME CreateTableOperationBuilder
+        // fields (which the underlying CreateTableOperation persists to _meta), exactly like TTL.
+        // TODO(row-expiry): predicate is captured as raw text but NOT validated at CREATE time
+        //  (the view columns don't exist yet here, so the ALTER-style probe SELECT can't run);
+        //  validation happens on ALTER MATERIALIZED VIEW ... SET EXPIRE, as for CREATE TABLE.
+        if (tok != null && isExpireKeyword(tok)) {
+            tok = parseCreateTableExpireRows(lexer, tableOpBuilder);
+        }
+
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, tableOpBuilder);
             tok = optTok(lexer);

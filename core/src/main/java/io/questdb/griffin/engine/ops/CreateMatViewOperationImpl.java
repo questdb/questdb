@@ -189,6 +189,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return createTableOperation;
     }
 
+    // The row-expiry policy is parsed onto the underlying CreateTableOperation (mirroring TTL).
+    // It must be exposed on the TableStructure that CairoEngine.createMatView() hands to the _meta
+    // serializer, so delegate here exactly like getTtlHoursOrMonths(); otherwise CREATE MAT VIEW
+    // ... EXPIRE ROWS would silently drop the policy at create time.
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return createTableOperation.getExpiryCleanupIntervalMicros();
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return createTableOperation.getExpiryPredicate();
+    }
+
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return createTableOperation.getIndexBlockCapacity(columnIndex);

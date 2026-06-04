@@ -1122,12 +1122,12 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h",
                     32,
-                    "'alter' or 'resume' or 'suspend' or 'set' expected"
+                    "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h foobar",
                     33,
-                    "'alter' or 'resume' or 'suspend' or 'set' expected"
+                    "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter",
@@ -1245,7 +1245,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set",
                     36,
-                    "'ttl' or 'refresh' expected"
+                    "'ttl', 'expire' or 'refresh' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl",

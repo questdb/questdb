@@ -1,0 +1,218 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.mv;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+
+/**
+ * Verifies the EXPIRE ROWS row-expiry clause on MATERIALIZED VIEWs:
+ * <ul>
+ *     <li>{@code CREATE MATERIALIZED VIEW ... EXPIRE ROWS WHEN <pred> [CLEANUP EVERY <dur>]}</li>
+ *     <li>{@code ALTER MATERIALIZED VIEW ... SET EXPIRE ROWS WHEN <pred> [CLEANUP EVERY <dur>]}</li>
+ *     <li>{@code ALTER MATERIALIZED VIEW ... DROP EXPIRE}</li>
+ * </ul>
+ * Mat views are WAL tables, so the _meta persistence and the read-time row-expiry filter are shared
+ * with plain tables (the filter excludes only {@code isView()}, and mat views are {@code isMatView()}).
+ * These tests confirm the grammar/threading and that querying a policied mat view hides expired rows.
+ * <p>
+ * The base table carries NO policy on purpose: the read filter never runs during a mat-view refresh
+ * (refresh reads the base, writes the view), so a base-table policy is a separate concern.
+ * <p>
+ * {@code now()} is pinned via {@link #setCurrentMicros(long)} so time-based predicates are
+ * deterministic. 2024-01-10T00:00:00Z = 1704844800000000 micros; now()-1d = 2024-01-09T00:00:00Z.
+ */
+public class MatViewExpireRowsTest extends AbstractCairoTest {
+
+    // 2024-01-10T00:00:00.000000Z
+    private static final long NOW_MICROS = 1704844800000000L;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        // Mat views are gated behind dev mode, exactly as MatViewTest enables them.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testAlterMatViewDropExpire() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into base values ('BBB', 5.0, '2024-01-09T12:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            // Passthrough view, no policy yet.
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            // Set a policy: hide v < 2 -> only BBB visible.
+            execute("alter materialized view mv set expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertSql(
+                    "sym\tv\n" +
+                            "BBB\t5.0\n",
+                    "select sym, v from mv order by sym"
+            );
+
+            // Drop the policy: all rows visible again.
+            execute("alter materialized view mv drop expire");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertNull(metadata.getExpiryPredicate());
+                assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
+            }
+            assertSql(
+                    "sym\tv\n" +
+                            "AAA\t1.0\n" +
+                            "BBB\t5.0\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterMatViewSetExpire() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // v < 2 -> hidden
+            execute("insert into base values ('BBB', 2.5, '2024-01-09T12:00:00.000000Z')"); // v >= 2 -> visible
+            execute("insert into base values ('CCC', 0.5, '2024-01-09T18:00:00.000000Z')"); // v < 2 -> hidden
+            drainWalAndMatViewQueues();
+
+            // Passthrough view with no policy at creation.
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            execute("alter materialized view mv set expire rows when v < 2.0 cleanup every 30m");
+            drainWalAndMatViewQueues();
+
+            // Metadata predicate + cleanup interval are persisted.
+            final TableToken token = engine.verifyTableName("mv");
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * 60_000_000L, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // The read-time filter (reading the policy from the metadata cache) hides v<2 rows.
+            assertSql(
+                    "sym\tv\n" +
+                            "BBB\t2.5\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testCreatePassthroughMatViewWithExpire() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // v < 2 -> hidden
+            execute("insert into base values ('BBB', 2.5, '2024-01-09T12:00:00.000000Z')"); // v >= 2 -> visible
+            execute("insert into base values ('CCC', 0.5, '2024-01-09T18:00:00.000000Z')"); // v < 2 -> hidden
+            drainWalAndMatViewQueues();
+
+            // Passthrough (no SAMPLE BY) view that carries the policy from creation.
+            execute("create materialized view mv2 as (select * from base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            // Predicate persisted; CLEANUP EVERY omitted -> default 1 hour.
+            final TableToken token = engine.verifyTableName("mv2");
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(3_600_000_000L, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // Rows with v < 2 are hidden by the read-time filter.
+            assertSql(
+                    "sym\tv\n" +
+                            "BBB\t2.5\n",
+                    "select sym, v from mv2 order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateSampleByMatViewWithExpire() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table base (sym symbol, price double, ts timestamp) timestamp(ts) partition by day wal");
+
+            // SAMPLE BY 1h aggregating view with a time-based policy on the bucket timestamp.
+            execute("create materialized view mv as (" +
+                    "select sym, last(price) price, ts from base sample by 1h" +
+                    ") partition by day EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+
+            // Old buckets (2024-01-05) become expired; recent buckets (2024-01-09T12) survive.
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into base values ('AAA', 2.0, '2024-01-09T12:30:00.000000Z')");
+            execute("insert into base values ('BBB', 3.0, '2024-01-09T06:15:00.000000Z')");
+            execute("insert into base values ('CCC', 5.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            // Predicate persisted.
+            final TableToken token = engine.verifyTableName("mv");
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("ts < dateadd('d', -1, now())", metadata.getExpiryPredicate());
+                assertEquals(3_600_000_000L, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // now() pinned: ts < 2024-01-09 hides the 01-05 and 01-01 buckets, keeps the 01-09 ones.
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "BBB\t3.0\t2024-01-09T06:00:00.000000Z\n" +
+                            "AAA\t2.0\t2024-01-09T12:00:00.000000Z\n",
+                    "select sym, price, ts from mv order by ts, sym"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewExpirePersistsAfterReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0 cleanup every 15m");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+
+            // Drop pooled readers/writers and re-read the policy from disk (_meta).
+            engine.releaseInactive();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(15 * 60_000_000L, metadata.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+}
