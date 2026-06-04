@@ -171,6 +171,10 @@ public interface MetadataService {
 
     int getTtlHoursOrMonths();
 
+    String getExpiryPredicate();
+
+    long getExpiryCleanupIntervalMicros();
+
     int getTimestampType();
 
     UpdateOperator getUpdateOperator();

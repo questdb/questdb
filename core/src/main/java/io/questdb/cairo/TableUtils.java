@@ -114,8 +114,10 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
+    public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
+    public static final short META_FORMAT_MINOR_VERSION_EXPIRE_ROWS = 2;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -2602,6 +2604,11 @@ public final class TableUtils {
                 }
             }
         }
+
+        // Trailing row-expiry policy section (META_FORMAT_MINOR_VERSION_EXPIRE_ROWS). Always written,
+        // even when there's no policy (empty string + 0L), so the two _meta serializers stay symmetric.
+        mem.putStr(tableStruct.getExpiryPredicate() == null ? "" : tableStruct.getExpiryPredicate());
+        mem.putLong(tableStruct.getExpiryCleanupIntervalMicros());
     }
 
     private static int exists(FilesFacade ff, Path path) {
@@ -2628,7 +2635,7 @@ public final class TableUtils {
         return metaMem.getStrA(offset);
     }
 
-    private static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
+    public static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
         int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
         short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
         short actualChecksum = checksumForMetaFormatMinorVersionField(
@@ -2776,7 +2783,85 @@ public final class TableUtils {
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+        // Gate on the version that introduced TTL rather than LATEST: a future bump of
+        // META_FORMAT_MINOR_VERSION_LATEST must not silently zero out TTL for older tables
+        // that legitimately have it set (same rationale as hasParquetEncodingConfig).
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TTL) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+    }
+
+    /**
+     * Computes the byte offset of the trailing row-expiry policy section, i.e. the offset just
+     * past the column-name section and the per-column covering-indices section. Returns -1 when
+     * the covering section is truncated/absent (older formats), in which case there is no policy.
+     * <p>
+     * This is the single source of truth for both _meta readers (TableReaderMetadata and
+     * TableWriterMetadata), so the policy offset cannot drift between them.
+     */
+    static long getMetaExpiryPolicyOffset(MemoryR metaMem, int columnCount) {
+        long memSize = metaMem.size();
+        long offset = getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return -1;
+            }
+            int strLen = metaMem.getInt(offset);
+            offset += Vm.getStorageLength(strLen);
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (isColumnCovering(metaMem, i)) {
+                if (offset + Integer.BYTES > memSize) {
+                    return -1;
+                }
+                int includeCount = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+                if (includeCount > 0) {
+                    if (offset + (long) includeCount * Integer.BYTES > memSize) {
+                        return -1;
+                    }
+                    offset += (long) includeCount * Integer.BYTES;
+                }
+            }
+        }
+        return offset;
+    }
+
+    /**
+     * Reads the trailing row-expiry cleanup interval (micros) from a raw _meta buffer, or {@code 0}
+     * when there's no policy (older format, or empty section).
+     */
+    static long getExpiryCleanupIntervalMicros(MemoryR metaMem, int columnCount) {
+        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
+            return 0;
+        }
+        long offset = getMetaExpiryPolicyOffset(metaMem, columnCount);
+        if (offset < 0 || offset + Integer.BYTES > metaMem.size()) {
+            return 0;
+        }
+        CharSequence pred = metaMem.getStrA(offset);
+        offset += Vm.getStorageLength(pred);
+        if (offset + Long.BYTES > metaMem.size()) {
+            return 0;
+        }
+        return metaMem.getLong(offset);
+    }
+
+    /**
+     * Reads the trailing row-expiry predicate (raw SQL text) from a raw _meta buffer, or {@code null}
+     * when there's no policy (older format, or empty section).
+     */
+    static String getExpiryPredicate(MemoryR metaMem, int columnCount) {
+        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
+            return null;
+        }
+        long offset = getMetaExpiryPolicyOffset(metaMem, columnCount);
+        if (offset < 0 || offset + Integer.BYTES > metaMem.size()) {
+            return null;
+        }
+        CharSequence pred = metaMem.getStrA(offset);
+        if (pred == null || pred.length() == 0) {
+            return null;
+        }
+        return Chars.toString(pred);
     }
 
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {

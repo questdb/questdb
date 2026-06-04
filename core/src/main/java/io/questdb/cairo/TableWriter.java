@@ -2354,6 +2354,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return metadata.getTtlHoursOrMonths();
     }
 
+    @Override
+    public String getExpiryPredicate() {
+        return metadata.getExpiryPredicate();
+    }
+
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return metadata.getExpiryCleanupIntervalMicros();
+    }
+
     @TestOnly
     public TxWriter getTxWriter() {
         return txWriter;
@@ -11630,6 +11640,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+
+            // Trailing row-expiry policy section (kept symmetric with TableUtils.writeMetadata serializer).
+            ddlMem.putStr(metadata.getExpiryPredicate() == null ? "" : metadata.getExpiryPredicate());
+            ddlMem.putLong(metadata.getExpiryCleanupIntervalMicros());
 
             ddlMem.sync(false);
             return index;

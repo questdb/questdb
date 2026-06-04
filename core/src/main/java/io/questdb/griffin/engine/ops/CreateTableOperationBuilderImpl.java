@@ -72,6 +72,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
     private int ttlPosition;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
@@ -108,6 +110,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
+                    expiryPredicate,
+                    expiryCleanupIntervalMicros,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -155,6 +159,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
+                expiryPredicate,
+                expiryCleanupIntervalMicros,
                 walEnabled,
                 autoIncludeTs
         );
@@ -183,6 +189,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         volumePosition = 0;
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
+        expiryPredicate = null;
+        expiryCleanupIntervalMicros = 0;
         walEnabled = false;
         tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
@@ -318,6 +326,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setTtlPosition(int ttlPosition) {
         this.ttlPosition = ttlPosition;
+    }
+
+    public void setExpiryPredicate(String expiryPredicate) {
+        this.expiryPredicate = expiryPredicate;
+    }
+
+    public void setExpiryCleanupIntervalMicros(long expiryCleanupIntervalMicros) {
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias, int volumePosition) {

@@ -105,6 +105,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private String volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
@@ -175,6 +177,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             boolean walEnabled,
             boolean autoIncludeTimestamp
     ) throws SqlException {
@@ -219,6 +223,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.maxUncommittedRows = maxUncommittedRows;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -270,6 +276,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -295,6 +303,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -475,6 +485,16 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return ttlHoursOrMonths;
     }
 
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
+    }
+
     public int getTtlPosition() {
         return ttlPosition;
     }
@@ -604,6 +624,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
+        this.expiryPredicate = likeTableMetadata.getExpiryPredicate();
+        this.expiryCleanupIntervalMicros = likeTableMetadata.getExpiryCleanupIntervalMicros();
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();

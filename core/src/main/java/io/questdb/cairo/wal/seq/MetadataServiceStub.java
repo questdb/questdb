@@ -110,6 +110,16 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default String getExpiryPredicate() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default long getExpiryCleanupIntervalMicros() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
     }

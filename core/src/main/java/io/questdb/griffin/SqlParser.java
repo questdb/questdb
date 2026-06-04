@@ -374,6 +374,93 @@ public class SqlParser {
         return CommonUtils.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
+    private static long strideToMicros(int multiple, char unit, int position) throws SqlException {
+        switch (unit) {
+            case 's':
+                return multiple * 1_000_000L;
+            case 'm':
+                return multiple * 60_000_000L;
+            case 'h':
+                return multiple * 3_600_000_000L;
+            case 'd':
+                return multiple * 86_400_000_000L;
+            case 'w':
+                return multiple * 604_800_000_000L;
+            default:
+                throw SqlException.$(position, "unsupported cleanup interval unit, expected s/m/h/d/w");
+        }
+    }
+
+    /**
+     * Parses the optional row-expiry clause of CREATE TABLE:
+     * {@code EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]}.
+     * <p>
+     * The {@code EXPIRE} keyword has already been consumed by the caller. The predicate is captured
+     * as raw SQL text (everything between WHEN and CLEANUP/end-of-statement, tracking parenthesis
+     * depth) and stored on the builder unvalidated. Returns the next unconsumed token.
+     */
+    private CharSequence parseCreateTableExpireRows(
+            GenericLexer lexer,
+            CreateTableOperationBuilderImpl builder
+    ) throws SqlException {
+        expectTok(lexer, "rows");
+        expectTok(lexer, "when");
+
+        // Capture predicate SQL text: everything between WHEN and the next boundary, tracking
+        // parenthesis depth so a boundary keyword inside parentheses doesn't terminate the predicate.
+        // Boundaries are CLEANUP (consumed here) and the clauses that may follow EXPIRE in CREATE TABLE
+        // (WITH / IN VOLUME / DEDUP[LICATE]) plus ';'/EOF, which are handed back to the caller.
+        final int predicateStart = lexer.getPosition();
+        int predicateEnd;
+        int depth = 0;
+        boolean foundCleanup = false;
+        CharSequence tok;
+        while (true) {
+            tok = optTok(lexer);
+            if (tok == null || Chars.equals(tok, ';')) {
+                predicateEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                break;
+            }
+            if (depth == 0) {
+                if (isCleanupKeyword(tok)) {
+                    predicateEnd = lexer.lastTokenPosition();
+                    foundCleanup = true;
+                    break;
+                }
+                if (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok)) {
+                    predicateEnd = lexer.lastTokenPosition();
+                    break;
+                }
+            }
+            if (Chars.equals(tok, '(')) {
+                depth++;
+            } else if (Chars.equals(tok, ')')) {
+                depth--;
+            }
+        }
+
+        final String predicateSql = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
+        if (predicateSql.isEmpty()) {
+            throw SqlException.$(predicateStart, "EXPIRE ROWS WHEN predicate is empty");
+        }
+        builder.setExpiryPredicate(predicateSql);
+
+        // Optional: CLEANUP EVERY <duration>; defaults to 1 hour when omitted.
+        if (foundCleanup) {
+            expectTok(lexer, "every");
+            tok = tok(lexer, "cleanup interval value (e.g., 1h, 30m, 24h)");
+            final int multiple = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+            final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+            builder.setExpiryCleanupIntervalMicros(strideToMicros(multiple, unit, lexer.lastTokenPosition()));
+            // Fetch the next clause keyword (WITH / IN / DEDUP / ';' / EOF) for the caller.
+            tok = optTok(lexer);
+        } else {
+            builder.setExpiryCleanupIntervalMicros(3_600_000_000L);
+            // tok already holds the boundary token (WITH / IN / DEDUP / ';' / null) — hand it back as-is.
+        }
+        return tok;
+    }
+
     public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
         if (node == null) {
             return null;
@@ -1734,6 +1821,11 @@ public class SqlParser {
                                 .put(tok != null ? tok : "");
                     }
                 }
+            }
+
+            // Optional: EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]
+            if (tok != null && isExpireKeyword(tok)) {
+                tok = parseCreateTableExpireRows(lexer, builder);
             }
         }
         final boolean isWalEnabled = configuration.isWalSupported()
