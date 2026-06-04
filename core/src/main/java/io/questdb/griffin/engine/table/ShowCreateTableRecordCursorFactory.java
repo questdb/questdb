@@ -88,6 +88,30 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
+    public static void expireToSink(CharSequence predicate, long cleanupIntervalMicros, CharSink<?> sink) {
+        if (predicate == null || predicate.length() == 0) {
+            return;
+        }
+        sink.putAscii(" EXPIRE ROWS WHEN ").put(predicate);
+        // The default cleanup cadence is 1h; only print CLEANUP EVERY when it differs.
+        if (cleanupIntervalMicros > 0 && cleanupIntervalMicros != 3_600_000_000L) {
+            sink.putAscii(" CLEANUP EVERY ");
+            appendDurationStride(cleanupIntervalMicros, sink);
+        }
+    }
+
+    private static void appendDurationStride(long micros, CharSink<?> sink) {
+        if (micros % 86_400_000_000L == 0) {
+            sink.put(micros / 86_400_000_000L).put('d');
+        } else if (micros % 3_600_000_000L == 0) {
+            sink.put(micros / 3_600_000_000L).put('h');
+        } else if (micros % 60_000_000L == 0) {
+            sink.put(micros / 60_000_000L).put('m');
+        } else {
+            sink.put(micros / 1_000_000L).put('s');
+        }
+    }
+
     public static void ttlToSink(int ttl, CharSink<?> sink) {
         if (ttl == 0) {
             return;
@@ -221,6 +245,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 ttlToSink(sink);
                 // (BYPASS) WAL
                 putWal();
+                // EXPIRE ROWS WHEN <pred> [CLEANUP EVERY <dur>]
+                expireToSink(sink);
             }
             // IN VOLUME OTHER_VOLUME
             putInVolume(config);
@@ -376,6 +402,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         // overridden in ent, do not remove!
         protected void ttlToSink(CharSink<?> sink) {
             ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        // overridden in ent, do not remove!
+        protected void expireToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.expireToSink(table.getExpiryPredicate(), table.getExpiryCleanupIntervalMicros(), sink);
         }
 
         private static int countCoveringSurvivors(IntList coveringCols, CairoTable table) {

@@ -103,6 +103,21 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateMatViewWithExpire() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            drainWalAndMatViewQueues();
+            sink.clear();
+            printSql("SHOW CREATE MATERIALIZED VIEW mv", sink);
+            final String ddl = sink.toString();
+            org.junit.Assert.assertTrue("expected EXPIRE clause in: " + ddl, ddl.contains("EXPIRE ROWS WHEN v < 2.0"));
+            org.junit.Assert.assertTrue("expected CLEANUP EVERY in: " + ddl, ddl.contains("CLEANUP EVERY 30m"));
+        });
+    }
+
+    @Test
     public void testAlterMatViewSetExpire() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
