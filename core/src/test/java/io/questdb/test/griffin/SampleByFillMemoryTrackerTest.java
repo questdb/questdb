@@ -30,7 +30,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -99,7 +104,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         // limit while the keyed maps grow during the build pass -- usually at the base
         // GROUP BY's key-by-bucket map, but the fill cursor's keysMap is now
         // charged too. Either way the breach carries the per-query message.
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR");
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR", SampleByFillRecordCursorFactory.class);
     }
 
     @Test
@@ -137,7 +142,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         // FILL(LINEAR) routes to SampleByInterpolateRecordCursorFactory, whose
         // recordKeyMap (distinct keys) and dataMap (key x bucket) grow with the
         // key set. A high-cardinality key trips the per-query limit.
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(LINEAR)");
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(LINEAR)", SampleByInterpolateRecordCursorFactory.class);
     }
 
     @Test
@@ -165,7 +170,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
     public void testKeyedFillNoneFailsOnHighCardinality() throws Exception {
         // FILL(NONE) routes to SampleByFillNoneRecordCursor; its OrderedMap grows
         // with the distinct key set discovered during the build pass.
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NONE) ALIGN TO FIRST OBSERVATION");
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NONE) ALIGN TO FIRST OBSERVATION", SampleByFillNoneRecordCursorFactory.class);
     }
 
     @Test
@@ -173,7 +178,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         // FILL(NULL) routes through SampleByFillValueRecordCursor; the keyed map
         // it builds during the key-discovery pass grows with the key set and
         // trips the per-query limit.
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION");
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION", SampleByFillNullRecordCursorFactory.class);
     }
 
     @Test
@@ -203,14 +208,14 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
     public void testKeyedFillPrevFailsOnHighCardinality() throws Exception {
         // FILL(PREV) routes to SampleByFillPrevRecordCursor; its OrderedMap grows
         // with the distinct key set.
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION");
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION", SampleByFillPrevRecordCursorFactory.class);
     }
 
     @Test
     public void testKeyedFillValueFailsOnHighCardinality() throws Exception {
         // FILL(constant) routes to SampleByFillValueRecordCursor; same keyed map
         // growth as FILL(NULL).
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(0) ALIGN TO FIRST OBSERVATION");
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(0) ALIGN TO FIRST OBSERVATION", SampleByFillValueRecordCursorFactory.class);
     }
 
     @Test
@@ -256,7 +261,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         assertRepeatedRunsReleaseAllocations("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(LINEAR)");
     }
 
-    private void assertBreach(String query) throws Exception {
+    private void assertBreach(String query, Class<?> expectedFactory) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             // 60_000 distinct keys: the keyed map grows past the 512 KiB limit
@@ -270,38 +275,28 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-                try (RecordCursorFactory factory = cq.getRecordCursorFactory();
-                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    //noinspection StatementWithEmptyBody
-                    while (cursor.hasNext()) {
-                        // drain until breach
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    // Routing guard: confirm the query exercises the intended FILL
+                    // factory rather than silently testing a different cursor.
+                    assertUsesFactory(factory, expectedFactory);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                     }
-                    Assert.fail("expected per-query memory breach");
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                 }
             }
         });
     }
 
     private void assertHitsFastPath(RecordCursorFactory factory) {
-        // The fast-path SampleByFillRecordCursorFactory sits below an outer
-        // SelectedRecordCursorFactory / sort wrap, so walk the base-factory chain
-        // rather than checking the top factory's class directly.
-        RecordCursorFactory cur = factory;
-        while (cur != null) {
-            if (cur instanceof SampleByFillRecordCursorFactory) {
-                return;
-            }
-            RecordCursorFactory next = cur.getBaseFactory();
-            if (next == cur) {
-                break;
-            }
-            cur = next;
-        }
-        Assert.fail("expected SampleByFillRecordCursorFactory in base chain of " + factory.getClass().getSimpleName());
+        assertUsesFactory(factory, SampleByFillRecordCursorFactory.class);
     }
 
     private void assertRepeatedRunsReleaseAllocations(String query) throws Exception {
@@ -350,6 +345,24 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertUsesFactory(RecordCursorFactory factory, Class<?> target) {
+        // The SAMPLE BY factory sits below an outer SelectedRecordCursorFactory /
+        // sort wrap, so walk the base-factory chain rather than checking the top
+        // factory's class directly.
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (target.isInstance(cur)) {
+                return;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        Assert.fail("expected " + target.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
     }
 
     private void createSmallTable() throws Exception {

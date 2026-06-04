@@ -32,6 +32,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -127,6 +128,35 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
                     Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                     TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowOpenFailureReleasesAllocations() throws Exception {
+        // Inflate the window order-by tree page above the limit so the first
+        // reopenTrees() in CachedWindowRecordCursor.of() breaches before any rows
+        // are read. Reusing one factory across opens catches the failed-open
+        // cleanup: without freeing the cursor on a breach, isOpen stays true and
+        // the next open skips reopen() -> no breach -> stale, mischarged trees.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, 2 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(100))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT k, row_number() OVER (ORDER BY k) AS rn FROM tab",
+                         sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
                 }
             }
         });

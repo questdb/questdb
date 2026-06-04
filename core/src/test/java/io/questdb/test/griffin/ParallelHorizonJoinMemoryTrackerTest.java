@@ -45,7 +45,7 @@ import org.junit.Test;
  * HORIZON JOIN aggregates slave rows in a per-master-row window (markout
  * analysis) and reaches the same unbounded native structures as the parallel
  * GROUP BY: the owner/per-worker {@code FastGroupByAllocator}s that back group-by
- * function state (e.g. {@code array_agg}), and — for keyed queries — the
+ * function state (e.g. {@code array_agg}), and, for keyed queries, the
  * {@code GroupByShardingContext} fragment maps. Those structures live in
  * {@link io.questdb.griffin.engine.table.BaseAsyncHorizonJoinAtom} and the keyed
  * {@link AsyncHorizonJoinRecordCursorFactory} atom; the base atom binds the

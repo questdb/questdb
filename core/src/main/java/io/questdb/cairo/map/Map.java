@@ -133,7 +133,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * {@code batchAddr}. Each packed long has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
      * byte distance from Map's base address to the <b>start of the value
-     * region</b> of that entry — not to the entry start. This keeps the
+     * region</b> of that entry -- not to the entry start. This keeps the
      * encoding uniform across fixed- and variable-size maps and lets
      * consumers address per-column values as
      * {@code entryBase + offset + valueOffsets[valueIndex]}.
@@ -222,7 +222,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * map route through tracker-aware overloads so that allocations are charged to
      * the active workload's per-query counter in addition to the global counter.
      * <p>
-     * A {@code null} tracker means no per-query charging — allocations go to the
+     * A {@code null} tracker means no per-query charging -- allocations go to the
      * global counter only, as before. The caller owns the tracker's lifetime and
      * must call this with {@code null} (or replace with a new tracker) before the
      * bound tracker is closed or returned to its provider's pool; the map must not

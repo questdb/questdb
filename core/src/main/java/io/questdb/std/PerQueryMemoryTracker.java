@@ -81,7 +81,7 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
      * Releases all native memory owned by this tracker: the
      * {@code {used, limit}} block and every per-tag Rust allocator block. Called
      * by the provider when the pooled tracker is finally disposed (engine
-     * shutdown or pool-capacity overflow).
+     * shutdown or pool clear).
      */
     void destroy() {
         freeNativeAllocators();

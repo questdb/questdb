@@ -154,7 +154,7 @@ public class AsyncTrackerPropagationTest extends AbstractCairoTest {
                 task.clear();
                 Assert.assertNull(task.getMemoryTracker());
 
-                // null is a valid input — degrades to the no-per-query-limit case.
+                // null is a valid input -- degrades to the no-per-query-limit case.
                 task.of(breaker, null, started, latch, null, null, 0, 0, 1);
                 Assert.assertNull(task.getMemoryTracker());
                 task.clear();
@@ -183,7 +183,7 @@ public class AsyncTrackerPropagationTest extends AbstractCairoTest {
                 task.clear();
                 Assert.assertNull(task.getMemoryTracker());
 
-                // null is a valid input — degrades to the no-per-query-limit case.
+                // null is a valid input -- degrades to the no-per-query-limit case.
                 task.of(breaker, null, started, latch, null, 0);
                 Assert.assertNull(task.getMemoryTracker());
                 task.clear();
