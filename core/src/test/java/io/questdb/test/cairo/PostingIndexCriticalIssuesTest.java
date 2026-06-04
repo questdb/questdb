@@ -5145,9 +5145,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * correct. Fix belongs writer-side: the covering sidecars must exist before the new
      * parquet partition version becomes reader-visible. Un-@Ignore to reproduce (~300ms).
      */
-    @Ignore("Open (root-caused): parquet rewrite exposes the new partition version " +
-            "before its covering .pci/.pc sidecars are written, so a concurrent covered " +
-            "read sees coverCount=0 and returns NULL. Native passes.")
+    @Ignore("Open (root-caused): a multi-partition O3/squash commit exposes some rewritten " +
+            "parquet partition versions with only the .pv and no covering .pci, so a concurrent " +
+            "covered read sees coverCount=0 and returns NULL. Native passes.")
     @Test
     public void testMultiThreadedO3CoveringPostingConcurrentReaderFuzz() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
