@@ -62,6 +62,54 @@ public class O3ParquetMergeStrategy {
     }
 
     /**
+     * Convenience overload of
+     * {@link #computeMergeActions(LongList, long, long, long, int, int, ObjList, LongList, LongList, boolean)}
+     * that always coalesces boundary ties.
+     *
+     * @param rowGroupBounds         List of (min, max, rowCount) triples for each row group.
+     * @param sortedTimestampsAddr   Native address of sorted O3 timestamps (16 bytes per entry).
+     * @param srcOooLo               Start index of O3 data range (inclusive).
+     * @param srcOooHi               End index of O3 data range (inclusive).
+     * @param smallRowGroupThreshold Row groups with fewer rows than this are considered "small"
+     *                               and will have adjacent non-overlapping O3 data merged into them.
+     * @param maxRowGroupSize        Maximum number of rows per COPY_O3 action. Larger ranges are split
+     *                               into multiple actions of at most this size. Use Integer.MAX_VALUE
+     *                               to disable splitting.
+     * @param actionsBuf             Pre-allocated buffer to receive computed merge actions (reused across calls).
+     *                               Objects in the buffer beyond the returned count are stale and must not be read.
+     * @param rgO3Ranges             Pre-allocated scratch list for per-row-group O3 ranges (reused across calls).
+     * @param gapO3Ranges            Pre-allocated scratch list for per-gap O3 ranges (reused across calls).
+     * @return the number of actions written into actionsBuf
+     */
+    public static int computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            int smallRowGroupThreshold,
+            int maxRowGroupSize,
+            ObjList<MergeAction> actionsBuf,
+            LongList rgO3Ranges,
+            LongList gapO3Ranges
+    ) {
+        // Convenience overload that always coalesces boundary ties. Used by unit tests that
+        // exercise coalescing directly; production callers use the explicit-flag overload so
+        // coalescing (and the forced rewrite it implies) is limited to deduplicating commits.
+        return computeMergeActions(
+                rowGroupBounds,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                smallRowGroupThreshold,
+                maxRowGroupSize,
+                actionsBuf,
+                rgO3Ranges,
+                gapO3Ranges,
+                true
+        );
+    }
+
+    /**
      * Computes the merge strategy between existing row groups and incoming O3 data.
      * <p>
      * The algorithm uses both min and max timestamps to detect true overlap:
@@ -96,34 +144,6 @@ public class O3ParquetMergeStrategy {
      *                               full-partition rewrite) is unnecessary.
      * @return the number of actions written into actionsBuf
      */
-    public static int computeMergeActions(
-            LongList rowGroupBounds,
-            long sortedTimestampsAddr,
-            long srcOooLo,
-            long srcOooHi,
-            int smallRowGroupThreshold,
-            int maxRowGroupSize,
-            ObjList<MergeAction> actionsBuf,
-            LongList rgO3Ranges,
-            LongList gapO3Ranges
-    ) {
-        // Convenience overload that always coalesces boundary ties. Used by unit tests that
-        // exercise coalescing directly; production callers use the explicit-flag overload so
-        // coalescing (and the forced rewrite it implies) is limited to deduplicating commits.
-        return computeMergeActions(
-                rowGroupBounds,
-                sortedTimestampsAddr,
-                srcOooLo,
-                srcOooHi,
-                smallRowGroupThreshold,
-                maxRowGroupSize,
-                actionsBuf,
-                rgO3Ranges,
-                gapO3Ranges,
-                true
-        );
-    }
-
     public static int computeMergeActions(
             LongList rowGroupBounds,
             long sortedTimestampsAddr,
