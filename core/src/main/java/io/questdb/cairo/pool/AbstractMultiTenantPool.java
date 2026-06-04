@@ -32,7 +32,6 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -57,22 +56,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final int maxEntries;
     private final int maxSegments;
     private final int segmentSize;
-    private final CarrierLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
         this.segmentSize = configuration.getPoolSegmentSize();
         this.maxEntries = maxSegments * configuration.getPoolSegmentSize();
-        if (configuration.cairoResourcePoolTracingEnabled()) {
-            threadLocalPoolSupervisor = new CarrierLocal<>(TracingResourcePoolSupervisor::new);
-        } else {
-            threadLocalPoolSupervisor = new CarrierLocal<>();
-        }
-    }
-
-    public void configureThreadLocalPoolSupervisor(@NotNull ResourcePoolSupervisor<T> poolSupervisor) {
-        this.threadLocalPoolSupervisor.set(poolSupervisor);
     }
 
     public Map<CharSequence, Entry<T>> entries() {
@@ -81,7 +70,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     @Override
     public T get(TableToken tableToken) {
-        return get0(tableToken, null);
+        return get0(tableToken, null, null);
+    }
+
+    protected T getWithSupervisor(TableToken tableToken, @Nullable ResourcePoolSupervisor<T> supervisor) {
+        return get0(tableToken, null, supervisor);
     }
 
     public int getBusyCount() {
@@ -207,10 +200,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    public void removeThreadLocalPoolSupervisor() {
-        this.threadLocalPoolSupervisor.remove();
-    }
-
     public void unlock(TableToken tableToken) {
         unlock(tableToken, false);
     }
@@ -262,7 +251,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    private T get0(TableToken tableToken, @Nullable T copyOfTenant) {
+    private T get0(TableToken tableToken, @Nullable T copyOfTenant, @Nullable ResourcePoolSupervisor<T> poolSupervisor) {
         Entry<T> rootEntry = getEntry(tableToken);
         Entry<T> e = rootEntry;
 
@@ -292,7 +281,16 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
                     T tenant = e.getTenant(i);
-                    ResourcePoolSupervisor<T> supervisor = threadLocalPoolSupervisor.get();
+                    // The query-scoped supervisor is supplied by the borrowing caller; it lives
+                    // on SqlExecutionContext (passed in via CairoEngine.getReader) so it travels
+                    // with a continuation that parks and resumes on a different worker. When none
+                    // is supplied and resource pool tracing is enabled, fall back to a per-borrow
+                    // tracing supervisor so the debug "left behind" attribution keeps working for
+                    // every pool, including non-SQL borrows that have no execution context.
+                    ResourcePoolSupervisor<T> supervisor = poolSupervisor;
+                    if (supervisor == null && getConfiguration().cairoResourcePoolTracingEnabled()) {
+                        supervisor = new TracingResourcePoolSupervisor<>();
+                    }
                     if (tenant == null) {
                         try {
                             LOG.debug()
@@ -430,10 +428,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     }
 
     protected T getCopyOf(@NotNull T srcTenant) {
+        return getCopyOf(srcTenant, null);
+    }
+
+    protected T getCopyOf(@NotNull T srcTenant, @Nullable ResourcePoolSupervisor<T> supervisor) {
         if (!isCopyOfSupported()) {
             throw new UnsupportedOperationException("getCopyOf is not supported by this pool");
         }
-        return get0(srcTenant.getTableToken(), srcTenant);
+        return get0(srcTenant.getTableToken(), srcTenant, supervisor);
     }
 
     protected abstract byte getListenerSrc();

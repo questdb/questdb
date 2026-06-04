@@ -46,7 +46,6 @@ import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.RecentWriteTracker;
-import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.SequencerMetadataPool;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.pool.TableMetadataPool;
@@ -95,7 +94,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
-import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -123,7 +121,9 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.continuation.TimerShards;
+import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.preferences.SettingsStore;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
@@ -136,7 +136,6 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
@@ -640,10 +639,6 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.close();
     }
 
-    public void configureThreadLocalReaderPoolSupervisor(@NotNull ResourcePoolSupervisor<ReaderPool.R> supervisor) {
-        readerPool.configureThreadLocalPoolSupervisor(supervisor);
-    }
-
     public @NotNull MatViewDefinition createMatView(
             SecurityContext securityContext,
             MemoryMARW mem,
@@ -955,23 +950,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.get(tableToken);
     }
 
+    public TableReader getReader(TableToken tableToken, SqlExecutionContext executionContext) {
+        verifyTableToken(tableToken);
+        return readerPool.get(tableToken, executionContext.getReaderPoolSupervisor());
+    }
+
     public TableReader getReader(TableToken tableToken, long metadataVersion) {
         verifyTableToken(tableToken);
-        final int tableId = tableToken.getTableId();
-        TableReader reader = readerPool.get(tableToken);
-        if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
-                || (tableId > -1 && reader.getMetadata().getTableId() != tableId)) {
-            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
-                    tableToken,
-                    tableId,
-                    reader.getMetadata().getTableId(),
-                    metadataVersion,
-                    reader.getMetadataVersion()
-            );
-            reader.close();
-            throw ex;
-        }
-        return reader;
+        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken));
+    }
+
+    public TableReader getReader(TableToken tableToken, long metadataVersion, SqlExecutionContext executionContext) {
+        verifyTableToken(tableToken);
+        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken, executionContext.getReaderPoolSupervisor()));
     }
 
     /**
@@ -981,15 +972,16 @@ public class CairoEngine implements Closeable, WriterSource {
      * If the source reader is detached and not in use, returns the source reader.
      * The source reader must be used only through calling this method.
      */
-    public TableReader getReaderAtTxn(TableReader srcReader) {
+    public TableReader getReaderAtTxn(TableReader srcReader, SqlExecutionContext executionContext) {
         assert srcReader.isOpen() && srcReader.isActive();
-        // Fast path: go with the base reader if it's not in-use.
+        // Fast path: go with the base reader if it's not in-use. It was borrowed before the
+        // current query, so it is intentionally not attributed to the query's supervisor.
         if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0) {
             readerPool.incDetachedRefCount(srcReader);
             return srcReader;
         }
-        // Slow path: obtain a base reader copy from the pool.
-        return readerPool.getCopyOf(srcReader);
+        // Slow path: obtain a base reader copy from the pool, attributed to the query.
+        return readerPool.getCopyOf(srcReader, executionContext.getReaderPoolSupervisor());
     }
 
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
@@ -1669,10 +1661,6 @@ public class CairoEngine implements Closeable, WriterSource {
         walLocker.clearTable(tableToken);
     }
 
-    public void removeThreadLocalReaderPoolSupervisor() {
-        readerPool.removeThreadLocalPoolSupervisor();
-    }
-
     public TableToken rename(
             SecurityContext securityContext,
             Path fromPath,
@@ -2018,6 +2006,23 @@ public class CairoEngine implements Closeable, WriterSource {
         if (vd.getSeqTxn() != expectedTxn) {
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedTxn, vd.getSeqTxn());
         }
+    }
+
+    private static TableReader checkReaderVersion(TableToken tableToken, long metadataVersion, TableReader reader) {
+        final int tableId = tableToken.getTableId();
+        if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
+                || (tableId > -1 && reader.getMetadata().getTableId() != tableId)) {
+            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                    tableToken,
+                    tableId,
+                    reader.getMetadata().getTableId(),
+                    metadataVersion,
+                    reader.getMetadataVersion()
+            );
+            reader.close();
+            throw ex;
+        }
+        return reader;
     }
 
     private static void insert(
