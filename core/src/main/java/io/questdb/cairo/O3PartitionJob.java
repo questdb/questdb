@@ -3392,6 +3392,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
                         if (IndexType.isPosting(indexType)) {
                             indexWriter.commitDense();
+                            // commitDense may have sealed (spill-driven reseal),
+                            // rotating the .pv and recording a purge for the
+                            // superseded file. The pooled writer is freed below
+                            // without draining that outbox through a TableWriter,
+                            // so reclaim the superseded value file inline. Safe
+                            // here: this is a fresh, uncommitted parquet index
+                            // whose old gens no committed reader can pick.
+                            indexWriter.unlinkPendingSealPurgesDirect();
                         } else {
                             indexWriter.commit();
                         }

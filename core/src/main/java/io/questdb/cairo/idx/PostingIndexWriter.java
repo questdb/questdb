@@ -1558,6 +1558,32 @@ public class PostingIndexWriter implements IndexWriter {
         allocateNativeBuffers();
     }
 
+    @Override
+    public void unlinkPendingSealPurgesDirect() {
+        // Reclaim the superseded value file(s) from a spill-driven reseal by
+        // unlinking them directly, then clear the outbox. The native reseal
+        // defers these through the TableWriter's scoreboard-gated purge queue,
+        // but the parquet rebuild (O3PartitionJob.updateParquetIndexes) frees
+        // its pooled writer right after commitDense without ever draining the
+        // outbox, so a queued purge would simply be discarded by close(). A
+        // direct unlink is safe there because the parquet rebuild produces a
+        // fresh, uncommitted index: the chain head is tagged with the upcoming
+        // txn, so no committed reader can pick the superseded gens, and a
+        // rewrite failure removes the whole partition directory. coverCount is
+        // 0 on that path, so no sidecar (.pc) files exist for the old sealTxn.
+        assert coverCount == 0 : "unlinkPendingSealPurgesDirect does not reclaim covered sidecars";
+        if (pendingPurges.size() > 0 && partitionPath.size() > 0) {
+            final Path p = Path.getThreadLocal(partitionPath);
+            final int plen = p.size();
+            for (int i = 0, n = pendingPurges.size(); i < n; i++) {
+                final PendingSealPurge entry = pendingPurges.getQuick(i);
+                ff.removeQuiet(PostingIndexUtils.valueFileName(
+                        p.trimTo(plen), indexName, entry.postingColumnNameTxn, entry.sealTxn));
+            }
+        }
+        releasePendingPurges();
+    }
+
     private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
                                             boolean isDesignatedTs,
                                             long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {

@@ -362,4 +362,16 @@ public interface IndexWriter extends Closeable, Mutable {
      * Truncates the index, removing all data.
      */
     void truncate();
+
+    /**
+     * Reclaims the value files recorded for seal-purge by unlinking them
+     * directly, bypassing the scoreboard-gated purge queue, then clears the
+     * pending-purge outbox. Only safe when the superseded files are invisible
+     * to every reader (a fresh, uncommitted index build). Used by the parquet
+     * rebuild path, whose pooled writer is freed without ever draining its
+     * outbox through a TableWriter. No-op for writers without a seal-purge
+     * outbox (e.g. BITMAP).
+     */
+    default void unlinkPendingSealPurgesDirect() {
+    }
 }

@@ -4606,6 +4606,98 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The parquet index-rebuild path (O3PartitionJob.updateParquetIndexes ->
+     * commitDense) is the third commitDense caller. When its index() loop trips
+     * the spill budget, commitDense routes through seal(), which rotates the .pv
+     * to a new sealTxn. Unlike the native reseal, the pooled parquet writer is
+     * freed (close() -> releasePendingPurges) without ever draining its pending
+     * seal-purge, so the superseded intermediate .pv would leak on disk
+     * permanently (no directory sweep, no recovery-walk reclaim). The fix unlinks
+     * the superseded value file inline -- safe because the parquet rebuild is a
+     * fresh, uncommitted index whose prev gens are never picked by a committed
+     * reader. After a spill-driven CONVERT, exactly one .pv must remain.
+     */
+    @Test
+    public void testConvertToParquetPostingResealSpillDoesNotLeakValueFile() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_leak (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Hot key 'A' so the parquet rebuild's index() loop spills past the
+            // 256-byte budget mid-stream (genCount > 0 -> commitDense seals).
+            execute("""
+                    INSERT INTO t_pq_leak
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(2000)
+                    """);
+            // A second partition so the converted one is not the active tail.
+            execute("""
+                    INSERT INTO t_pq_leak
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_leak CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // O3 into the already-parquet partition rewrites it; updateParquetIndexes
+            // rebuilds the posting index over all 2000+ 'A' rows, tripping the spill
+            // budget -> commitDense seals -> the rotated intermediate .pv would leak.
+            execute("""
+                    INSERT INTO t_pq_leak VALUES
+                    ('2024-01-01T00:10:00.500000Z', 'A'),
+                    ('2024-01-01T00:20:00.500000Z', 'A')
+                    """);
+            drainWalQueue();
+
+            // Drain any queued posting-seal purges; the leaked intermediate is
+            // never queued, so this would not reclaim it.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            // Index still returns every 'A' rowid after the parquet reseal
+            // (2000 + 2 O3 rows in the converted partition + 10 in the next).
+            assertQuery("SELECT count() FROM t_pq_leak WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2012\n");
+
+            final TableToken token = engine.getTableTokenIfExists("t_pq_leak");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final java.io.File dir = new java.io.File(path.toString());
+                final String[] names = dir.list();
+                Assert.assertNotNull("partition dir must exist: " + dir, names);
+                int pvCount = 0;
+                for (String n : names) {
+                    if (n.startsWith("sym.pv.")) {
+                        pvCount++;
+                    }
+                }
+                Assert.assertEquals(
+                        "exactly one active value file must remain; a superseded intermediate "
+                                + ".pv from the spill-driven parquet reseal leaked: "
+                                + java.util.Arrays.toString(names),
+                        1, pvCount);
+            }
+        });
+    }
+
+    /**
      * Reproduces the SIGSEGV from the JMH walFastLag bench (hs_err_pid19555):
      * MemoryCR.getLong over-read inside PostingIndexChainEntry.read on a
      * covering posting index. The bench ran walFastLagInsertAndQuery in a
