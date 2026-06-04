@@ -30,8 +30,6 @@ import io.questdb.mp.ConcurrentPool;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 /**
  * OSS {@link MemoryTrackerProvider}: hands out one {@link PerQueryMemoryTracker}
  * per workload invocation. Trackers are pooled across invocations so the steady
@@ -57,7 +55,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
     private final CairoConfiguration configuration;
     private final ConcurrentPool<PerQueryMemoryTracker> pool = new ConcurrentPool<>();
-    private final AtomicInteger pooled = new AtomicInteger();
     private volatile boolean closed;
 
     public PerQueryMemoryTrackerProvider(@NotNull CairoConfiguration configuration) {
@@ -68,9 +65,7 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
     public @NotNull MemoryTracker acquire(@NotNull SecurityContext securityContext, long queryId, @NotNull MemoryTrackerWorkload workload) {
         assert !closed : "acquire() after close()";
         PerQueryMemoryTracker tracker = pool.pop();
-        if (tracker != null) {
-            pooled.decrementAndGet();
-        } else {
+        if (tracker == null) {
             tracker = new PerQueryMemoryTracker(this);
         }
         tracker.init(queryId, workload, limitFor(workload));
@@ -90,13 +85,12 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
 
     @TestOnly
     public int getPooledCount() {
-        return pooled.get();
+        return pool.count();
     }
 
     private void drainPool() {
         PerQueryMemoryTracker tracker;
         while ((tracker = pool.pop()) != null) {
-            pooled.decrementAndGet();
             tracker.destroy();
         }
     }
@@ -115,6 +109,5 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
             return;
         }
         pool.push(tracker);
-        pooled.incrementAndGet();
     }
 }
