@@ -27,8 +27,10 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -156,6 +158,13 @@ public class SqlParser {
     private boolean createTableMode = false;
     private boolean createViewMode = false;
     private int digit;
+    // Master switch for the read-time row-expiry filter (approach A). When false, table
+    // references with an EXPIRE ROWS policy are NOT rewritten. Reserved as the future bypass
+    // for the cleanup/refresh job; no callers are wired yet.
+    private boolean expiryFilterEnabled = true;
+    // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
+    // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
+    private final LowerCaseCharSequenceHashSet expiringTablesBeingExpanded = new LowerCaseCharSequenceHashSet();
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -643,6 +652,7 @@ public class SqlParser {
     private void clearRecordedViews() {
         recordedViews.clear();
         viewsBeingCompiled.clear();
+        expiringTablesBeingExpanded.clear();
     }
 
     private void compileViewQuery(IQueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
@@ -691,6 +701,95 @@ public class SqlParser {
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;
+    }
+
+    /**
+     * Builds the keep-rows filter for a row-expiry predicate. The stored predicate describes WHEN
+     * a row expires, so the kept rows are the negation of it. For the common timestamp-vs-now()
+     * shapes ({@code col < now()}, {@code col <= now()}, {@code now() > col}, {@code now() >= col})
+     * we emit the equivalent {@code col >= now()} / {@code col > now()} form so the planner can use
+     * an interval/timestamp scan; otherwise we fall back to a generic {@code NOT (...)} wrap.
+     * <p>
+     * Ported verbatim from the expiring-view draft (193dddfd0c) buildTimestampCompareFilter.
+     */
+    private static String buildRowExpiryKeepFilter(String predicate) {
+        final String trimmed = predicate.trim();
+        final String lower = trimmed.toLowerCase();
+
+        if (lower.endsWith("< now()") || lower.endsWith("<now()")) {
+            final String col = trimmed.substring(0, trimmed.lastIndexOf('<')).trim();
+            return col + " >= now()";
+        }
+        if (lower.endsWith("<= now()") || lower.endsWith("<=now()")) {
+            final String col = trimmed.substring(0, trimmed.lastIndexOf('<')).trim();
+            return col + " > now()";
+        }
+        if (lower.startsWith("now() >")) {
+            String rest = trimmed.substring(7).trim();
+            if (rest.startsWith("=")) {
+                // now() >= col means col <= now() is expired, so keep NOT(col <= now()) = col > now()
+                rest = rest.substring(1).trim();
+                return rest + " > now()";
+            }
+            // now() > col means col < now() is expired, so keep col >= now()
+            return rest + " >= now()";
+        }
+        // Fallback to generic negation
+        return "NOT (" + trimmed + ")";
+    }
+
+    /**
+     * Rewrites a table reference that carries an EXPIRE ROWS policy into a nested
+     * {@code SELECT * FROM "t" WHERE <keep-filter>} sub-query, so expired rows become invisible to
+     * all reads. Mirrors {@link #compileViewQuery(IQueryModel, TableToken, int)} and the
+     * expiring-view draft's expandExpiringView. The caller MUST have already added {@code tableName}
+     * to {@link #expiringTablesBeingExpanded} so the synthetic inner {@code FROM "t"} resolves as a
+     * plain table rather than re-expanding (infinite recursion).
+     */
+    private void expandExpiringTable(
+            IQueryModel model,
+            CharSequence tableName,
+            String predicate,
+            int position,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final String filterSql = buildRowExpiryKeepFilter(predicate);
+        // Quote the table name so names that need quoting (or look like keywords) parse correctly.
+        final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE " + filterSql;
+
+        final GenericLexer subLexer = viewLexers.next();
+        subLexer.of(syntheticSql);
+
+        final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, model.getDecls(), true);
+        model.setNestedModel(subQuery);
+        model.setNestedModelIsSubQuery(true);
+        if (model.getAlias() == null) {
+            model.setAlias(literal(tableName, position));
+        }
+    }
+
+    /**
+     * Returns the EXPIRE ROWS predicate for the given table token, or null if the table is unknown,
+     * is not a regular table, or carries no policy. Uses the in-memory metadata cache
+     * ({@link io.questdb.cairo.MetadataCache#readLock()} + map lookup): a shared read lock plus a
+     * hash-map get, no pool borrow, no file I/O on a cache hit. See class/PR notes for the
+     * cache-miss caveat.
+     */
+    private String lookupExpiryPredicate(TableToken tableToken) {
+        if (tableToken == null || tableToken.isView()) {
+            return null;
+        }
+        try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
+            final CairoTable table = metadataRO.getTable(tableToken);
+            if (table == null) {
+                return null;
+            }
+            final String predicate = table.getExpiryPredicate();
+            if (predicate == null || predicate.isEmpty()) {
+                return null;
+            }
+            return predicate;
+        }
     }
 
     private CharSequence createColumnAlias(
@@ -4407,6 +4506,43 @@ public class SqlParser {
             default:
                 throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
+
+        // Read-time row-expiry filter (approach A): if this resolved to a plain table (not a CTE,
+        // not a table-function) that carries an EXPIRE ROWS policy, transparently rewrite the
+        // reference into a nested "SELECT * FROM t WHERE <keep-filter>" so expired rows are hidden
+        // from every read. This is the single chokepoint for plain-table resolution: both the FROM
+        // branch (parseFromClause) and the JOIN branch funnel through parseSelectFrom, and the inner
+        // tables of sub-queries/CTE bodies recurse back here too. The CTE *reference* case set a
+        // nested model above (tableNameExpr stays null), so it is naturally skipped.
+        final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
+        if (
+                expiryFilterEnabled
+                        && resolvedTableNameExpr != null
+                        && resolvedTableNameExpr.type == ExpressionNode.LITERAL
+        ) {
+            // Normalise to the unquoted name so the recursion guard matches regardless of quoting:
+            // the outer reference may be "from t" while the synthetic inner is "from \"t\"".
+            final CharSequence unquotedName = unquote(resolvedTableNameExpr.token);
+            // Guard against the synthetic inner "SELECT * FROM t" re-expanding (infinite recursion).
+            if (!expiringTablesBeingExpanded.contains(unquotedName)) {
+                final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
+                final String predicate;
+                if (tt != null && !tt.isView() && (predicate = lookupExpiryPredicate(tt)) != null) {
+                    final int position = resolvedTableNameExpr.position;
+                    model.setTableNameExpr(null);
+                    // The set stores references, not copies, and unquote() of a quoted token yields a
+                    // view over the (transient) lexer buffer; store a stable String, like
+                    // viewsBeingCompiled does, so the key survives the nested parse.
+                    final String guardKey = Chars.toString(unquotedName);
+                    expiringTablesBeingExpanded.add(guardKey);
+                    try {
+                        expandExpiringTable(model, guardKey, predicate, position, sqlParserCallback);
+                    } finally {
+                        expiringTablesBeingExpanded.remove(guardKey);
+                    }
+                }
+            }
+        }
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
@@ -5369,6 +5505,15 @@ public class SqlParser {
                 throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
             }
         }
+    }
+
+    /**
+     * Master switch for the read-time row-expiry filter (approach A). When {@code false}, table
+     * references carrying an EXPIRE ROWS policy are left untouched. Reserved as the future bypass
+     * for the cleanup/refresh job.
+     */
+    public void setExpiryFilterEnabled(boolean expiryFilterEnabled) {
+        this.expiryFilterEnabled = expiryFilterEnabled;
     }
 
     void clear() {

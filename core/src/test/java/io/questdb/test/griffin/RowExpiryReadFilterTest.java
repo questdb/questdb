@@ -1,0 +1,243 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin;
+
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
+
+/**
+ * Verifies the read-time row-expiry filter (approach A: subquery rewrite). When a table carries an
+ * EXPIRE ROWS policy, the parser transparently rewrites every reference to it into a nested
+ * {@code SELECT * FROM t WHERE NOT(<predicate>)} so expired rows are invisible to ALL reads:
+ * plain SELECT, JOIN, sub-query, CTE, and aggregation.
+ * <p>
+ * {@code now()} is pinned via {@link #setCurrentMicros(long)} so the time-based predicates are
+ * deterministic. 2024-01-10T00:00:00Z = 1704844800000000 micros; now()-1d = 2024-01-09T00:00:00Z.
+ */
+public class RowExpiryReadFilterTest extends AbstractCairoTest {
+
+    // 2024-01-10T00:00:00.000000Z
+    private static final long NOW_MICROS = 1704844800000000L;
+
+    @Test
+    public void testAggregationOverPolicied() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            // AAA: one expired (2024-01-05) + one live (2024-01-09T12) -> count 1
+            // BBB: two live -> count 2
+            // CCC: only expired -> absent from grouped result
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into t values ('AAA', 2.0, '2024-01-09T12:00:00.000000Z')");
+            execute("insert into t values ('BBB', 3.0, '2024-01-09T06:00:00.000000Z')");
+            execute("insert into t values ('BBB', 4.0, '2024-01-09T18:00:00.000000Z')");
+            execute("insert into t values ('CCC', 5.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tc\n" +
+                            "AAA\t1\n" +
+                            "BBB\t2\n",
+                    "select sym, count() c from t order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testExplicitAliasResolvesAgainstFilteredTable() throws Exception {
+        // An explicit alias on a policied table must still resolve (alias.col) and the rows must be
+        // filtered. Guards the interaction between expandExpiringTable's alias and setModelAlias*.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\n" +
+                            "BBB\t2.0\n",
+                    "select a.sym, a.v from t a order by a.sym"
+            );
+        });
+    }
+
+    @Test
+    public void testJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            // normal dimension table, no policy
+            execute("create table dim (sym symbol, name string)");
+            execute("insert into dim values ('AAA', 'alpha')");
+            execute("insert into dim values ('BBB', 'bravo')");
+            drainWalQueue();
+
+            // Only the live row (BBB) should survive the join; the expired AAA row is invisible.
+            assertSql(
+                    "sym\tv\tname\n" +
+                            "BBB\t2.0\tbravo\n",
+                    "select t.sym, t.v, dim.name from t join dim on t.sym = dim.sym order by t.sym"
+            );
+        });
+    }
+
+    @Test
+    public void testSelfJoinBothSidesFiltered() throws Exception {
+        // Two references to the same policied table in one query. The recursion guard is add/removed
+        // around each expansion, so both the FROM side and the JOIN side must be filtered.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            // If either side leaked the expired AAA row, the join would produce extra/incorrect rows.
+            assertSql(
+                    "sym\tsym1\n" +
+                            "BBB\tBBB\n",
+                    "select a.sym, b.sym from t a join t b on a.sym = b.sym order by a.sym"
+            );
+        });
+    }
+
+    @Test
+    public void testNonTimePredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // v<2 -> expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-06T00:00:00.000000Z')"); // v>=2 -> live
+            execute("insert into t values ('CCC', 9.0, '2024-01-07T00:00:00.000000Z')"); // v>=2 -> live
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "BBB\t2.0\t2024-01-06T00:00:00.000000Z\n" +
+                            "CCC\t9.0\t2024-01-07T00:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testNoPolicyUnaffected() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            // No EXPIRE ROWS clause: every row must be visible (regression guard for the hot path).
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')");
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "AAA\t1.0\t2024-01-05T00:00:00.000000Z\n" +
+                            "BBB\t2.0\t2024-01-09T12:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testSubqueryAndCte() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            final String expected = "sym\tv\tts\n" +
+                    "BBB\t2.0\t2024-01-09T12:00:00.000000Z\n";
+
+            // inline sub-query
+            assertSql(expected, "select * from (select * from t) order by ts");
+            // CTE
+            assertSql(expected, "with x as (select * from t) select * from x order by ts");
+            // nested deeper to exercise recursion through parseSelectFrom repeatedly
+            assertSql(expected, "select * from (select * from (select * from t)) order by ts");
+        });
+    }
+
+    @Test
+    public void testBareNowPredicateUsesOptimizedFilter() throws Exception {
+        // Exercises buildRowExpiryKeepFilter's optimized "col < now()" -> "col >= now()" branch.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS); // cutoff is exactly now() = 2024-01-10T00:00:00Z
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < now()");
+            execute("insert into t values ('AAA', 1.0, '2024-01-09T23:59:59.999999Z')"); // < now() -> expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-10T00:00:00.000000Z')"); // == now() -> live (>=)
+            execute("insert into t values ('CCC', 3.0, '2024-01-11T00:00:00.000000Z')"); // > now() -> live
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "BBB\t2.0\t2024-01-10T00:00:00.000000Z\n" +
+                            "CCC\t3.0\t2024-01-11T00:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testTimePredicateHidesExpiredRows() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            // expired: strictly older than now()-1d (2024-01-09T00:00:00Z)
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into t values ('BBB', 2.0, '2024-01-08T23:59:59.999999Z')");
+            // live: >= now()-1d
+            execute("insert into t values ('CCC', 3.0, '2024-01-09T00:00:00.000000Z')");
+            execute("insert into t values ('DDD', 4.0, '2024-01-09T12:00:00.000000Z')");
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "CCC\t3.0\t2024-01-09T00:00:00.000000Z\n" +
+                            "DDD\t4.0\t2024-01-09T12:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+}
