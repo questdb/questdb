@@ -50,6 +50,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -295,13 +296,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " FROM long_sequence(" + (rowsPerPartition * partitions) + ")",
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT approx_count_distinct((v)::SYMBOL) FROM tab",
-                                sink,
-                                "approx_count_distinct\n" + partitions + "\n"
-                        );
+                        assertQuery("SELECT approx_count_distinct((v)::SYMBOL) FROM tab")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("approx_count_distinct\n" + partitions + "\n");
                     },
                     configuration,
                     LOG
@@ -644,19 +645,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT k, min(v), max(v) FROM tab GROUP BY k ORDER BY k",
-                                sink,
-                                """
+                        assertQuery("SELECT k, min(v), max(v) FROM tab GROUP BY k ORDER BY k")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         k\tmin\tmax
                                         0\t0.04\t400.00
                                         1\t0.01\t399.97
                                         2\t0.02\t399.98
                                         3\t0.03\t399.99
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -691,31 +691,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         );
                         // Keyed form exercises computeFirst/computeNext within each
                         // worker and merge across workers (sharded GROUP BY).
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT k, min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab GROUP BY k ORDER BY k",
-                                sink,
-                                """
+                        assertQuery("SELECT k, min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab GROUP BY k ORDER BY k")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         k\tmin\tmax
                                         0\t4.000\t40000.000
                                         1\t1.000\t39997.000
                                         2\t2.000\t39998.000
                                         3\t3.000\t39999.000
-                                        """
-                        );
+                                        """);
                         // Non-keyed form covers AsyncGroupByNotKeyed, which also
                         // merges per-worker partial states.
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab",
-                                sink,
-                                """
+                        assertQuery("SELECT min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("""
                                         min\tmax
                                         1.000\t40000.000
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -756,29 +755,28 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT k, min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab GROUP BY k ORDER BY k",
-                                sink,
-                                """
+                        assertQuery("SELECT k, min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab GROUP BY k ORDER BY k")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         k\tmin\tmax
                                         0\t4.00000\t40000.00000
                                         1\t1.00000\t39997.00000
                                         2\t2.00000\t39998.00000
                                         3\t3.00000\t39999.00000
-                                        """
-                        );
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab",
-                                sink,
-                                """
+                                        """);
+                        assertQuery("SELECT min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("""
                                         min\tmax
                                         1.00000\t40000.00000
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -3318,18 +3316,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "select round(regr_slope(x, y), 5), sym from tbl1 WHERE x > 0.5 ORDER BY sym",
-                                sink,
-                                """
+                        assertQuery("select round(regr_slope(x, y), 5), sym from tbl1 WHERE x > 0.5 ORDER BY sym")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         round\tsym
                                         -0.00317\ta
                                         -0.00402\tb
                                         0.00476\tc
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -4032,13 +4029,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         // ORDER BY ... LIMIT -1 forces the cursor to walk the full post-merge
                         // heap to find the last row - the corrupted keySize crashes the
                         // cursor on a fraction of the buggy runs.
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT key, min(achar) FROM tab ORDER BY key LIMIT -1",
-                                sink,
-                                "key\tmin\n99\t\n"
-                        );
+                        assertQuery("SELECT key, min(achar) FROM tab ORDER BY key LIMIT -1")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("key\tmin\n99\t\n");
                     },
                     configuration,
                     LOG
@@ -5070,10 +5065,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             );
                             context.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
-                            TestUtils.assertSql(compiler, context, query, sink, "");
-                            Assert.fail();
-                        } catch (CairoException ex) {
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+                            assertQuery(query)
+                                    .withCompiler(compiler)
+                                    .withContext(context)
+                                    .noLeakCheck()
+                                    .failsWith("timeout, query aborted");
                         } finally {
                             Misc.free(circuitBreaker);
                         }
@@ -5353,13 +5349,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                query,
-                                sink,
-                                expected
-                        );
+                        assertQuery(query)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce(expected);
 
                         if (enableParallelGroupBy) {
                             // Make sure that we're testing Rosti here.
@@ -5545,40 +5539,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, plainSql, castSql, LOG);
     }
 
-    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws Exception {
         assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
     }
 
-    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws SqlException {
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws Exception {
         for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
             final String query = queriesAndExpectedResults[i];
             final String expected = queriesAndExpectedResults[i + 1];
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    query,
-                    sink,
-                    expected
-            );
+            new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         }
     }
 
-    static void assertQueriesAndPlans(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesExpectedResultsAndPlans) throws SqlException {
+    static void assertQueriesAndPlans(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesExpectedResultsAndPlans) throws Exception {
         for (int i = 0, n = queriesExpectedResultsAndPlans.length; i < n; i += 3) {
             final String query = queriesExpectedResultsAndPlans[i];
             final String expected = queriesExpectedResultsAndPlans[i + 1];
-            sink.clear();
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    query,
-                    sink,
-                    expected
-            );
+            new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
 
             // verify the plan, optionally
             final String expectedPlanFragment = queriesExpectedResultsAndPlans[i + 2];
             if (expectedPlanFragment != null) {
+                sink.clear();
                 TestUtils.printSql(
                         engine,
                         sqlExecutionContext,
