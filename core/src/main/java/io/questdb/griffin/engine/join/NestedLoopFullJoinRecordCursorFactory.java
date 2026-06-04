@@ -91,6 +91,9 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() reopens the match-ids map before it assigns the master/slave cursors, so a
+            // breach there leaves them unset; close() frees the map and resets isOpen for reuse.
+            Misc.free(cursor);
             throw ex;
         }
     }
@@ -229,17 +232,17 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
+            if (!isOpen) {
+                isOpen = true;
+                matchIdsMap.setMemoryTracker(executionContext.getMemoryTracker());
+                matchIdsMap.reopen();
+            }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             filter.init(this, executionContext);
             this.slaveRecord = slaveCursor.getRecord();
             record.of(masterCursor.getRecord(), this.slaveRecord);
             isMasterHasNextPending = true;
-            if (!isOpen) {
-                isOpen = true;
-                matchIdsMap.setMemoryTracker(executionContext.getMemoryTracker());
-                matchIdsMap.reopen();
-            }
             circuitBreaker = executionContext.getCircuitBreaker();
         }
     }

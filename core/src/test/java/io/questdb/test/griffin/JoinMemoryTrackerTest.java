@@ -251,6 +251,23 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedLoopFullJoinOpenFailureReleasesAllocations() throws Exception {
+        // Inflate the matched-id map far above the limit so the nested-loop full join's of()
+        // breaches on matchIdsMap.reopen() with isOpen already set. A small input keeps every other
+        // allocation under the limit; reusing one factory across opens catches the isOpen desync.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x AS k FROM long_sequence(20))");
+            execute("CREATE TABLE s AS (SELECT x AS k FROM long_sequence(20))");
+            drainWalQueue();
+            assertOpenFailureReleasesAllocations(
+                    "SELECT * FROM m FULL OUTER JOIN s ON m.k <> s.k",
+                    NestedLoopFullJoinRecordCursorFactory.class
+            );
+        });
+    }
+
+    @Test
     public void testSpliceJoinFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
