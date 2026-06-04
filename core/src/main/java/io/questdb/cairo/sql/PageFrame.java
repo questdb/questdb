@@ -72,20 +72,6 @@ public interface PageFrame {
      */
     byte getFormat();
 
-    /**
-     * Reports whether this Parquet partition resides on cold-tier (remote)
-     * storage. Default {@code false} until the cold-tier metadata wiring lands;
-     * the Parquet decode-buffer pool consults this via
-     * {@link PageFrameAddressCache#isColdParquetPartition(int)} to gate the
-     * disk-spill path.
-     * <p>
-     * TODO: wire to real cold-tier metadata once remote storage lands. Until
-     * then this stub keeps the disk-spill path unreachable in production.
-     */
-    default boolean isColdParquetPartition() {
-        return false;
-    }
-
     IndexReader getIndexReader(int columnIndex, int direction);
 
     /**
@@ -145,4 +131,18 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
+    /**
+     * Reports whether this Parquet partition resides on cold-tier (remote)
+     * storage. Default {@code false} until the cold-tier metadata wiring lands;
+     * the Parquet decode-buffer pool consults this via
+     * {@link PageFrameAddressCache#isColdParquetPartition(int)} to gate the
+     * disk-spill path.
+     * <p>
+     * TODO: wire to real cold-tier metadata once remote storage lands. Until
+     * then this stub keeps the disk-spill path unreachable in production.
+     */
+    default boolean isColdParquetPartition() {
+        return false;
+    }
 }

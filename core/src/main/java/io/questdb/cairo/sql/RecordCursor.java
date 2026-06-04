@@ -297,7 +297,10 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * {@link #recordAt(Record, long)} on this cursor. The Parquet decode-buffer
      * pool scales its byte budget by the hint: monotonic walks get a smaller
      * effective ceiling, scattered walks get the full configured budget.
-     * Wrappers that hold a delegate cursor must forward the call.
+     * Wrappers that hold a delegate cursor must forward the call. Factories
+     * that copy delegate records into a heap-allocated chain or map before
+     * iteration (e.g. non-light hash/asof joins) intentionally skip this hint
+     * because the underlying cursor is exhausted once and never random-accessed.
      */
     default void setParquetDecodeHint(ParquetDecodeHint hint) {
     }
