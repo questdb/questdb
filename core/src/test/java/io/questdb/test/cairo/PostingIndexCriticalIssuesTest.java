@@ -4444,6 +4444,79 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The original bug's trigger at scale: fragment one day into many split
+     * sub-partitions, then squash them all in a single squashSplitPartitions
+     * pass. The merged partition holds the full hot key, so its covering reseal
+     * (discardForRebuild -> index() -> commitDense) trips the spill budget and
+     * commitDense must consolidate -- the path that SIGSEGVd before the fix.
+     * Twenty separate O3 commits into the late tail build twenty+ splits (kept
+     * from auto-squashing by the high MAX_SPLITS), then squashPartitions()
+     * collapses them to one and the covering result must match the truth.
+     */
+    @Test
+    public void testSquashManySplitPartitionsCoveringPostingSpill() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        // High ceilings so housekeep does not auto-squash before the explicit call.
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_manysplit (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2000 hot 'A' rows early in the day so the squash reseal spills.
+            execute("""
+                    INSERT INTO t_manysplit
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(2000)
+                    """);
+            // Late sentinel keeps the day's max at 23:00 so the O3 prefixes split.
+            execute("INSERT INTO t_manysplit VALUES ('2024-01-01T23:00:00.000000Z', 'A', 1000000.0)");
+            // Twenty separate O3 commits into distinct late-tail minutes; each
+            // splits the trailing sub-partition, accumulating many splits.
+            final int splitInserts = 20;
+            for (int i = 0; i < splitInserts; i++) {
+                execute("INSERT INTO t_manysplit VALUES ('2024-01-01T22:"
+                        + String.format("%02d", i) + ":00.000000Z', 'B', " + (-1 - i) + ".0)");
+            }
+
+            final long splitCount = selectLong("SELECT count() FROM table_partitions('t_manysplit')");
+            Assert.assertTrue(
+                    "test setup must fragment the day into many split sub-partitions, got " + splitCount,
+                    splitCount > 10);
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_manysplit")) {
+                // squashPartitions() -> squashPartitionForce -> squashSplitPartitions
+                // -> sealPostingIndexForPartition: the reported reseal path, now over
+                // a partition merged from 20+ splits.
+                w.squashPartitions();
+            }
+
+            assertQuery("SELECT count() FROM table_partitions('t_manysplit')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+
+            // 2000 'A' rows (sum 1..2000 = 2001000) plus the 23:00 sentinel
+            // (1000000) = 2001 rows, sum 3001000, served through the covering index.
+            assertQuery("SELECT count(), sum(price) FROM t_manysplit WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n2001\t3001000.0\n");
+        });
+    }
+
+    /**
      * Non-covering twin of testSquashCoveringPostingWithMidStreamSpillFlush.
      * The non-covering squash reseal also runs discardForRebuild -> index() ->
      * commitDense; the same mid-stream flushAllPending orphans the early sparse
