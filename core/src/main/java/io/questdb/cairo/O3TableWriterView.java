@@ -124,9 +124,8 @@ public final class O3TableWriterView {
         );
     }
 
-    // safety: TODO
-    // assumption: each worker (columns) gets a unique and non-overlapping dedupColSinkAddr so it should be good
-    // to be validated
+    // safety: per-partition dedup block. allocated once on the writer thread, cleared once during
+    // partition processing before the per-column fan-out, so concurrent partitions hit distinct blocks.
     void clearDedupBlock(long dedupColSinkAddr) {
         final DedupColumnCommitAddresses dedupColumnCommitAddresses = tableWriter.getDedupCommitAddresses();
         if (dedupColumnCommitAddresses != null) {
@@ -300,7 +299,7 @@ public final class O3TableWriterView {
         return tableWriter.getPartitionParquetFileSize(partitionIndex);
     }
 
-    // safety: TODO
+    // safety: read-only of frozen symbol state. All interning happens before the fan-out and no O3 job mutates symbol maps.
     int getSymbolCount(int columnIndex) {
         return tableWriter.getSymbolMapWriter(columnIndex).getSymbolCount();
     }
@@ -330,14 +329,16 @@ public final class O3TableWriterView {
         return tableWriter.getTimestampType();
     }
 
-    // safety: I assume Txn cannot advanced during O3
-    // TODO: validate it
+    // safety: txn is frozen during the o3 fan-out. it advances only via TxWriter.commit()/truncate(), which
+    // run after o3DoneLatch.await drains the workers. o3 workers only read it
     long getTxn() {
         return tableWriter.getTxn();
     }
 
-    // safety: TODO
-    // assumptions: called from just the last partition -> not multithreaded for the same column index
+    // safety: shared, non-thread-safe IndexWriter mutated by the copy task - an Unsafe caller-discipline
+    // invariant (hence the name): per-column-distinct writers, one copy task per column, and the inline
+    // appendLastPartition vs this async path are mutually exclusive per batch. Only the last partition.
+    // TODO: more review
     IndexWriter getUnsafeGetIndexWriterForLastPartitionOnly(int columnIndex) {
         return tableWriter.getIndexWriter(columnIndex);
     }
@@ -399,7 +400,7 @@ public final class O3TableWriterView {
         indexWriter.of(tableWriter.getConfiguration(), keyFd, valueFd, isInit, indexBlockCapacity);
     }
 
-    // safety: TODO
+    // safety: read-only of the frozen per-column null flag; same rationale as getSymbolCount.
     boolean symbolHasNull(int columnIndex) {
         return tableWriter.getSymbolMapWriter(columnIndex).getNullFlag();
     }
