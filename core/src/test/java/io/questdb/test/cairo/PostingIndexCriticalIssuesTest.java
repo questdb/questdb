@@ -74,6 +74,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -5097,6 +5098,229 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 + "intermediate from the spill-driven reseal survived: "
                                 + java.util.Arrays.toString(names),
                         1, pvCount);
+            }
+        });
+    }
+
+    /**
+     * Concurrent covered-read integration test: a COVERING posting index
+     * (sym INCLUDE price) over several parquet partitions, rewritten out-of-order
+     * across the real 4-worker O3 pool under a tiny spill budget, while background
+     * threads continuously serve {@code count(), sum(price) WHERE sym='A'} from the
+     * covering sidecars. This is the multi-threaded covering analogue of
+     * testParquetPostingSpillConcurrentReadFuzz; it exercises the interaction the
+     * single-threaded covering tests never do:
+     * <ul>
+     *   <li>multiple O3 workers running updateParquetIndexes -> commitDense ->
+     *       configureCovering -> rebuildSidecars and depositing .pv/.pc purges into
+     *       the shared deferredPostingSealPurges list/pool under parquetSealPurgeLock;</li>
+     *   <li>the scoreboard-gated PostingSealPurgeJob (on the pool) reclaiming
+     *       superseded .pv/.pc while readers hold real txn pins;</li>
+     *   <li>readers resolving covered values (the addr-based covered read) against a
+     *       sidecar a concurrent reseal/purge is rotating.</li>
+     * </ul>
+     * Oracles (all under -ea, so the audit's holdsLock / no-O3-in-flight /
+     * covered-bounds asserts also fire on the worker threads): rows are only added,
+     * so the covered 'A' count must be monotonic and never below the committed
+     * floor; sum(price) must never drop below the initial covered total and must
+     * stay &gt;= count (every price &gt;= 1); no reader may crash; and after a final
+     * purge pass with nothing pinned, each partition keeps exactly one .pv (no purge
+     * lost or double-freed). The floor is read BEFORE the count so a commit landing
+     * mid-read can never make a valid snapshot look short.
+     * <p>
+     * IGNORED pending root-cause: this reproducer FAILS. Single-threaded the covered
+     * query is correct (count=dayCount*hotPerDay, sum=dayCount*sum(1..hotPerDay)), but
+     * under the concurrent O3 reseal a reader observes a CORRECT posting count
+     * (count >= the committed floor) together with a PARTIAL covered sum -- the price
+     * values of the partitions being resealed read as 0 while their row ids are still
+     * counted (e.g. count>=5000 but sum=1001000 == only 2 of 5 days' prices). The
+     * covered-value (sidecar) read races the writer-thread covering reseal
+     * (sealPostingIndexForPartition -> rebuildSidecars) in a way the posting row-id
+     * read does not. Reproducible across seeds. Un-@Ignore to reproduce.
+     */
+    @Ignore("Reproducer for a covered-value partial-read under concurrent O3 reseal; " +
+            "count() is correct but sum(covered) reads 0 for resealing partitions. Single-threaded is correct.")
+    @Test
+    public void testMultiThreadedO3CoveringPostingConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days; keeps sum < 1e7 (no sci-notation)
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2; // sum(1..hotPerDay)
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // hotPerDay 'A' rows/day with price = row index, so the covered total is
+            // deterministic and every partition's reseal spills (tiny budget).
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        long prevCount = 0;
+                        while (!stop.get() && bgError.get() == null) {
+                            // Read the floor BEFORE the snapshot: the floor was committed
+                            // at an earlier time, and rows only ever get added, so a valid
+                            // snapshot taken later cannot be below it.
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (count < prevCount) {
+                                throw new AssertionError("covered 'A' count went backwards: " + prevCount + " -> " + count);
+                            }
+                            if (sum < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(price) dropped below the initial total "
+                                        + initialSum + ": " + sum + " (a covered value was lost/corrupted)");
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("covered sum(price)=" + sum + " < count=" + count
+                                        + " -- a covered value resolved as < 1 (stale/garbage sidecar)");
+                            }
+                            prevCount = count;
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-posting-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    // O3-insert 'A' rows (price 1.0) into a random subset of the parquet
+                    // days: one commit -> a partition task per touched day, run across the
+                    // pool, each calling deferParquetPostingSealPurges (covering: .pv + .pc).
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    // Publish the new floor only AFTER the commit is visible.
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent covered reader threw: " + bgError.get(), bgError.get());
+
+            // Drain deferred purges with nothing pinned, then verify the exact final
+            // covered totals (count exact; sum within epsilon to dodge double formatting).
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows); // each O3 row adds price 1.0
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+            }
+
+            // Each parquet partition must keep exactly one value file (no purge lost
+            // or double-freed under concurrent covering deposit).
+            final TableToken token = engine.getTableTokenIfExists("t_cov");
+            Assert.assertNotNull("table must exist", token);
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("all days must remain", dayCount, reader.getTxFile().getPartitionCount());
+                for (int i = 0; i < dayCount; i++) {
+                    final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(i);
+                    try (Path path = new Path()) {
+                        path.of(configuration.getDbRoot()).concat(token);
+                        setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                        final String[] names = new java.io.File(path.toString()).list();
+                        Assert.assertNotNull("partition dir must exist: " + path, names);
+                        int pvCount = 0;
+                        for (String n : names) {
+                            if (n.startsWith("sym.pv.")) {
+                                pvCount++;
+                            }
+                        }
+                        Assert.assertEquals(
+                                "partition " + i + " must keep exactly one value file: "
+                                        + java.util.Arrays.toString(names),
+                                1, pvCount);
+                    }
+                }
             }
         });
     }
