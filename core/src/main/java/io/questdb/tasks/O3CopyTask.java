@@ -25,7 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.idx.IndexWriter;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.O3TableWriterView;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -49,6 +49,7 @@ public class O3CopyTask {
     private long dstVarSize;
     private int indexBlockCapacity;
     private IndexWriter indexWriter;
+    private boolean sharedLastPartitionIndexWriter;
     private long o3SplitPartitionSize;
     private AtomicInteger partCounter;
     private boolean partitionMutates;
@@ -78,7 +79,7 @@ public class O3CopyTask {
     private long srcTimestampAddr;
     private long srcTimestampFd;
     private long srcTimestampSize;
-    private TableWriter tableWriter;
+    private O3TableWriterView tableWriterView;
     private long timestampMergeIndexAddr;
     private long timestampMergeIndexSize;
     private long timestampMin;
@@ -157,6 +158,10 @@ public class O3CopyTask {
 
     public IndexWriter getIndexWriter() {
         return indexWriter;
+    }
+
+    public boolean isSharedLastPartitionIndexWriter() {
+        return sharedLastPartitionIndexWriter;
     }
 
     public long getO3SplitPartitionSize() {
@@ -271,8 +276,8 @@ public class O3CopyTask {
         return srcTimestampSize;
     }
 
-    public TableWriter getTableWriter() {
-        return tableWriter;
+    public O3TableWriterView getTableWriterView() {
+        return tableWriterView;
     }
 
     public long getTimestampMergeIndexAddr() {
@@ -341,8 +346,9 @@ public class O3CopyTask {
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3NewPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriterView,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long partitionUpdateSinkAddr
     ) {
         this.columnCounter = columnCounter;
@@ -394,8 +400,9 @@ public class O3CopyTask {
         this.srcDataNewPartitionSize = srcDataNewPartitionSize;
         this.srcDataOldPartitionSize = srcDataOldPartitionSize;
         this.o3SplitPartitionSize = o3NewPartitionSize;
-        this.tableWriter = tableWriter;
+        this.tableWriterView = tableWriterView;
         this.indexWriter = indexWriter;
+        this.sharedLastPartitionIndexWriter = sharedLastPartitionIndexWriter;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
     }
 }

@@ -25,7 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.O3Basket;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.O3TableWriterView;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.ObjList;
@@ -58,7 +58,7 @@ public class O3PartitionTask {
     private long srcOooHi;
     private long srcOooLo;
     private long srcOooMax;
-    private TableWriter tableWriter;
+    private O3TableWriterView tableWriterView;
     private long txn;
 
     public AtomicInteger getColumnCounter() {
@@ -145,8 +145,8 @@ public class O3PartitionTask {
         return srcOooMax;
     }
 
-    public TableWriter getTableWriter() {
-        return tableWriter;
+    public O3TableWriterView getTableWriterView() {
+        return tableWriterView;
     }
 
     public long getTxn() {
@@ -177,7 +177,7 @@ public class O3PartitionTask {
             boolean last,
             long txn,
             long sortedTimestampsAddr,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriterView,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
             long newPartitionSize,
@@ -203,7 +203,7 @@ public class O3PartitionTask {
         this.partitionBy = partitionBy;
         this.columns = columns;
         this.o3Columns = o3Columns;
-        this.tableWriter = tableWriter;
+        this.tableWriterView = tableWriterView;
         this.columnCounter = columnCounter;
         this.o3Basket = o3Basket;
         this.newPartitionSize = newPartitionSize;

@@ -254,6 +254,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final long[] o3LastTimestampSpreads;
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
+    private final O3TableWriterView o3View = new O3TableWriterView(this);
     private final boolean o3QuickSortEnabled;
     private final LongList o3SealAddrs = new LongList();
     private final LongList o3SealAuxAddrs = new LongList();
@@ -7772,7 +7773,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     last,
                     getTxn(),
                     sortedTimestampsAddr,
-                    this,
+                    o3View,
                     columnCounter,
                     o3Basket,
                     newPartitionSize,
@@ -7801,7 +7802,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     last,
                     getTxn(),
                     sortedTimestampsAddr,
-                    this,
+                    o3View,
                     columnCounter,
                     o3Basket,
                     newPartitionSize,
@@ -8238,7 +8239,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long cursor = partitionSubSeq.next();
             if (cursor > -1) {
                 final O3PartitionTask partitionTask = partitionQueue.get(cursor);
-                if (partitionTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                if (partitionTask.getTableWriterView() == o3View && o3ErrorCount.get() > 0) {
                     // do we need to free anything on the task?
                     partitionSubSeq.done(cursor);
                     o3ClockDownPartitionUpdateCount();
@@ -8252,7 +8253,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             cursor = openColumnSubSeq.next();
             if (cursor > -1) {
                 O3OpenColumnTask openColumnTask = openColumnQueue.get(cursor);
-                if (openColumnTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                if (openColumnTask.getTableWriterView() == o3View && o3ErrorCount.get() > 0) {
                     O3CopyJob.closeColumnIdle(
                             openColumnTask.getColumnCounter(),
                             openColumnTask.getTimestampMergeIndexAddr(),
@@ -8260,7 +8261,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             openColumnTask.getSrcTimestampFd(),
                             openColumnTask.getSrcTimestampAddr(),
                             openColumnTask.getSrcTimestampSize(),
-                            this
+                            o3View
                     );
                     openColumnSubSeq.done(cursor);
                 } else {
@@ -8272,7 +8273,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             cursor = copySubSeq.next();
             if (cursor > -1) {
                 O3CopyTask copyTask = copyQueue.get(cursor);
-                if (copyTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                if (copyTask.getTableWriterView() == o3View && o3ErrorCount.get() > 0) {
                     O3CopyJob.unmapAndClose(
                             copyTask.getColumnCounter(),
                             copyTask.getPartCounter(),
@@ -8295,7 +8296,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             copyTask.getSrcTimestampSize(),
                             copyTask.getDstKFd(),
                             copyTask.getDstVFd(),
-                            this
+                            o3View
                     );
                     copySubSeq.done(cursor);
                 } else {
@@ -9202,7 +9203,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         newPartitionSize,
                                         srcDataMax,
                                         0,
-                                        this,
+                                        o3View,
                                         indexWriter,
                                         getColumnNameTxn(partitionTimestamp, i),
                                         partitionUpdateSinkAddr

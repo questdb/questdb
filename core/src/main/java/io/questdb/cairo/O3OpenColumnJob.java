@@ -80,7 +80,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
             long columnNameTxn,
             long partitionUpdateSinkAddr
@@ -166,6 +166,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataOldPartitionSize,
                     o3SplitPartitionSize,
                     indexWriter,
+                    // appendLastPartition is entered by TableWriter itself and receives
+                    // its live indexer. Preserve that ownership through the copy task.
+                    indexWriter != null,
                     columnNameTxn,
                     partitionUpdateSinkAddr
             );
@@ -179,7 +182,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             FilesFacade ff,
             boolean isOom
     ) {
@@ -241,7 +244,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             long colTopSinkAddr,
             long columnNameTxn,
             long partitionUpdateSinkAddr
@@ -401,7 +404,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             // Upgrade srcDataTop to offset.
             srcDataTopOffset = columnTypeDriver.getAuxVectorOffset(srcDataTop);
 
-            dstAuxFd = openRW(ff, iFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            dstAuxFd = openRW(ff, iFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
 
             // Use target partition size to determine the size of fixed file, it's already compensated
             // for partitions splits and duplicates found by dedup.
@@ -506,7 +509,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     : 0;
             dstDataSize = dstDataAppendOffset2 + suffixSize + suffixSize2;
 
-            dstDataFd = openRW(ff, dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            dstDataFd = openRW(ff, dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
             if (dstDataSize > 0) {
                 dstVarAddr = mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3);
                 if (!mixedIOFlag) {
@@ -664,8 +667,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long partitionUpdateSinkAddr
     ) {
         long cursor = tableWriter.getO3CopyPubSeq().next();
@@ -723,6 +727,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
+                    sharedLastPartitionIndexWriter,
                     partitionUpdateSinkAddr
             );
         } else {
@@ -779,6 +784,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
+                    sharedLastPartitionIndexWriter,
                     partitionUpdateSinkAddr
             );
         }
@@ -837,7 +843,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
             long dstIndexAdjust,
             long partitionUpdateSinkAddr
@@ -903,6 +909,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
+                            false,
                             partitionUpdateSinkAddr
                     );
                     break;
@@ -960,6 +967,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
+                            false,
                             partitionUpdateSinkAddr
                     );
                     break;
@@ -1022,6 +1030,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
+                            false,
                             partitionUpdateSinkAddr
                     );
                     break;
@@ -1079,6 +1088,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
+                            false,
                             partitionUpdateSinkAddr
                     );
                     break;
@@ -1136,6 +1146,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
+                            false,
                             partitionUpdateSinkAddr
                     );
                     break;
@@ -1198,6 +1209,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
+                            false,
                             partitionUpdateSinkAddr
                     );
                     break;
@@ -1255,6 +1267,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             o3SplitPartitionSize,
                             tableWriter,
                             indexWriter,
+                            false,
                             partitionUpdateSinkAddr
                     );
                     break;
@@ -1317,7 +1330,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             long partitionUpdateSinkAddr
     ) {
         long dstAuxAddr = 0;
@@ -1438,6 +1451,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 null,
+                false,
                 partitionUpdateSinkAddr
         );
     }
@@ -1483,7 +1497,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
@@ -1504,7 +1518,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final Path pathToOldPartition = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForNativePartition(
                 pathToOldPartition,
-                tableWriter.getMetadata().getTimestampType(),
+                tableWriter.getTimestampType(),
                 tableWriter.getPartitionBy(),
                 oldPartitionTimestamp,
                 srcNameTxn
@@ -1515,7 +1529,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         boolean partitionAppend = isOpenColumnModeForAppend(openColumnMode);
         TableUtils.setPathForNativePartition(
                 pathToNewPartition,
-                tableWriter.getMetadata().getTimestampType(),
+                tableWriter.getTimestampType(),
                 tableWriter.getPartitionBy(),
                 partitionTimestamp,
                 partitionAppend ? srcNameTxn : txn
@@ -1526,7 +1540,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         // append jobs do not set value of part counter, we do it here for those
         switch (openColumnMode) {
             case OPEN_LAST_PARTITION_FOR_APPEND:
-            case OPEN_MID_PARTITION_FOR_APPEND:
+            case OPEN_MID_PARTITION_FOR_APPEND: {
+                final boolean sharedLastPartitionIndexWriter = openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND && indexWriter != null;
                 appendMidPartition(
                         pathToNewPartition,
                         pplen,
@@ -1562,13 +1577,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // straightforward. Failure to make them consistent manifests when this site updates index and
                         // extends its value memory, it may do so without extending key memory. Then key memory has
                         // the reference to a value block, which would be outside the mapped area for tableWriters' indexer.
-                        openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND && indexWriter != null ? tableWriter.getIndexWriter(columnIndex) : indexWriter,
+                        sharedLastPartitionIndexWriter ? tableWriter.o3UnsafeGetIndexWriterForLastPartitionOnly(columnIndex) : indexWriter,
+                        sharedLastPartitionIndexWriter,
                         colTopSinkAddr,
                         columnIndex,
                         columnNameTxn,
                         partitionUpdateSinkAddr
                 );
                 break;
+            }
             case OPEN_MID_PARTITION_FOR_MERGE:
                 mergeMidPartition(
                         pathToOldPartition,
@@ -1739,7 +1756,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long activeFixFd = task.getActiveFixFd();
         final long activeVarFd = task.getActiveVarFd();
         final long srcDataTop = task.getSrcDataTop();
-        final TableWriter tableWriter = task.getTableWriter();
+        final O3TableWriterView tableWriter = task.getTableWriterView();
         final IndexWriter indexWriter = task.getIndexWriter();
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
         final int columnIndex = task.getColumnIndex();
@@ -1821,11 +1838,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstFixFd,
             MemoryMA dstFixMem,
             long dstLen,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long columnNameTxn,
             long partitionUpdateSinkAddr
     ) {
@@ -1859,6 +1877,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFileOffset = dstFixOffset;
 
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
+                // A shared last-partition writer belongs to TableWriter. If it is
+                // not already open here, do not prepare O3-owned open state for it.
+                if (sharedLastPartitionIndexWriter) {
+                    throw CairoException.critical(0)
+                            .put("shared last-partition index writer is closed before O3 copy publish [table=")
+                            .put(tableWriter.getTableToken())
+                            .put(']');
+                }
                 byte indexType = indexWriter.getIndexType();
                 if (IndexType.isPosting(indexType)) {
                     indexWriter.setO3PathContext(
@@ -1868,8 +1894,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             tableWriter.getTxn() + 1L
                     );
                 } else {
-                    dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
                 }
             }
         } catch (Throwable e) {
@@ -1949,6 +1975,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
+                sharedLastPartitionIndexWriter,
                 partitionUpdateSinkAddr
         );
     }
@@ -1976,8 +2003,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long colTopSinkAddr,
             int columnIndex,
             long columnNameTxn,
@@ -2018,9 +2046,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         if (ColumnType.isVarSize(columnType)) {
             try {
                 // index files are opened as normal
-                dstFixFd = openRW(ff, iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstFixFd = openRW(ff, iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
                 // open data file now
-                dstVarFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstVarFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
             } catch (Throwable e) {
                 LOG.error().$("append mid partition error 2 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
@@ -2093,7 +2121,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             );
         } else {
             try {
-                dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
             } catch (Throwable e) {
                 LOG.error().$("append mid partition error 3 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
@@ -2140,6 +2168,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataOldPartitionSize,
                     o3SplitPartitionSize,
                     indexWriter,
+                    sharedLastPartitionIndexWriter,
                     columnNameTxn,
                     partitionUpdateSinkAddr
             );
@@ -2166,7 +2195,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
             long columnNameTxn,
             long partitionUpdateSinkAddr
@@ -2183,18 +2212,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         try {
             if (ColumnType.isVarSize(columnType)) {
-                dstFixFd = openRW(ff, iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstFixFd = openRW(ff, iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
 
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
                 dstFixSize = columnTypeDriver.getAuxVectorSize(srcOooHi - srcOooLo + 1);
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
-                dstVarFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstVarFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
                 dstVarSize = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
                 dstVarAddr = dstVarSize > 0 ? mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3) : 0;
             } else {
-                dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
                 if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
@@ -2207,8 +2236,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                                 tableWriter.getTxn() + 1L
                         );
                     } else {
-                        dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                        dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                        dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
+                        dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
                     }
                 }
             }
@@ -2282,6 +2311,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
+                false,
                 partitionUpdateSinkAddr
         );
     }
@@ -2306,7 +2336,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             long partitionUpdateSinkAddr
     ) {
         long dstFixFd = 0;
@@ -2399,6 +2429,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 null,
+                false,
                 partitionUpdateSinkAddr
         );
     }
@@ -2445,7 +2476,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
             long colTopSinkAddr,
             long columnNameTxn,
@@ -2535,7 +2566,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             srcDataTopOffset = srcDataTop << shl;
             dstIndexAdjust = srcDataTopOffset >> 2;
 
-            dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
             // Use target partition size to determine the size of fixed file, it's already compensated
             // for partitions splits and duplicates found by dedup
             long rowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize - srcDataTop;
@@ -2579,8 +2610,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             tableWriter.getTxn() + 1L
                     );
                 } else {
-                    dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
                 }
             }
 
@@ -2714,7 +2745,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
             long colTopSinkAddr,
             long columnNameTxn,
@@ -2854,7 +2885,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
             long colTopSinkAddr,
             long oldPartitionTimestamp,
@@ -2890,8 +2921,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long srcDataVarFd = 0;
         if (ColumnType.isVarSize(columnType)) {
             try {
-                srcDataFixFd = openRW(ff, iFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                srcDataVarFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                srcDataFixFd = openRW(ff, iFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
+                srcDataVarFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 2 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
@@ -2962,7 +2993,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // ensure timestamp srcDataFixFd is always negative, we will close it externally
                     srcDataFixFd = -srcTimestampFd;
                 } else {
-                    srcDataFixFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    srcDataFixFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.o3WriterFileOpenOpts());
                 }
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 3 [table=").$(tableWriter.getTableToken())
@@ -3079,8 +3110,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long partitionUpdateSinkAddr
     ) {
         while (cursor == -2) {
@@ -3140,6 +3172,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
+                    sharedLastPartitionIndexWriter,
                     partitionUpdateSinkAddr
             );
         } else {
@@ -3196,6 +3229,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
+                    sharedLastPartitionIndexWriter,
                     partitionUpdateSinkAddr
             );
         }
@@ -3252,8 +3286,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long partitionUpdateSinkAddr
     ) {
         final O3CopyTask task = tableWriter.getO3CopyQueue().get(cursor);
@@ -3309,6 +3344,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
+                sharedLastPartitionIndexWriter,
                 partitionUpdateSinkAddr
         );
         tableWriter.getO3CopyPubSeq().done(cursor);

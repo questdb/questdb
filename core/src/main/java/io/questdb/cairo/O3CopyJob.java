@@ -99,8 +99,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long partitionUpdateSinkAddr
     ) {
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
@@ -259,6 +260,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 o3SplitPartitionSize,
                 tableWriter,
                 indexWriter,
+                sharedLastPartitionIndexWriter,
                 partitionUpdateSinkAddr
         );
     }
@@ -313,8 +315,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcDataNewPartitionSize = task.getSrcDataNewPartitionSize();
         final long srcDataOldPartitionSize = task.getSrcDataOldPartitionSize();
         final long o3SplitPartitionSize = task.getO3SplitPartitionSize();
-        final TableWriter tableWriter = task.getTableWriter();
+        final O3TableWriterView tableWriter = task.getTableWriterView();
         final IndexWriter indexWriter = task.getIndexWriter();
+        final boolean sharedLastPartitionIndexWriter = task.isSharedLastPartitionIndexWriter();
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
 
         subSeq.done(cursor);
@@ -372,6 +375,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     o3SplitPartitionSize,
                     tableWriter,
                     indexWriter,
+                    sharedLastPartitionIndexWriter,
                     partitionUpdateSinkAddr
             );
         } catch (Throwable th) {
@@ -610,8 +614,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             long partitionUpdateSinkAddr
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
@@ -646,11 +651,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcTimestampSize,
                         tableWriter,
                         indexWriter,
+                        sharedLastPartitionIndexWriter,
                         indexBlockCapacity
                 );
             }
 
-            final int commitMode = tableWriter.getConfiguration().getCommitMode();
+            final int commitMode = tableWriter.o3CommitMode();
             if (commitMode != CommitMode.NOSYNC) {
                 syncColumns(
                         columnCounter,
@@ -727,7 +733,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             FilesFacade ff,
             int commitMode
     ) {
@@ -802,8 +808,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             IndexWriter indexWriter,
+            boolean sharedLastPartitionIndexWriter,
             int indexBlockCapacity
     ) {
         // BITMAP: O3OpenColumnJob opened dstKFd / dstVFd and ownership transfers to indexWriter.of(...) below.
@@ -814,17 +821,26 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             boolean closed = !indexWriter.isOpen();
             try {
                 if (closed) {
+                    // The last-partition append path can hand us TableWriter's shared indexer.
+                    // Workers may update that writer while it is open, but they must never
+                    // reopen it from O3 task file descriptors or free it on completion.
+                    if (sharedLastPartitionIndexWriter) {
+                        throw CairoException.critical(0)
+                                .put("shared last-partition index writer is closed on O3 copy path [table=")
+                                .put(tableWriter.getTableToken())
+                                .put(']');
+                    }
                     if (IndexType.isPosting(indexWriter.getIndexType())) {
                         indexWriter.openFromO3Context(row == 0);
                     } else {
-                        indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
+                        tableWriter.o3OpenIndexWriter(indexWriter, dstKFd, dstVFd, row == 0, indexBlockCapacity);
                     }
                 }
                 indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
             } finally {
-                if (closed) {
+                if (closed && !sharedLastPartitionIndexWriter) {
                     Misc.free(indexWriter);
                 }
             }
@@ -886,7 +902,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             long partitionUpdateSinkAddr,
-            TableWriter tableWriter
+            O3TableWriterView tableWriter
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
         O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
@@ -920,7 +936,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter
+            O3TableWriterView tableWriter
     ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug()
@@ -946,7 +962,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter
+            O3TableWriterView tableWriter
     ) {
         try {
             final FilesFacade ff = tableWriter.getFilesFacade();
@@ -1016,7 +1032,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     static void o3NotifyPartitionUpdate(
-            TableWriter tableWriter,
+            O3TableWriterView tableWriter,
             final long partitionUpdateSinkAddr,
             long timestampMin,
             long partitionTimestamp,
@@ -1067,7 +1083,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             long dstKFd,
             long dstVFd,
-            TableWriter tableWriter
+            O3TableWriterView tableWriter
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
             // unmap memory
@@ -1119,7 +1135,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarSize,
             long dstKFd,
             long dstVFd,
-            TableWriter tableWriter
+            O3TableWriterView tableWriter
     ) {
         try {
             final FilesFacade ff = tableWriter.getFilesFacade();
