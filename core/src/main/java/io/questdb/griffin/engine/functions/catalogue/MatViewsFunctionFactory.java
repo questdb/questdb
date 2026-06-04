@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -119,6 +121,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
         private static final int COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS + 1;
         private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS + 1;
+        private static final int COLUMN_EXPIRE_PREDICATE = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
+        private static final int COLUMN_EXPIRE_CLEANUP_EVERY = COLUMN_EXPIRE_PREDICATE + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -243,6 +247,18 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final long avgScanRangeTsUnits = state != null ? state.getAvgScanRangeTsUnits() : 0L;
                         final long commitGapThresholdTsUnits = state != null ? state.getCommitGapThresholdTsUnits() : 0L;
 
+                        // The row-expiry policy lives in the view's table metadata (_meta), not the
+                        // mat-view definition; read it from the in-memory metadata cache.
+                        String expirePredicate = null;
+                        long expireCleanupMicros = 0;
+                        try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                            final CairoTable viewTable = metadataRO.getTable(viewToken);
+                            if (viewTable != null) {
+                                expirePredicate = viewTable.getExpiryPredicate();
+                                expireCleanupMicros = viewTable.getExpiryCleanupIntervalMicros();
+                            }
+                        }
+
                         record.of(
                                 viewDefinition,
                                 lastRefreshStartTimestamp,
@@ -263,7 +279,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgCommitNanos,
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
-                                commitGapThresholdTsUnits
+                                commitGapThresholdTsUnits,
+                                expirePredicate,
+                                expireCleanupMicros
                         );
                         viewIndex++;
                         return true;
@@ -295,6 +313,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long avgScanRangeTsUnits;
                 private long avgScanSampleNanos;
                 private long commitGapThresholdTsUnits;
+                private long expireCleanupMicros;
+                private String expirePredicate;
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
                 private long lastPeriodHi;
@@ -364,6 +384,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TIMER_TIME_ZONE -> viewDefinition.getTimerTimeZone();
                         case COLUMN_PERIOD_LENGTH_UNIT -> getIntervalUnit(periodLengthUnit);
                         case COLUMN_PERIOD_DELAY_UNIT -> getIntervalUnit(periodDelayUnit);
+                        case COLUMN_EXPIRE_PREDICATE -> expirePredicate;
+                        case COLUMN_EXPIRE_CLEANUP_EVERY -> TablesFunctionFactory.formatCleanupEvery(expireCleanupMicros);
                         default -> null;
                     };
                 }
@@ -398,7 +420,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgCommitNanos,
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
-                        long commitGapThresholdTsUnits
+                        long commitGapThresholdTsUnits,
+                        String expirePredicate,
+                        long expireCleanupMicros
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -421,6 +445,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanSampleNanos = avgScanSampleNanos;
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
+                    this.expirePredicate = expirePredicate;
+                    this.expireCleanupMicros = expireCleanupMicros;
                 }
 
                 private CharSequence getViewStatus() {
@@ -462,6 +488,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("refresh_avg_scan_sample_nanos", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_avg_scan_range_ts_units", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("expire_predicate", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("expire_cleanup_every", ColumnType.STRING));
             METADATA = metadata;
         }
     }
