@@ -46,6 +46,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
@@ -536,12 +537,52 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
+    private long countLogRows(String whereClause) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)) {
+            ctx.with(
+                    configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null
+            );
+            String sql = "SELECT count(*) FROM \"" + configuration.getSystemTableNamePrefix()
+                    + "posting_seal_purge_log\" WHERE " + whereClause;
+            try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(ctx)) {
+                assertTrue("log query must return a row", cursor.hasNext());
+                return cursor.getRecord().getLong(0);
+            }
+        }
+    }
+
     private TableToken createPostingTable(String name) {
         return createTable(
                 new TableModel(configuration, name, PartitionBy.NONE)
                         .col("c", ColumnType.INT)
                         .timestamp("ts")
         );
+    }
+
+    private PostingSealPurgeTask newPostingSealPurgeTask(
+            TableToken tok,
+            String columnName,
+            long sealTxn,
+            long toTableTxn
+    ) {
+        PostingSealPurgeTask task = new PostingSealPurgeTask();
+        task.of(
+                tok,
+                columnName,
+                TableUtils.COLUMN_NAME_TXN_NONE,
+                sealTxn,
+                0L,
+                -1L,
+                PartitionBy.NONE,
+                ColumnType.TIMESTAMP_MICRO,
+                0L,
+                toTableTxn
+        );
+        return task;
     }
 
     private Path partitionPathFor(TableToken tok) {
@@ -674,6 +715,47 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 }
                 path.trimTo(plen);
             }
+        });
+    }
+
+    @Test
+    public void testPersistReadyTasksDirectRejectsUnclampedToTxnSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tok = createPostingTable("posting_purge_sentinel");
+            PostingSealPurgeTask task = new PostingSealPurgeTask();
+            task.of(
+                    tok,
+                    "c",
+                    TableUtils.COLUMN_NAME_TXN_NONE,
+                    1L,
+                    0L,
+                    -1L,
+                    PartitionBy.NONE,
+                    ColumnType.TIMESTAMP_MICRO,
+                    0L,
+                    Long.MAX_VALUE
+            );
+
+            ObjList<PostingSealPurgeTask> tasks = new ObjList<>();
+            tasks.add(newPostingSealPurgeTask(tok, "c_ready", 2L, 1L));
+            tasks.add(task);
+            assertFalse(PostingSealPurgeJob.persistReadyTasksDirect(engine, tasks, 0, tasks.size(), 1L));
+        });
+    }
+
+    @Test
+    public void testPersistReadyTasksDirectWritesReadyRowsOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tok = createPostingTable("posting_purge_batch");
+            ObjList<PostingSealPurgeTask> tasks = new ObjList<>();
+            tasks.add(newPostingSealPurgeTask(tok, "c_ready_1", 1L, 5L));
+            tasks.add(newPostingSealPurgeTask(tok, "c_future", 2L, 7L));
+            tasks.add(newPostingSealPurgeTask(tok, "c_ready_2", 3L, 5L));
+
+            assertTrue(PostingSealPurgeJob.persistReadyTasksDirect(engine, tasks, 0, tasks.size(), 5L));
+
+            assertEquals(2L, countLogRows("table_name = '" + tok.getDirName() + "'"));
+            assertEquals(0L, countLogRows("column_name = 'c_future'"));
         });
     }
 
