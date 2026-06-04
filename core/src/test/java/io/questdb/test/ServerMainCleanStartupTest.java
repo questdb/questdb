@@ -29,7 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.str.StringSink;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -45,8 +45,6 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCleanStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
-            StringSink sink = new StringSink();
 
             // create two tables:
             // 1. empty
@@ -66,35 +64,30 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 cairoEngine.execute("insert into y values(200, 2)", sqlExecutionContext);
 
                 // wait for txns to be written
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select wait_wal_table('y')",
-                        sink,
-                        "wait_wal_table('y')\n" +
-                                "true\n"
-                );
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select wait_wal_table('y')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                wait_wal_table('y')
+                                true
+                                """);
 
                 // ensure transactions
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select * from wal_tables order by 1",
-                        sink,
-                        "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                                "x\tfalse\t0\t0\t0\t\t\t0\n" +
-                                "y\tfalse\t2\t0\t2\t\t\t0\n"
-                );
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select * from wal_tables order by 1")
+                        .noLeakCheck()
+                        .returns("""
+                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
+                                x\tfalse\t0\t0\t0\t\t\t0
+                                y\tfalse\t2\t0\t2\t\t\t0
+                                """);
 
 
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1",
-                        sink,
-                        "table_name\townership_reason\n" +
-                                "y\t\n"
-                );
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
+                        .noLeakCheck()
+                        .returns("""
+                                table_name\townership_reason
+                                y\t
+                                """);
 
             }
 
@@ -105,13 +98,9 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
             ) {
                 serverMain.start();
 
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1",
-                        sink,
-                        "table_name\townership_reason\n"
-                );
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
+                        .noLeakCheck()
+                        .returns("table_name\townership_reason\n");
             }
         });
     }
