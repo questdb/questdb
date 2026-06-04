@@ -783,10 +783,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewNoSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            assertQuery("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day")
-                    .noLeakCheck()
-                    .fails(34, "TIMESTAMP column is not present in select list");
-            assertNull(getMatViewDefinition("test"));
+            // A non-aggregating projection (no SAMPLE BY / timestamp_floor) is now a valid
+            // "passthrough" materialized view: it copies matching base rows 1:1.
+            execute("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
         });
     }
 
@@ -1861,7 +1861,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1888,7 +1889,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1915,7 +1917,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -2052,7 +2055,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             matViewDefinition.getPeriodDelay(),
                             matViewDefinition.getPeriodDelayUnit(),
                             matViewDefinition.getPeriodLength(),
-                            matViewDefinition.getPeriodLengthUnit()
+                            matViewDefinition.getPeriodLengthUnit(),
+                            false
                     );
                     AppendableBlock block = writer.append();
                     MatViewDefinition.append(unknownDefinition, block);

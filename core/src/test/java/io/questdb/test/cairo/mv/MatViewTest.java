@@ -7556,6 +7556,141 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPassthroughRefreshLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("alter materialized view price_copy set refresh limit 3 days");
+
+            // now = 2024-09-15 => refresh frontier = now - 3 days = 2024-09-12. Refresh never reaches
+            // base data older than the frontier.
+            currentMicros = parseFloorPartialTimestamp("2024-09-15T00:00:00.000000Z");
+            execute(
+                    "insert into base_price values('old', 1.0, '2024-09-09T00:00')" +   // before frontier -> excluded
+                            ",('mid', 2.0, '2024-09-13T00:00')" +
+                            ",('new', 3.0, '2024-09-14T00:00')"
+            );
+            drainQueues();
+
+            sink.clear();
+            printSql("select * from base_price where ts >= '2024-09-12T00:00:00.000000Z' order by ts, sym, price", sink);
+            assertSql(sink.toString(), "price_copy order by ts, sym, price");
+        });
+    }
+
+    @Test
+    public void testPassthroughTtlDropsOldPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Passthrough copy; TTL reclaims old partitions from the view's own storage.
+            execute("create materialized view price_copy as (select * from base_price) partition by DAY TTL 1 DAY");
+
+            // Wall clock after the data so TTL measures age from the data's max timestamp.
+            currentMicros = parseFloorPartialTimestamp("2024-09-14T12:00:00.000000Z");
+            execute(
+                    "insert into base_price values('a', 1.0, '2024-09-10T00:00')" +
+                            ",('b', 2.0, '2024-09-11T00:00')" +
+                            ",('c', 3.0, '2024-09-12T00:00')" +
+                            ",('d', 4.0, '2024-09-13T00:00')" +
+                            ",('e', 5.0, '2024-09-14T00:00')"
+            );
+            drainQueues();
+
+            // max ts = 2024-09-14; TTL 1 day keeps partition 09-13 (ceiling 09-14, age 0) and the
+            // active 09-14; 09-10..09-12 are evicted.
+            sink.clear();
+            printSql("select * from base_price where ts >= '2024-09-13T00:00:00.000000Z' order by ts, sym, price", sink);
+            assertSql(sink.toString(), "price_copy order by ts, sym, price");
+        });
+    }
+
+    @Test
+    public void testPassthroughRejectsAggregateWithoutSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Aggregating query with neither SAMPLE BY nor timestamp_floor() is not a passthrough
+            // (and not a valid aggregating mat view either) -> rejected.
+            try {
+                execute("create materialized view bad as (select sym, last(price) price, ts from base_price) partition by DAY");
+                org.junit.Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is not present in select list");
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughColumnSubsetAndFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // A projection of a column subset plus a WHERE filter is still a passthrough view.
+            execute("create materialized view sym_copy as (select ts, sym from base_price where sym = 'gbpusd')");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.1, '2024-09-10T12:01')" +
+                            ",('jpyusd', 2.2, '2024-09-10T12:02')" +
+                            ",('gbpusd', 3.3, '2024-09-11T13:02')"
+            );
+            drainQueues();
+
+            sink.clear();
+            printSql("select ts, sym from base_price where sym = 'gbpusd' order by ts", sink);
+            final String expected = sink.toString();
+            assertSql(expected, "sym_copy order by ts");
+        });
+    }
+
+    @Test
+    public void testPassthroughRefreshMirrorsBase() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Non-aggregating "passthrough" view: no SAMPLE BY. PARTITION BY is omitted, so it is
+            // inherited from the base table (DAY).
+            execute("create materialized view price_copy as (select * from base_price)");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-11T13:02')"
+            );
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // Incremental forward append.
+            execute("insert into base_price values('gbpusd', 1.400, '2024-09-12T10:00')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // Out-of-order: a late row lands in an older partition. The passthrough refresh
+            // REPLACE_RANGEs the changed interval, so the view reflects it (a forward-only copy
+            // would have missed this).
+            execute("insert into base_price values('eurusd', 1.100, '2024-09-10T11:30')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+        });
+    }
+
+    @Test
     public void testSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -8271,6 +8406,13 @@ public class MatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertPassthroughMatchesBase() throws Exception {
+        sink.clear();
+        printSql("select * from base_price order by ts, sym, price", sink);
+        final String expected = sink.toString();
+        assertSql(expected, "price_copy order by ts, sym, price");
     }
 
     private String copySql(int from, int count) {

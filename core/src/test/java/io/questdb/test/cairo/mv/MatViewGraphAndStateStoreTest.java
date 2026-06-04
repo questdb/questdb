@@ -234,7 +234,8 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
                 0,
                 (char) 0,
                 0,
-                (char) 0
+                (char) 0,
+                false
         );
         return viewDefinition;
     }
