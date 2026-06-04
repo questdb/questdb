@@ -51,6 +51,8 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -60,6 +62,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -75,6 +78,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -4694,6 +4698,114 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 + java.util.Arrays.toString(names),
                         1, pvCount);
             }
+        });
+    }
+
+    /**
+     * Concurrent-read fuzz for the parquet reseal value-file reclaim. Background
+     * threads continuously query the posting index on a parquet partition while
+     * the main thread repeatedly O3-rewrites that partition under a tiny spill
+     * budget, so every rewrite drives commitDense -> seal ->
+     * unlinkPendingSealPurgesDirect (the inline reclaim, gated on isRewrite).
+     * If the reclaim ever unlinked a value file a reader still resolves, a
+     * concurrent count() would fail to open it. 'A' rows are only ever added, so
+     * each reader's observed count must be monotonic and never below the initial
+     * 2010, with no reader crash; the final count is asserted exactly. Random
+     * batch sizes and O3 timestamps vary the rewrite shape across runs.
+     */
+    @Test
+    public void testParquetPostingSpillConcurrentReadFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE xq (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // 2000 hot 'A' rows in one row group (so the O3 inserts below take the
+            // isRewrite=true rebuild) plus a second partition so the converted one
+            // is not the active tail.
+            execute("""
+                    INSERT INTO xq
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(2000)
+                    """);
+            execute("""
+                    INSERT INTO xq
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE xq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        long prev = 0;
+                        while (!stop.get() && bgError.get() == null) {
+                            final long a;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count() FROM xq WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                a = cur.hasNext() ? cur.getRecord().getLong(0) : -1;
+                            }
+                            if (a < 2010) {
+                                throw new AssertionError("'A' count fell below the initial 2010: " + a);
+                            }
+                            if (a < prev) {
+                                throw new AssertionError("'A' count went backwards: " + prev + " -> " + a);
+                            }
+                            prev = a;
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "parquet-posting-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            long expectedA = 2010;
+            try {
+                final int batches = 8 + rnd.nextInt(8);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final int n = 1 + rnd.nextInt(4);
+                    final StringBuilder sql = new StringBuilder("INSERT INTO xq VALUES ");
+                    for (int i = 0; i < n; i++) {
+                        if (i > 0) {
+                            sql.append(',');
+                        }
+                        // O3 timestamp inside the converted partition's [1s, 1999s] range.
+                        sql.append("(dateadd('s', ").append(1 + rnd.nextInt(1999))
+                                .append(", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A')");
+                    }
+                    execute(sql.toString());
+                    drainWalQueue();
+                    expectedA += n;
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                }
+            }
+
+            Assert.assertNull("concurrent reader threw: " + bgError.get(), bgError.get());
+            assertQuery("SELECT count() FROM xq WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + expectedA + "\n");
         });
     }
 
