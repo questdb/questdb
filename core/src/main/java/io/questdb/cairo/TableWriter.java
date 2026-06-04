@@ -6049,6 +6049,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void deferPendingPostingSealPurges(ColumnIndexer indexer, long currentTableTxn) {
+        // The native (writer-thread) reseal twin of deferParquetPostingSealPurges,
+        // which is the O3-worker path. This one runs only post-join, so -- unlike the
+        // parquet path -- no O3 worker is concurrently stashing into the list.
+        assert o3PartitionUpdRemaining.get() == 0 : "native posting seal-purge defer ran with O3 partition workers in flight";
         // First publish entries already safe for the current committed txn.
         // Only finite future entries must cross an indexer reopen in the
         // TableWriter-owned list below.
@@ -6076,6 +6080,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void discardAbandonedDeferredPostingSealPurges0(long currentTableTxn) {
+        assert o3PartitionUpdRemaining.get() == 0 : "deferred posting seal-purge discard ran with O3 partition workers in flight";
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
@@ -10840,6 +10845,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void publishDeferredPostingSealPurges0(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+        assert o3PartitionUpdRemaining.get() == 0 : "deferred posting seal-purge publish ran with O3 partition workers in flight";
         if (deferredPostingSealPurges.size() == 0) {
             return;
         }
@@ -12339,6 +12345,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one column indexer was touched.
      */
     private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+        // Invariant: posting seal runs only after every O3 partition worker has
+        // joined (finishO3Commit / post-await, or a writer-thread squash). It reads
+        // the just-written partition column data and rotates value files; a worker
+        // still in flight would race that. o3PartitionUpdRemaining is the work-steal
+        // drain counter -- 0 means no O3 partition task is outstanding.
+        assert o3PartitionUpdRemaining.get() == 0 : "posting seal ran with O3 partition workers in flight";
         // Tables without any POSTING index incur per-call filesystem and
         // metadata work below, including a stat(2). Bail out before any of
         // that when no POSTING index column exists.
@@ -12518,6 +12530,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void sealPostingIndexesForO3Partitions() {
+        assert o3PartitionUpdRemaining.get() == 0 : "posting seal sweep ran with O3 partition workers in flight";
         // O3 rebuilds posting indexes via pool IndexWriters that have no covering
         // configuration and never seal (FD-based close skips seal). Re-open each
         // affected partition's posting index, seal it (converting sparse gens to
