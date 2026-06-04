@@ -5128,18 +5128,35 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * lost or double-freed). The floor is read BEFORE the count so a commit landing
      * mid-read can never make a valid snapshot look short.
      * <p>
-     * IGNORED pending root-cause: this reproducer FAILS. Single-threaded the covered
-     * query is correct (count=dayCount*hotPerDay, sum=dayCount*sum(1..hotPerDay)), but
-     * under the concurrent O3 reseal a reader observes a CORRECT posting count
-     * (count >= the committed floor) together with a PARTIAL covered sum -- the price
-     * values of the partitions being resealed read as 0 while their row ids are still
-     * counted (e.g. count>=5000 but sum=1001000 == only 2 of 5 days' prices). The
-     * covered-value (sidecar) read races the writer-thread covering reseal
-     * (sealPostingIndexForPartition -> rebuildSidecars) in a way the posting row-id
-     * read does not. Reproducible across seeds. Un-@Ignore to reproduce.
+     * IGNORED reproducer for a PARQUET-specific covered-read race (still open).
+     * Under concurrent O3 rewrite of parquet partitions, a reader observes a correct
+     * posting count but a covered sum that is short by whole partitions -- the covered
+     * values of the partition(s) being rewritten read as 0. Proven scope:
+     * <ul>
+     *   <li>single-threaded the covered query is correct (count and sum exact);</li>
+     *   <li>with the CONVERT-to-parquet removed (native partitions) it passes -- the
+     *       race is parquet-only;</li>
+     *   <li>NOT the unversioned .pci in-place rewrite (openSidecarFiles truncates a
+     *       single per-column-version .pci under readers, which is itself unsafe, but
+     *       making it write-once did NOT fix this symptom) and NOT the chain entry's
+     *       covered end-offset (instrumented: sidecarFileEndOffsets is non-zero, and
+     *       the .pc length covers publishedEnd, when the read still returns 0).</li>
+     * </ul>
+     * So the covering .pc data the writer-thread parquet seal publishes is not yet
+     * visible to a concurrent reader's mmap when the chain extent is published, or the
+     * reader does not remap the .pc on the partition-version change. Un-@Ignore to
+     * reproduce (fails within ~300ms, whole-partition-multiple covered sum).
+     * <p>
+     * Further narrowed: the 0 originates in the dense/stride covered-value read
+     * (findDenseVarBlockBase / the per-stride .pc lookup) returning an empty stride
+     * for the rewritten parquet partition, even though the .pc is mapped to a valid
+     * non-zero extent. So the writer-thread parquet seal's dense .pc data/stride-index
+     * is not yet consistently visible to a concurrent reader when its chain entry is
+     * published, OR the reader reuses a stale .pc mapping across the parquet
+     * version change. Root-cause continues in a follow-up.
      */
-    @Ignore("Reproducer for a covered-value partial-read under concurrent O3 reseal; " +
-            "count() is correct but sum(covered) reads 0 for resealing partitions. Single-threaded is correct.")
+    @Ignore("Open: parquet-specific covered-read race -- covered values of a parquet " +
+            "partition under concurrent O3 rewrite read 0 (count correct). Native passes.")
     @Test
     public void testMultiThreadedO3CoveringPostingConcurrentReaderFuzz() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
