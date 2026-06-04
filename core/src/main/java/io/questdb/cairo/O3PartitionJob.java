@@ -3405,9 +3405,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // is tagged with the pre-seal txn. In update-in-place
                             // mode the directory is the live committed one, where
                             // a reader pinned at the pre-commit txn could still
-                            // walk to and map the superseded .pv, so it is not
-                            // safe to unlink here (that far-rarer case still leaks
-                            // the intermediate, like the pre-fix behaviour).
+                            // walk to and map the superseded .pv, so it is NOT
+                            // safe to unlink here. That far-rarer case keeps one
+                            // superseded .pv on disk -- bounded, not growing: the
+                            // next in-place rebuild's of(isInit) truncates and
+                            // reuses it, so the on-disk count stays at two
+                            // (.pv.0 + active). That is a known gap (full
+                            // reclamation needs a scoreboard-gated deferred purge
+                            // routed to the writer thread), still strictly better
+                            // than the pre-fix data loss it replaces.
                             if (isRewrite) {
                                 indexWriter.unlinkPendingSealPurgesDirect();
                             }
