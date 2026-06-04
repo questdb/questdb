@@ -29,8 +29,8 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,25 +39,31 @@ import java.util.HashMap;
 
 public class SampleByConfigTest extends AbstractBootstrapTest {
 
-    final CharSequence ddl = "CREATE TABLE sensors (\n" +
-            "ts TIMESTAMP,\n" +
-            "val INT\n" +
-            ") TIMESTAMP(ts) PARTITION BY DAY WAL";
-    final CharSequence dml = "INSERT INTO sensors (ts, val) VALUES \n" +
-            "('2021-05-31T23:10:00.000000Z', 10),\n" +
-            "('2021-06-01T01:10:00.000000Z', 80),\n" +
-            "('2021-06-01T07:20:00.000000Z', 15),\n" +
-            "('2021-06-01T13:20:00.000000Z', 10),\n" +
-            "('2021-06-01T19:20:00.000000Z', 40),\n" +
-            "('2021-06-02T01:10:00.000000Z', 90),\n" +
-            "('2021-06-02T07:20:00.000000Z', 30)";
-    final CharSequence expectedCalendar = "ts\tcount\n" +
-            "2021-05-31T00:00:00.000000Z\t1\n" +
-            "2021-06-01T00:00:00.000000Z\t4\n" +
-            "2021-06-02T00:00:00.000000Z\t2\n";
-    final CharSequence expectedFirstObservation = "ts\tcount\n" +
-            "2021-05-31T23:10:00.000000Z\t5\n" +
-            "2021-06-01T23:10:00.000000Z\t2\n";
+    final CharSequence ddl = """
+            CREATE TABLE sensors (
+            ts TIMESTAMP,
+            val INT
+            ) TIMESTAMP(ts) PARTITION BY DAY WAL""";
+    final CharSequence dml = """
+            INSERT INTO sensors (ts, val) VALUES\s
+            ('2021-05-31T23:10:00.000000Z', 10),
+            ('2021-06-01T01:10:00.000000Z', 80),
+            ('2021-06-01T07:20:00.000000Z', 15),
+            ('2021-06-01T13:20:00.000000Z', 10),
+            ('2021-06-01T19:20:00.000000Z', 40),
+            ('2021-06-02T01:10:00.000000Z', 90),
+            ('2021-06-02T07:20:00.000000Z', 30)""";
+    final CharSequence expectedCalendar = """
+            ts\tcount
+            2021-05-31T00:00:00.000000Z\t1
+            2021-06-01T00:00:00.000000Z\t4
+            2021-06-02T00:00:00.000000Z\t2
+            """;
+    final CharSequence expectedFirstObservation = """
+            ts\tcount
+            2021-05-31T23:10:00.000000Z\t5
+            2021-06-01T23:10:00.000000Z\t2
+            """;
     final CharSequence query = "SELECT ts, count from sensors\n" +
             "SAMPLE BY 1d";
 
@@ -109,7 +115,18 @@ public class SampleByConfigTest extends AbstractBootstrapTest {
                 engine.execute(dml, sqlExecutionContext);
                 drainWalQueue(engine);
 
-                TestUtils.assertSql(engine, sqlExecutionContext, query, Misc.getThreadLocalSink(), expected);
+                // CALENDAR alignment produces a fixed, indexable grid (random
+                // access + known size); FIRST OBSERVATION streams (neither). The
+                // effective alignment is the query's explicit ALIGN clause if
+                // present, otherwise the configured default.
+                final boolean calendarAligned = Chars.contains(query, "ALIGN TO CALENDAR")
+                        || (!Chars.contains(query, "ALIGN TO FIRST OBSERVATION") && expectedConfig);
+                new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .supportsRandomAccess(calendarAligned)
+                        .expectSize(calendarAligned)
+                        .returns(expected);
             }
         }
     }
