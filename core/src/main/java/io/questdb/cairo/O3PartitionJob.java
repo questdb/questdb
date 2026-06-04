@@ -1864,7 +1864,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Path tableRootPath,
             long tempIndexAddr
     ) {
-        final int dedupColumnCount = tableWriter.o3DedupColumnCount();
+        final int dedupColumnCount = tableWriter.getDedupColumnCount();
         if (dedupColumnCount == 0) {
             return Vect.mergeDedupTimestampWithLongIndexAsc(
                     srcTimestampAddr,
@@ -2182,7 +2182,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampMergeIndexSize
             );
         } else {
-            final int dedupColumnCount = tableWriter.o3DedupColumnCount();
+            final int dedupColumnCount = tableWriter.getDedupColumnCount();
             final long dedupRows;
             timestampMergeIndexAddr = Unsafe.malloc(timestampMergeIndexSize, MemoryTag.NATIVE_O3);
             try {
@@ -3242,7 +3242,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // by partition purging logic as a valid version
         Path path = Path.getThreadLocal(pathToTable);
         setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
-        FilesFacade ff = tableWriter.o3FilesFacade();
+        FilesFacade ff = tableWriter.getFilesFacade();
         if (!ff.rmdir(path)) {
             // This is not critical, the read error will be transient
             LOG.error().$("could not remove phantom partition dir, it may cause transient missing file read errors [errno=").$(ff.errno()).$(", path=").$(path).I$();
@@ -3345,7 +3345,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // In rewrite mode all columns exist in the new parquet file
                         // (the Rust encoder fills missing columns with NULLs),
                         // so the index must cover all rows from row 0.
-                        final long columnTop = isRewrite ? 0 : tableWriter.o3ColumnTop(partitionTimestamp, columnIndex, -1);
+                        final long columnTop = isRewrite ? 0 : tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
                         if (columnTop > -1 && newPartitionSize > columnTop) {
                             parquetColumns.clear();
                             parquetColumns.add(parquetColumnIndex);

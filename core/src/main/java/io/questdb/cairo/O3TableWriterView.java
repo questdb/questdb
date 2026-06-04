@@ -309,35 +309,14 @@ public final class O3TableWriterView {
         tableWriter.o3CountDownDoneLatch();
     }
 
-
-    // todo: looks redundant!
-    long o3ColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
-        return getColumnTop(partitionTimestamp, columnIndex, defaultValue);
-    }
-
     // safety: read only config lookup
     int o3CommitMode() {
         return tableWriter.getConfiguration().getCommitMode();
     }
 
-    // todo: looks redundant!
-    int o3DedupColumnCount() {
-        return getDedupColumnCount();
-    }
-
     // safety: config lookup
     String o3DbRoot() {
         return tableWriter.getConfiguration().getDbRoot();
-    }
-
-    // todo: looks redundant!
-    FilesFacade o3FilesFacade() {
-        return getFilesFacade();
-    }
-
-    // todo: looks redundant!
-    void o3OpenIndexWriter(IndexWriter indexWriter, long keyFd, long valueFd, boolean isInit, int indexBlockCapacity) {
-        openIndexWriter(indexWriter, keyFd, valueFd, isInit, indexBlockCapacity);
     }
 
     // safety: config lookup

@@ -833,7 +833,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     if (IndexType.isPosting(indexWriter.getIndexType())) {
                         indexWriter.openFromO3Context(row == 0);
                     } else {
-                        tableWriter.o3OpenIndexWriter(indexWriter, dstKFd, dstVFd, row == 0, indexBlockCapacity);
+                        tableWriter.openIndexWriter(indexWriter, dstKFd, dstVFd, row == 0, indexBlockCapacity);
                     }
                 }
                 indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
