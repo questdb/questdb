@@ -56,6 +56,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -4786,6 +4787,96 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 + "superseded intermediate must be reclaimed by the deferred purge: "
                                 + java.util.Arrays.toString(names),
                         1, pvCount);
+            }
+        });
+    }
+
+    /**
+     * Exercises the concurrent deposit into deferParquetPostingSealPurges: a real
+     * WorkerPool runs O3PartitionJob on multiple threads, and one O3 insert that
+     * touches every parquet partition dispatches a partition task per day, so
+     * several workers run updateParquetIndexes -> commitDense -> seal -> the
+     * deferred purge at once, contending on parquetSealPurgeLock. The single-
+     * threaded tests never hit this path. After a purge-job pass, every
+     * partition must keep exactly one value file (no purge lost or double-freed
+     * under contention) and the indexed count must be exact.
+     */
+    @Test
+    public void testMultiThreadedO3ParquetPostingSpillReclaimsAcrossPartitions() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 6;
+            execute("""
+                    CREATE TABLE t_mt (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2000 hot 'A' rows per day so every partition's reseal spills.
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_mt SELECT dateadd('s', x::INT, '2024-01-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A' FROM long_sequence(2000)");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_mt CONVERT PARTITION TO PARQUET LIST '2024-01-0" + d + "'");
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            try {
+                // One O3 insert with a row inside every parquet day's range -> one
+                // commit, one partition task per day, run across the pool workers.
+                final StringBuilder sql = new StringBuilder("INSERT INTO t_mt VALUES ");
+                for (int d = 1; d <= dayCount; d++) {
+                    if (d > 1) {
+                        sql.append(',');
+                    }
+                    sql.append("('2024-01-0").append(d).append("T00:10:00.500000Z', 'A')");
+                }
+                execute(sql.toString());
+            } finally {
+                pool.halt();
+            }
+
+            // Pool halted: drain the deferred purges with nothing pinned.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            // 6 days * 2000 + 6 O3 rows.
+            assertQuery("SELECT count() FROM t_mt WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + (dayCount * 2000 + dayCount) + "\n");
+
+            // Every parquet partition must keep exactly one value file.
+            final TableToken token = engine.getTableTokenIfExists("t_mt");
+            Assert.assertNotNull("table must exist", token);
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("all days must remain", dayCount, reader.getTxFile().getPartitionCount());
+                for (int i = 0; i < dayCount; i++) {
+                    final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(i);
+                    try (Path path = new Path()) {
+                        path.of(configuration.getDbRoot()).concat(token);
+                        setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                        final String[] names = new java.io.File(path.toString()).list();
+                        Assert.assertNotNull("partition dir must exist: " + path, names);
+                        int pvCount = 0;
+                        for (String n : names) {
+                            if (n.startsWith("sym.pv.")) {
+                                pvCount++;
+                            }
+                        }
+                        Assert.assertEquals(
+                                "partition " + i + " must keep exactly one value file (no purge lost or "
+                                        + "double-freed under concurrent deposit): " + java.util.Arrays.toString(names),
+                                1, pvCount);
+                    }
+                }
             }
         });
     }
