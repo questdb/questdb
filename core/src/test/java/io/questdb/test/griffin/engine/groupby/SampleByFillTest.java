@@ -1495,15 +1495,12 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('A', 2.0, '2024-01-01T01:00:00.000000Z')");
             bindVariableService.clear();
             bindVariableService.setStr(0, "not_an_offset");
-            try {
-                assertExceptionNoLeakCheck(
-                        "SELECT ts, key, sum(val) FROM x " +
-                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR WITH OFFSET $1"
-                );
-                fail("expected SqlException for unparseable offset");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: not_an_offset");
-            }
+            assertQuery(
+                    "SELECT ts, key, sum(val) FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR WITH OFFSET $1"
+            )
+                    .noLeakCheck()
+                    .failsWith("invalid offset: not_an_offset");
         });
     }
 
@@ -1547,15 +1544,12 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "('A', 2.0, '2024-01-02T00:00:00.000000Z')");
             bindVariableService.clear();
             bindVariableService.setStr(0, "Mars/Olympus_Mons");
-            try {
-                assertExceptionNoLeakCheck(
-                        "SELECT ts, key, sum(val) FROM x " +
-                                "SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1"
-                );
-                fail("expected SqlException for unparseable timezone");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Mars/Olympus_Mons");
-            }
+            assertQuery(
+                    "SELECT ts, key, sum(val) FROM x " +
+                            "SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1"
+            )
+                    .noLeakCheck()
+                    .failsWith("invalid timezone: Mars/Olympus_Mons");
         });
     }
 

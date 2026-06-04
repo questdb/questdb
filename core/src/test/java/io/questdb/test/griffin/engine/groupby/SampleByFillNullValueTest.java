@@ -1297,11 +1297,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // Position 25 points at the AS token of the second alias -- the
             // optimiser raises the duplicate before the alias literal is
             // positioned, so "AS k" is reported rather than the k token itself.
-            assertExceptionNoLeakCheck(
-                    "SELECT ts AS k, count(*) AS k FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    25,
-                    "Duplicate column [name=k]"
-            );
+            assertQuery("SELECT ts AS k, count(*) AS k FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .fails(25, "Duplicate column [name=k]");
         });
     }
 
@@ -1773,7 +1771,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             bindVariableService.setStr(0, "Not/AReal_Zone");
             final String sql = "SELECT sum(val) s, ts FROM x " +
                     "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1";
-            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), "invalid timezone: Not/AReal_Zone");
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("$1"), "invalid timezone: Not/AReal_Zone");
         });
     }
 
