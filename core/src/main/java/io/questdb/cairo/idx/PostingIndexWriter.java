@@ -71,7 +71,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
 /**
- * Delta + FoR64 BitPacking bitmap index writer.
+ * Delta + FoR64 BitPacking posting index writer.
  * <p>
  * Each commit appends one generation (covering all keys) to the value file.
  * No symbol table needed — encoding is purely arithmetic.
@@ -111,7 +111,9 @@ public class PostingIndexWriter implements IndexWriter {
     // current sidecar append offset. Reused across calls to avoid allocations.
     private final LongList coverEndOffsetsScratch = new LongList();
     // O3 addr-based covering: caller-provided native memory addresses
+    private final LongList coveredColumnAddrSizes = new LongList();
     private final LongList coveredColumnAddrs = new LongList();
+    private final LongList coveredColumnAuxAddrSizes = new LongList();
     private final LongList coveredColumnAuxAddrs = new LongList();
     private final IntList coveredColumnIndices = new IntList();
     private final LongList coveredColumnNameTxns = new LongList();
@@ -532,7 +534,9 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
+        this.coveredColumnAuxAddrSizes.clear();
         this.coveredColumnTops.clear();
         this.coveredColumnShifts.clear();
         this.coveredColumnIndices.clear();
@@ -562,7 +566,9 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
+        this.coveredColumnAuxAddrSizes.clear();
         this.coveredColumnTops.clear();
         this.coveredColumnShifts.clear();
         this.coveredColumnIndices.clear();
@@ -1219,7 +1225,9 @@ public class PostingIndexWriter implements IndexWriter {
     public void releaseCoveredColumnReadMappings() {
         unmapCoveredColumnReads();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
+        this.coveredColumnAuxAddrSizes.clear();
     }
 
     @Override
@@ -1414,6 +1422,17 @@ public class PostingIndexWriter implements IndexWriter {
     public void sealIfMultiGen(int threshold) {
         if (keyMem.isOpen() && partitionPath.size() > 0 && genCount > threshold) {
             seal();
+        }
+    }
+
+    public void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+        coveredColumnAddrSizes.clear();
+        coveredColumnAuxAddrSizes.clear();
+        if (dataSizes != null) {
+            coveredColumnAddrSizes.addAll(dataSizes);
+        }
+        if (auxSizes != null) {
+            coveredColumnAuxAddrSizes.addAll(auxSizes);
         }
     }
 
@@ -3162,7 +3181,14 @@ public class PostingIndexWriter implements IndexWriter {
         if (addr == 0) {
             return 0;
         }
+        // size == 0: addr-based caller-owned aux mapping (see getCoveredDataReadAddr).
         if (size == 0) {
+            assert covIdx >= coveredColumnAuxAddrSizes.size()
+                    || coveredColumnAuxAddrSizes.getQuick(covIdx) == 0
+                    || offset + needed <= coveredColumnAuxAddrSizes.getQuick(covIdx)
+                    : "addr-based covered aux read out of bounds [covIdx=" + covIdx
+                    + ", offset=" + offset + ", needed=" + needed
+                    + ", mapped=" + coveredColumnAuxAddrSizes.getQuick(covIdx) + ']';
             return addr + offset;
         }
         if (offset + needed > size) {
@@ -3195,8 +3221,18 @@ public class PostingIndexWriter implements IndexWriter {
         if (addr == 0) {
             return 0;
         }
-        // size == 0 means addr-based (O3): caller-provided buffer, no bounds check or remap
+        // size == 0 means addr-based (O3 seal / fast-lag): the mapping is owned by
+        // the caller (TableWriter), so we never munmap/remap it -- coveredColReadSizes
+        // stays 0 precisely so unmapCoveredColumnReads leaves caller memory alone.
+        // When the caller supplied the mapped length via setCoveredColumnAddrSizes,
+        // assert the read stays inside it (an empty list -- test/parquet -- skips it).
         if (size == 0) {
+            assert covIdx >= coveredColumnAddrSizes.size()
+                    || coveredColumnAddrSizes.getQuick(covIdx) == 0
+                    || offset + needed <= coveredColumnAddrSizes.getQuick(covIdx)
+                    : "addr-based covered data read out of bounds [covIdx=" + covIdx
+                    + ", offset=" + offset + ", needed=" + needed
+                    + ", mapped=" + coveredColumnAddrSizes.getQuick(covIdx) + ']';
             return addr + offset;
         }
         // size > 0 means name-based: writer-owned mmap, remap if file grew

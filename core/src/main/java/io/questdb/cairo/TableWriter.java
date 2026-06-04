@@ -10979,6 +10979,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                        indexer.setCoveredColumnAddrSizes(o3SealMappedSizes, o3SealAuxMappedSizes);
                         // WAL fast-lag uses getTxn() (NOT getTxn()+1L like the
                         // O3 seal paths). See publishToChain javadoc: the
                         // partition stays attached and openPartition's
@@ -12468,6 +12469,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                        indexer.setCoveredColumnAddrSizes(o3SealMappedSizes, o3SealAuxMappedSizes);
                         // Same getTxn()+1 convention as the REBUILD entry
                         // above and as O3CopyJob's setO3PathContext. Picker
                         // (per-gen visibility via slot[0].TXN_AT_SEAL) keeps

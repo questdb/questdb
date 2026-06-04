@@ -294,6 +294,9 @@ public interface IndexWriter extends Closeable, Mutable {
     default void sealIfMultiGen(int threshold) {
     }
 
+    default void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+    }
+
     default void setCoveredColumnNameTxns(LongList txns) {
     }
 
