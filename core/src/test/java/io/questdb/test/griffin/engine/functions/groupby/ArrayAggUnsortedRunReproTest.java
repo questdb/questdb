@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -112,10 +113,10 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
                         final int threadId = t;
                         new Thread(() -> {
                             int localInversions = 0;
-                            try {
+                            try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
-                                    localInversions += countInversions(engine, sqlExecutionContext, query);
+                                    localInversions += countInversions(engine, threadCtx, query);
                                 }
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
@@ -124,6 +125,7 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
                                     threadsThatSawInversions.incrementAndGet();
                                     totalInversions.addAndGet(localInversions);
                                 }
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "repro-" + threadId).start();
