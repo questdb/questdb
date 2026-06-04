@@ -5128,35 +5128,26 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * lost or double-freed). The floor is read BEFORE the count so a commit landing
      * mid-read can never make a valid snapshot look short.
      * <p>
-     * IGNORED reproducer for a PARQUET-specific covered-read race (still open).
-     * Under concurrent O3 rewrite of parquet partitions, a reader observes a correct
-     * posting count but a covered sum that is short by whole partitions -- the covered
-     * values of the partition(s) being rewritten read as 0. Proven scope:
-     * <ul>
-     *   <li>single-threaded the covered query is correct (count and sum exact);</li>
-     *   <li>with the CONVERT-to-parquet removed (native partitions) it passes -- the
-     *       race is parquet-only;</li>
-     *   <li>NOT the unversioned .pci in-place rewrite (openSidecarFiles truncates a
-     *       single per-column-version .pci under readers, which is itself unsafe, but
-     *       making it write-once did NOT fix this symptom) and NOT the chain entry's
-     *       covered end-offset (instrumented: sidecarFileEndOffsets is non-zero, and
-     *       the .pc length covers publishedEnd, when the read still returns 0).</li>
-     * </ul>
-     * So the covering .pc data the writer-thread parquet seal publishes is not yet
-     * visible to a concurrent reader's mmap when the chain extent is published, or the
-     * reader does not remap the .pc on the partition-version change. Un-@Ignore to
-     * reproduce (fails within ~300ms, whole-partition-multiple covered sum).
-     * <p>
-     * Further narrowed: the 0 originates in the dense/stride covered-value read
-     * (findDenseVarBlockBase / the per-stride .pc lookup) returning an empty stride
-     * for the rewritten parquet partition, even though the .pc is mapped to a valid
-     * non-zero extent. So the writer-thread parquet seal's dense .pc data/stride-index
-     * is not yet consistently visible to a concurrent reader when its chain entry is
-     * published, OR the reader reuses a stale .pc mapping across the parquet
-     * version change. Root-cause continues in a follow-up.
+     * IGNORED reproducer for a PARQUET-specific covered-read race (root cause known,
+     * fix pending). Under concurrent O3 rewrite of parquet partitions a reader sees a
+     * correct posting count() but a sum(price) short by whole partitions, because the
+     * covered values read as SQL NULL (count() counts them; sum() skips NULLs).
+     * ROOT CAUSE (fully traced via instrumentation): getCoveredDouble returns NaN ->
+     * keyBlockAddrs == null while isCurrentGenDense == true -> cacheSidecarKeyAddrs
+     * early-returned on coverCount == 0 -> openSidecarFilesIfPresent found the .pci
+     * file MISSING when the reader opened the rewritten parquet partition version. The
+     * parquet O3 rewrite exposes the new partition version (with its sealTxn-versioned
+     * .pv row-ids) to readers BEFORE the writer-thread covering seal
+     * (sealPostingIndexForPartition) writes that version's .pci/.pc sidecars, so a
+     * reader catches a window where the partition is covered but its .pci does not yet
+     * exist, reports coverCount=0, and returns NULL covered values. Native partitions
+     * reseal in place (the .pci is always present), hence they pass. Single-threaded is
+     * correct. Fix belongs writer-side: the covering sidecars must exist before the new
+     * parquet partition version becomes reader-visible. Un-@Ignore to reproduce (~300ms).
      */
-    @Ignore("Open: parquet-specific covered-read race -- covered values of a parquet " +
-            "partition under concurrent O3 rewrite read 0 (count correct). Native passes.")
+    @Ignore("Open (root-caused): parquet rewrite exposes the new partition version " +
+            "before its covering .pci/.pc sidecars are written, so a concurrent covered " +
+            "read sees coverCount=0 and returns NULL. Native passes.")
     @Test
     public void testMultiThreadedO3CoveringPostingConcurrentReaderFuzz() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
