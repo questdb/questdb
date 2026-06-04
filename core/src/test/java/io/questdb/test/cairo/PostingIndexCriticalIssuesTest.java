@@ -4702,16 +4702,19 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Concurrent-read fuzz for the parquet reseal value-file reclaim. Background
-     * threads continuously query the posting index on a parquet partition while
-     * the main thread repeatedly O3-rewrites that partition under a tiny spill
-     * budget, so every rewrite drives commitDense -> seal ->
-     * unlinkPendingSealPurgesDirect (the inline reclaim, gated on isRewrite).
-     * If the reclaim ever unlinked a value file a reader still resolves, a
-     * concurrent count() would fail to open it. 'A' rows are only ever added, so
-     * each reader's observed count must be monotonic and never below the initial
-     * 2010, with no reader crash; the final count is asserted exactly. Random
-     * batch sizes and O3 timestamps vary the rewrite shape across runs.
+     * Concurrent-read safety guard for the parquet reseal value-file reclaim
+     * (unlinkPendingSealPurgesDirect). Background threads continuously query the
+     * posting index on a parquet partition while the main thread repeatedly
+     * O3-rewrites it under a tiny spill budget, so every rewrite drives
+     * commitDense -> seal -> the inline reclaim (gated on isRewrite). The reclaim
+     * DELETES a value file; if it ever deleted one a reader still resolves, a
+     * concurrent count() would fail to open it or return a short count -- so the
+     * 'A' count (rows are only added) must stay monotonic, never below the
+     * initial 2010, with no reader crash. This catches a reclaim that unlinks a
+     * still-live file (fault injection: deleting the active .pv makes it fail).
+     * The trailing single-.pv assertion additionally guards against the reclaim
+     * regressing into a leak across many rewrites; the deterministic counterpart
+     * is testConvertToParquetPostingResealSpillDoesNotLeakValueFile.
      */
     @Test
     public void testParquetPostingSpillConcurrentReadFuzz() throws Exception {
@@ -4799,6 +4802,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 stop.set(true);
                 for (Thread t : readers) {
                     t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
                 }
             }
 
@@ -4806,6 +4810,36 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             assertQuery("SELECT count() FROM xq WHERE sym = 'A'")
                     .noLeakCheck()
                     .returnsOnce("count\n" + expectedA + "\n");
+
+            // The reclaim must also have kept the partition free of leaked
+            // intermediates across every rewrite: exactly one value file remains.
+            engine.releaseAllWriters();
+            final TableToken token = engine.getTableTokenIfExists("xq");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final java.io.File dir = new java.io.File(path.toString());
+                final String[] names = dir.list();
+                Assert.assertNotNull("partition dir must exist: " + dir, names);
+                int pvCount = 0;
+                for (String nm : names) {
+                    if (nm.startsWith("sym.pv.")) {
+                        pvCount++;
+                    }
+                }
+                Assert.assertEquals(
+                        "exactly one value file must remain after the rewrites; a leaked "
+                                + "intermediate from the spill-driven reseal survived: "
+                                + java.util.Arrays.toString(names),
+                        1, pvCount);
+            }
         });
     }
 
