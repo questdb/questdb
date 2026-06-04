@@ -503,6 +503,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                         || cc.getType() == CompiledQuery.ALTER_VIEW
                         || cc.getType() == CompiledQuery.ALTER_STORAGE_POLICY
                         || cc.getType() == CompiledQuery.DROP)) {
+                    // The compiled query holds a native op (InsertOperation, UpdateOperation,
+                    // AlterOperation, or an Operation subtype for CREATE/DROP). The per-type
+                    // executors that normally free these ops are not reached when we throw here,
+                    // so we must free them explicitly to avoid a native-memory leak per refused
+                    // request. closeAllButSelect() frees INSERT/UPDATE/ALTER ops; Misc.free
+                    // covers CREATE/DROP operation subtypes.
+                    cc.closeAllButSelect();
+                    Misc.free(cc.getOperation());
                     throw CairoException.authorization().put("replica access is read-only");
                 }
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
