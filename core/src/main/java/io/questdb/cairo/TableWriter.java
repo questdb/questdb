@@ -3137,6 +3137,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
+        commit();
+        metadata.setExpiry(predicate, cleanupIntervalMicros);
+        // writeMetadataToDisk() rewrites _meta (persisting the policy via the ALTER-rewrite
+        // serializer), bumps the metadata version, and refreshes the MetadataCache via
+        // hydrateTable(metadata) so the read-time row-expiry filter immediately sees the change.
+        writeMetadataToDisk();
+    }
+
+    @Override
     public void setMetaTtl(int ttlHoursOrMonths) {
         commit();
         metadata.setTtlHoursOrMonths(ttlHoursOrMonths);

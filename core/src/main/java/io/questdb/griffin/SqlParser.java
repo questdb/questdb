@@ -412,13 +412,28 @@ public class SqlParser {
             GenericLexer lexer,
             CreateTableOperationBuilderImpl builder
     ) throws SqlException {
+        final ExpireRowsClause clause = parseExpireRowsClause(lexer, true);
+        builder.setExpiryPredicate(clause.predicate);
+        builder.setExpiryCleanupIntervalMicros(clause.cleanupIntervalMicros);
+        return clause.nextTok;
+    }
+
+    /**
+     * Shared parser for the {@code ROWS WHEN <predicate> [CLEANUP EVERY <duration>]} body of an
+     * EXPIRE clause (the {@code EXPIRE} keyword itself has already been consumed by the caller).
+     * Used by both CREATE TABLE and ALTER TABLE SET EXPIRE.
+     * <p>
+     * The predicate is captured as raw SQL text: everything between WHEN and the next boundary,
+     * tracking parenthesis depth so a boundary keyword inside parentheses doesn't terminate it.
+     * Boundaries are CLEANUP (consumed here) and ';'/EOF. When {@code inCreateTable} is true, the
+     * clauses that may follow EXPIRE in CREATE TABLE (WITH / IN VOLUME / DEDUP[LICATE]) are also
+     * boundaries and the boundary token is returned to the caller in {@link ExpireRowsClause#nextTok}.
+     * Cleanup interval defaults to 1 hour when omitted.
+     */
+    public ExpireRowsClause parseExpireRowsClause(GenericLexer lexer, boolean inCreateTable) throws SqlException {
         expectTok(lexer, "rows");
         expectTok(lexer, "when");
 
-        // Capture predicate SQL text: everything between WHEN and the next boundary, tracking
-        // parenthesis depth so a boundary keyword inside parentheses doesn't terminate the predicate.
-        // Boundaries are CLEANUP (consumed here) and the clauses that may follow EXPIRE in CREATE TABLE
-        // (WITH / IN VOLUME / DEDUP[LICATE]) plus ';'/EOF, which are handed back to the caller.
         final int predicateStart = lexer.getPosition();
         int predicateEnd;
         int depth = 0;
@@ -436,7 +451,7 @@ public class SqlParser {
                     foundCleanup = true;
                     break;
                 }
-                if (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok)) {
+                if (inCreateTable && (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
                     predicateEnd = lexer.lastTokenPosition();
                     break;
                 }
@@ -452,22 +467,21 @@ public class SqlParser {
         if (predicateSql.isEmpty()) {
             throw SqlException.$(predicateStart, "EXPIRE ROWS WHEN predicate is empty");
         }
-        builder.setExpiryPredicate(predicateSql);
 
-        // Optional: CLEANUP EVERY <duration>; defaults to 1 hour when omitted.
+        final long cleanupIntervalMicros;
         if (foundCleanup) {
             expectTok(lexer, "every");
             tok = tok(lexer, "cleanup interval value (e.g., 1h, 30m, 24h)");
             final int multiple = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
             final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-            builder.setExpiryCleanupIntervalMicros(strideToMicros(multiple, unit, lexer.lastTokenPosition()));
+            cleanupIntervalMicros = strideToMicros(multiple, unit, lexer.lastTokenPosition());
             // Fetch the next clause keyword (WITH / IN / DEDUP / ';' / EOF) for the caller.
             tok = optTok(lexer);
         } else {
-            builder.setExpiryCleanupIntervalMicros(3_600_000_000L);
+            cleanupIntervalMicros = 3_600_000_000L;
             // tok already holds the boundary token (WITH / IN / DEDUP / ';' / null) — hand it back as-is.
         }
-        return tok;
+        return new ExpireRowsClause(predicateSql, predicateStart, cleanupIntervalMicros, tok);
     }
 
     public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
@@ -1923,6 +1937,11 @@ public class SqlParser {
             }
 
             // Optional: EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]
+            // TODO(row-expiry): predicate is captured as raw text but NOT validated at CREATE time
+            //  (the table/columns don't exist yet here, so the ALTER-style probe SELECT can't run).
+            //  Validation currently happens only on ALTER TABLE ... SET EXPIRE
+            //  (SqlCompilerImpl.validateExpiryPredicate). Add create-time validation against the
+            //  columns being created (synthetic metadata) in a follow-up.
             if (tok != null && isExpireKeyword(tok)) {
                 tok = parseCreateTableExpireRows(lexer, builder);
             }
@@ -5681,6 +5700,25 @@ public class SqlParser {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
         return viewSql;
+    }
+
+    /**
+     * Result of {@link #parseExpireRowsClause(GenericLexer, boolean)}: the captured raw predicate
+     * text, the cleanup interval in microseconds, and the next unconsumed token (the boundary
+     * keyword for the CREATE TABLE caller; null/';' for the ALTER caller).
+     */
+    public static final class ExpireRowsClause {
+        public final long cleanupIntervalMicros;
+        public final CharSequence nextTok;
+        public final String predicate;
+        public final int predicatePos;
+
+        public ExpireRowsClause(String predicate, int predicatePos, long cleanupIntervalMicros, CharSequence nextTok) {
+            this.predicate = predicate;
+            this.predicatePos = predicatePos;
+            this.cleanupIntervalMicros = cleanupIntervalMicros;
+            this.nextTok = nextTok;
+        }
     }
 
     public interface ReplacingVisitor {

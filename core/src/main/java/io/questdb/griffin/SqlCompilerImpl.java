@@ -2281,7 +2281,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
             } else if (isDropKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok))) {
+                if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok) && !isExpireKeyword(tok))) {
                     compileAlterTableDropExt(executionContext, tok, tableToken, tableNamePosition);
                     return;
                 }
@@ -2290,6 +2290,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isPartitionKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
+                } else if (isExpireKeyword(tok)) {
+                    alterTableDropExpire(tableToken, tableNamePosition, tableMetadata);
                 }
             } else if (isRenameKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
@@ -2519,7 +2521,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok))) {
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isExpireKeyword(tok))) {
                     compileAlterTableSetExt(executionContext, tok, tableToken, tableNamePosition);
                     return;
                 }
@@ -2537,6 +2539,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 } else if (isTtlKeyword(tok)) {
                     alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
+                } else if (isExpireKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableSetParam(tableToken);
+                    alterTableSetExpire(executionContext, tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -5169,6 +5174,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    protected void alterTableDropExpire(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop row-expiry policy");
+        }
+        // null predicate + 0 interval encodes "no policy" — clears the EXPIRE ROWS policy.
+        final AlterOperationBuilder dropExpire = alterOperationBuilder.ofSetExpire(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                null,
+                0
+        );
+        compiledQuery.ofAlter(dropExpire.build());
+    }
+
     protected void alterTableOrMatViewSetTtl(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
         final int ttlValuePos = lexer.getPosition();
         final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
@@ -5182,6 +5203,49 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 ttlHoursOrMonths
         );
         compiledQuery.ofAlter(setTtl.build());
+    }
+
+    protected void alterTableSetExpire(SqlExecutionContext executionContext, TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        // EXPIRE has already been consumed; parse "ROWS WHEN <predicate> [CLEANUP EVERY <dur>]"
+        // using the shared CREATE-path parser (inCreateTable=false: ';'/EOF are the only boundaries).
+        final SqlParser.ExpireRowsClause clause = parser.parseExpireRowsClause(lexer, false);
+        if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
+        }
+        validateExpiryPredicate(executionContext, tableToken, clause.predicate, clause.predicatePos);
+        final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                clause.predicate,
+                clause.cleanupIntervalMicros
+        );
+        compiledQuery.ofAlter(setExpire.build());
+    }
+
+    /**
+     * Validates that an EXPIRE ROWS predicate is compilable against the given (existing) table by
+     * compiling and generating a probe {@code SELECT 1 FROM "<table>" WHERE NOT (<pred>) LIMIT 0}.
+     * Any SQL/Cairo error (unknown column, bad type, syntax error) is surfaced as a clear SqlException
+     * positioned at the predicate. The probe goes through a fresh compiler; the LIMIT 0 keeps it cheap.
+     */
+    private void validateExpiryPredicate(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            String predicate,
+            int predicatePos
+    ) throws SqlException {
+        final String probeSql = "SELECT 1 FROM \"" + tableToken.getTableName() + "\" WHERE NOT (" + predicate + ") LIMIT 0";
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory factory = compiler.compile(probeSql, executionContext).getRecordCursorFactory()) {
+                // Open the cursor so column references and types are fully resolved/validated.
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    cursor.hasNext();
+                }
+            }
+        } catch (SqlException | CairoException e) {
+            throw SqlException.$(predicatePos, "invalid EXPIRE ROWS predicate: ").put(e.getFlyweightMessage());
+        }
     }
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {

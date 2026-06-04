@@ -242,6 +242,14 @@ public interface MetadataService {
     void setMetaO3MaxLag(long o3MaxLagUs);
 
     /**
+     * Sets (or clears) the row-expiry policy of this table. {@code predicate} is the raw SQL
+     * text of the EXPIRE ROWS WHEN predicate, or {@code null} to drop the policy.
+     * {@code cleanupIntervalMicros} is the physical-cleanup cadence in microseconds (ignored
+     * when {@code predicate} is null).
+     */
+    void setMetaExpiry(String predicate, long cleanupIntervalMicros);
+
+    /**
      * Sets the time-to-live (TTL) of the data in this table:
      * if positive, it's in hours;
      * if negative, it's in months (and the actual value is positive);

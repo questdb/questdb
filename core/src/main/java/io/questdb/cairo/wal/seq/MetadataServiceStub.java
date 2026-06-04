@@ -170,6 +170,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
+        throw CairoException.critical(0).put("change of row-expiry policy does not update sequencer metadata");
+    }
+
+    @Override
     default void setMetaTtl(int ttlHoursOrMonths) {
         throw CairoException.critical(0).put("change of TTL does not update sequencer metadata");
     }
