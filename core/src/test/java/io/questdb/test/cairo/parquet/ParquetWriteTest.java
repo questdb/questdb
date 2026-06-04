@@ -724,64 +724,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDumpDistinctTsThreeRowGroupsForInspection() throws Exception {
-        // DEBUG: 12 distinct timestamps, one symbol each, row group size 4 -> 3 row groups
-        // (rg0=sym0..3, rg1=sym4..7, rg2=sym8..11), each row group with its own symbol
-        // dictionary. Commit 1 only: pure write, no O3, no merge, no dedup. Dump the
-        // as-written data.parquet so a third-party reader can confirm it is correct.
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table tab (ts timestamp, s symbol index) " +
-                            "timestamp(ts) partition by day format parquet wal " +
-                            "dedup upsert keys(ts, s)"
-            );
-            execute(
-                    "insert into tab " +
-                            "select dateadd('s', x::INT - 1, '2020-02-27T12:00:00.000000Z'::TIMESTAMP) ts, ('sym' || (x - 1)) s " +
-                            "from long_sequence(12)"
-            );
-            drainWalQueue();
-            assertSql("count\n12\n", "select count() from tab");
-            dumpParquetPartition("tab", "2020-02-27", "/tmp/qdb_dump/distinct_ts_commit1.parquet");
-        });
-    }
-
-    @Test
-    public void testDumpSameTsThreeRowGroupsForInspection() throws Exception {
-        // DEBUG: 12 distinct symbols at a SINGLE timestamp, row group size 4 -> 3 row
-        // groups all [12:00, 12:00], each with its own dictionary (rg0=sym0..3,
-        // rg1=sym4..7, rg2=sym8..11). Dump data.parquet after commit 1 (pure write, no
-        // merge) and again after commit 2 (O3 dedup re-insert -> merge/rewrite path), so
-        // a third-party reader can tell whether the bytes on disk are correct.
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table tab (ts timestamp, s symbol index) " +
-                            "timestamp(ts) partition by day format parquet wal " +
-                            "dedup upsert keys(ts, s)"
-            );
-            execute(
-                    "insert into tab " +
-                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
-                            "from long_sequence(12)"
-            );
-            drainWalQueue();
-            assertSql("count\n12\n", "select count() from tab");
-            dumpParquetPartition("tab", "2020-02-27", "/tmp/qdb_dump/same_ts_commit1.parquet");
-
-            execute(
-                    "insert into tab " +
-                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
-                            "from long_sequence(12)"
-            );
-            drainWalQueue();
-            assertSql("count\n12\n", "select count() from tab");
-            dumpParquetPartition("tab", "2020-02-27", "/tmp/qdb_dump/same_ts_commit2.parquet");
-        });
-    }
-
-    @Test
     public void testFooterCacheUsedInUpdateMode() throws Exception {
         // Small row group size to produce multiple row groups.
         // Disable rewrite: ratio=1.0 (impossible to exceed), max_bytes=Long.MAX_VALUE.
