@@ -271,10 +271,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ParquetPartitionDecoder parquetDecoder = new ParquetPartitionDecoder();
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-    // Guards deferParquetPostingSealPurges' drain into deferredPostingSealPurges +
-    // the task pool: parquet index rebuilds run on parallel O3 workers, so several
-    // can stash seal-purges at once. The writer-thread native reseal touches the
-    // same list only after the O3 workers join, so it needs no lock.
+    // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
+    // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
+    // at once; the writer-thread paths touch the same list only after the O3 workers
+    // join. Historically the writer side held no lock and leaned on that join ordering
+    // alone for safety. Every list/pool access -- writer and worker -- now takes this
+    // lock, so the non-thread-safe ObjList/ObjectStackPool are safe by construction,
+    // not by timing: a future change that moved a mutation into the O3 window can no
+    // longer corrupt them. The lock is a leaf (nothing else is held across it) and the
+    // writer paths run post-join uncontended, so it costs nothing measurable.
     private final Object parquetSealPurgeLock = new Object();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
@@ -4664,6 +4669,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void closeDeferredPostingSealPurges() {
+        synchronized (parquetSealPurgeLock) {
+            closeDeferredPostingSealPurges0();
+        }
+    }
+
+    private void closeDeferredPostingSealPurges0() {
         long currentTableTxn = txWriter != null ? txWriter.getTxn() : -1L;
         if (txWriter != null) {
             publishDeferredPostingSealPurgesOnClose(currentTableTxn);
@@ -6021,7 +6032,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // before the commit -- without this its outbox is discarded by close().
     // publishPendingPurges only touches the thread-safe global queue and the
     // writer's own outbox (lock-free); drainPendingFuturePurges mutates the shared
-    // deferredPostingSealPurges list and task pool, so it runs under the lock.
+    // deferredPostingSealPurges list and task pool under parquetSealPurgeLock -- the
+    // same lock every writer-side list/pool access now also takes.
     void deferParquetPostingSealPurges(IndexWriter writer, long currentTableTxn) {
         writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
         synchronized (parquetSealPurgeLock) {
@@ -6043,17 +6055,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
 
         IndexWriter writer = indexer.getWriter();
-        writer.drainPendingFuturePurges(
-                deferredPostingSealPurges,
-                getDeferredPostingSealPurgeTaskPool(),
-                tableToken,
-                partitionBy,
-                timestampType,
-                currentTableTxn
-        );
+        // Same lock the parquet O3-worker path takes; keeps every deferredPostingSealPurges
+        // + task-pool mutation under parquetSealPurgeLock (structural, not timing, safety).
+        synchronized (parquetSealPurgeLock) {
+            writer.drainPendingFuturePurges(
+                    deferredPostingSealPurges,
+                    getDeferredPostingSealPurgeTaskPool(),
+                    tableToken,
+                    partitionBy,
+                    timestampType,
+                    currentTableTxn
+            );
+        }
     }
 
     private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
+        synchronized (parquetSealPurgeLock) {
+            discardAbandonedDeferredPostingSealPurges0(currentTableTxn);
+        }
+    }
+
+    private void discardAbandonedDeferredPostingSealPurges0(long currentTableTxn) {
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
@@ -6625,6 +6647,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private ObjectStackPool<PostingSealPurgeTask> getDeferredPostingSealPurgeTaskPool() {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (deferredPostingSealPurgeTaskPool == null) {
             deferredPostingSealPurgeTaskPool = new ObjectStackPool<>(PostingSealPurgeTask::new, 16);
         }
@@ -8687,6 +8710,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void persistDeferredPostingSealPurgesDirect(long currentTableTxn) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (!PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, 0, deferredPostingSealPurges.size(), currentTableTxn)) {
             return;
         }
@@ -10763,6 +10787,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long currentTableTxn,
             LongList orphanSealTxns
     ) {
+        synchronized (parquetSealPurgeLock) {
+            publishAbandonedPostingSealPurges0(
+                    columnName,
+                    columnNameTxn,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    currentTableTxn,
+                    orphanSealTxns
+            );
+        }
+    }
+
+    private void publishAbandonedPostingSealPurges0(
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTableTxn,
+            LongList orphanSealTxns
+    ) {
         if (orphanSealTxns.size() == 0) {
             return;
         }
@@ -10790,6 +10834,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+        synchronized (parquetSealPurgeLock) {
+            publishDeferredPostingSealPurges0(currentTableTxn, persistOnQueueFull, queueRetryCount);
+        }
+    }
+
+    private void publishDeferredPostingSealPurges0(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
         if (deferredPostingSealPurges.size() == 0) {
             return;
         }
@@ -11409,6 +11459,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * close if they still cannot be handed off). Best-effort: never throws.
      */
     private void recoverSpilledPostingSealPurges() {
+        synchronized (parquetSealPurgeLock) {
+            recoverSpilledPostingSealPurges0();
+        }
+    }
+
+    private void recoverSpilledPostingSealPurges0() {
         path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
         if (!ff.exists(path.$())) {
             path.trimTo(pathSize);
@@ -11491,12 +11547,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void releaseDeferredPostingSealPurgeTask(PostingSealPurgeTask task) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (deferredPostingSealPurgeTaskPool != null) {
             deferredPostingSealPurgeTaskPool.release(task);
         }
     }
 
     private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         for (int i = readPos; i < n; i++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
             if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
@@ -12622,6 +12680,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * dropping them with a critical log.
      */
     private boolean spillReadyPostingSealPurges(long currentTableTxn) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (currentTableTxn < 0) {
             // No committed table txn (writer never fully opened): readiness is
             // undefined, so do not spill. Fall back to the drop path.
