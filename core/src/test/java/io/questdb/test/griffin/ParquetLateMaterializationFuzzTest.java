@@ -723,7 +723,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     public void testWithDiskSpillEnabledAndColdPartitionFlag() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
-        PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = true;
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
         try {
             testLateMaterializationAllTypesLowSelectivity(
                     "select sum(an_int), count(a_long), first(a_string) from x where id%17=3",
@@ -731,7 +731,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     false
             );
         } finally {
-            PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = false;
+            PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
         }
     }
 
@@ -739,7 +739,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     public void testWithDiskSpillEnabledManyPartitions() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 256L * 1024 * 1024);
-        PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = true;
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
         try {
             WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -774,7 +774,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     LOG
             );
         } finally {
-            PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = false;
+            PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
         }
     }
 
@@ -782,7 +782,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     public void testWithDiskSpillEnabledVarcharLateMaterialization() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 8 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
-        PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = true;
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
         try {
             WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -814,7 +814,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     LOG
             );
         } finally {
-            PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = false;
+            PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
         }
     }
 

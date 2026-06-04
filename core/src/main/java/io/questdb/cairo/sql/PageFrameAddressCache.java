@@ -54,7 +54,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // add(), regardless of frame.isColdParquetPartition(). Lets integration
     // tests exercise the cold-tier spill path without real cold-storage
     // wiring. Production code never flips this; tests reset it in @After.
-    public static volatile boolean FORCE_COLD_PARQUET_PARTITION_FOR_TEST = false;
+    public static volatile boolean IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
     private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
     // Flat arrays storing per-frame, per-column data. Indexed as: frameIndex * columnCount + columnIndex.
     // These are off-heap to reduce GC pressure for large and wide tables.
@@ -120,7 +120,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
-        coldParquetPartition.add(frame.isColdParquetPartition() || FORCE_COLD_PARQUET_PARTITION_FOR_TEST);
+        coldParquetPartition.add(frame.isColdParquetPartition() || IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST);
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
