@@ -207,7 +207,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.free(parquetColumns);
         releaseParquetBuffers();
         if (spillManager != null) {
-            spillManager.deleteAllSpillFiles();
             spillManager.close();
         }
     }
@@ -219,8 +218,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         activeDecoder = null;
         Misc.free(parquetColumns);
         releaseParquetBuffers();
+        Misc.freeObjListAndClear(freeParquetBufferShells);
         if (spillManager != null) {
-            spillManager.deleteAllSpillFiles();
             spillManager.close();
         }
         addressCache = null;
@@ -353,6 +352,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint) {
         releaseParquetBuffers();
+        if (spillManager != null) {
+            spillManager.deleteAllSpillFiles();
+        }
         this.addressCache = addressCache;
         this.accessPattern = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
@@ -634,24 +636,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetColumns.add(parquetIdx);
             parquetColumns.add(columnType);
         }
-    }
-
-    private void reDecodeInitial(ParquetBuffers buffers, int frameIndex, IntHashSet filterColumnIndexes) {
-        if (spillManager != null) {
-            spillManager.dropSpilledFrame(frameIndex);
-        }
-        openParquet(frameIndex, filterColumnIndexes, true);
-        final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-        final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-        final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-        cachedBytes -= buffers.decodedBytes;
-        try {
-            buffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
-        } catch (Throwable th) {
-            evictHalfInitialized(buffers);
-            throw th;
-        }
-        cachedBytes += buffers.decodedBytes;
     }
 
     private void setBound(byte usageBit, ParquetBuffers b) {
@@ -1041,10 +1025,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             spilledBytes = 0;
         }
 
-        void dropSpilledFrame(int frameIndex) {
-            dropSpilledEntry(findSpilled(frameIndex));
-        }
-
         void recordSpillFailure() {
             if (metrics != null) {
                 metrics.incSpillFailures();
@@ -1299,18 +1279,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
             assert frameFormat == PartitionFormat.PARQUET;
+            assert !currentRowGroupBuffer.isRestored;
             if (filterColumnIndexes.size() == addressCache.getColumnCount()) {
                 return false;
-            }
-
-            // Late-mat writes to rowGroupBuffers; restored buffers store slots in restoredScratch.
-            if (currentRowGroupBuffer.isRestored) {
-                try {
-                    reDecodeInitial(currentRowGroupBuffer, frameIndex, filterColumnIndexes);
-                } catch (Throwable th) {
-                    clear();
-                    throw th;
-                }
             }
 
             openParquet(frameIndex, filterColumnIndexes, false);
@@ -1438,7 +1409,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 DirectLongList filteredRows,
                 boolean fillWithNulls
         ) {
-            assert !isRestored : "decodeRemainingColumns requires fresh-decode state; caller must reDecodeInitial first";
+            assert !isRestored : "decodeRemainingColumns requires fresh-decode state";
             if (parquetColumns.size() == 0) {
                 return 0;
             }
