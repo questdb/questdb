@@ -30,14 +30,13 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
-import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.postgresql.util.PSQLException;
@@ -66,16 +65,13 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         return doesConvertFileExist(engine, token, true);
     }
 
-    static void assertNumOfRows(CairoEngine engine, String tableName, int count) throws SqlException {
+    static void assertNumOfRows(CairoEngine engine, String tableName, int count) throws Exception {
         try (SqlExecutionContext context = createSqlExecutionContext(engine)) {
-            TestUtils.assertSql(
-                    engine,
-                    context,
-                    "SELECT count() FROM " + tableName,
-                    Misc.getThreadLocalSink(),
-                    "count\n" +
-                            count + "\n"
-            );
+            new QueryAssertion(engine, context, () -> {}, "SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + count + "\n");
         }
     }
 
