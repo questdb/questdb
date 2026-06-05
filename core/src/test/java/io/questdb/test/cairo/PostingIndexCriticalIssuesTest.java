@@ -5123,6 +5123,303 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Two-covering-indexes hardening test: one table carries TWO covering posting
+     * indexes (sym1 INCLUDE price, sym2 INCLUDE price), so every O3 commit reseals
+     * BOTH covering indexes of each rewritten partition in the same seal sweep.
+     * Each row sets sym1='A' and sym2='B', so a covered read through either index
+     * sees the same monotonically-growing total; a reseal of one index that
+     * corrupts or drops the other's covered values fails the per-index oracle.
+     */
+    @Test
+    public void testMultiThreadedO3TwoCoveringIndexesConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov_two (
+                        ts TIMESTAMP,
+                        sym1 SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        sym2 SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_two SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', 'B', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_two CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 4;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                // Even readers probe sym1, odd readers probe sym2.
+                final String pred = (r % 2 == 0) ? "sym1 = 'A'" : "sym2 = 'B'";
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov_two WHERE " + pred, ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("[" + pred + "] covered count fell below the floor: " + count + " < " + floor);
+                            }
+                            if (sum < (double) initialSum - 0.5) {
+                                throw new AssertionError("[" + pred + "] covered sum(price) dropped below the initial total "
+                                        + initialSum + ": " + sum);
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("[" + pred + "] covered sum(price)=" + sum + " < count=" + count
+                                        + " -- a covered value resolved as < 1");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-two-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_two VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 'B', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent two-index covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                for (String pred : new String[]{"sym1 = 'A'", "sym2 = 'B'"}) {
+                    try (RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov_two WHERE " + pred, ctx).getRecordCursorFactory();
+                         RecordCursor cur = f.getCursor(ctx)) {
+                        Assert.assertTrue("final covered query returned no row for " + pred, cur.hasNext());
+                        Assert.assertEquals("final covered count [" + pred + ']', expectedRows, cur.getRecord().getLong(0));
+                        Assert.assertEquals("final covered sum(price) [" + pred + ']', (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Covered VARCHAR (variable-size) hardening test. The reproducer covers a
+     * fixed-size DOUBLE; this covers a VARCHAR, exercising the variable-size .pc
+     * sidecar path (per-row offset+len into a var data block) under concurrent O3
+     * rewrite. Every 'A' row carries a non-null label, so count(label) must always
+     * equal count() -- a covered varchar that resolves to NULL/empty mid-reseal
+     * drops count(label) below count() and fails the oracle.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringVarcharConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long initialRows = (long) dayCount * hotPerDay;
+
+            execute("""
+                    CREATE TABLE t_cov_vc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_vc SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', ('lbl' || x)::VARCHAR FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_vc CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final long labelCount;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), count(label) FROM t_cov_vc WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    labelCount = cur.getRecord().getLong(1);
+                                } else {
+                                    count = -1;
+                                    labelCount = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (labelCount != count) {
+                                throw new AssertionError("covered VARCHAR resolved to NULL for "
+                                        + (count - labelCount) + " of " + count
+                                        + " rows -- a covered var value was lost/corrupted mid-reseal");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-varchar-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_vc VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 'z')");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent covered varchar reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), count(label) FROM t_cov_vc WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered non-null label count", expectedRows, cur.getRecord().getLong(1));
+            }
+        });
+    }
+
+    /**
      * Covered-read hardening across row-id encodings. Same all-parquet O3 churn as
      * the reproducer, but each run pins a random posting row-id encoding (adaptive /
      * Elias-Fano / delta), so the covering reader decodes .pv chains under a
