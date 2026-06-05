@@ -2022,6 +2022,41 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheCachedWindowSpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(5_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            // A window function caches the whole input through CachedWindowRecordCursorFactory,
+            // which tags its base SCATTERED. Forward-consuming a cold parquet table under a tiny
+            // cache evicts and spills frames as the scan advances.
+            assertSqlCursors(
+                    "SELECT k, v, count(*) OVER () c FROM src_native ORDER BY k, v",
+                    "SELECT k, v, count(*) OVER () c FROM src ORDER BY k, v"
+            );
+
+            Assert.assertTrue("cached window did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
+        });
+    }
+
+    @Test
     public void testParquetCacheCleanStaleSpillFilesNoOpWhenDirEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> PageFrameMemoryPool.cleanStaleDiskSpillFiles(FilesFacadeImpl.INSTANCE, ""));
     }
@@ -2042,31 +2077,6 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testParquetCacheCleanStaleSpillFilesNoOpWhenDirNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> PageFrameMemoryPool.cleanStaleDiskSpillFiles(FilesFacadeImpl.INSTANCE, null));
-    }
-
-    @Test
-    public void testParquetCacheCleanStaleSpillFilesPreservesSubdirectories() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            String dir = temp.getRoot().getAbsolutePath();
-            try (Path path = new Path()) {
-                final long pid = ProcessHandle.current().pid();
-                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
-                Assert.assertEquals(0, ff.mkdirs(path.slash(), configuration.getMkDirMode()));
-
-                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(pid).put('-').put(1L).put('-').put(0).$();
-                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-                Assert.assertTrue(fd >= 0);
-                ff.close(fd);
-
-                PageFrameMemoryPool.cleanStaleDiskSpillFiles(ff, dir);
-
-                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
-                Assert.assertTrue(ff.exists(path.$()));
-                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(pid).put('-').put(1L).put('-').put(0).$();
-                Assert.assertFalse(ff.exists(path.$()));
-            }
-        });
     }
 
     @Test
@@ -2102,6 +2112,31 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheCleanStaleSpillFilesPreservesSubdirectories() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            String dir = temp.getRoot().getAbsolutePath();
+            try (Path path = new Path()) {
+                final long pid = ProcessHandle.current().pid();
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
+                Assert.assertEquals(0, ff.mkdirs(path.slash(), configuration.getMkDirMode()));
+
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(pid).put('-').put(1L).put('-').put(0).$();
+                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd >= 0);
+                ff.close(fd);
+
+                PageFrameMemoryPool.cleanStaleDiskSpillFiles(ff, dir);
+
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
+                Assert.assertTrue(ff.exists(path.$()));
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(pid).put('-').put(1L).put('-').put(0).$();
+                Assert.assertFalse(ff.exists(path.$()));
+            }
+        });
+    }
+
+    @Test
     public void testParquetCacheCleanStaleSpillFilesRemovesPrefixedFilesOnly() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -2129,6 +2164,74 @@ public class ParquetTest extends AbstractCairoTest {
                     Assert.assertFalse(ff.exists(path.$()));
                 }
             }
+        });
+    }
+
+    @Test
+    public void testParquetCacheCorruptedSpillFileBadSlotCountDegradesToRedecode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        final AtomicLong spillFd = new AtomicLong(-1);
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                spillFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                final long bytes = super.read(fd, buf, len, offset);
+                if (offset == 0 && bytes >= 12 && fd == spillFd.get()) {
+                    Unsafe.putInt(buf + 8, Integer.MAX_VALUE);
+                }
+                return bytes;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
+                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+            );
+
+            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertEquals("every restore must be rejected by slotCount bound [restores="
+                    + metrics.restores() + "]", 0, metrics.restores());
         });
     }
 
@@ -2169,7 +2272,7 @@ public class ParquetTest extends AbstractCairoTest {
             public long read(long fd, long buf, long len, long offset) {
                 final long bytes = super.read(fd, buf, len, offset);
                 if (offset == 0 && bytes >= 4 && fd == spillFd.get()) {
-                    Unsafe.getUnsafe().putInt(buf, 0xDEAD_BEEF);
+                    Unsafe.putInt(buf, 0xDEAD_BEEF);
                 }
                 return bytes;
             }
@@ -2203,6 +2306,432 @@ public class ParquetTest extends AbstractCairoTest {
             Assert.assertEquals("every restore attempt must be rejected by magic check [restores="
                             + metrics.restores() + "]",
                     0, metrics.restores());
+        });
+    }
+
+    @Test
+    public void testParquetCacheCorruptedSpillFileNegativeSlotSizeDegradesToRedecode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        final AtomicLong spillFd = new AtomicLong(-1);
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                spillFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                final long bytes = super.read(fd, buf, len, offset);
+                // The full header read covers the slot table; slot 0's dataSize sits at
+                // offset 20 (after magic/version/slotCount=12, parquetIdx=4, colType=4).
+                // Forcing it negative trips restore()'s negative slot-size guard, which
+                // sits after the schema-prefix check so the prefix still matches.
+                if (offset == 0 && bytes >= 28 && fd == spillFd.get()) {
+                    Unsafe.putLong(buf + 20, -1L);
+                }
+                return bytes;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
+                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+            );
+
+            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertEquals("every restore must be rejected by the negative slot-size guard [restores="
+                    + metrics.restores() + "]", 0, metrics.restores());
+        });
+    }
+
+    @Test
+    public void testParquetCacheCorruptedSpillFileOversizedBodyDegradesToRedecode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        final AtomicLong spillFd = new AtomicLong(-1);
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                spillFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                final long bytes = super.read(fd, buf, len, offset);
+                // Slot 0's dataSize (offset 20) is non-negative but far larger than the
+                // disk budget, so the accumulated bodyBytes trips restore()'s
+                // bodyBytes > diskBudget guard. 1 TB stays well clear of long overflow.
+                if (offset == 0 && bytes >= 28 && fd == spillFd.get()) {
+                    Unsafe.putLong(buf + 20, 1L << 40);
+                }
+                return bytes;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
+                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+            );
+
+            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertEquals("every restore must be rejected by the bodyBytes>diskBudget guard [restores="
+                    + metrics.restores() + "]", 0, metrics.restores());
+        });
+    }
+
+    @Test
+    public void testParquetCacheCorruptedSpillFileSchemaMismatchDegradesToRedecode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        final AtomicLong spillFd = new AtomicLong(-1);
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                spillFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                final long bytes = super.read(fd, buf, len, offset);
+                // The second read covers slot meta; first read is exactly HEADER_PREFIX=12 bytes.
+                if (offset == 0 && bytes > 12 && fd == spillFd.get()) {
+                    Unsafe.putInt(buf + 12, -42);
+                }
+                return bytes;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
+                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+            );
+
+            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertEquals("every restore must be rejected by schema-prefix check [restores="
+                    + metrics.restores() + "]", 0, metrics.restores());
+        });
+    }
+
+    @Test
+    public void testParquetCacheCorruptedSpillFileShortBodyReadDegradesToRedecode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        final AtomicLong spillFd = new AtomicLong(-1);
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                spillFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                final long bytes = super.read(fd, buf, len, offset);
+                // The body read happens at offset == headerBytes (always > 0); the two header
+                // reads are at offset 0. A short count here trips restore()'s body read-length
+                // guard, which runs after bodyPtr is malloc'd and must free it on the way out.
+                if (offset != 0 && fd == spillFd.get() && bytes > 0) {
+                    return bytes - 1;
+                }
+                return bytes;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
+                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+            );
+
+            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertEquals("every restore must be rejected by the short body-read guard [restores="
+                    + metrics.restores() + "]", 0, metrics.restores());
+        });
+    }
+
+    @Test
+    public void testParquetCacheCorruptedSpillFileShortHeaderReadDegradesToRedecode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        final AtomicLong spillFd = new AtomicLong(-1);
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                spillFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                final long bytes = super.read(fd, buf, len, offset);
+                // The header-prefix read asks for exactly HEADER_PREFIX=12 bytes; the full
+                // header read that follows asks for more (len > 12). A short count on that
+                // second read trips restore()'s header read-length guard.
+                if (offset == 0 && len > 12 && fd == spillFd.get() && bytes > 0) {
+                    return bytes - 1;
+                }
+                return bytes;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
+                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+            );
+
+            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertEquals("every restore must be rejected by the short header-read guard [restores="
+                    + metrics.restores() + "]", 0, metrics.restores());
+        });
+    }
+
+    @Test
+    public void testParquetCacheCorruptedSpillFileSlotCountBelowCurrentDegradesToRedecode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        final AtomicLong spillFd = new AtomicLong(-1);
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                spillFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    spillFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                final long bytes = super.read(fd, buf, len, offset);
+                // restore() reads slotCount (offset +8) from the header-prefix read. Forcing it
+                // to 1 - below the two-column current decode - trips the currentSlotCount >
+                // slotCount guard. 1 stays a valid (in-bounds) slotCount so the earlier bound
+                // check passes and this guard is the one that fires.
+                if (offset == 0 && bytes >= 12 && fd == spillFd.get()) {
+                    Unsafe.putInt(buf + 8, 1);
+                }
+                return bytes;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
+                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+            );
+
+            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertEquals("every restore must be rejected by the currentSlotCount>slotCount guard [restores="
+                    + metrics.restores() + "]", 0, metrics.restores());
         });
     }
 
@@ -2311,7 +2840,7 @@ public class ParquetTest extends AbstractCairoTest {
             public long read(long fd, long buf, long len, long offset) {
                 final long bytes = super.read(fd, buf, len, offset);
                 if (offset == 0 && bytes >= 8 && fd == spillFd.get()) {
-                    Unsafe.getUnsafe().putInt(buf + 4, Integer.MAX_VALUE);
+                    Unsafe.putInt(buf + 4, Integer.MAX_VALUE);
                 }
                 return bytes;
             }
@@ -2343,48 +2872,13 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetCacheCorruptedSpillFileBadSlotCountDegradesToRedecode() throws Exception {
+    public void testParquetCacheCrossJoinSpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
         PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
         final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
         metrics.clear();
-        final AtomicLong spillFd = new AtomicLong(-1);
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public boolean close(long fd) {
-                spillFd.compareAndSet(fd, -1);
-                return super.close(fd);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                final long fd = super.openRO(name);
-                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
-                    spillFd.set(fd);
-                }
-                return fd;
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
-                    spillFd.set(fd);
-                }
-                return fd;
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                final long bytes = super.read(fd, buf, len, offset);
-                if (offset == 0 && bytes >= 12 && fd == spillFd.get()) {
-                    Unsafe.getUnsafe().putInt(buf + 8, Integer.MAX_VALUE);
-                }
-                return bytes;
-            }
-        };
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
                     TIMESTAMP(ts) PARTITION BY HOUR WAL""");
@@ -2399,61 +2893,29 @@ public class ParquetTest extends AbstractCairoTest {
                     TIMESTAMP(ts) PARTITION BY HOUR WAL""");
             drainWalQueue();
 
+            // CrossJoinRecordCursorFactory rescans its slave (the right side) once per master
+            // row and tags it SCATTERED, so each rescan over the cold parquet table spills the
+            // evicted frames and restores them on the next pass.
             assertSqlCursors(
-                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
-                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+                    "SELECT m.x, s.k, s.v FROM (SELECT x FROM long_sequence(4)) m CROSS JOIN src_native s",
+                    "SELECT m.x, s.k, s.v FROM (SELECT x FROM long_sequence(4)) m CROSS JOIN src s"
             );
 
-            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
-            Assert.assertEquals("every restore must be rejected by slotCount bound [restores="
-                    + metrics.restores() + "]", 0, metrics.restores());
+            Assert.assertTrue("cross join did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertTrue("cross join did not exercise spill restore [restores="
+                    + metrics.restores() + "]", metrics.restores() > 0);
         });
     }
 
     @Test
-    public void testParquetCacheCorruptedSpillFileSchemaMismatchDegradesToRedecode() throws Exception {
+    public void testParquetCacheFullSortSpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
         PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
         final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
         metrics.clear();
-        final AtomicLong spillFd = new AtomicLong(-1);
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public boolean close(long fd) {
-                spillFd.compareAndSet(fd, -1);
-                return super.close(fd);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                final long fd = super.openRO(name);
-                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
-                    spillFd.set(fd);
-                }
-                return fd;
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
-                    spillFd.set(fd);
-                }
-                return fd;
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                final long bytes = super.read(fd, buf, len, offset);
-                // The second read covers slot meta; first read is exactly HEADER_PREFIX=12 bytes.
-                if (offset == 0 && bytes > 12 && fd == spillFd.get()) {
-                    Unsafe.getUnsafe().putInt(buf + 12, -42);
-                }
-                return bytes;
-            }
-        };
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
                     TIMESTAMP(ts) PARTITION BY HOUR WAL""");
@@ -2468,14 +2930,16 @@ public class ParquetTest extends AbstractCairoTest {
                     TIMESTAMP(ts) PARTITION BY HOUR WAL""");
             drainWalQueue();
 
+            // UNION ALL has no random access, so ORDER BY over it picks the full
+            // SortedRecordCursorFactory (not the light variant). It tags its base SCATTERED, and
+            // AbstractSetRecordCursor forwards the hint to both cold parquet scans, which spill.
             assertSqlCursors(
-                    "SELECT k, v FROM src_native ORDER BY k, v LIMIT 500",
-                    "SELECT k, v FROM src ORDER BY k, v LIMIT 500"
+                    "SELECT k, v FROM (SELECT k, v FROM src_native UNION ALL SELECT k, v FROM src_native) ORDER BY k, v",
+                    "SELECT k, v FROM (SELECT k, v FROM src UNION ALL SELECT k, v FROM src) ORDER BY k, v"
             );
 
-            Assert.assertTrue("spill should fire [spills=" + metrics.spills() + "]", metrics.spills() > 0);
-            Assert.assertEquals("every restore must be rejected by schema-prefix check [restores="
-                    + metrics.restores() + "]", 0, metrics.restores());
+            Assert.assertTrue("full sort over union did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
         });
     }
 
@@ -2512,6 +2976,43 @@ public class ParquetTest extends AbstractCairoTest {
             Assert.assertTrue("hash join did not exercise spill restore [restores="
                             + metrics.restores() + "]",
                     metrics.restores() > 0);
+        });
+    }
+
+    @Test
+    public void testParquetCacheLatestBySpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(5_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            // LATEST ON ... PARTITION BY a non-symbol key takes the generic
+            // LatestByLightRecordCursorFactory path (a symbol key would use the symbol-indexed
+            // factories, which do not hint). That factory tags its random-access base SCATTERED,
+            // so the full backward scan over a cold parquet table under a tiny cache spills.
+            // ORDER BY k makes the per-key result deterministic.
+            assertSqlCursors(
+                    "SELECT k, v, ts FROM src_native LATEST ON ts PARTITION BY k ORDER BY k",
+                    "SELECT k, v, ts FROM src LATEST ON ts PARTITION BY k ORDER BY k"
+            );
+
+            Assert.assertTrue("latest-by did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
         });
     }
 
@@ -2586,32 +3087,6 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetCacheSpillDirMkdirsFailureThrows() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            String missingDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "spill-" + System.nanoTime();
-            FilesFacade ff = new FilesFacadeImpl() {
-                @Override
-                public int mkdirs(Path path, int mode) {
-                    return 13;
-                }
-            };
-            try {
-                new PageFrameMemoryPool(
-                        1024L,
-                        1024L,
-                        missingDir,
-                        ff,
-                        configuration.getMkDirMode(),
-                        configuration.getMetrics().parquetDecodeMetrics()
-                ).close();
-                Assert.fail("expected CairoException");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not create parquet spill directory");
-            }
-        });
-    }
-
-    @Test
     public void testParquetCacheSpillAllocateFailureRecordsFailureAndDegrades() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 8 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
@@ -2670,6 +3145,95 @@ public class ParquetTest extends AbstractCairoTest {
                     "allocate failure should leave spills counter at zero [spills=" + metrics.spills() + "]",
                     0, metrics.spills()
             );
+        });
+    }
+
+    @Test
+    public void testParquetCacheSpillDirMkdirsFailureThrows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String missingDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "spill-" + System.nanoTime();
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public int mkdirs(Path path, int mode) {
+                    return 13;
+                }
+            };
+            try {
+                new PageFrameMemoryPool(
+                        1024L,
+                        1024L,
+                        missingDir,
+                        ff,
+                        configuration.getMkDirMode(),
+                        configuration.getMetrics().parquetDecodeMetrics()
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not create parquet spill directory");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetCacheSpillFilesDeletedAfterCursorClose() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        // Spill files live on disk, not native memory, so assertMemoryLeak cannot catch a leaked
+        // one. Track create/delete through the FilesFacade and assert the counts balance once the
+        // cursor (and its PageFrameMemoryPool) has closed.
+        final AtomicLong created = new AtomicLong();
+        final AtomicLong removed = new AtomicLong();
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd >= 0 && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    created.incrementAndGet();
+                }
+                return fd;
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                final boolean ok = super.removeQuiet(name);
+                if (ok && Utf8s.containsAscii(name, PageFrameMemoryPool.SPILL_FILE_PREFIX)) {
+                    removed.incrementAndGet();
+                }
+                return ok;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, w LONG, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 97)::int, x::double, (x * 31 + 7)::long, timestamp_sequence('2024-01-01', 18_000_000)
+                    FROM long_sequence(10_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            // assertSqlCursors opens and closes both cursors via try-with-resources, so the
+            // parquet page-frame cursor's pool closes and must delete every spill file it made.
+            assertSqlCursors(
+                    "SELECT k, v, w, ts FROM src_native ORDER BY k, ts",
+                    "SELECT k, v, w, ts FROM src ORDER BY k, ts"
+            );
+
+            Assert.assertTrue("query did not spill, so the cleanup invariant is untested [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertTrue("at least one spill file must have been created [created="
+                    + created.get() + "]", created.get() > 0);
+            Assert.assertEquals("every spill file created during the query must be deleted once the"
+                            + " cursor closes [created=" + created.get() + ", removed=" + removed.get() + "]",
+                    created.get(), removed.get());
         });
     }
 

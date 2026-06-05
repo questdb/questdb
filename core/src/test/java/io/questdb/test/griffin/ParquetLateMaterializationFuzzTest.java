@@ -143,7 +143,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -180,7 +180,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -215,7 +215,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute("create table x (id long, filter_col int, ts timestamp) timestamp(ts) partition by day;", sqlExecutionContext);
                     engine.execute(
@@ -268,7 +268,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -301,7 +301,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -335,7 +335,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -370,7 +370,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -403,7 +403,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -435,7 +435,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -469,7 +469,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -503,7 +503,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -536,7 +536,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -579,7 +579,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -619,7 +619,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -744,7 +744,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
             WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                         engine.execute(
                                 """
@@ -787,7 +787,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
             WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                         engine.execute(
                                 """
@@ -843,7 +843,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -945,7 +945,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """

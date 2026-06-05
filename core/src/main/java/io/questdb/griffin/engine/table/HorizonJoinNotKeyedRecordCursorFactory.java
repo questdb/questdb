@@ -358,7 +358,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
                 long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
-                long matchRowId = Long.MIN_VALUE;
+                long matchRowId;
                 if (keyedAsOfJoin) {
                     Record masterKeyRecord = masterRecord;
                     if (symbolTranslatingRecord != null) {

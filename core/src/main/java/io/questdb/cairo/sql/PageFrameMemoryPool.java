@@ -444,7 +444,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (shellCount > 0) {
             buffers = freeParquetBufferShells.getQuick(shellCount - 1);
             freeParquetBufferShells.remove(shellCount - 1);
-            buffers.reopen();
+            // reopen() re-allocates the native buffers one by one. The shell is
+            // already popped off freeParquetBufferShells and not yet tracked in
+            // lruHead/byFrameIndex, so a partial reopen would orphan it. Free what
+            // reopen() managed to allocate and discard the shell.
+            try {
+                buffers.reopen();
+            } catch (Throwable th) {
+                buffers.close();
+                throw th;
+            }
         } else {
             buffers = new ParquetBuffers();
         }
@@ -1279,6 +1288,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
             assert frameFormat == PartitionFormat.PARQUET;
+            // Only AsyncTopK enables spilling (the only atom that passes a non-zero owner
+            // pool budget), and there a restored buffer never reaches late materialization:
+            // a frame spills only after its reduce, restore runs only on recordB
+            // chain-comparison hops to already-reduced frames, and late materialization runs
+            // on the frame being reduced for the first time (fresh decode), so the two never
+            // land on the same buffer. If a future change broke this, setupRestored would
+            // have already closed currentRowGroupBuffer's native handle and
+            // decodeRemainingColumns below could not decode into it.
             assert !currentRowGroupBuffer.isRestored;
             if (filterColumnIndexes.size() == addressCache.getColumnCount()) {
                 return false;
@@ -1344,12 +1361,39 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private byte usageFlags;
 
         public ParquetBuffers() {
-            this.auxPageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-            this.auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-            this.pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-            this.pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-            this.restoredSlotMeta = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-            this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            // Each buffer below allocates native memory eagerly. If any allocation
+            // throws (native OOM or RSS limit exceeded), free the ones already
+            // allocated so the half-built object does not leak: acquireBuffer never
+            // assigns the throwing ctor to a tracked reference, so close() would
+            // never reach it.
+            DirectLongList auxPageAddresses = null;
+            DirectLongList auxPageSizes = null;
+            DirectLongList pageAddresses = null;
+            DirectLongList pageSizes = null;
+            DirectLongList restoredSlotMeta = null;
+            RowGroupBuffers rowGroupBuffers = null;
+            try {
+                auxPageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                restoredSlotMeta = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            } catch (Throwable th) {
+                Misc.free(auxPageAddresses);
+                Misc.free(auxPageSizes);
+                Misc.free(pageAddresses);
+                Misc.free(pageSizes);
+                Misc.free(restoredSlotMeta);
+                Misc.free(rowGroupBuffers);
+                throw th;
+            }
+            this.auxPageAddresses = auxPageAddresses;
+            this.auxPageSizes = auxPageSizes;
+            this.pageAddresses = pageAddresses;
+            this.pageSizes = pageSizes;
+            this.restoredSlotMeta = restoredSlotMeta;
+            this.rowGroupBuffers = rowGroupBuffers;
         }
 
         @Override
@@ -1409,6 +1453,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 DirectLongList filteredRows,
                 boolean fillWithNulls
         ) {
+            // Requires a fresh-decode buffer: setupRestored closes rowGroupBuffers (ptr == 0),
+            // so a restored buffer has no native handle to decode into. The decode calls below
+            // would hand that null handle to Rust, which null-guards it and throws a
+            // CairoException instead of decoding. populateRemainingColumns explains why a
+            // restored buffer never reaches this path.
             assert !isRestored : "decodeRemainingColumns requires fresh-decode state";
             if (parquetColumns.size() == 0) {
                 return 0;
