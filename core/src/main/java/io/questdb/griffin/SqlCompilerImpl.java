@@ -3078,6 +3078,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
         // todo: consider moving this method to InsertModel
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put("replica access is read-only");
+        }
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
         InsertOperationImpl insertOperation = null;
         Function timestampFunction = null;
@@ -3201,6 +3208,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private InsertOperation compileInsertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put("replica access is read-only");
+        }
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
