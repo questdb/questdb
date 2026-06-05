@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
@@ -161,6 +162,39 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedHorizonJoinOpenFailureReleasesAllocations() throws Exception {
+        // A tiny limit breaches the cursor's of() at atom.reopen() before any row; reusing the factory
+        // catches a failed open that leaves isOpen set (the next open would skip reopen() and not breach).
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 100, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        final String query = "SELECT t.sym, array_agg(p.price) " +
+                                "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
+                                "RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncHorizonJoinRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testKeyedHorizonJoinReleasesAllocations() throws Exception {
         // A small keyed array_agg fits the per-query limit; the owner and per-worker allocators,
         // the sharding context, and the ASOF maps are bound to the tracker on each open and must
@@ -225,6 +259,39 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                                 TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                                 TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
+        // Multi-slave keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 100);
+                        final String query = "SELECT t.sym, array_agg(p0.px0), count(p1.px1) " +
+                                "FROM trades t " +
+                                "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
+                                "HORIZON JOIN prices1 p1 " +
+                                "RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncMultiHorizonJoinRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
                             }
                         }
                     },
@@ -336,6 +403,38 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotKeyedHorizonJoinOpenFailureReleasesAllocations() throws Exception {
+        // Non-keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 100, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        final String query = "SELECT array_agg(p.price) " +
+                                "FROM trades t HORIZON JOIN prices p " +
+                                "RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testNotKeyedHorizonJoinReleasesAllocations() throws Exception {
         // A small non-keyed array_agg fits the per-query limit; the owner and per-worker allocators
         // and the ASOF maps are bound to the tracker on each open and must release every byte on
@@ -360,6 +459,40 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                         rows++;
                                     }
                                     Assert.assertEquals("iteration " + i, 1, rows);
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testNotKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
+        // Multi-slave non-keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations;
+        // dropping the GROUP BY key routes to the non-keyed multi-horizon factory.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 100);
+                        final String query = "SELECT array_agg(p0.px0), count(p1.px1) " +
+                                "FROM trades t " +
+                                "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
+                                "HORIZON JOIN prices1 p1 " +
+                                "RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                                 }
                             }
                         }

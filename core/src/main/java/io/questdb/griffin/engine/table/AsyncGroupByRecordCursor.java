@@ -381,11 +381,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();
         Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;

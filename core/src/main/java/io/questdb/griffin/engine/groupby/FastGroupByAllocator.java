@@ -83,7 +83,11 @@ public class FastGroupByAllocator implements GroupByAllocator {
     @Override
     public void clear() {
         _close();
-        chunks.restoreInitialCapacity();
+        // Skip restoring a closed index: re-mallocing it under an already-exhausted tracker would
+        // breach again mid-cleanup (reopen() reallocates it before the next use).
+        if (chunks.isOpen()) {
+            chunks.restoreInitialCapacity();
+        }
     }
 
     @Override

@@ -285,11 +285,12 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncMultiHorizonJoinAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.executionContext = executionContext;
         this.circuitBreaker = executionContext.getCircuitBreaker();
 

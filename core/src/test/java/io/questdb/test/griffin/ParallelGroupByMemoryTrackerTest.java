@@ -136,6 +136,42 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelKeyedGroupByOpenFailureReleasesAllocations() throws Exception {
+        // A tiny limit breaches the cursor's of() at atom.reopen() before any row; reusing the factory
+        // catches a failed open that leaves isOpen set (the next open would skip reopen() and not breach).
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k VARCHAR, v LONG) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 1_000_000)::timestamp, (x % 5)::varchar, x FROM long_sequence(1_000)",
+                                sqlExecutionContext
+                        );
+                        try (RecordCursorFactory factory = compiler.compile("SELECT k, count(*) FROM tab GROUP BY k", sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncGroupByRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelKeyedGroupBySucceedsOnSmallKeySet() throws Exception {
         // Low-cardinality keyed GROUP BY stays below the sharding threshold; the
         // handful of per-worker maps fit the per-query limit, accounting stays
@@ -205,6 +241,41 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
                                 Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                                 TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                                 TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelNotKeyedArrayAggOpenFailureReleasesAllocations() throws Exception {
+        // Non-keyed variant of testParallelKeyedGroupByOpenFailureReleasesAllocations.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, v DOUBLE) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 1000)::timestamp, x::double FROM long_sequence(1_000)",
+                                sqlExecutionContext
+                        );
+                        try (RecordCursorFactory factory = compiler.compile("SELECT array_agg(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncGroupByNotKeyedRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
                             }
                         }
                     },

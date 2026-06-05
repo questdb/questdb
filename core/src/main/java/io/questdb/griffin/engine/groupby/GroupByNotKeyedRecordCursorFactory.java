@@ -96,16 +96,18 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = cursor.baseCursor;
-        if (baseCursor == null) {
-            baseCursor = base.getCursor(executionContext);
+        // The base cursor is shared with getSharedCursor and opened by whichever runs first, so
+        // close the cursor on a breach only when this call opened it.
+        if (cursor.baseCursor == null) {
+            cursor.baseCursor = base.getCursor(executionContext);
+            try {
+                return cursor.of(cursor.baseCursor, executionContext);
+            } catch (Throwable th) {
+                cursor.close();
+                throw th;
+            }
         }
-        try {
-            return cursor.of(baseCursor, executionContext);
-        } catch (Throwable e) {
-            Misc.free(baseCursor);
-            throw e;
-        }
+        return cursor.of(cursor.baseCursor, executionContext);
     }
 
     @Override

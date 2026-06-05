@@ -164,6 +164,32 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotKeyedCountDistinctOpenFailureReleasesAllocations() throws Exception {
+        // getCursor() must null cursor.baseCursor on a breach so a reused open does not read a freed
+        // cursor. A tiny limit breaches the first open at allocator.reopen(); raising it must recover.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            execute("CREATE TABLE tab AS (SELECT x % 1_000 AS v FROM long_sequence(10_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT count_distinct(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected a per-query memory breach during cursor open");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1_000, cursor.getRecord().getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNotKeyedCountDistinctSucceedsOnSmallSet() throws Exception {
         // Sync non-keyed GROUP BY on a small distinct set fits the per-query
         // limit and returns the expected count.
