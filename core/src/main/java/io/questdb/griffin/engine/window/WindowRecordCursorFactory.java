@@ -89,8 +89,14 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -201,18 +207,14 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 isOpen = true;
-                try {
-                    // Bind the per-query tracker on each window function's per-partition
-                    // map before reopen() allocates the map backing under it.
-                    final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
-                    for (int i = 0; i < windowFunctionsCount; i++) {
-                        windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
-                    }
-                    reopen(functions);
-                } catch (Throwable t) {
-                    close();
-                    throw t;
+                // Bind the per-query tracker on each window function's per-partition
+                // map before reopen() allocates the map backing under it. A breach here (or
+                // in Function.init below) propagates to getCursor, which closes the cursor.
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                for (int i = 0; i < windowFunctionsCount; i++) {
+                    windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }
+                reopen(functions);
             }
             Function.init(functions, baseCursor, executionContext, null);
         }

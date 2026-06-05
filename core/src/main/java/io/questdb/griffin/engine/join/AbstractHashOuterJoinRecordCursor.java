@@ -51,7 +51,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             RecordChain slaveChain
     ) {
         super(columnSplit);
-        isOpen = true;
+        isOpen = false;
         this.joinKeyMap = joinKeyMap;
         this.slaveChain = slaveChain;
     }
@@ -145,6 +145,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
+            joinKeyMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             joinKeyMap.reopen();
         }
         // Bind the per-query tracker before any slaveChain write. The chain's

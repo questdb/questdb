@@ -32,7 +32,9 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
@@ -119,6 +121,58 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashOuterJoinFilteredFullFatOpenFailureReleasesAllocations() throws Exception {
+        // A LEFT JOIN with a non-equi filter forces the full-fat HashOuterJoinFilteredRecordCursorFactory.
+        // Its LEFT cursor has no match-ids map, so of() breaches cleanly on joinKeyMap.reopen() with
+        // isOpen already set once the inflated map crosses the limit. Reusing the factory catches a
+        // failed open that leaves isOpen stuck.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x AS k, x AS v FROM long_sequence(20))");
+            execute("CREATE TABLE s AS (SELECT x AS k, x AS v FROM long_sequence(20))");
+            drainWalQueue();
+            assertFullFatOpenFailureReleasesAllocations(
+                    "SELECT m.k FROM m LEFT JOIN s ON m.k = s.k AND m.v <> s.v",
+                    HashOuterJoinFilteredRecordCursorFactory.class
+            );
+        });
+    }
+
+    @Test
+    public void testHashOuterJoinFilteredFullFatRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // A full-fat FULL OUTER JOIN with a non-equi filter cycles the join-key map, the match-ids map
+        // and the slave RecordChain - all now tracker-bound. assertMemoryLeak around the reuse loop is
+        // the load-bearing check that each structure's malloc/free nets to zero on the per-query counter.
+        // Shrink the slave-chain page so its default 16 MiB page does not breach the 512 KiB limit on
+        // the first record; a small input then fits comfortably under the limit.
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x AS k, x AS v FROM long_sequence(50))");
+            execute("CREATE TABLE s AS (SELECT x AS k, (2 * x) AS v FROM long_sequence(50))");
+            drainWalQueue();
+            final String sql = "SELECT m.k, s.v FROM m FULL OUTER JOIN s ON m.k = s.k AND m.v <> s.v";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    Assert.assertTrue(
+                            "expected HashOuterJoinFilteredRecordCursorFactory, got: " + factory.getClass().getSimpleName(),
+                            isFactoryInChain(factory, HashOuterJoinFilteredRecordCursorFactory.class)
+                    );
+                    for (int i = 0; i < 20; i++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            long rows = 0;
+                            while (cursor.hasNext()) {
+                                rows++;
+                            }
+                            Assert.assertTrue("iteration " + i + " produced no rows", rows > 0);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHashOuterJoinFilteredLightOpenFailureReleasesAllocations() throws Exception {
         // A FULL OUTER JOIN with a non-equi filter routes to the filtered light factory whose
         // full-outer cursor reopens a match-ids map (region 1) before the slave chain (region 2).
@@ -132,6 +186,24 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             assertOpenFailureReleasesAllocations(
                     "SELECT * FROM m FULL OUTER JOIN s ON m.k = s.k AND m.v <> s.v",
                     HashOuterJoinFilteredLightRecordCursorFactory.class
+            );
+        });
+    }
+
+    @Test
+    public void testHashOuterJoinFullFatOpenFailureReleasesAllocations() throws Exception {
+        // Force the full-fat HashOuterJoinRecordCursorFactory and inflate the join-key map above the
+        // limit so its of() breaches on joinKeyMap.reopen() with isOpen already set. A small input
+        // keeps every other allocation under the limit; reusing one factory across opens catches a
+        // failed open that leaves isOpen stuck (a later open would skip reopen() and stop breaching).
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x AS k FROM long_sequence(20))");
+            execute("CREATE TABLE s AS (SELECT x AS k, x AS v FROM long_sequence(20))");
+            drainWalQueue();
+            assertFullFatOpenFailureReleasesAllocations(
+                    "SELECT m.k, s.v FROM m LEFT JOIN s ON k",
+                    HashOuterJoinRecordCursorFactory.class
             );
         });
     }
@@ -294,6 +366,31 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                     SpliceJoinLightRecordCursorFactory.class
             );
         });
+    }
+
+    private void assertFullFatOpenFailureReleasesAllocations(String sql, Class<?> factoryClass) throws Exception {
+        // setFullFatJoins forces the full-fat outer-join factory (the same path the optimizer picks for a
+        // non-random-access slave). The query is configured to breach during the cursor's of() (the
+        // inflated join-key map crosses the per-query limit on the first reopen). Reusing one factory
+        // across opens catches a failed open that does not free the cursor: the stuck isOpen flag would
+        // let a later open skip reopen() and stop breaching, tripping the Assert.fail below.
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(true);
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                Assert.assertTrue(
+                        "expected " + factoryClass.getSimpleName() + ", got: " + factory.getClass().getSimpleName(),
+                        isFactoryInChain(factory, factoryClass)
+                );
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                }
+            }
+        }
     }
 
     private void assertOpenFailureReleasesAllocations(String sql, Class<?> factoryClass) throws Exception {

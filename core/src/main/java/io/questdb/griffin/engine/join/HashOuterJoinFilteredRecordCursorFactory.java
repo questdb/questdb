@@ -90,7 +90,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         try {
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
-            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
             this.slaveChain = new RecordChain(slaveFactory.getMetadata(),
                     slaveChainSink,
                     configuration.getSqlHashJoinValuePageSize(),
@@ -98,7 +98,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             this.columnSplit = columnSplit;
             this.joinType = joinType;
             if (joinType != IQueryModel.JOIN_LEFT_OUTER) {
-                matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
+                matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY, false, false);
             }
             this.filter = filter;
             this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
@@ -163,6 +163,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the join map (and, for FULL/RIGHT, the match-ids map) under the bound
+            // per-query tracker before it can throw; close() frees them (and the slave chain) under
+            // that tracker and resets isOpen for reuse.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -218,7 +222,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             super(columnSplit, joinKeyMap, slaveChain);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
             this.matchIdsMap = matchIdsMap;
-            isOpen = true;
         }
 
         @Override
@@ -325,6 +328,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
+                matchIdsMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 matchIdsMap.reopen();
             }
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
@@ -349,7 +353,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
             record = new OuterJoinRecord(columnSplit, nullRecord);
-            isOpen = true;
         }
 
         @Override
@@ -429,7 +432,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             super(columnSplit, joinKeyMap, slaveChain);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
             this.matchIdsMap = matchIdsMap;
-            isOpen = true;
         }
 
         @Override
@@ -529,6 +531,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
+                matchIdsMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 matchIdsMap.reopen();
             }
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
