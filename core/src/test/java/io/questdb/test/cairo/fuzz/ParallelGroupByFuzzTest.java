@@ -1819,22 +1819,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 400 * 1024);
                         try {
                             // vwap() routes through the unordered path (AsyncGroupByRecordCursorFactory).
-                            TestUtils.assertSql(compiler, sqlExecutionContext,
-                                    "select key, vwap(price, quantity) from tab order by key",
-                                    sink, "");
-                            Assert.fail();
-                        } catch (CairoException ex) {
-                            Assert.assertTrue(ex.isOutOfMemory());
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "global RSS memory limit exceeded");
+                            assertQuery("select key, vwap(price, quantity) from tab order by key")
+                                    .withCompiler(compiler)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .failsWith("global RSS memory limit exceeded");
                         } finally {
                             Unsafe.setRssMemLimit(0);
                         }
 
                         // Verify the query succeeds after limit removed (error state doesn't leak).
                         try {
-                            TestUtils.assertSql(compiler, sqlExecutionContext,
-                                    "select count() from (select key, vwap(price, quantity) from tab group by key)",
-                                    sink, """
+                            assertQuery("select count() from (select key, vwap(price, quantity) from tab group by key)")
+                                    .withEngine(engine)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("""
                                             count
                                             100000
                                             """);

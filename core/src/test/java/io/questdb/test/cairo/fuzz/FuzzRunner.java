@@ -72,6 +72,7 @@ import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -812,14 +813,14 @@ public class FuzzRunner {
         drainWalQueue(applyRnd, tableName);
     }
 
-    private void assertMinMaxTimestamp(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws SqlException {
+    private void assertMinMaxTimestamp(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
         try (TableReader reader = getReader(tableName)) {
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select ts from " + tableName + " order by ts limit 1",
-                        sink,
+                new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select ts from " + tableName + " order by ts limit 1")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(
                         "ts\n" +
                                 Micros.toUSecString(reader.getMinTimestamp())
                                 + "\n"
@@ -827,11 +828,11 @@ public class FuzzRunner {
             }
 
             if (reader.getMaxTimestamp() != Long.MIN_VALUE) {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select ts from " + tableName + " order by ts limit -1",
-                        sink,
+                new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select ts from " + tableName + " order by ts limit -1")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(
                         "ts\n" +
                                 Micros.toUSecString(reader.getMaxTimestamp())
                                 + "\n"
