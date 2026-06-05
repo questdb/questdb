@@ -217,6 +217,12 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         workDone = true;
                     }
                 } catch (Throwable th) {
+                    // A REPLACE that failed mid-append leaves uncommitted rows in the (reused) writer.
+                    // Free it so those rows are rolled back on close and cannot be committed into the
+                    // NEXT partition's REPLACE_RANGE (which would resurrect them outside the deleted
+                    // range). A fresh writer + copier are acquired on the next REPLACE.
+                    walWriter = Misc.free(walWriter);
+                    copier = null;
                     LOG.error().$("row-expiry partition cleanup failed [table=").$(tableName)
                             .$(", partitionTs=").$(floorTs)
                             .$(", msg=").$(th.getMessage())

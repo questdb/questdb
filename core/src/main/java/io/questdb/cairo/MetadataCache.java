@@ -121,6 +121,16 @@ public class MetadataCache implements QuietCloseable {
     }
 
     /**
+     * Records that an EXPIRE ROWS policy now exists (or is being created), opening the read-filter gate
+     * ({@link #mayHaveExpiryPolicy()}). Called as a policy is set, BEFORE it becomes visible, so a query
+     * racing the SET/CREATE never sees the gate closed and skips the filter. Monotonic — never reset
+     * (the gate is a performance hint, not authoritative state).
+     */
+    public void markExpiryPolicyPossible() {
+        anyExpiryPolicySeen = true;
+    }
+
+    /**
      * Whether any table may carry an EXPIRE ROWS policy. Returns true while the cache is still
      * hydrating at startup (so the read filter is never skipped before a policy becomes visible), and
      * thereafter true only once a policied table has been cached. Lets the read filter and the cleanup

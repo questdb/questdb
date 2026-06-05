@@ -306,6 +306,23 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInPredicateAtCreate() throws Exception {
+        // Regression: 'col IN (...)' must work as an EXPIRE predicate at CREATE — the bare IN must not be
+        // mistaken for the IN VOLUME clause. NOT(sym IN (...)) keeps rows whose sym is not in the list.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN sym IN ('AAA', 'CCC')");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // in list -> expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-06T00:00:00.000000Z')"); // not in   -> live
+            execute("insert into t values ('CCC', 3.0, '2024-01-07T00:00:00.000000Z')"); // in list -> expired
+            drainWalQueue();
+
+            assertSql("sym\tv\n" + "BBB\t2.0\n", "select sym, v from t order by sym");
+        });
+    }
+
+    @Test
     public void testReadFilterFallsBackToMetadataOnCacheMiss() throws Exception {
         // Startup-hydration race regression: when the metadata cache has no entry for a (resolvable)
         // policied table — as during the brief async metadata hydration at startup — the read filter must

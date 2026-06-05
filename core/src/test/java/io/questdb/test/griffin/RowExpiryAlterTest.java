@@ -262,6 +262,21 @@ public class RowExpiryAlterTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCreateInvalidPredicateRejected() throws Exception {
+        // An EXPIRE predicate referencing an unknown column must be rejected at CREATE — not accepted and
+        // then bricking every read via the injected filter. The table must not be left behind.
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "create table t (v double, ts timestamp) timestamp(ts) partition by day wal " +
+                            "EXPIRE ROWS WHEN no_such_col < now()",
+                    13,
+                    "invalid EXPIRE ROWS predicate"
+            );
+            assertNull(engine.getTableTokenIfExists("t"));
+        });
+    }
+
     /**
      * Minimal {@link MetadataServiceStub} that records the arguments of {@link #setMetaExpiry}. Only the
      * methods left abstract by {@link MetadataServiceStub} are stubbed here; they are never invoked by the

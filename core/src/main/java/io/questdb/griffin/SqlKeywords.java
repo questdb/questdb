@@ -2503,6 +2503,16 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'w';
     }
 
+    public static boolean isVolumeKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'v'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 'u'
+                && (tok.charAt(4) | 32) == 'm'
+                && (tok.charAt(5) | 32) == 'e';
+    }
+
     public static boolean isWalKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'w'

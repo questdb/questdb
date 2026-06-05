@@ -4227,6 +4227,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
 
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
+                    // Validate the EXPIRE ROWS predicate now the view's columns exist; drop the view on
+                    // failure so a bad predicate cannot brick every read of it (see executeCreateTable).
+                    if (createTableOp.getExpiryPredicate() != null) {
+                        try {
+                            validateExpiryPredicate(executionContext, matViewToken, createTableOp.getExpiryPredicate(), createTableOp.getTableNamePosition());
+                        } catch (Throwable e) {
+                            engine.dropTableOrViewOrMatView(path, matViewToken);
+                            throw e;
+                        }
+                    }
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
                 }
@@ -4421,6 +4431,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                         throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
                                 .put(e.getFlyweightMessage());
+                    }
+                }
+                // The columns now exist, so validate the EXPIRE ROWS predicate (CREATE captured it as
+                // raw text). Drop the just-created table on failure so the statement fails atomically,
+                // rather than leaving a table whose every read is rewritten with an invalid predicate.
+                if (createTableOp.getExpiryPredicate() != null) {
+                    try {
+                        validateExpiryPredicate(executionContext, tableToken, createTableOp.getExpiryPredicate(), createTableOp.getTableNamePosition());
+                    } catch (Throwable e) {
+                        engine.dropTableOrViewOrMatView(path, tableToken);
+                        throw e;
                     }
                 }
             }

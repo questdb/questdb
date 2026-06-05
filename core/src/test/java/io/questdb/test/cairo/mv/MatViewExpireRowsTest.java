@@ -179,6 +179,21 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewInvalidPredicateRejected() throws Exception {
+        // An invalid EXPIRE predicate must be rejected at CREATE MATERIALIZED VIEW (not accepted and then
+        // bricking every read of the view). The view must not be left behind.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) EXPIRE ROWS WHEN no_such_col < now()",
+                    25,
+                    "invalid EXPIRE ROWS predicate"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
     public void testCreateSampleByMatViewWithExpire() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(NOW_MICROS);

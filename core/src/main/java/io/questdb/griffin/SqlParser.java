@@ -454,9 +454,24 @@ public class SqlParser {
                     foundCleanup = true;
                     break;
                 }
-                if (inCreateTable && (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+                if (inCreateTable && (isWithKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
                     predicateEnd = lexer.lastTokenPosition();
                     break;
+                }
+                if (inCreateTable && isInKeyword(tok)) {
+                    // 'IN' is ambiguous: 'IN VOLUME' ends the predicate, but '<col> IN (...)' is part of
+                    // it. Only treat IN as the boundary when it is followed by VOLUME; otherwise it is
+                    // predicate content and we keep scanning (the following '(' bumps the paren depth).
+                    final int inPos = lexer.lastTokenPosition();
+                    final CharSequence afterIn = optTok(lexer);
+                    if (afterIn != null && isVolumeKeyword(afterIn)) {
+                        lexer.unparseLast(); // hand VOLUME back so the caller parses IN VOLUME
+                        predicateEnd = inPos;
+                        break;
+                    }
+                    if (afterIn != null) {
+                        lexer.unparseLast();
+                    }
                 }
             }
             if (Chars.equals(tok, '(')) {
