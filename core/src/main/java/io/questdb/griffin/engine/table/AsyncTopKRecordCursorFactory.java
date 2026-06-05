@@ -143,9 +143,8 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(frameSequence);
             return cursor;
         } catch (Throwable th) {
-            // cursor.of() binds the per-query tracker on every per-worker tree chain and reopens them;
-            // a breach mid-reopen leaves some chains allocated. close() drains the sequence and frees
-            // them under that tracker, also resetting isOpen so the factory is reusable.
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
             cursor.close();
             throw th;
         }
