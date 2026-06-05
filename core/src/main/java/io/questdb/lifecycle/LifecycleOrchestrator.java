@@ -192,7 +192,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
         }
         running.set(true);
         startAllInTopologicalOrder();
-        if (anyFailedReachable()) {
+        if (anyFailed()) {
             close();
             // Chain the first failed component's throwable so the real cause (the specific error
             // message or error-code URL the component threw) is visible to operators and to
@@ -378,7 +378,10 @@ public class LifecycleOrchestrator implements QuietCloseable {
         return true;
     }
 
-    private boolean anyFailedReachable() {
+    // Scans the entire registry for any component in FAILED state. Despite the
+    // name suggesting reachability, this is a flat scan over all registered
+    // components. Renamed from anyFailedReachable for clarity.
+    private boolean anyFailed() {
         for (int i = 0, n = registry.size(); i < n; i++) {
             if (stateOf(registry.getQuick(i).name()) == State.FAILED) {
                 return true;
@@ -461,10 +464,22 @@ public class LifecycleOrchestrator implements QuietCloseable {
                     try {
                         cb.run();
                     } catch (Throwable t) {
+                        // A stage-2 callback failure must surface as a boot failure, not be
+                        // silently swallowed. If the callback throws (e.g. the worker pool
+                        // manager fails to create native threads), the server has no worker
+                        // threads and cannot serve requests. Publishing FAILED here ensures
+                        // anyFailed() trips in run(), so boot throws instead of returning a
+                        // DEGRADED zombie that passes readiness probes but cannot do any work.
                         injectedLog.error()
                                 .$("stable-below callback failed for ").$(w.componentName)
                                 .$(": ").$(t.getMessage())
                                 .I$();
+                        publishInternal(w.componentName, State.FAILED, "stage-2 callback failed: " + t.getMessage());
+                        // Retain the failure so run() can chain it into LifecycleStartupException.
+                        if (firstFailedComponentThrowable == null) {
+                            firstFailedComponentThrowable = t;
+                            firstFailedComponentName = w.componentName;
+                        }
                     }
                 }
             }
