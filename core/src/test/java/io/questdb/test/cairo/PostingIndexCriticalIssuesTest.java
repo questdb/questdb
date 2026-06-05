@@ -5135,6 +5135,153 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * DROP PARTITION concurrent with covering reads. A covering read for 'A'
+     * iterates the posting index across ALL partitions, so while it runs the writer
+     * drops random EARLIER parquet partitions (their index files are removed,
+     * scoreboard-gated) and O3-inserts into a PROTECTED last partition (never
+     * dropped). Readers project only the protected partition (ts >= last day), whose
+     * covered count/sum is therefore monotonic; a DROP that corrupts the shared
+     * index iteration or frees a partition under the reader would drop the protected
+     * total or crash. The all-parquet protected partition reseals on the safe path.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringDropPartitionConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 5 + rnd.nextInt(3); // 5..7 days; >=4 droppable + 1 protected
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final String protectedDay = "2024-02-0" + dayCount;
+
+            execute("""
+                    CREATE TABLE t_cov_drop (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_drop SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_drop CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong protectedFloor = new AtomicLong(hotPerDay);
+            final String protectedPred = "sym = 'A' AND ts >= '" + protectedDay + "T00:00:00.000000Z'";
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = protectedFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov_drop WHERE " + protectedPred, ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("protected-partition covered count fell below floor: " + count + " < " + floor);
+                            }
+                            if (sum < (double) perDaySum - 0.5) {
+                                throw new AssertionError("protected-partition covered sum dropped below its initial total "
+                                        + perDaySum + ": " + sum);
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("protected covered sum=" + sum + " < count=" + count + " -- a covered value resolved as < 1");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-drop-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long protectedExpected = hotPerDay;
+            int nextDropDay = 1;
+            try {
+                final int batches = 6 + rnd.nextInt(8);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    // Always O3-insert into the protected last partition (forces its reseal).
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_drop VALUES ");
+                    final int n = 1 + rnd.nextInt(3);
+                    for (int i = 0; i < n; i++) {
+                        if (i > 0) {
+                            sql.append(',');
+                        }
+                        sql.append("('").append(protectedDay).append("T00:")
+                                .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                .append(":00.500000Z', 'A', 1.0)");
+                    }
+                    execute(sql.toString());
+                    protectedExpected += n;
+                    protectedFloor.set(protectedExpected);
+
+                    // Drop the next earlier partition (1..dayCount-1) roughly every other batch.
+                    if (nextDropDay < dayCount && rnd.nextBoolean()) {
+                        execute("ALTER TABLE t_cov_drop DROP PARTITION LIST '2024-02-0" + nextDropDay + "'");
+                        nextDropDay++;
+                    }
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent drop-partition covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = perDaySum + (protectedExpected - hotPerDay);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov_drop WHERE " + protectedPred, ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final protected query returned no row", cur.hasNext());
+                Assert.assertEquals("final protected covered count", protectedExpected, cur.getRecord().getLong(0));
+                Assert.assertEquals("final protected covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+            }
+        });
+    }
+
+    /**
      * Two-covering-indexes hardening test: one table carries TWO covering posting
      * indexes (sym1 INCLUDE price, sym2 INCLUDE price), so every O3 commit reseals
      * BOTH covering indexes of each rewritten partition in the same seal sweep.
