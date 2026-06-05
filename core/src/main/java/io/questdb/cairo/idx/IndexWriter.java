@@ -294,6 +294,9 @@ public interface IndexWriter extends Closeable, Mutable {
     default void sealIfMultiGen(int threshold) {
     }
 
+    default void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+    }
+
     default void setCoveredColumnNameTxns(LongList txns) {
     }
 
@@ -349,6 +352,15 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Records the partition timestamp and name-txn on the writer so a deferred
+     * seal-purge task can reconstruct the value-file directory after the writer
+     * is freed. The path-based of(...) overloads used by the parquet rebuild do
+     * not carry these. No-op for writers without a seal-purge outbox (e.g. BITMAP).
+     */
+    default void setPartitionContext(long partitionTimestamp, long partitionNameTxn) {
+    }
+
+    /**
      * Syncs the index files to disk.
      *
      * @param async true for async sync, false for sync
@@ -362,16 +374,4 @@ public interface IndexWriter extends Closeable, Mutable {
      * Truncates the index, removing all data.
      */
     void truncate();
-
-    /**
-     * Reclaims the value files recorded for seal-purge by unlinking them
-     * directly, bypassing the scoreboard-gated purge queue, then clears the
-     * pending-purge outbox. Only safe when the superseded files are invisible
-     * to every reader (a fresh, uncommitted index build). Used by the parquet
-     * rebuild path, whose pooled writer is freed without ever draining its
-     * outbox through a TableWriter. No-op for writers without a seal-purge
-     * outbox (e.g. BITMAP).
-     */
-    default void unlinkPendingSealPurgesDirect() {
-    }
 }
