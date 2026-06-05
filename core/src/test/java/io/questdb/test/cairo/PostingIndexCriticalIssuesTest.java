@@ -5123,6 +5123,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Covered-read hardening across row-id encodings. Same all-parquet O3 churn as
+     * the reproducer, but each run pins a random posting row-id encoding (adaptive /
+     * Elias-Fano / delta), so the covering reader decodes .pv chains under a
+     * different codec while partitions are rewritten out of order. The covered
+     * count/sum oracle is encoding-independent; a decode bug under one codec surfaces
+     * as a dropped/garbage covered value.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringEncodingConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int enc = rnd.nextInt(3);
+        if (enc == 1) {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "ef");
+        } else if (enc == 2) {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");
+        } // enc == 0 -> adaptive (default)
+        assertMemoryLeak(() -> runConcurrentCoveredSumCountFuzz("t_cov_enc", true, rnd));
+    }
+
+    /**
+     * Native-only reproducer of the OPEN native-partition covered-read race (the
+     * cleanest form; see testMultiThreadedO3CoveringMixedNativeParquetReaderFuzz for
+     * the full diagnosis). Identical to the parquet reproducer but the partitions are
+     * NEVER converted to parquet, so every O3 commit reseals a NATIVE partition in
+     * place. Fails the same way -- one partition's covered values transiently read 0
+     * -- while the all-parquet reproducer passes, confirming the race is native-reseal
+     * specific and distinct from the parquet expose-before-.pci bug already fixed.
+     * Un-ignore once the native in-place reseal publishes covered data before it
+     * publishes the new sealTxn chain entry.
+     */
+    @Ignore("Reproducer for the OPEN native-partition covered-read race (fails ~5/8); un-ignore when fixed.")
+    @Test
+    public void testMultiThreadedO3CoveringNativeOnlyConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runConcurrentCoveredSumCountFuzz("t_cov_native", false, rnd));
+    }
+
+    /**
      * Use-after-free probe: a COVERING cursor held open across a full O3 rewrite +
      * seal-purge must keep returning its pinned snapshot and never read a reclaimed
      * value file. Opens a covered SELECT over several parquet partitions, reads
@@ -6626,6 +6668,148 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 .returns("count\n"
                         + expectedCount
                         + "\n");
+    }
+
+    // Shared single-key covered sum/count concurrent-reader workload. Seeds
+    // dayCount days of 'A' rows (price = row index), optionally converts them all to
+    // parquet, then runs reader threads asserting the covered count/sum stay
+    // monotonic (rows are only ADDED, so a valid snapshot can never drop below the
+    // committed floor) while a 4-worker pool rewrites partitions out of order under a
+    // tiny spill budget. Verifies the exact final totals. Callers set the spill /
+    // auto-include / row-id-encoding properties before invoking. Pass toParquet=false
+    // to exercise the native in-place reseal path.
+    private void runConcurrentCoveredSumCountFuzz(String tableName, boolean toParquet, Rnd rnd) throws Exception {
+        final int dayCount = 4 + rnd.nextInt(4); // 4..7 days; keeps sum < 1e7
+        final int hotPerDay = 1000;
+        final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+        final long initialRows = (long) dayCount * hotPerDay;
+        final long initialSum = (long) dayCount * perDaySum;
+
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE) "
+                + "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        for (int d = 1; d <= dayCount; d++) {
+            execute("INSERT INTO " + tableName + " SELECT dateadd('s', x::INT, '2024-02-0" + d
+                    + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+        }
+        if (toParquet) {
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+        }
+
+        final AtomicReference<Throwable> bgError = new AtomicReference<>();
+        final AtomicBoolean stop = new AtomicBoolean();
+        final AtomicLong rowFloor = new AtomicLong(initialRows);
+        final int readerCount = 3;
+        final Thread[] readers = new Thread[readerCount];
+        for (int r = 0; r < readerCount; r++) {
+            readers[r] = new Thread(() -> {
+                try (
+                        SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                        null, null, -1, null);
+                        SqlCompiler compiler = engine.getSqlCompiler()
+                ) {
+                    long prevCount = 0;
+                    while (!stop.get() && bgError.get() == null) {
+                        final long floor = rowFloor.get();
+                        final long count;
+                        final double sum;
+                        try (RecordCursorFactory f = compiler.compile(
+                                "SELECT count(), sum(price) FROM " + tableName + " WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                             RecordCursor cur = f.getCursor(ctx)) {
+                            if (cur.hasNext()) {
+                                count = cur.getRecord().getLong(0);
+                                sum = cur.getRecord().getDouble(1);
+                            } else {
+                                count = -1;
+                                sum = -1;
+                            }
+                        }
+                        if (count < floor) {
+                            throw new AssertionError("covered 'A' count fell below the committed floor: " + count + " < " + floor);
+                        }
+                        if (count < prevCount) {
+                            throw new AssertionError("covered 'A' count went backwards: " + prevCount + " -> " + count);
+                        }
+                        if (sum < (double) initialSum - 0.5) {
+                            throw new AssertionError("covered sum(price) dropped below the initial total " + initialSum + ": " + sum);
+                        }
+                        if (sum < (double) count - 0.5) {
+                            throw new AssertionError("covered sum(price)=" + sum + " < count=" + count
+                                    + " -- a covered value resolved as < 1 (stale/garbage sidecar)");
+                        }
+                        prevCount = count;
+                    }
+                } catch (Throwable e) {
+                    bgError.set(e);
+                }
+            }, "covering-reader-" + r);
+            readers[r].setDaemon(true);
+            readers[r].start();
+        }
+
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.setupWorkerPool(pool, engine);
+        pool.start(LOG);
+        long expectedRows = initialRows;
+        try {
+            final int batches = 6 + rnd.nextInt(10);
+            for (int b = 0; b < batches && bgError.get() == null; b++) {
+                final StringBuilder sql = new StringBuilder("INSERT INTO " + tableName + " VALUES ");
+                int added = 0;
+                for (int d = 1; d <= dayCount; d++) {
+                    if (rnd.nextBoolean()) {
+                        continue;
+                    }
+                    final int n = 1 + rnd.nextInt(3);
+                    for (int i = 0; i < n; i++) {
+                        if (added > 0) {
+                            sql.append(',');
+                        }
+                        sql.append("('2024-02-0").append(d).append("T00:")
+                                .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                .append(":00.500000Z', 'A', 1.0)");
+                        added++;
+                    }
+                }
+                if (added == 0) {
+                    continue;
+                }
+                execute(sql.toString());
+                expectedRows += added;
+                rowFloor.set(expectedRows);
+            }
+        } finally {
+            stop.set(true);
+            for (Thread t : readers) {
+                t.join(30_000);
+                Assert.assertFalse("reader thread did not terminate", t.isAlive());
+            }
+            pool.halt();
+        }
+
+        Assert.assertNull("concurrent covered reader threw: " + bgError.get(), bgError.get());
+
+        try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+            runPostingSealPurgeJob(purgeJob);
+        }
+        engine.releaseAllWriters();
+
+        final long expectedSum = initialSum + (expectedRows - initialRows);
+        try (
+                SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                        .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                null, null, -1, null);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory f = compiler.compile(
+                        "SELECT count(), sum(price) FROM " + tableName + " WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                RecordCursor cur = f.getCursor(ctx)
+        ) {
+            Assert.assertTrue("final covered query returned no row", cur.hasNext());
+            Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+            Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+        }
     }
 
     private void fillPostingSealPurgeQueue(TableToken liveToken) {
