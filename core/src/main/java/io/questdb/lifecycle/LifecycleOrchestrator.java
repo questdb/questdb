@@ -56,6 +56,13 @@ public class LifecycleOrchestrator implements QuietCloseable {
     @Nullable
     protected ObjList<Component> topoOrder;
     private final AtomicBoolean closed = new AtomicBoolean();
+    // When a component's start() throws, the orchestrator retains the first such throwable and
+    // the component name so run() can chain them into the LifecycleStartupException. Retaining
+    // only the first failure keeps the cause stable across a cascade where several dependents are
+    // also marked FAILED. Both fields are written once under the startAllInTopologicalOrder loop
+    // (single-threaded at that point) and read once in run() after the loop returns.
+    private String firstFailedComponentName;
+    private Throwable firstFailedComponentThrowable;
     private final Log injectedLog;
     // latestProgress and lastTransitionMicros are read by the /lifecycle HTTP handler
     // thread via snapshot() while concurrently written by the lifecycle/main thread (publishInternal
@@ -187,6 +194,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
         startAllInTopologicalOrder();
         if (anyFailedReachable()) {
             close();
+            // Chain the first failed component's throwable so the real cause (the specific error
+            // message or error-code URL the component threw) is visible to operators and to
+            // boot tests that assert on the specific failure, not only the generic wrapper.
+            if (firstFailedComponentThrowable != null) {
+                throw new LifecycleStartupException(
+                        "boot-essential component(s) failed [component=" + firstFailedComponentName + "]",
+                        firstFailedComponentThrowable
+                );
+            }
             throw new LifecycleStartupException("boot-essential component(s) failed");
         }
     }
@@ -525,6 +541,11 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 }
             } catch (Throwable t) {
                 publishInternal(c.name(), State.FAILED, t.toString());
+                // Retain the first failure so run() can chain it into LifecycleStartupException.
+                if (firstFailedComponentThrowable == null) {
+                    firstFailedComponentThrowable = t;
+                    firstFailedComponentName = c.name();
+                }
             }
         }
     }

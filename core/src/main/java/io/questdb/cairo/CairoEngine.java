@@ -175,7 +175,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
-    private MetadataCache metadataCache;
+    // volatile: assigned by completeInit() on the orchestrator thread, read by worker threads
+    // and hydration threads; volatile ensures safe cross-thread publication after completeInit.
+    private volatile MetadataCache metadataCache;
     private final Metrics metrics;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
@@ -184,12 +186,15 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
-    private SettingsStore settingsStore;
-    private SqlCompilerPool sqlCompilerPool;
+    // volatile: see metadataCache comment above.
+    private volatile SettingsStore settingsStore;
+    // volatile: see metadataCache comment above.
+    private volatile SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
     private final TableMetadataPool tableMetadataPool;
-    private TableNameRegistry tableNameRegistry;
+    // volatile: see metadataCache comment above.
+    private volatile TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
     private final ObjList<Telemetry<? extends AbstractTelemetryTask>> telemetries;
     private final Telemetry<TelemetryTask> telemetry;
