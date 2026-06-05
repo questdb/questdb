@@ -49,20 +49,6 @@ public final class QwpSchema {
     }
 
     /**
-     * Creates a schema from column definitions.
-     *
-     * @param columns the column definitions
-     * @return the schema
-     */
-    public static QwpSchema create(QwpColumnDef[] columns) {
-        ObjList<QwpColumnDef> list = new ObjList<>(columns.length);
-        for (QwpColumnDef col : columns) {
-            list.add(col);
-        }
-        return new QwpSchema(list);
-    }
-
-    /**
      * Parses a schema section (inline columns) from a byte array.
      *
      * @param buf         buffer
@@ -108,62 +94,6 @@ public final class QwpSchema {
         ParseResult result = new ParseResult();
         parse(address, length, columnCount, result);
         return result;
-    }
-
-    /**
-     * Encodes this schema's inline columns to direct memory.
-     *
-     * @param address destination address
-     * @return address after the encoded columns
-     */
-    public long encode(long address) {
-        long pos = address;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QwpColumnDef col = columns.getQuick(i);
-            byte[] nameBytes = col.getNameUtf8();
-            pos = QwpVarint.encode(pos, nameBytes.length);
-            for (byte b : nameBytes) {
-                Unsafe.putByte(pos++, b);
-            }
-            Unsafe.putByte(pos++, col.getWireTypeCode());
-        }
-        return pos;
-    }
-
-    /**
-     * Encodes this schema's inline columns to a byte array.
-     *
-     * @param buf    destination buffer
-     * @param offset starting offset
-     * @return offset after the encoded columns
-     */
-    public int encode(byte[] buf, int offset) {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QwpColumnDef col = columns.getQuick(i);
-            byte[] nameBytes = col.getNameUtf8();
-            offset = QwpVarint.encode(buf, offset, nameBytes.length);
-            System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
-            offset += nameBytes.length;
-            buf[offset++] = col.getWireTypeCode();
-        }
-        return offset;
-    }
-
-    /**
-     * Computes the encoded size in bytes for this schema's inline columns.
-     *
-     * @return encoded size
-     */
-    public int encodedSize() {
-        int size = 0;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QwpColumnDef col = columns.getQuick(i);
-            byte[] nameBytes = col.getNameUtf8();
-            size += QwpVarint.encodedLength(nameBytes.length);
-            size += nameBytes.length;
-            size += 1; // type code
-        }
-        return size;
     }
 
     /**

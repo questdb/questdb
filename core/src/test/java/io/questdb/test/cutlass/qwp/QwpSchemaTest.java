@@ -108,11 +108,7 @@ public class QwpSchemaTest {
     public void testColumnNameMaxLength() throws QwpParseException {
         // Create column name at max length
         String longName = "x".repeat(QwpConstants.MAX_COLUMN_NAME_LENGTH);
-        QwpColumnDef[] columns = {new QwpColumnDef(longName, QwpConstants.TYPE_VARCHAR)};
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = encodeColumns(new QwpColumnDef(longName, QwpConstants.TYPE_VARCHAR));
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
         Assert.assertEquals(longName, result.schema.getColumn(0).getName());
@@ -141,64 +137,15 @@ public class QwpSchemaTest {
 
     @Test
     public void testColumnNameUtf8() throws QwpParseException {
-        QwpColumnDef[] columns = {
+        byte[] buf = encodeColumns(
                 new QwpColumnDef("température", QwpConstants.TYPE_DOUBLE),
                 new QwpColumnDef("数据", QwpConstants.TYPE_VARCHAR)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        );
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 2);
 
         Assert.assertEquals("température", result.schema.getColumn(0).getName());
         Assert.assertEquals("数据", result.schema.getColumn(1).getName());
-    }
-
-    @Test
-    public void testEncodeDecodeRoundTrip() throws QwpParseException {
-        QwpColumnDef[] columns = {
-                new QwpColumnDef("id", QwpConstants.TYPE_LONG),
-                new QwpColumnDef("name", QwpConstants.TYPE_VARCHAR),
-                new QwpColumnDef("price", QwpConstants.TYPE_DOUBLE),
-                new QwpColumnDef("ts", QwpConstants.TYPE_TIMESTAMP)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
-
-        QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 4);
-
-        Assert.assertEquals(original.getColumnCount(), result.schema.getColumnCount());
-
-        for (int i = 0; i < original.getColumnCount(); i++) {
-            Assert.assertEquals(original.getColumn(i).getName(), result.schema.getColumn(i).getName());
-            Assert.assertEquals(original.getColumn(i).getTypeCode(), result.schema.getColumn(i).getTypeCode());
-            Assert.assertEquals(original.getColumn(i).getWireTypeCode(), result.schema.getColumn(i).getWireTypeCode());
-        }
-    }
-
-    @Test
-    public void testEncodeDirectMemory() throws QwpParseException {
-        QwpColumnDef[] columns = {
-                new QwpColumnDef("value", QwpConstants.TYPE_LONG)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        int size = original.encodedSize();
-
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long endAddress = original.encode(address);
-            Assert.assertEquals(size, endAddress - address);
-
-            QwpSchema.ParseResult result = QwpSchema.parse(address, size, 1);
-            Assert.assertEquals("value", result.schema.getColumn(0).getName());
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
     }
 
     @Test
@@ -245,10 +192,7 @@ public class QwpSchemaTest {
             columns[i] = new QwpColumnDef("col_" + QwpConstants.getTypeName(types[i]), types[i]);
         }
 
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
-
+        byte[] buf = encodeColumns(columns);
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, types.length);
 
         Assert.assertEquals(types.length, result.schema.getColumnCount());
@@ -259,14 +203,10 @@ public class QwpSchemaTest {
 
     @Test
     public void testParseDirectMemory() throws QwpParseException {
-        QwpColumnDef[] columns = {
+        byte[] buf = encodeColumns(
                 new QwpColumnDef("temp", QwpConstants.TYPE_DOUBLE),
                 new QwpColumnDef("ts", QwpConstants.TYPE_TIMESTAMP)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        );
 
         long address = Unsafe.malloc(buf.length, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -290,10 +230,7 @@ public class QwpSchemaTest {
             columns[i] = new QwpColumnDef("col" + i, QwpConstants.TYPE_INT);
         }
 
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
-
+        byte[] buf = encodeColumns(columns);
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 10);
 
         Assert.assertEquals(10, result.schema.getColumnCount());
@@ -305,15 +242,11 @@ public class QwpSchemaTest {
     @Test
     public void testParseSchema() throws QwpParseException {
         // Create a schema with multiple columns
-        QwpColumnDef[] columns = {
+        byte[] buf = encodeColumns(
                 new QwpColumnDef("temperature", QwpConstants.TYPE_DOUBLE),
                 new QwpColumnDef("humidity", QwpConstants.TYPE_FLOAT),
                 new QwpColumnDef("timestamp", QwpConstants.TYPE_TIMESTAMP)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        );
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 3);
 
@@ -325,13 +258,7 @@ public class QwpSchemaTest {
 
     @Test
     public void testParseSingleColumn() throws QwpParseException {
-        QwpColumnDef[] columns = {
-                new QwpColumnDef("value", QwpConstants.TYPE_LONG)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = encodeColumns(new QwpColumnDef("value", QwpConstants.TYPE_LONG));
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
 
@@ -341,17 +268,33 @@ public class QwpSchemaTest {
     }
 
     @Test
-    public void testParseTypeCodeRoundTrip() throws QwpParseException {
-        QwpColumnDef[] columns = {
-                new QwpColumnDef("col", QwpConstants.TYPE_DOUBLE)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+    public void testParseTypeCode() throws QwpParseException {
+        byte[] buf = encodeColumns(new QwpColumnDef("col", QwpConstants.TYPE_DOUBLE));
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
 
         Assert.assertEquals(QwpConstants.TYPE_DOUBLE, result.schema.getColumn(0).getTypeCode());
+    }
+
+    // Builds the inline column-descriptor wire bytes (per column: name_len varint,
+    // UTF-8 name, type code) that QwpSchema.parse consumes. Production no longer
+    // encodes schemas through QwpSchema -- egress inlines its own emit in
+    // QwpResultBatchBuffer -- so this byte builder lives in the parser's test.
+    private static byte[] encodeColumns(QwpColumnDef... columns) {
+        int size = 0;
+        for (QwpColumnDef col : columns) {
+            byte[] nameBytes = col.getNameUtf8();
+            size += QwpVarint.encodedLength(nameBytes.length) + nameBytes.length + 1;
+        }
+        byte[] buf = new byte[size];
+        int offset = 0;
+        for (QwpColumnDef col : columns) {
+            byte[] nameBytes = col.getNameUtf8();
+            offset = QwpVarint.encode(buf, offset, nameBytes.length);
+            System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
+            offset += nameBytes.length;
+            buf[offset++] = col.getWireTypeCode();
+        }
+        return buf;
     }
 }
