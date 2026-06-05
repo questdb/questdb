@@ -89,6 +89,87 @@ public class QwpEgressReviewFindingsTest {
         });
     }
 
+    /**
+     * The first batch of a query (batch_seq == 0) carries the schema inline
+     * (col_count varint + one descriptor per column); every continuation batch
+     * (batch_seq > 0) drops it and ships rows only. This pins that wire
+     * invariant directly on the buffer rather than leaning on the e2e client
+     * decoder: emitting the same buffered content as a continuation batch must
+     * yield exactly the first-batch bytes with the schema block excised --
+     * nothing more, nothing less.
+     */
+    @Test
+    public void testContinuationBatchOmitsSchema() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Varied name lengths so a varint off-by-one in the schema-size math
+            // would surface in the delta below.
+            String[] names = {"a", "temperature", repeat('x', 100)};
+            int[] columnTypes = {ColumnType.INT, ColumnType.DOUBLE, ColumnType.LONG};
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            for (int i = 0; i < names.length; i++) {
+                QwpEgressColumnDef def = new QwpEgressColumnDef();
+                def.of(names[i], columnTypes[i]);
+                cols.add(def);
+            }
+
+            // The exact bytes a first batch adds over a continuation batch:
+            // col_count varint + per column (name_len varint + UTF-8 name + type byte).
+            int schemaBytes = QwpVarint.encodedLength(names.length);
+            for (String name : names) {
+                int nameLen = name.getBytes(StandardCharsets.UTF_8).length;
+                schemaBytes += QwpVarint.encodedLength(nameLen) + nameLen + 1;
+            }
+
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, null, dict);
+                int rows = batch.getRowCount();
+                int prefix = 1 + QwpVarint.encodedLength(rows); // table_name (0x00) + row_count varint
+
+                int firstSize = batch.computeTableBlockSize(rows, true);
+                int contSize = batch.computeTableBlockSize(rows, false);
+                Assert.assertEquals(
+                        "first batch must exceed a continuation batch by exactly the inline schema",
+                        schemaBytes, firstSize - contSize);
+
+                long buf = Unsafe.malloc(firstSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    int wFirst = batch.emitTableBlock(buf, buf + firstSize, true);
+                    Assert.assertEquals("first-batch emit must match its computed size", firstSize, wFirst);
+                    byte[] first = new byte[wFirst];
+                    for (int i = 0; i < wFirst; i++) {
+                        first[i] = Unsafe.getByte(buf + i);
+                    }
+
+                    // Re-emit the same buffered content as a continuation batch.
+                    // emitTableBlock writes only -- it does not advance row/delta
+                    // state -- so this is a faithful isFirstBatch=false comparison.
+                    int wCont = batch.emitTableBlock(buf, buf + firstSize, false);
+                    Assert.assertEquals("continuation emit must match its computed size", contSize, wCont);
+                    byte[] cont = new byte[wCont];
+                    for (int i = 0; i < wCont; i++) {
+                        cont[i] = Unsafe.getByte(buf + i);
+                    }
+
+                    // table_name + row_count prefix is identical on both batches.
+                    for (int i = 0; i < prefix; i++) {
+                        Assert.assertEquals("prefix byte " + i + " must match", first[i], cont[i]);
+                    }
+                    // The continuation drops exactly the schema block; everything
+                    // after it (the column data) is byte-identical to the first batch.
+                    Assert.assertEquals("continuation length = first length - schema bytes",
+                            first.length - schemaBytes, cont.length);
+                    for (int i = prefix; i < cont.length; i++) {
+                        Assert.assertEquals("column-data byte " + i + " must match the first batch",
+                                first[i + schemaBytes], cont[i]);
+                    }
+                } finally {
+                    Unsafe.free(buf, firstSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
     @Test
     public void testCurrentBatchDeltaWireBytesMatchesComputeDeltaSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
