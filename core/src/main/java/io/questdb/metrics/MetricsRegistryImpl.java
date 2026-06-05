@@ -37,6 +37,11 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
+    public void removeTarget(Target target) {
+        metrics.remove(target);
+    }
+
+    @Override
     public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
         AtomicLongGauge gauge = new AtomicLongGaugeImpl(name);
         metrics.add(gauge);
