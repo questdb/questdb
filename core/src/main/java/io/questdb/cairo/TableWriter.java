@@ -7156,7 +7156,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // A fresh ALTER TABLE ADD INDEX build holds no live indexer, so an existing
         // torn .pk may be destructively reset (allowDestructiveRecovery = true). The
         // O3/squash covering reseal runs while readers may hold the .pk, so it passes
-        // false -- a committed .pk is left intact (hasInitialisedKeyFileHeader bails).
+        // false -- a committed .pk is preserved (createIndexFiles' non-destructive
+        // branch returns early on ff.exists, never resetting it).
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, allowDestructiveRecovery);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
@@ -12488,6 +12489,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 if (parquetAddr == 0) {
+                    // First eligible covering column: open the shared decoder and log the
+                    // reseal once per partition (the extracted indexParquetColumn no longer
+                    // logs, unlike the old per-column indexParquetPartition reseal path).
+                    LOG.info().$("resealing parquet covering index [path=").$substr(pathRootSize, path).I$();
                     final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
                     openParquetMetadataOrThrow(path, plen, parquetFileSize);
                     parquetSize = parquetMetaReader.getParquetFileSize();
