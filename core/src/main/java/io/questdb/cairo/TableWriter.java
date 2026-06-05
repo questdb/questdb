@@ -4941,7 +4941,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            if (!metadata.isColumnIndexed(colIdx)) {
+            // metadata can mark a column indexed before its indexer slot is populated
+            // (a WAL metadata change applied ahead of openPartition), so indexers may
+            // be shorter than columnCount -- mirror the `index < indexers.size()` guard
+            // used elsewhere (see the updateIndexes path) to avoid an out-of-bounds get.
+            if (!metadata.isColumnIndexed(colIdx) || colIdx >= indexers.size()) {
                 continue;
             }
             ColumnIndexer indexer = indexers.getQuick(colIdx);
@@ -7126,9 +7130,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * and feeds each column here, instead of re-opening the file per column.
      *
      * @param allowDestructiveRecovery passed straight to createIndexFiles: true only
-     *                                  for a fresh ADD INDEX build (no live indexer
-     *                                  holds the .pk); false for the O3/squash covering
-     *                                  reseal, where readers may pin the committed .pk.
+     *                                 for a fresh ADD INDEX build (no live indexer
+     *                                 holds the .pk); false for the O3/squash covering
+     *                                 reseal, where readers may pin the committed .pk.
      */
     private void indexParquetColumn(
             SymbolColumnIndexer indexer,
@@ -11044,8 +11048,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int coveringPathLen = -1;
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // indexers may be shorter than columnCount when a WAL metadata change
+                // marked a column indexed before its indexer slot was populated; guard
+                // the get the same way the updateIndexes path does.
                 if (metadata.getColumnType(colIdx) <= 0
                         || !metadata.isColumnIndexed(colIdx)
+                        || colIdx >= indexers.size()
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }
