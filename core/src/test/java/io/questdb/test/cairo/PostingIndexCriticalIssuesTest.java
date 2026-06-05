@@ -5123,6 +5123,269 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Use-after-free probe: a COVERING cursor held open across a full O3 rewrite +
+     * seal-purge must keep returning its pinned snapshot and never read a reclaimed
+     * value file. Opens a covered SELECT over several parquet partitions, reads
+     * about half (pinning those partition versions through the txn scoreboard), then
+     * runs several O3 commits across the 4-worker pool plus a PostingSealPurgeJob
+     * that rotates and reclaims superseded .pv/.pc, then drains the SAME cursor to
+     * the end. The pinned snapshot is the table at open time: every covered price
+     * must be a real seeded value (>= 1, never 0/NaN) and the row count must equal
+     * the rows present at open. A scoreboard gap that reclaims a pinned value file
+     * SIGSEGVs or returns garbage here.
+     */
+    @Test
+    public void testCoveringCursorHeldAcrossO3ReclaimNoCrash() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(3); // 4..6 days
+            final int hotPerDay = 1000;
+            final long initialRows = (long) dayCount * hotPerDay;
+
+            execute("""
+                    CREATE TABLE t_cov_hold (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_hold SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_hold CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                long pinnedCount = 0;
+                try (RecordCursorFactory f = compiler.compile(
+                        "SELECT price FROM t_cov_hold WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                     RecordCursor cur = f.getCursor(ctx)) {
+                    final io.questdb.cairo.sql.Record rec = cur.getRecord();
+                    final long half = initialRows / 2;
+                    // Read about half, pinning the snapshot via the txn scoreboard.
+                    while (pinnedCount < half && cur.hasNext()) {
+                        final double p = rec.getDouble(0);
+                        if (Double.isNaN(p) || p < 1.0) {
+                            throw new AssertionError("held cursor read a NULL/garbage covered value before O3: " + p);
+                        }
+                        pinnedCount++;
+                    }
+                    // Rotate + reclaim superseded value files under the held cursor.
+                    for (int b = 0; b < 8; b++) {
+                        final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_hold VALUES ");
+                        int added = 0;
+                        for (int d = 1; d <= dayCount; d++) {
+                            if (rnd.nextBoolean()) {
+                                continue;
+                            }
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0)");
+                            added++;
+                        }
+                        if (added > 0) {
+                            execute(sql.toString());
+                        }
+                    }
+                    // The pool's own PostingSealPurgeJob reclaims the superseded .pv/.pc
+                    // concurrently (scoreboard-gated); it owns the log writer, so we must
+                    // not construct a competing one here. Give it a moment to attempt the
+                    // reclaim against the still-pinned cursor.
+                    Os.sleep(50);
+                    // Drain the SAME pinned cursor -- must not crash or read garbage.
+                    while (cur.hasNext()) {
+                        final double p = rec.getDouble(0);
+                        if (Double.isNaN(p) || p < 1.0) {
+                            throw new AssertionError("held cursor read a NULL/garbage covered value after O3+purge "
+                                    + "(reclaimed a pinned value file?): " + p);
+                        }
+                        pinnedCount++;
+                    }
+                }
+                Assert.assertEquals("held cursor must return exactly its pinned snapshot rows",
+                        initialRows, pinnedCount);
+            } finally {
+                pool.halt();
+            }
+        });
+    }
+
+    /**
+     * Wide covering hardening test: the index covers TWO data columns
+     * (INCLUDE price, qty), so each partition reseal materialises two
+     * sealTxn-versioned .pc data files alongside the .pci, and a covered read
+     * walks two per-cover sidecars per row. Same all-parquet O3 churn + reader
+     * threads as the reproducer, with the covered count, sum(price) AND sum(qty)
+     * all held monotonic; a mismatched per-cover sidecar offset or a dropped .pc
+     * for one of the two covered columns fails the oracle.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringWideConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov_wide (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_wide SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE, x::LONG FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_wide CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sumPrice;
+                            final double sumQty;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price), sum(qty) FROM t_cov_wide WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sumPrice = cur.getRecord().getDouble(1);
+                                    sumQty = cur.getRecord().getDouble(2);
+                                } else {
+                                    count = -1;
+                                    sumPrice = -1;
+                                    sumQty = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (sumPrice < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(price) dropped below the initial total "
+                                        + initialSum + ": " + sumPrice);
+                            }
+                            if (sumQty < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(qty) dropped below the initial total "
+                                        + initialSum + ": " + sumQty);
+                            }
+                            if (sumPrice < (double) count - 0.5 || sumQty < (double) count - 0.5) {
+                                throw new AssertionError("a covered column resolved as < 1: count=" + count
+                                        + " sum(price)=" + sumPrice + " sum(qty)=" + sumQty);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-wide-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_wide VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0, 1)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent wide covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price), sum(qty) FROM t_cov_wide WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+                Assert.assertEquals("final covered sum(qty)", (double) expectedSum, cur.getRecord().getDouble(2), 0.5);
+            }
+        });
+    }
+
+    /**
      * Concurrent LATEST ON covered-read hardening test. Stresses the covering
      * BACKWARD reader (PostingIndexBwdReader / findLatestRow + symbol-rank), a
      * code path the sum/count reproducer never touches. A COVERING posting index
