@@ -573,6 +573,45 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * WAL-apply auto-scale reproduction, mirroring the field scenario more
+     * closely than the explicit-ALTER test: a covering posting index on a WAL
+     * table, ingested with high, growing symbol cardinality so the WAL apply job
+     * fires scaleSymbolCapacities() -> changeSymbolCapacity() repeatedly (the
+     * field 256 -> 2048 -> 4096 growth). Asserts both that the planner keeps
+     * choosing the covering scan (covering mapping is read from the reader _meta,
+     * which updateColumnSymbolCapacity must preserve) and that the covered
+     * sidecar still serves correct data afterwards.
+     */
+    @Test
+    public void testWalCoveringPlanSurvivesAutoScaleHeavyIngest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL CAPACITY 16 INDEX TYPE POSTING INCLUDE (val), val DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String coveringPlan =
+                    "SelectedRecord\n" +
+                            "    CoveringIndex on: sym with: ts, val\n" +
+                            "      filter: sym='zzz'\n";
+            assertPlanNoLeakCheck("SELECT ts, val FROM x WHERE sym = 'zzz'", coveringPlan);
+
+            final long dayMicros = 86_400_000_000L;
+            for (int day = 0; day < 6; day++) {
+                execute("INSERT INTO x " +
+                        "SELECT (" + (day * dayMicros) + " + x)::timestamp, rnd_symbol(4000,4,10,0), x::double " +
+                        "FROM long_sequence(30000)");
+                drainWalQueue();
+            }
+            // One known covered row to verify the covered read after all the auto-scaling.
+            execute("INSERT INTO x VALUES (" + (9 * dayMicros) + ", 'zzz', 7.0)");
+            drainWalQueue();
+
+            // The planner must still choose the covering posting index after auto-scale.
+            assertPlanNoLeakCheck("SELECT ts, val FROM x WHERE sym = 'zzz'", coveringPlan);
+            // The covered sidecar read must still return correct data.
+            assertSql("count\tsum\n1\t7.0\n", "SELECT count(), sum(val) FROM x WHERE sym = 'zzz'");
+        });
+    }
+
     @Test
     public void testO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
         assertMemoryLeak(() -> {
