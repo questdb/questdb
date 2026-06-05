@@ -94,6 +94,18 @@ import static io.questdb.cairo.TableUtils.setPathForNativePartition;
  */
 public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
+    @Override
+    public void setUp() {
+        super.setUp();
+        // Every test must start with an empty shared posting-seal-purge ring. Many
+        // tests here run a WorkerPool + O3, which publish purge tasks into the
+        // engine-wide MessageBus ring; with no PostingSealPurgeJob draining it in the
+        // harness the residue can saturate the ring and starve a later test's purge --
+        // e.g. leaving a superseded .pv unreclaimed, or making a saturation assertion
+        // see no room. Draining here makes each test independent of the prior one.
+        drainPostingSealPurgeQueue();
+    }
+
     /**
      * Review C2: the full-partition SELECT DISTINCT path calls
      * collectDistinctKeys(), not collectDistinctKeysInRange(). The no-range
