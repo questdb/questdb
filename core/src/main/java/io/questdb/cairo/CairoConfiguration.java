@@ -780,13 +780,6 @@ public interface CairoConfiguration {
 
     long getSqlParquetCacheMemorySize();
 
-    /**
-     * @deprecated Replaced by {@link #getSqlParquetCacheMemorySize()}. The value is
-     * parsed for backward-compatible config files but no longer consulted at runtime.
-     */
-    @Deprecated
-    int getSqlParquetFrameCacheCapacity();
-
     int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();

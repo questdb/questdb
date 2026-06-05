@@ -1186,11 +1186,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return 8;
-    }
-
-    @Override
     public int getSqlPivotMaxProducedColumns() {
         return 5_000;
     }

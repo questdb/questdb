@@ -4085,61 +4085,42 @@ public class ParquetTest extends AbstractCairoTest {
     // partition cannot be converted to parquet. The trailing native partition keeps
     // it non-active so the conversion is allowed.
     //
-    // The buffer-reuse trigger depends on exactly cacheCap column-present frames
-    // ahead of the absent frame, so pin getSqlParquetFrameCacheCapacity() instead
-    // of relying on the production default - and tie the partition count to the
-    // same constant. Otherwise a change to the default would silently break the
-    // reuse, the stale read would vanish, and the test would pass even on broken
-    // code.
+    // Force buffer reuse: a 1-byte memory budget makes cachedBytes >= budget true
+    // on every miss after the first, so the column-absent decode must evict and
+    // reuse an earlier buffer. Without this the default 256 MiB budget swallows
+    // all tiny partitions, no eviction happens, and the stale-pointer bug never
+    // fires - broken code would silently pass.
     private void testSelectOnlyAddedColumnAbsentFromParquetPartition(String columnType) throws Exception {
-        final int cacheCap = 8;
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, cacheCap);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1);
         assertMemoryLeak(() -> {
             execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
-
-            // Day cacheCap+1 is converted to parquet BEFORE 's' is added, so its
-            // parquet file does not contain 's'. The native day cacheCap+2 (active)
-            // keeps the absent partition non-active so the conversion is allowed.
-            final String absentDay = String.format("2024-06-%02d", cacheCap + 1);
-            final String nativeDay = String.format("2024-06-%02d", cacheCap + 2);
             execute("insert into x(a, ts) values " +
-                    "(" + (cacheCap + 1) + ", '" + absentDay + "T00:00:00.000000Z'), " +
-                    "(" + (cacheCap + 2) + ", '" + nativeDay + "T00:00:00.000000Z');");
-            execute("alter table x convert partition to parquet where ts in '" + absentDay + "';");
+                    "(2, '2024-06-02T00:00:00.000000Z'), " +
+                    "(3, '2024-06-03T00:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts in '2024-06-02';");
 
             execute("alter table x add column s " + columnType + ";");
 
-            // cacheCap older single-row parquet partitions with non-null 's'. The
-            // pinned parquet frame cache holds cacheCap buffers, so scanning these
-            // (frames 0..cacheCap-1) drains the free list; the next parquet frame
-            // (the absent partition) is then forced to reuse one of these buffers.
-            StringBuilder insert = new StringBuilder("insert into x(a, ts, s) values ");
-            for (int day = 1; day <= cacheCap; day++) {
-                if (day > 1) {
-                    insert.append(", ");
-                }
-                insert.append(String.format("(%d, '2024-06-%02dT00:00:00.000000Z', 'AA')", day, day));
-            }
-            insert.append(';');
-            execute(insert.toString());
-            execute("alter table x convert partition to parquet where ts < '" + absentDay + "';");
+            // One older single-row parquet partition with non-null 's'. The tight
+            // byte budget forces the next parquet decode (the absent partition)
+            // to reuse this partition's buffer.
+            execute("insert into x(a, ts, s) values (1, '2024-06-01T00:00:00.000000Z', 'AA');");
+            execute("alter table x convert partition to parquet where ts < '2024-06-02';");
 
             // Project ONLY 's' so the absent-column frame decodes zero parquet
             // columns. The constant '1 one' keeps the base scan reading just 's'
-            // while rendering the NULL rows as a non-blank '\t1'. The first cacheCap
-            // rows are 'AA'; the next '\t1' is the absent parquet partition (the bug
-            // returns 'AA' / a stale aux read there); the last '\t1' is the native
-            // trailing partition.
-            StringBuilder expected = new StringBuilder("s\tone\n");
-            expected.repeat("AA\t1\n", cacheCap);
-            expected.append("\t1\n"); // absent parquet partition -> NULL
-            expected.append("\t1\n"); // native trailing partition -> NULL
+            // while rendering the NULL rows as a non-blank '\t1'. Row 1 is 'AA';
+            // row 2 is the absent parquet partition (the bug returns 'AA' / a
+            // stale aux read there); row 3 is the native trailing partition.
             // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
             // so it also exercises parquet decode re-entry (assertSql reads once).
             assertQuery("select s, 1 one from x")
                     .noLeakCheck()
                     .expectSize()
-                    .returns(expected.toString());
+                    .returns("s\tone\n" +
+                            "AA\t1\n" +
+                            "\t1\n" +
+                            "\t1\n");
         });
     }
 
