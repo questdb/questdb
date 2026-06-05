@@ -52,9 +52,11 @@ package io.questdb.cutlass.qwp.codec;
 public interface QwpServerInfoProvider {
 
     /**
-     * Bitfield of protocol extensions this server is willing to honour. Reserved
-     * for future use (e.g. freshness-watermark reads, multi-query multiplexing);
-     * currently always zero.
+     * Bitfield of protocol extensions this server is willing to honour. The only
+     * defined bit today is {@link QwpEgressMsgKind#CAP_ZONE}, set when
+     * {@link #getZoneId()} returns non-null; the remaining bits are reserved for
+     * future use (e.g. freshness-watermark reads, multi-query multiplexing) and
+     * stay zero.
      */
     int getCapabilities();
 
