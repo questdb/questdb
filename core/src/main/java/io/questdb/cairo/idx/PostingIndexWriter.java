@@ -106,6 +106,12 @@ public class PostingIndexWriter implements IndexWriter {
     // reused across reopens via resetState().
     private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
     private final CairoConfiguration configuration;
+    // Last-known valid byte extent of each cover column's .pcN, indexed by cover
+    // slot. Updated from the live sidecar handle's append offset whenever it is
+    // open (see captureCoverEndOffsets). Reused when the handle is closed so a
+    // chain-head republish (extendHead) that runs after closeSidecarMems does not
+    // clobber the entry's cover-end with 0 and make the on-disk .pc unreadable.
+    private final LongList coverEndOffsetsCache = new LongList();
     // Reusable scratch list passed to PostingIndexChainWriter.appendNewEntry /
     // extendHead, built once per chain publish from each cover column's
     // current sidecar append offset. Reused across calls to avoid allocations.
@@ -1893,17 +1899,43 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void captureCoverEndOffsets() {
         coverEndOffsetsScratch.clear();
-        if (coverCount <= 0) {
+        // The transient coverCount field is reset to 0 mid-reseal (clearCovering
+        // before the next configureCovering), and the sidecar handles are closed
+        // after each seal -- but the index is still covering on disk. Republishing
+        // the chain head in that window with an empty footer (coverCount==0) makes
+        // PostingIndexChainWriter.extendHead shrink the entry LEN to exclude the
+        // cover footer, so a concurrent covered read of the republished entry sees
+        // sidecarFileEndOffsets==0, fails to map the existing .pc and returns NULL
+        // for the whole partition -- the native in-place reseal covered-read race.
+        // Fall back to the last-known cover layout so the entry keeps its footer.
+        int effectiveCoverCount = coverCount > 0 ? coverCount : coverEndOffsetsCache.size();
+        if (effectiveCoverCount <= 0) {
             return;
         }
-        coverEndOffsetsScratch.setPos(coverCount);
-        for (int c = 0; c < coverCount; c++) {
-            long endOffset = 0L;
-            if (c < sidecarMems.size()) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    endOffset = mem.getAppendOffset();
-                }
+        // Keep the cache sized to the live cover count when it is known, so a later
+        // transient coverCount==0 republish reuses exactly the right layout (and a
+        // covering reconfigure that shrinks the cover set cannot over-report).
+        if (coverCount > 0 && coverEndOffsetsCache.size() != coverCount) {
+            int old = coverEndOffsetsCache.size();
+            coverEndOffsetsCache.setPos(coverCount);
+            for (int c = old; c < coverCount; c++) {
+                coverEndOffsetsCache.setQuick(c, 0L);
+            }
+        }
+        coverEndOffsetsScratch.setPos(effectiveCoverCount);
+        for (int c = 0; c < effectiveCoverCount; c++) {
+            long endOffset;
+            MemoryMARW mem = c < sidecarMems.size() ? sidecarMems.getQuick(c) : null;
+            if (mem != null && mem.isOpen()) {
+                // Handle open: its append offset is the authoritative valid extent
+                // of this .pcN. Remember it so a later republish can reuse it.
+                endOffset = mem.getAppendOffset();
+                coverEndOffsetsCache.setQuick(c, endOffset);
+            } else {
+                // Handle closed / transient coverCount==0: reuse the last-known
+                // extent. The .pc on disk for this head's sealTxn is unchanged. A
+                // genuinely never-written slot keeps its cached 0 and publishes 0.
+                endOffset = coverEndOffsetsCache.getQuick(c);
             }
             coverEndOffsetsScratch.setQuick(c, endOffset);
         }
@@ -3680,6 +3712,23 @@ public class PostingIndexWriter implements IndexWriter {
         // tripping the appendNewEntry monotonicity assertion.
         boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getHeadSealTxn();
         long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
+
+        // For a same-sealTxn head extension the new gen-dir written below
+        // overwrites the head entry's cover footer. Snapshot it into the cache
+        // first so captureCoverEndOffsets can republish the existing extents even
+        // when the writer's live coverCount is transiently 0 (between
+        // clearCovering and configureCovering) or its sidecar handles are closed.
+        // Without this the footer is dropped and a concurrent covered read of the
+        // just-republished entry returns NULL for the whole partition.
+        if (!newEntry) {
+            chain.readHeadCoverEndOffsets(keyMem, coverEndOffsetsCache);
+        } else {
+            // New sealTxn: the cached extents belong to the superseded sealTxn's
+            // .pc (a different file), so drop them. The new entry publishes an
+            // empty footer until rebuildSidecars writes the new .pc and
+            // repopulates the cache from the live sidecar handle.
+            coverEndOffsetsCache.clear();
+        }
 
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;

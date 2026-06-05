@@ -5753,17 +5753,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Native-only reproducer of the OPEN native-partition covered-read race (the
+     * Native-only regression for the fixed native-partition covered-read race (the
      * cleanest form; see testMultiThreadedO3CoveringMixedNativeParquetReaderFuzz for
-     * the full diagnosis). Identical to the parquet reproducer but the partitions are
+     * the diagnosis). Identical to the parquet reproducer but the partitions are
      * NEVER converted to parquet, so every O3 commit reseals a NATIVE partition in
-     * place. Fails the same way -- one partition's covered values transiently read 0
-     * -- while the all-parquet reproducer passes, confirming the race is native-reseal
-     * specific and distinct from the parquet expose-before-.pci bug already fixed.
-     * Un-ignore once the native in-place reseal publishes covered data before it
-     * publishes the new sealTxn chain entry.
+     * place. Before the fix this failed ~5 in 8 (one partition's covered values
+     * transiently read 0 because the in-place reseal republished the chain head with
+     * the cover footer dropped while the writer's coverCount field was transiently
+     * 0); after the fix it passes (validated 0/75). The fix preserves the head's
+     * cover footer across the transient coverCount=0 window.
      */
-    @Ignore("Reproducer for the OPEN native-partition covered-read race (fails ~5/8); un-ignore when fixed.")
     @Test
     public void testMultiThreadedO3CoveringNativeOnlyConcurrentReaderFuzz() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
@@ -6212,23 +6211,18 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * mix. A defect in either reseal path -- or in how the two share the deferred
      * seal-purge state -- drops a covered partition and the monotonic oracle fires.
      * <p>
-     * OPEN BUG (caught by this test, 2026-06-05, NOT yet fixed): fails ~1 in 4 runs
-     * with "covered sum(price) dropped below the initial total" -- exactly one
-     * partition's covered values transiently read 0 under a concurrent O3 reseal.
-     * This is a DISTINCT, native-partition-specific covered-read race, NOT the
-     * parquet expose-before-.pci bug fixed by resealParquetCoveringForPartition:
-     * the all-parquet reproducer (testMultiThreadedO3CoveringPostingConcurrent
-     * ReaderFuzz) passes 0/10+ while this mixed/native variant fails ~1/4. Proven
-     * via instrumentation: coverCount is NOT 0 (the .pci is present and valid -- no
-     * notexist/short/badmagic/count0), so the .pci truncation is not the cause; the
-     * covered DATA reads 0 for a whole NATIVE partition (getCoveredDouble falls back
-     * to NaN -> SQL sum() skips it). Likely an expose-before-cover-DATA window in the
-     * NATIVE in-place reseal (the new sealTxn chain entry becomes visible before that
-     * version's covered .pc data is materialised). Un-ignore once the native reseal
-     * publishes covered data before the chain entry. Reproduce with
-     * generateRandom(LOG, s0, s1) e.g. 483763479454950L, 1780617824721L.
+     * Regression for a fixed native-partition covered-read race (distinct from the
+     * parquet expose-before-.pci bug). Before the fix this failed ~1 in 4: a native
+     * in-place reseal republished the chain head while the writer's transient
+     * coverCount field was 0 (clearCovering had reset it), so extendHead sized the
+     * entry LEN without the cover footer; a concurrent covered read derived
+     * coverCount=0, could not map the still-present .pc, and getCoveredDouble
+     * returned NaN for a whole partition. Fixed by preserving the head's cover
+     * footer across the transient coverCount=0 window (PostingIndexWriter
+     * captureCoverEndOffsets falls back to a cache seeded from the head entry by
+     * publishToChain/PostingIndexChainWriter.readHeadCoverEndOffsets). See also the
+     * unit test testWriterEntryPreservesCoverFooterAfterClearCoveringCommit.
      */
-    @Ignore("Reproducer for an OPEN native-partition covered-read race; see javadoc. Un-ignore when fixed.")
     @Test
     public void testMultiThreadedO3CoveringMixedNativeParquetReaderFuzz() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
@@ -7005,34 +6999,27 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Reproduces the writer-side root cause of the GraalVM SIGSEGV in
-     * hs_err_pid19555 (PostingIndexBenchmarkSuite.walFastLagInsertAndQuery
-     * on bench/posting-wal-fastlag): a covering posting index whose chain
-     * head had LEN=104 (= entrySize(genCount=1, coverCount=0)) while .pci
-     * advertised coverCount=1. This test drives PostingIndexWriter through
-     * the same lifecycle the WAL fast-lag path follows in production:
-     * <ol>
-     * <li> configureCovering(...) -> coverCount=1 on the writer.
-     * <li> add() rows, seal() -> publishes a chain entry with cover footer.
-     * <li> clearCovering() -> writer's coverCount field is reset to 0
-     *     (this is what TableWriter does in the finally block of
-     *     sealPostingIndexesForLastPartitionFastLag, line 11367).
-     * <li> add() more rows, commit() -> flushAllPending() publishes via
-     *     extendHead, which rewrites the head entry's LEN using
-     *     entrySize(genCount, coverCount=0), DROPPING the cover footer.
-     * </ol>
-     * After step 4, the chain head's LEN no longer accommodates a cover
-     * footer slot, even though the table's covering schema (mirrored in
-     * .pci) still says one cover. A reader sourcing coverCount=1 from the
-     * .pci sidecar and walking the chain steps past the entry's LEN to
-     * read the (non-existent) footer - in production this surfaces as a
-     * SIGSEGV when the entry hugs the end of the .pk mmap. With the
-     * picker/read clamp fix in place the read self-bounds against the
-     * entry's LEN and zero-fills the missing cover slot, so the reader
-     * recovers gracefully.
+     * Regression for the native-partition covered-read race root cause: a covering
+     * posting index whose writer-side coverCount field is transiently reset to 0 by
+     * clearCovering() must NOT drop the chain head's cover footer on the next
+     * commit()/extendHead. clearCovering happens in TableWriter's WAL fast-lag seal
+     * finally block, and between an in-place reseal's clearCovering and the next
+     * configureCovering. Before the fix, extendHead sized the head entry with
+     * entrySize(genCount, coverCount=0) -- DROPPING the cover footer -- so a
+     * concurrent covered read saw sidecarFileEndOffsets==0, failed to map the
+     * still-present .pc and returned NULL for the whole partition.
+     * <p>
+     * publishToChain now snapshots the head's existing footer
+     * (PostingIndexChainWriter.readHeadCoverEndOffsets) before the new gen-dir
+     * overwrites it and republishes those extents, so the footer survives the
+     * transient coverCount=0 window. Drives the same lifecycle: configureCovering
+     * -> add -> seal (footer written); clearCovering (coverCount field -> 0); add ->
+     * commit (extendHead). After the commit the head LEN must still accommodate the
+     * cover footer, and the picker must read the preserved, non-zero cover end
+     * offset (not 0, not a stale/garbage slot).
      */
     @Test
-    public void testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit() throws Exception {
+    public void testWriterEntryPreservesCoverFooterAfterClearCoveringCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 String name = "writer_clear_covering_then_commit";
@@ -7136,49 +7123,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             }
                         }
                         Assert.assertEquals(
-                                "RED: with the writer-side bug, the head's LEN no "
-                                        + "longer includes the cover footer because "
-                                        + "extendHead used coverCount=0 for the size "
-                                        + "calculation. Expected coverCount=1 sized "
-                                        + "entry, observed coverCount=0 sized entry.",
-                                PostingIndexChainEntry.entrySize(genCountAfterCommit, 0),
-                                lenAfterCommit
-                        );
-                        Assert.assertNotEquals(
-                                "RED: the schema-correct LEN would include cover footer "
-                                        + "bytes, but the writer dropped them",
+                                "FIXED: publishToChain preserves the cover footer across the "
+                                        + "clearCovering()/commit() window, so the head LEN stays "
+                                        + "sized for coverCount=1 (entrySize(genCount, 1)) instead "
+                                        + "of shrinking to entrySize(genCount, 0)",
                                 PostingIndexChainEntry.entrySize(genCountAfterCommit, coverCount),
                                 lenAfterCommit
                         );
 
-                        // Final: prove Fix A keeps the reader from
-                        // dereferencing past the entry on this corrupted-footer
-                        // entry. Plant a sentinel byte pattern into the bytes
-                        // immediately past the entry's LEN - the (mis-computed)
-                        // cover footer offset for coverCount=1 lands on these
-                        // bytes. Without the picker/read clamp, getLong reads
-                        // the sentinel and assigns it as the cover end offset.
-                        // With the clamp, the read self-bounds against the
-                        // entry's LEN and zero-fills the missing slot.
+                        // The picker reads coverCount=1 with the PRESERVED, non-zero
+                        // cover end offset (the .pc extent written at seal), not 0.
+                        // Before the fix this slot would be dropped/zero and a covered
+                        // read would see the partition as having no covered data.
                         LPSZ keyFile = PostingIndexUtils.keyFileName(
                                 path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
                         long fileSize = ff.length(keyFile);
                         try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
                                 ff, keyFile, ff.getPageSize(), fileSize,
                                 MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
-                            PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                            chain.openExisting(mem);
-                            PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                            chain.loadHeadEntry(mem, head);
-                            // The unfixed cover loop would read at offset
-                            // (header + genCount * GEN_DIR_ENTRY_SIZE) for
-                            // each cover slot. Plant a sentinel there so a
-                            // failing clamp surfaces as a non-zero value.
-                            long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(
-                                    head.offset, head.genCount);
-                            final long sentinel = 0xDEAD_BEEF_CAFE_BABEL;
-                            mem.putLong(footerOffset, sentinel);
-
                             PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
                             PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
                             int rc = PostingIndexChainPicker.pick(
@@ -7187,17 +7149,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             Assert.assertEquals(
                                     PostingIndexChainPicker.RESULT_OK, rc);
                             Assert.assertEquals(
-                                    "Fix A: missing cover slot is zero-filled instead "
-                                            + "of dereferencing past the entry",
+                                    "the preserved cover footer still carries coverCount slots",
                                     coverCount, entry.coverFileEndOffsets.size());
-                            Assert.assertEquals(
-                                    "RED without Fix A: the picker would read the planted "
-                                            + "sentinel " + Long.toHexString(sentinel)
-                                            + "L as the cover end offset because the cover "
-                                            + "footer loop is not clamped against the entry's "
-                                            + "own LEN field. With Fix A, the clamp returns 0 "
-                                            + "instead.",
-                                    0L, entry.coverFileEndOffsets.getQuick(0));
+                            Assert.assertTrue(
+                                    "the preserved cover end offset must be the non-zero .pc "
+                                            + "extent written at seal, not 0 (0 would make a "
+                                            + "covered read see the partition as having no covered "
+                                            + "data): " + entry.coverFileEndOffsets.getQuick(0),
+                                    entry.coverFileEndOffsets.getQuick(0) > 0);
                         }
                     }
                 } finally {
