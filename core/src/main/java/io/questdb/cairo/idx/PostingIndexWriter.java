@@ -116,7 +116,9 @@ public class PostingIndexWriter implements IndexWriter {
     // extendHead, built once per chain publish from each cover column's
     // current sidecar append offset. Reused across calls to avoid allocations.
     private final LongList coverEndOffsetsScratch = new LongList();
-    // O3 addr-based covering: caller-provided native memory addresses
+    // O3 addr-based covering: caller-provided native memory addresses, plus the
+    // mapped byte length of each (the *AddrSizes lists bound the addr-based
+    // covered data/aux reads under -ea).
     private final LongList coveredColumnAddrSizes = new LongList();
     private final LongList coveredColumnAddrs = new LongList();
     private final LongList coveredColumnAuxAddrSizes = new LongList();
@@ -395,6 +397,11 @@ public class PostingIndexWriter implements IndexWriter {
                 hasPendingData = false;
                 activeKeyCount = 0;
                 coverCount = 0;
+                // Drop the cover-extent cache so a pooled reopen for a different
+                // column/partition starts clean. No live read depends on this
+                // (publishToChain rewrites the cache before every captureCoverEndOffsets),
+                // but clearing it keeps the cache's safety structural, not ordering-bound.
+                coverEndOffsetsCache.clear();
                 sealTarget = null;
                 releasePendingPurges();
                 pendingDiscardOldSealTxn = -1L;

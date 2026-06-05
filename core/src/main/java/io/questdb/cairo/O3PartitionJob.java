@@ -3397,21 +3397,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // No-op on BitmapIndexWriter.
                         indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
                         if (IndexType.isPosting(indexType)) {
-                            indexWriter.commitDense();
-                            // commitDense may have sealed (spill-driven reseal),
-                            // rotating the .pv and recording a purge for the
-                            // superseded file. The pooled writer is freed below
-                            // without ever draining that outbox through a
-                            // TableWriter (the native reseal does, this path
-                            // didn't), so the superseded .pv would leak. Hand the
-                            // purge to the writer's deferred queue: it is published
-                            // after the commit and the scoreboard-gated job deletes
-                            // the .pv only once no reader is pinned in its txn
-                            // window -- safe for both the rewrite (fresh dir) and
-                            // update-in-place (live committed dir) cases. Tagged
-                            // with getTxn() as the current (pre-commit) txn so the
-                            // seal's getTxn()+1 entry is treated as finite-future.
-                            tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
+                            // commitDense may seal (spill-driven reseal), rotating the
+                            // .pv and recording a purge for the superseded file. The
+                            // pooled writer is freed below without ever draining that
+                            // outbox through a TableWriter (the native reseal does, this
+                            // path didn't), so the superseded .pv would leak. Drain it in
+                            // a finally: an I/O fault inside commitDense's seal/sync can
+                            // throw AFTER the purge was recorded, and the defer must still
+                            // hand the entry off rather than drop it (idempotent no-op on
+                            // an empty outbox). The deferred entry is published after the
+                            // commit and the scoreboard-gated job deletes the .pv only
+                            // once no reader is pinned in its txn window -- safe for both
+                            // the rewrite (fresh dir) and update-in-place (live committed
+                            // dir) cases. Tagged with getTxn() as the current (pre-commit)
+                            // txn so the seal's getTxn()+1 entry is treated as
+                            // finite-future.
+                            try {
+                                indexWriter.commitDense();
+                            } finally {
+                                tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
+                            }
                         } else {
                             indexWriter.commit();
                         }

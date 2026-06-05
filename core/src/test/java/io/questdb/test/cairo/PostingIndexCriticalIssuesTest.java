@@ -4844,6 +4844,74 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * C4 (deterministic counterpart of the covering-parquet fuzz tests): an O3 write
+     * that rewrites an already-parquet partition carrying a COVERING posting index must
+     * rebuild that new parquet version's covering sidecars (.pci/.pc). The O3 worker
+     * builds only the non-covering .pv; resealParquetCoveringForPartition (reached via
+     * sealPostingIndexForPartition's parquet branch in finishO3Commit) re-materialises
+     * the covering from the rewritten parquet. Without it a reader opens the new version,
+     * walks the chain (count correct) but finds coverCount=0 and resolves covered values
+     * as NULL. The covering cursor is forced/verified by expectSize()+noRandomAccess();
+     * the sum(price)/first(tag) assertions would read NULL covered values without the fix.
+     */
+    @Test
+    public void testO3CoveringPostingParquetResealKeepsCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_cov_reseal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, tag),
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // 200 'A' rows in 2024-01-01 (price 1..200, sum 20100, tag 'TA').
+            execute("""
+                    INSERT INTO t_pq_cov_reseal
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE, 'TA'
+                    FROM long_sequence(200)
+                    """);
+            // 10 more 'A' rows in 2024-01-02 (price 1001..1010, sum 10055) so 'A'
+            // spans a native partition too, and the converted one is not the tail.
+            execute("""
+                    INSERT INTO t_pq_cov_reseal
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP),
+                           'A', (1000 + x)::DOUBLE, 'TA'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_cov_reseal CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // O3 merge into the already-parquet partition rewrites it; the covering
+            // sidecars for the new parquet version must be rebuilt for the new 'B' rows
+            // (and the existing 'A' rows) to resolve their covered price/tag.
+            execute("""
+                    INSERT INTO t_pq_cov_reseal VALUES
+                    ('2024-01-01T00:01:00.500000Z', 'B', -1.0, 'TB'),
+                    ('2024-01-01T00:02:00.500000Z', 'B', -2.0, 'TB')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            // expectSize()+noRandomAccess() => the covering cursor was selected and not
+            // a forward-scan fallback; sum(price)/first(tag) come from the .pc sidecars.
+            assertQuery("SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_pq_cov_reseal WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("rows\tsum_price\tfirst_tag\n210\t30155.0\tTA\n");
+            // The O3-inserted 'B' rows live in the rewritten parquet partition; their
+            // covered values must be non-NULL after the reseal.
+            assertQuery("SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_pq_cov_reseal WHERE sym = 'B'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("rows\tsum_price\tfirst_tag\n2\t-3.0\tTB\n");
+        });
+    }
+
+    /**
      * The parquet index-rebuild path (O3PartitionJob.updateParquetIndexes ->
      * commitDense) is the third commitDense caller. When its index() loop trips
      * the spill budget, commitDense routes through seal(), which rotates the .pv

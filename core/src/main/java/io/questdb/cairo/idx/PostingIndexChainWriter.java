@@ -293,35 +293,6 @@ public final class PostingIndexChainWriter {
         return activePageOffset;
     }
 
-    /**
-     * Read the current head entry's cover end-offset footer into {@code out}
-     * (cleared first). Lets a caller preserve the footer across a republish it
-     * cannot recompute -- e.g. a same-sealTxn gen flush whose writer-side
-     * coverCount field is transiently 0 (between clearCovering and the next
-     * configureCovering), or a freshly reopened per-partition writer that has
-     * not yet captured the live sidecar extent. The head entry on disk carries
-     * the authoritative footer from the seal that wrote the .pc, so reusing it
-     * keeps the chain entry pointing at the existing covered data instead of
-     * publishing an empty footer (which makes readers see the partition as
-     * having no covered values). Leaves {@code out} empty when there is no head
-     * or no cover footer.
-     */
-    public void readHeadCoverEndOffsets(MemoryARW keyMem, LongList out) {
-        out.clear();
-        if (!hasHead()) {
-            return;
-        }
-        long headOffset = headEntryOffset;
-        int genCount = keyMem.getInt(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
-        long len = keyMem.getLong(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
-        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount);
-        long footerBytesAvailable = Math.max(0L, headOffset + len - footerOffset);
-        int coverCount = (int) (footerBytesAvailable / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
-        for (int c = 0; c < coverCount; c++) {
-            out.add(keyMem.getLong(footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
-        }
-    }
-
     public long getCurrentTxnAtSeal() {
         return currentTxnAtSeal;
     }
@@ -468,6 +439,35 @@ public final class PostingIndexChainWriter {
      */
     public long peekNextSealTxn() {
         return genCounter + 1L;
+    }
+
+    /**
+     * Read the current head entry's cover end-offset footer into {@code out}
+     * (cleared first). Lets a caller preserve the footer across a republish it
+     * cannot recompute -- e.g. a same-sealTxn gen flush whose writer-side
+     * coverCount field is transiently 0 (between clearCovering and the next
+     * configureCovering), or a freshly reopened per-partition writer that has
+     * not yet captured the live sidecar extent. The head entry on disk carries
+     * the authoritative footer from the seal that wrote the .pc, so reusing it
+     * keeps the chain entry pointing at the existing covered data instead of
+     * publishing an empty footer (which makes readers see the partition as
+     * having no covered values). Leaves {@code out} empty when there is no head
+     * or no cover footer.
+     */
+    public void readHeadCoverEndOffsets(MemoryARW keyMem, LongList out) {
+        out.clear();
+        if (!hasHead()) {
+            return;
+        }
+        long headOffset = headEntryOffset;
+        int genCount = keyMem.getInt(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        long len = keyMem.getLong(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
+        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount);
+        long footerBytesAvailable = Math.max(0L, headOffset + len - footerOffset);
+        int coverCount = (int) (footerBytesAvailable / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
+        for (int c = 0; c < coverCount; c++) {
+            out.add(keyMem.getLong(footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
+        }
     }
 
     /**
