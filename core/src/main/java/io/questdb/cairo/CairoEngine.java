@@ -448,6 +448,12 @@ public class CairoEngine implements Closeable, WriterSource {
                             );
                             if (viewGraph.addView(viewDefinition)) {
                                 viewStateStore.createViewState(viewDefinition);
+                                // createViewState hydrates the metadata cache from the on-disk
+                                // view definition only, which carries no designated timestamp.
+                                // Enqueue a compile so the view compiler job recomputes the full
+                                // view metadata (including the designated timestamp) once it starts,
+                                // matching how the WAL apply path registers a freshly replicated view.
+                                enqueueCompileView(tableToken);
                             }
                         }
                     } catch (Throwable th) {
