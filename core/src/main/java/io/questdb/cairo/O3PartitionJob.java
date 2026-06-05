@@ -3404,7 +3404,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // update-in-place (live committed dir) cases. Tagged
                             // with getTxn() as the current (pre-commit) txn so the
                             // seal's getTxn()+1 entry is treated as finite-future.
-                            tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
+                            tableWriterView.deferParquetPostingSealPurges(indexWriter, tableWriterView.getTxn());
                         } else {
                             indexWriter.commit();
                         }

@@ -284,6 +284,11 @@ public final class O3TableWriterView {
         return tableWriter.getConfiguration().getPartitionEncoderParquetRowGroupSize();
     }
 
+    // safety: TODO
+    void deferParquetPostingSealPurges(IndexWriter writer, long currentTableTxn) {
+        tableWriter.deferParquetPostingSealPurges(writer, currentTableTxn);
+    }
+
     // safety: read only lookup
     int getPartitionIndexByTimestamp(long timestamp) {
         return tableWriter.getPartitionIndexByTimestamp(timestamp);
