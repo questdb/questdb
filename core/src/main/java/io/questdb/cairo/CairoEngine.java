@@ -46,6 +46,7 @@ import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.RecentWriteTracker;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.SequencerMetadataPool;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.pool.TableMetadataPool;
@@ -950,19 +951,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.get(tableToken);
     }
 
-    public TableReader getReader(TableToken tableToken, SqlExecutionContext executionContext) {
+    public TableReader getReader(TableToken tableToken, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
-        return readerPool.get(tableToken, executionContext.getReaderPoolSupervisor());
+        return readerPool.get(tableToken, readerPoolSupervisor);
     }
 
-    public TableReader getReader(TableToken tableToken, long metadataVersion) {
+    public TableReader getReader(TableToken tableToken, long metadataVersion, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
-        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken));
-    }
-
-    public TableReader getReader(TableToken tableToken, long metadataVersion, SqlExecutionContext executionContext) {
-        verifyTableToken(tableToken);
-        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken, executionContext.getReaderPoolSupervisor()));
+        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken, readerPoolSupervisor));
     }
 
     /**

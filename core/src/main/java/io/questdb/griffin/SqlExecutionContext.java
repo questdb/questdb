@@ -158,11 +158,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
-        return getCairoEngine().getReader(tableToken, version, this);
+        return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
     }
 
     default TableReader getReader(TableToken tableToken) {
-        return getCairoEngine().getReader(tableToken, this);
+        return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
     }
 
     /**
@@ -232,15 +232,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelGroupByEnabled();
 
-    boolean isParallelReadParquetEnabled();
+    boolean isParallelHorizonJoinEnabled();
 
-    boolean isParquetRowGroupPruningEnabled();
+    boolean isParallelReadParquetEnabled();
 
     boolean isParallelTopKEnabled();
 
-    boolean isParallelHorizonJoinEnabled();
-
     boolean isParallelWindowJoinEnabled();
+
+    boolean isParquetRowGroupPruningEnabled();
 
     boolean isTimestampRequired();
 
@@ -294,15 +294,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
 
-    void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
+    void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 
-    void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
+    void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
 
-    void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
-
     void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
+
+    void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
 
     void setRandom(Rnd rnd);
 

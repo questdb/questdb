@@ -36,6 +36,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -4782,9 +4783,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(TableToken tableToken, long metadataVersion) {
+                public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                     fiddler.run(this);
-                    return super.getReader(tableToken, metadataVersion);
+                    return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
                 }
             }) {
                 try (
@@ -7923,9 +7924,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(TableToken tableToken, long metadataVersion) {
+            public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                 fiddler.run(this);
-                return super.getReader(tableToken, metadataVersion);
+                return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
             }
         }) {
             try (
