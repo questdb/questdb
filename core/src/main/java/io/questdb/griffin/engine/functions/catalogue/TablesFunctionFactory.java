@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -144,16 +145,9 @@ public class TablesFunctionFactory implements FunctionFactory {
         if (micros <= 0) {
             return null;
         }
-        if (micros % 86_400_000_000L == 0) {
-            return (micros / 86_400_000_000L) + "d";
-        }
-        if (micros % 3_600_000_000L == 0) {
-            return (micros / 3_600_000_000L) + "h";
-        }
-        if (micros % 60_000_000L == 0) {
-            return (micros / 60_000_000L) + "m";
-        }
-        return (micros / 1_000_000L) + "s";
+        StringSink sink = new StringSink();
+        RowExpiryUtil.appendCleanupEvery(sink, micros);
+        return sink.toString();
     }
 
     @Override

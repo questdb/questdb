@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.str.CharSink;
+
 /**
  * Shared helper for the row-expiry feature's background cleanup job ({@link RowExpiryCleanupJob}).
  * The stored expiry predicate describes WHEN a row expires; the cleanup job needs the logical
@@ -43,6 +45,24 @@ public final class RowExpiryUtil {
     public static final long DEFAULT_CLEANUP_INTERVAL_MICROS = 3_600_000_000L;
 
     private RowExpiryUtil() {
+    }
+
+    /**
+     * Renders {@code micros} as a {@code CLEANUP EVERY} stride (e.g. {@code 30m}, {@code 1h},
+     * {@code 2d}) into {@code sink}, picking the largest whole unit that divides it evenly. Shared by
+     * SHOW CREATE TABLE and the {@code tables()}/{@code materialized_views()} catalogue functions so
+     * the rendering cannot drift.
+     */
+    public static void appendCleanupEvery(CharSink<?> sink, long micros) {
+        if (micros % 86_400_000_000L == 0) {
+            sink.put(micros / 86_400_000_000L).put('d');
+        } else if (micros % 3_600_000_000L == 0) {
+            sink.put(micros / 3_600_000_000L).put('h');
+        } else if (micros % 60_000_000L == 0) {
+            sink.put(micros / 60_000_000L).put('m');
+        } else {
+            sink.put(micros / 1_000_000L).put('s');
+        }
     }
 
     /**

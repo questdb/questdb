@@ -36,6 +36,8 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean hasParquetPartitions;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
@@ -50,8 +52,6 @@ public class CairoTable implements Sinkable {
     private int timestampType;
     private TableToken token;
     private int ttlHoursOrMonths;
-    private long expiryCleanupIntervalMicros;
-    private String expiryPredicate;
 
     public CairoTable(@NotNull TableToken token) {
         this.token = token;
@@ -109,6 +109,14 @@ public class CairoTable implements Sinkable {
 
     public String getDirectoryName() {
         return token.getDirName();
+    }
+
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     public int getId() {
@@ -185,14 +193,6 @@ public class CairoTable implements Sinkable {
         return ttlHoursOrMonths;
     }
 
-    public long getExpiryCleanupIntervalMicros() {
-        return expiryCleanupIntervalMicros;
-    }
-
-    public String getExpiryPredicate() {
-        return expiryPredicate;
-    }
-
     public boolean hasDedup() {
         return dedup;
     }
@@ -211,6 +211,11 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
+    }
+
+    public void setExpiry(String expiryPredicate, long expiryCleanupIntervalMicros) {
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
     }
 
     public void setHasParquetPartitions(boolean hasParquetPartitions) {
@@ -251,11 +256,6 @@ public class CairoTable implements Sinkable {
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
-    }
-
-    public void setExpiry(String expiryPredicate, long expiryCleanupIntervalMicros) {
-        this.expiryPredicate = expiryPredicate;
-        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
     }
 
     @Override

@@ -48,6 +48,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean isCopy;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -58,8 +60,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private int partitionBy;
     private Path path;
     private int plen;
-    private long expiryCleanupIntervalMicros;
-    private String expiryPredicate;
     private int tableId;
     private TableToken tableToken;
     private TableReaderMetadataTransitionIndex transitionIndex;
@@ -166,6 +166,16 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
@@ -223,16 +233,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
-    }
-
-    @Override
-    public long getExpiryCleanupIntervalMicros() {
-        return expiryCleanupIntervalMicros;
-    }
-
-    @Override
-    public String getExpiryPredicate() {
-        return expiryPredicate;
     }
 
     public int getWriterColumnCount() {

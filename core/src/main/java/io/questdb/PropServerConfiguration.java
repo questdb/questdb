@@ -337,7 +337,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TimeZoneRules logTimestampTimezoneRules;
     private final boolean matViewCoveringIndexEnabled;
     private final boolean matViewEnabled;
-    private final boolean rowExpiryEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
     private final int matViewMaxRefreshRetries;
@@ -454,6 +453,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final int rollBufferLimit;
     private final int rollBufferSize;
+    private final boolean rowExpiryEnabled;
     private final long sequencerCheckInterval;
     private final PropWorkerPoolConfiguration sharedWorkerPoolNetworkConfiguration = new PropWorkerPoolConfiguration("shared-network");
     private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
@@ -5153,11 +5153,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isRowExpiryEnabled() {
-            return rowExpiryEnabled;
-        }
-
-        @Override
         public boolean isMatViewParallelSqlEnabled() {
             return matViewParallelExecutionEnabled;
         }
@@ -5220,6 +5215,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
+        }
+
+        @Override
+        public boolean isRowExpiryEnabled() {
+            return rowExpiryEnabled;
         }
 
         @Override

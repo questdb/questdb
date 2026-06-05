@@ -95,6 +95,16 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default long getExpiryCleanupIntervalMicros() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default String getExpiryPredicate() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default int getMetaMaxUncommittedRows() {
         throw new UnsupportedOperationException();
     }
@@ -106,16 +116,6 @@ public interface MetadataServiceStub extends MetadataService {
 
     @Override
     default int getTtlHoursOrMonths() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default String getExpiryPredicate() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getExpiryCleanupIntervalMicros() {
         throw new UnsupportedOperationException();
     }
 
@@ -160,6 +160,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
+        throw CairoException.critical(0).put("change of row-expiry policy does not update sequencer metadata");
+    }
+
+    @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         throw CairoException.critical(0).put("change of max uncommitted does not update sequencer metadata");
     }
@@ -167,11 +172,6 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void setMetaO3MaxLag(long o3MaxLagUs) {
         throw CairoException.critical(0).put("change of o3MaxLag does not update sequencer metadata");
-    }
-
-    @Override
-    default void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
-        throw CairoException.critical(0).put("change of row-expiry policy does not update sequencer metadata");
     }
 
     @Override

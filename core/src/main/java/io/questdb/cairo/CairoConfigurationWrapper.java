@@ -1578,11 +1578,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isRowExpiryEnabled() {
-        return getDelegate().isRowExpiryEnabled();
-    }
-
-    @Override
     public boolean isMatViewParallelSqlEnabled() {
         return getDelegate().isMatViewParallelSqlEnabled();
     }
@@ -1645,6 +1640,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
+    }
+
+    @Override
+    public boolean isRowExpiryEnabled() {
+        return getDelegate().isRowExpiryEnabled();
     }
 
     @Override

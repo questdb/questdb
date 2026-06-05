@@ -2215,6 +2215,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return designatedTimestampColumnName;
     }
 
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return metadata.getExpiryCleanupIntervalMicros();
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return metadata.getExpiryPredicate();
+    }
+
     public FilesFacade getFilesFacade() {
         return ff;
     }
@@ -2352,16 +2362,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public int getTtlHoursOrMonths() {
         return metadata.getTtlHoursOrMonths();
-    }
-
-    @Override
-    public String getExpiryPredicate() {
-        return metadata.getExpiryPredicate();
-    }
-
-    @Override
-    public long getExpiryCleanupIntervalMicros() {
-        return metadata.getExpiryCleanupIntervalMicros();
     }
 
     @TestOnly

@@ -130,11 +130,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         );
     }
 
-    @Override
-    public void close() {
-        sqlExecutionContext = Misc.free(sqlExecutionContext);
-    }
-
     /**
      * Physically reclaims expired rows from a single policied object, in place (no copy, no populate).
      * Snapshots non-active LOGICAL partition totals from a reader, classifies each as DROP/REPLACE/SKIP
@@ -236,6 +231,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             workDone |= dropPartitions(tableName, timestampType, partitionBy, dropFloors);
         }
         return workDone;
+    }
+
+    @Override
+    public void close() {
+        sqlExecutionContext = Misc.free(sqlExecutionContext);
     }
 
     @Override

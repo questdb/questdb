@@ -161,6 +161,10 @@ public interface MetadataService {
 
     void forceRemovePartitions(LongList partitionTimestamps);
 
+    long getExpiryCleanupIntervalMicros();
+
+    String getExpiryPredicate();
+
     int getMetaMaxUncommittedRows();
 
     TableRecordMetadata getMetadata();
@@ -170,10 +174,6 @@ public interface MetadataService {
     TableToken getTableToken();
 
     int getTtlHoursOrMonths();
-
-    String getExpiryPredicate();
-
-    long getExpiryCleanupIntervalMicros();
 
     int getTimestampType();
 
@@ -237,10 +237,6 @@ public interface MetadataService {
      */
     void setMatViewRefreshTimer(long startUs, int interval, char unit);
 
-    void setMetaMaxUncommittedRows(int maxUncommittedRows);
-
-    void setMetaO3MaxLag(long o3MaxLagUs);
-
     /**
      * Sets (or clears) the row-expiry policy of this table. {@code predicate} is the raw SQL
      * text of the EXPIRE ROWS WHEN predicate, or {@code null} to drop the policy.
@@ -248,6 +244,10 @@ public interface MetadataService {
      * when {@code predicate} is null).
      */
     void setMetaExpiry(String predicate, long cleanupIntervalMicros);
+
+    void setMetaMaxUncommittedRows(int maxUncommittedRows);
+
+    void setMetaO3MaxLag(long o3MaxLagUs);
 
     /**
      * Sets the time-to-live (TTL) of the data in this table:

@@ -379,6 +379,16 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int index) {
         return getHighAt(index * 2 + 1);
     }
@@ -483,16 +493,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
-    }
-
-    @Override
-    public long getExpiryCleanupIntervalMicros() {
-        return expiryCleanupIntervalMicros;
-    }
-
-    @Override
-    public String getExpiryPredicate() {
-        return expiryPredicate;
     }
 
     public int getTtlPosition() {

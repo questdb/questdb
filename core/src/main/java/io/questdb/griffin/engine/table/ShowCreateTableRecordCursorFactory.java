@@ -97,19 +97,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         // Only print CLEANUP EVERY when it differs from the (shared) default cadence.
         if (cleanupIntervalMicros > 0 && cleanupIntervalMicros != RowExpiryUtil.DEFAULT_CLEANUP_INTERVAL_MICROS) {
             sink.putAscii(" CLEANUP EVERY ");
-            appendDurationStride(cleanupIntervalMicros, sink);
-        }
-    }
-
-    private static void appendDurationStride(long micros, CharSink<?> sink) {
-        if (micros % 86_400_000_000L == 0) {
-            sink.put(micros / 86_400_000_000L).put('d');
-        } else if (micros % 3_600_000_000L == 0) {
-            sink.put(micros / 3_600_000_000L).put('h');
-        } else if (micros % 60_000_000L == 0) {
-            sink.put(micros / 60_000_000L).put('m');
-        } else {
-            sink.put(micros / 1_000_000L).put('s');
+            RowExpiryUtil.appendCleanupEvery(sink, cleanupIntervalMicros);
         }
     }
 

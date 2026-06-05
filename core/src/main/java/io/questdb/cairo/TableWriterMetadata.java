@@ -64,6 +64,16 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
@@ -134,16 +144,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
-    }
-
-    @Override
-    public long getExpiryCleanupIntervalMicros() {
-        return expiryCleanupIntervalMicros;
-    }
-
-    @Override
-    public String getExpiryPredicate() {
-        return expiryPredicate;
     }
 
     @Override
