@@ -69,6 +69,7 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1164,11 +1165,11 @@ public class O3Test extends AbstractO3Test {
                     }
                     Assert.assertTrue(max > (2L << 30));
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select * from " + tableName + " limit -5",
-                            sink,
+                    new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(
                             replaceTimestampSuffix1(
                                     "str\tts\n" +
                                             strColVal + "\t2022-02-24T00:51:43.301000Z\n" +
@@ -4327,7 +4328,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException {
+    ) throws Exception {
 
         //
         // ----- prev to last partition
@@ -4499,11 +4500,11 @@ public class O3Test extends AbstractO3Test {
 
         engine.execute("insert into x select * from append", sqlExecutionContext);
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(
                 expected
         );
 
@@ -4518,7 +4519,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException {
+    ) throws Exception {
 
         //
         // ----- last partition
@@ -4690,11 +4691,11 @@ public class O3Test extends AbstractO3Test {
 
         engine.execute("insert into x select * from append", sqlExecutionContext);
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(
                 expected
         );
 
@@ -4849,7 +4850,7 @@ public class O3Test extends AbstractO3Test {
     private static void testDecimalO3Insert0(CairoEngine engine,
                                              SqlCompiler compiler,
                                              SqlExecutionContext sqlExecutionContext,
-                                             String timestampTypeName) throws SqlException {
+                                             String timestampTypeName) throws Exception {
         engine.execute(
                 "create table x (" +
                         " id int," +
@@ -4914,10 +4915,11 @@ public class O3Test extends AbstractO3Test {
         }
 
         String suffix = timestampTypeName.endsWith("_NS") ? "000Z\n" : "Z\n";
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext,
-                "select * from x",
-                sink, "id\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256\tts\n" +
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("id\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256\tts\n" +
                         "20000\t0.0\t2.00\t2.00\t0.0200\t0.000200\t0.00000200\t2021-12-31T23:59:35.000000" + suffix +
                         "20001\t0.1\t3.01\t102.01\t1000.0201\t100.000201\t10.00000201\t2021-12-31T23:59:36.000000" + suffix +
                         "20002\t0.2\t4.02\t202.02\t2000.0202\t200.000202\t20.00000202\t2021-12-31T23:59:37.000000" + suffix +
@@ -5229,7 +5231,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException {
+    ) throws Exception {
         engine.execute(
                 "create table x as (" +
                         "select" +
@@ -5249,8 +5251,11 @@ public class O3Test extends AbstractO3Test {
             );
         }
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select sum(i) from x", sink, """
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select sum(i) from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         527250
                         """
@@ -7761,7 +7766,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException {
+    ) throws Exception {
 
         engine.execute(
                 "CREATE TABLE monthly_col_top(" +
@@ -7802,8 +7807,10 @@ public class O3Test extends AbstractO3Test {
         );
 
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '2'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         replaceTimestampSuffix1("""
                                 2022-06-08T02:50:00.000000Z\t9\t\t\t2
@@ -7822,8 +7829,10 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T04:50:00.000000Z', '18', '4', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         replaceTimestampSuffix1("""
                                 2022-06-08T02:50:00.000000Z\t5\t\t\t3
@@ -7843,8 +7852,10 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T02:50:00.000000Z', '21', '4', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         replaceTimestampSuffix1("""
                                 2022-06-08T02:50:00.000000Z\t5\t\t\t3
@@ -7865,7 +7876,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException {
+    ) throws Exception {
 
         engine.execute(
                 "CREATE TABLE monthly_col_top(" +
@@ -7910,8 +7921,10 @@ public class O3Test extends AbstractO3Test {
         );
 
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 replaceTimestampSuffix1("""
                         ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
                         2022-06-08T02:50:00.000000Z\t5\t\t\t3
@@ -7928,8 +7941,10 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T02:56:00.000000Z', '18', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 replaceTimestampSuffix1("""
                         ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
                         2022-06-08T02:50:00.000000Z\t5\t\t\t3
@@ -7949,8 +7964,10 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T04:31:00.000000Z', '21', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 replaceTimestampSuffix1("""
                         ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
                         2022-06-08T02:50:00.000000Z\t5\t\t\t3
@@ -7973,8 +7990,10 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T00:40:00.000000Z', '24', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 replaceTimestampSuffix1("""
                         ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
                         2022-06-08T00:40:00.000000Z\t24\t\t\t3
@@ -7998,7 +8017,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException, NumericException {
+    ) throws Exception {
 
         engine.execute("create table x (a int, ts " + timestampTypeName + ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
@@ -8226,11 +8245,11 @@ public class O3Test extends AbstractO3Test {
                 0\t2020-03-10T20:36:00.001000Z
                 """, timestampTypeName);
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(
                 expected
         );
     }
@@ -8676,7 +8695,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException, NumericException {
+    ) throws Exception {
         CairoConfiguration configuration = engine.getConfiguration();
         TableModel x = new TableModel(configuration, "x", PartitionBy.DAY);
         TestUtils.createPopulateTable(
@@ -8692,8 +8711,11 @@ public class O3Test extends AbstractO3Test {
 
         // Insert OOO to create partition dir 2020-01-01.1
         engine.execute("insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select count() from x", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select count() from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(
                 """
                         count
                         11
@@ -8703,8 +8725,11 @@ public class O3Test extends AbstractO3Test {
         // Close and open writer. Partition dir 2020-01-01.1 should not be purged
         engine.releaseAllWriters();
         engine.execute("insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select count() from x", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select count() from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(
                 """
                         count
                         12
@@ -8717,7 +8742,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException, NumericException {
+    ) throws Exception {
         CairoConfiguration configuration = engine.getConfiguration();
         TableModel tableModel = new TableModel(configuration, "x", PartitionBy.DAY);
         Rnd rnd = TestUtils.generateRandom(LOG);
@@ -8816,8 +8841,11 @@ public class O3Test extends AbstractO3Test {
             o3.commit();
         }
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select count() from x", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select count() from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(
                 "count\n" + (2 * idBatchSize + 1) + "\n"
         );
         engine.releaseAllReaders();
@@ -8960,7 +8988,7 @@ public class O3Test extends AbstractO3Test {
         }
     }
 
-    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws SqlException {
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws Exception {
         // Day 1 '1970-01-01'
         int initialCount = i / 2;
         engine.execute(
@@ -9017,8 +9045,10 @@ public class O3Test extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        TestUtils.assertSql(
-                compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from x where str = 'cc'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(
                 "str\tts\tx\tstr2\ty\n" +
                         "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
                         "cc\t" + ts2 + "\t11111\tdd\t22222\n"
