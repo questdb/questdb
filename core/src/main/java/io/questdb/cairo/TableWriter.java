@@ -4028,6 +4028,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     getPrimaryColumn(i).jumpTo(newTransientRowCount << shl);
                 }
             }
+            // Configure covering on the posting writers BEFORE indexing. A
+            // covering posting index writes its .pc covered sidecar inline
+            // (writeSidecarGenData), reached both from the commit below and from
+            // a mid-stream spill flush inside updateIndexesParallel; the spill
+            // path bounds RSS for large batches and must still produce a complete
+            // sidecar. Every other index path configures covering before it
+            // indexes (see configureCoveringIfNeeded call sites); the WAL
+            // fast-lag path is the exception because
+            // publishPostingIndexesForLastPartitionFastLag's addr-based
+            // configureCovering clears the writer-owned cover schema set at
+            // openPartition. Restore it here so spill-flushed generations carry
+            // their covered data; otherwise a covered read over-reads the .pc.
+            configureCoveringForLastPartitionFastLag();
             updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
             try {
                 publishPostingIndexesForLastPartitionFastLag();
@@ -4912,6 +4925,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (timestampIndex != -1) {
             o3TimestampMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(timestampIndex));
             o3TimestampMemCpy = o3MemColumns2.getQuick(getPrimaryColumnIndex(timestampIndex));
+        }
+    }
+
+    private void configureCoveringForLastPartitionFastLag() {
+        // Wire each covering POSTING writer's covered-column read maps for the
+        // last (active) partition before updateIndexesParallel indexes into it,
+        // so a mid-stream spill flush during indexing writes a complete .pc
+        // covered sidecar. configureCoveringIfNeeded is a no-op for non-covering
+        // and non-posting columns. Runs serially on the writer thread, so the
+        // shared covering* scratch it uses is safe.
+        if (lastPartitionTimestamp == Long.MIN_VALUE) {
+            return;
+        }
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (!metadata.isColumnIndexed(colIdx)) {
+                continue;
+            }
+            ColumnIndexer indexer = indexers.getQuick(colIdx);
+            if (indexer != null) {
+                configureCoveringIfNeeded(indexer, colIdx, lastPartitionTimestamp);
+            }
         }
     }
 

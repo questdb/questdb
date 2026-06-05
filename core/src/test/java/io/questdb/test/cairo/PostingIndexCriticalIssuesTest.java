@@ -485,6 +485,94 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Field report reproduction: a covering POSTING index on a single
+     * actively-growing partition fed by sequential (in-order) WAL/ILP commits.
+     * Covered reads return wrong values (or SIGSEGV) once enough rows of a hot
+     * key accumulate. No O3, squash, or parquet conversion is involved -- plain
+     * append is enough.
+     * <p>
+     * Mechanism: the WAL fast-lag commit indexes the new rows in
+     * {@code updateIndexesParallel} (the add() phase) and only afterwards, in
+     * {@code publishPostingIndexesForLastPartitionFastLag}, calls
+     * {@code configureCovering} + {@code commit()}. When a hot key's spill arena
+     * crosses the budget mid-add, {@code compactIfOverBudget -> flushAllPending}
+     * drains a sparse generation right there -- but covering is not configured
+     * yet, so {@code writeSidecarGenData} short-circuits and the generation gets
+     * a gen-dir entry and .pv rows with no .pc covered block (its .pc header slot
+     * stays 0). A later covered read walks that generation with a 0 sidecar
+     * offset and reads past the .pc mapping: count() (served from the index row
+     * addresses) stays correct while sum(value) (served from the covering
+     * sidecar) is wrong. The fix defers the mid-add spill flush so the whole
+     * batch flushes once, after covering is configured, with .pc written.
+     * <p>
+     * A small spill budget reproduces at ~4M rows what the field report hit at
+     * ~45M rows under the default 256 MiB budget.
+     */
+    @Test
+    public void testWalFastLagCoveringSpillWritesCoveredSidecar() throws Exception {
+        setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE flt (
+                        ts TIMESTAMP,
+                        ParameterID SYMBOL INDEX TYPE POSTING INCLUDE (value),
+                        value DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            final int batches = 40;
+            final int rowsPerBatch = 100_000; // per-commit hot-key spill (~hundreds of KiB) exceeds the 256 KiB budget
+            final long base = 1_700_000_000_000_000L; // arbitrary instant; all rows stay in one day
+            long start = base;
+            for (int b = 0; b < batches; b++) {
+                execute("INSERT INTO flt " +
+                        "SELECT timestamp_sequence(cast(" + start + " as timestamp), 1), 'KCAS', 1.0 " +
+                        "FROM long_sequence(" + rowsPerBatch + ")");
+                start += rowsPerBatch; // keep the next batch strictly after the previous -> in-order append
+                drainWalQueue();
+            }
+
+            final long total = (long) batches * rowsPerBatch;
+            // count() is served by the index row addresses, sum(value) by the
+            // covering sidecar. A healthy covering index keeps them consistent;
+            // the orphaned-sidecar bug leaves count() right but sum(value) wrong
+            // (and over-reads the .pc -- a bare SIGSEGV without assertions).
+            assertSql(
+                    "count\tsum\n" + total + "\t" + (double) total + "\n",
+                    "SELECT count(), sum(value) FROM flt WHERE ParameterID = 'KCAS'"
+            );
+        });
+    }
+
+    /**
+     * Plan-fallback reproduction: a symbol-capacity change must not drop the
+     * covering-index schema. When the symbol capacity grows (automatically as new
+     * symbols arrive, or via ALTER), changeSymbolCapacity -> updateColumnSymbolCapacity
+     * rebuilds the symbol column's metadata; that rebuild used to forget the
+     * covering column indices, so the next metadata rewrite persisted a _meta with
+     * no covering flag/section and the planner stopped choosing the covering scan.
+     */
+    @Test
+    public void testCoveringSurvivesSymbolCapacityChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (val), val DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, 'a', 1.0)");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN sym SYMBOL CAPACITY 8192");
+            drainWalQueue();
+            // Fresh compile after the capacity change: the covering posting index
+            // must still be chosen.
+            assertPlanNoLeakCheck(
+                    "SELECT ts, val FROM x WHERE sym = 'b'",
+                    "SelectedRecord\n" +
+                            "    CoveringIndex on: sym with: ts, val\n" +
+                            "      filter: sym='b'\n"
+            );
+        });
+    }
+
     @Test
     public void testO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
         assertMemoryLeak(() -> {
