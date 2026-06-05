@@ -68,6 +68,12 @@ public class MetadataCache implements QuietCloseable {
     private MemoryCMR metaMem = Vm.getCMRInstance();
     private TxReader txReader;
     private long version;
+    // Row-expiry gate: avoids the per-table-reference policy lookup (read filter) and the cleanup
+    // table scan when no table carries an EXPIRE ROWS policy. anyExpiryPolicySeen is monotonic (set
+    // when a policied table is cached, never reset); fullyHydrated stays false until startup hydration
+    // completes, so the gate is conservatively open during the fill window (see mayHaveExpiryPolicy).
+    private volatile boolean anyExpiryPolicySeen = false;
+    private volatile boolean fullyHydrated = false;
 
     public MetadataCache(CairoEngine engine) {
         this.engine = engine;
@@ -103,12 +109,25 @@ public class MetadataCache implements QuietCloseable {
             try (MetadataCacheReader metadataRO = readLock()) {
                 LOG.info().$("metadata hydration completed [tables=").$(metadataRO.getTableCount()).I$();
             }
+            // From here the cache reflects every existing table, so the row-expiry gate can trust
+            // anyExpiryPolicySeen rather than staying conservatively open.
+            fullyHydrated = true;
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$safe(e.getFlyweightMessage()).$();
         } finally {
             Path.clearThreadLocals();
         }
+    }
+
+    /**
+     * Whether any table may carry an EXPIRE ROWS policy. Returns true while the cache is still
+     * hydrating at startup (so the read filter is never skipped before a policy becomes visible), and
+     * thereafter true only once a policied table has been cached. Lets the read filter and the cleanup
+     * discovery skip their per-table work on databases that never use EXPIRE ROWS.
+     */
+    public boolean mayHaveExpiryPolicy() {
+        return !fullyHydrated || anyExpiryPolicySeen;
     }
 
     /**
@@ -211,10 +230,11 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
-            table.setExpiry(
-                    TableUtils.getExpiryPredicate(metaMem, columnCount),
-                    TableUtils.getExpiryCleanupIntervalMicros(metaMem, columnCount)
-            );
+            final String expiryPredicate = TableUtils.getExpiryPredicate(metaMem, columnCount);
+            table.setExpiry(expiryPredicate, TableUtils.getExpiryCleanupIntervalMicros(metaMem, columnCount));
+            if (expiryPredicate != null && !expiryPredicate.isEmpty()) {
+                anyExpiryPolicySeen = true;
+            }
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
@@ -686,7 +706,11 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
-            table.setExpiry(tableMetadata.getExpiryPredicate(), tableMetadata.getExpiryCleanupIntervalMicros());
+            final String expiryPredicate = tableMetadata.getExpiryPredicate();
+            table.setExpiry(expiryPredicate, tableMetadata.getExpiryCleanupIntervalMicros());
+            if (expiryPredicate != null && !expiryPredicate.isEmpty()) {
+                anyExpiryPolicySeen = true;
+            }
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 

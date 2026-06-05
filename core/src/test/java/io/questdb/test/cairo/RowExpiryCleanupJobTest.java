@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableReader;
@@ -33,9 +34,11 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Drives {@link RowExpiryCleanupJob} deterministically (pinned {@code now()} via
@@ -81,7 +84,7 @@ public class RowExpiryCleanupJobTest extends AbstractCairoTest {
 
     @Test
     public void testJobDropsFullyExpiredPartitions() throws Exception {
-        // Fast path: bare "ts < now()" => classification straight from partition min/max, no SQL count.
+        // Older day-partitions are entirely older than now() => zero survivors => DROP the whole day.
         assertMemoryLeak(() -> {
             setCurrentMicros(NOW_MICROS);
             execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
@@ -230,6 +233,104 @@ public class RowExpiryCleanupJobTest extends AbstractCairoTest {
             // Non-policied table untouched.
             assertEquals(2, rawRowCount("np"));
         });
+    }
+
+    @Test
+    public void testJobParquetPartition() throws Exception {
+        // Finding D regression: a parquet (non-native) partition must not crash cleanup. The job reads
+        // partition totals from the tx file (not raw column memory), so parquet partitions are classified
+        // and reclaimed via the SQL survivor path. The old code read the timestamp column directly, which
+        // is null for parquet => NPE that aborted the whole table's cleanup.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // 2024-01-05: all v<2 -> DROP
+            execute("insert into t values ('BBB', 1.5, '2024-01-05T06:00:00.000000Z')");
+            execute("insert into t values ('CCC', 5.0, '2024-01-06T00:00:00.000000Z')"); // 2024-01-06: all v>=2 -> SKIP
+            execute("insert into t values ('DDD', 6.0, '2024-01-06T06:00:00.000000Z')");
+            execute("insert into t values ('EEE', 7.0, '2024-01-10T06:00:00.000000Z')"); // active partition
+            drainWalQueue();
+
+            // Convert the non-active days to parquet (the active partition is never converted).
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-10T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertEquals(5, rawRowCount("t"));
+
+            runCleanup();
+            drainWalQueue();
+
+            // No NPE: 2024-01-05 (all expired) dropped; 2024-01-06 (all kept) untouched; active intact.
+            assertEquals(3, rawRowCount("t"));
+            assertEquals(0, rawRowCountWhere("t", "2024-01-05"));
+            assertEquals(2, rawRowCountWhere("t", "2024-01-06"));
+            assertEquals(1, rawRowCountWhere("t", "2024-01-10"));
+        });
+    }
+
+    @Test
+    public void testJobSplitPartition() throws Exception {
+        // Bug A/C regression: an O3 split divides one logical day into several physical partitions. The
+        // job must act on the whole LOGICAL day — never DROP one split while a sibling split has keepers,
+        // and never build an IN literal from a split's directory name (not parseable). Processing per
+        // logical day fixes both; the old per-physical-split code threw every cycle and left a latent
+        // sibling-wipe DROP. Forward regression guard for the per-logical-day rework.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+        // Keep the split on 2024-01-08 after it stops being the last partition (otherwise mid-partition
+        // splits are squashed back into a single physical partition once a newer day arrives).
+        setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 2);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            // 2024-01-08: dense keeper clusters (v=5) at 00:00 and 01:00 (1000 rows total), in order.
+            execute("insert into t select 5.0, '2024-01-08T00:00:00.000000Z'::timestamp from long_sequence(800)");
+            execute("insert into t select 5.0, '2024-01-08T01:00:00.000000Z'::timestamp from long_sequence(200)");
+            drainWalQueue();
+            // O3-insert 5 expired rows (v=1) at 00:30 (between the clusters) so the day splits at 00:30.
+            execute("insert into t select 1.0, '2024-01-08T00:30:00.000000Z'::timestamp from long_sequence(5)");
+            drainWalQueue();
+            // Newer day makes 2024-01-08 (and its splits) non-active.
+            execute("insert into t values (5.0, '2024-01-10T06:00:00.000000Z')");
+            drainWalQueue();
+
+            assertTrue("expected 2024-01-08 to be split into multiple physical partitions",
+                    physicalPartitionsForDay("t", "2024-01-08") > 1);
+            assertEquals(1006, rawRowCount("t")); // 1000 keepers + 5 expired + 1 active
+
+            runCleanup();
+            drainWalQueue();
+
+            // The 5 expired rows are gone; all 1000 keepers in 2024-01-08 survive (no loss, no
+            // duplication); the day is NOT dropped (it has keepers); the active day is untouched.
+            assertEquals(1001, rawRowCount("t"));
+            assertEquals(1000, rawRowCountWhere("t", "2024-01-08"));
+            assertEquals(1, rawRowCountWhere("t", "2024-01-10"));
+            assertEquals(0, rawCountVBelow("t", 2.0));
+        });
+    }
+
+    private static int physicalPartitionsForDay(String tableName, String dayPrefix) {
+        final TableToken token = engine.verifyTableName(tableName);
+        final StringSink sink = new StringSink();
+        int count = 0;
+        try (TableReader reader = engine.getReader(token)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                sink.clear();
+                PartitionBy.setSinkForPartition(
+                        sink,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        reader.getPartitionTimestampByIndex(i)
+                );
+                if (sink.toString().startsWith(dayPrefix)) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     private static int partitionCount(String tableName) {

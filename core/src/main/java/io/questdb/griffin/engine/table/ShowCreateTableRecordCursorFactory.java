@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -93,8 +94,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             return;
         }
         sink.putAscii(" EXPIRE ROWS WHEN ").put(predicate);
-        // The default cleanup cadence is 1h; only print CLEANUP EVERY when it differs.
-        if (cleanupIntervalMicros > 0 && cleanupIntervalMicros != 3_600_000_000L) {
+        // Only print CLEANUP EVERY when it differs from the (shared) default cadence.
+        if (cleanupIntervalMicros > 0 && cleanupIntervalMicros != RowExpiryUtil.DEFAULT_CLEANUP_INTERVAL_MICROS) {
             sink.putAscii(" CLEANUP EVERY ");
             appendDurationStride(cleanupIntervalMicros, sink);
         }

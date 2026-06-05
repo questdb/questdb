@@ -28,15 +28,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
@@ -159,10 +160,6 @@ public class SqlParser {
     private boolean createTableMode = false;
     private boolean createViewMode = false;
     private int digit;
-    // Master switch for the read-time row-expiry filter (approach A). When false, table
-    // references with an EXPIRE ROWS policy are NOT rewritten. Reserved as the future bypass
-    // for the cleanup/refresh job; no callers are wired yet.
-    private boolean expiryFilterEnabled = true;
     // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
     // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
     private final LowerCaseCharSequenceHashSet expiringTablesBeingExpanded = new LowerCaseCharSequenceHashSet();
@@ -385,19 +382,24 @@ public class SqlParser {
     }
 
     private static long strideToMicros(int multiple, char unit, int position) throws SqlException {
-        switch (unit) {
-            case 's':
-                return multiple * 1_000_000L;
-            case 'm':
-                return multiple * 60_000_000L;
-            case 'h':
-                return multiple * 3_600_000_000L;
-            case 'd':
-                return multiple * 86_400_000_000L;
-            case 'w':
-                return multiple * 604_800_000_000L;
-            default:
-                throw SqlException.$(position, "unsupported cleanup interval unit, expected s/m/h/d/w");
+        final long unitMicros = switch (unit) {
+            case 's' -> 1_000_000L;
+            case 'm' -> 60_000_000L;
+            case 'h' -> 3_600_000_000L;
+            case 'd' -> 86_400_000_000L;
+            case 'w' -> 604_800_000_000L;
+            default -> throw SqlException.$(position, "unsupported cleanup interval unit, expected s/m/h/d/w");
+        };
+        try {
+            // int * long can overflow for absurd values (e.g. 999999999w); fail cleanly instead of
+            // persisting a garbage (possibly negative) cleanup cadence.
+            final long micros = Math.multiplyExact((long) multiple, unitMicros);
+            if (micros <= 0) {
+                throw SqlException.$(position, "cleanup interval must be positive");
+            }
+            return micros;
+        } catch (ArithmeticException e) {
+            throw SqlException.$(position, "cleanup interval is too large");
         }
     }
 
@@ -479,7 +481,7 @@ public class SqlParser {
             // Fetch the next clause keyword (WITH / IN / DEDUP / ';' / EOF) for the caller.
             tok = optTok(lexer);
         } else {
-            cleanupIntervalMicros = 3_600_000_000L;
+            cleanupIntervalMicros = RowExpiryUtil.DEFAULT_CLEANUP_INTERVAL_MICROS;
             // tok already holds the boundary token (WITH / IN / DEDUP / ';' / null) — hand it back as-is.
         }
         return new ExpireRowsClause(predicateSql, predicateStart, cleanupIntervalMicros, tok);
@@ -733,19 +735,94 @@ public class SqlParser {
             int position,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final String filterSql = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
         // Quote the table name so names that need quoting (or look like keywords) parse correctly.
-        final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE " + filterSql;
+        // Wrap the predicate verbatim in NOT(...) and let the SQL parser turn it into a proper
+        // expression AST — a read must see the rows that have NOT expired. Negating structurally
+        // (rather than string-munging the predicate text) handles every shape correctly: compound
+        // AND/OR, function calls, IN/BETWEEN, etc.
+        final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE not (" + predicate + ")";
 
         final GenericLexer subLexer = viewLexers.next();
         subLexer.of(syntheticSql);
 
         final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, model.getDecls(), true);
+        subQuery.setWhereClause(simplifyKeepFilter(subQuery.getWhereClause()));
         model.setNestedModel(subQuery);
         model.setNestedModelIsSubQuery(true);
         if (model.getAlias() == null) {
             model.setAlias(literal(tableName, position));
         }
+    }
+
+    /**
+     * Returns the inverse of an ordering-comparison operator ({@code <}->{@code >=}, {@code <=}->{@code >},
+     * {@code >}->{@code <=}, {@code >=}->{@code <}), so {@code NOT(a <op> b)} can be rewritten as the bare
+     * {@code a <inverse> b} that {@link WhereClauseParser} can prune partitions on. Returns null for any
+     * other operator (the caller then keeps the {@code NOT(...)} wrap, which is always correct).
+     */
+    private static CharSequence invertOrderingOperator(CharSequence op) {
+        if (Chars.equals(op, '<')) {
+            return ">=";
+        }
+        if (Chars.equals(op, "<=")) {
+            return ">";
+        }
+        if (Chars.equals(op, '>')) {
+            return "<=";
+        }
+        if (Chars.equals(op, ">=")) {
+            return "<";
+        }
+        return null;
+    }
+
+    /**
+     * Rewrites a {@code NOT(<ordering comparison>)} keep-filter into the equivalent flipped comparison
+     * (e.g. {@code NOT(ts < now())} -> {@code ts >= now()}) so {@link WhereClauseParser} can extract a
+     * timestamp interval and prune partitions — it interval-extracts a bare comparison (and NOT(IN) /
+     * NOT(BETWEEN)) but not NOT(<). Compound and other shapes are returned unchanged (still NOT(...)).
+     */
+    private static ExpressionNode simplifyKeepFilter(ExpressionNode keepFilter) {
+        if (keepFilter != null && keepFilter.paramCount == 1 && keepFilter.rhs != null
+                && Chars.equalsIgnoreCase(keepFilter.token, "not")) {
+            final ExpressionNode inner = keepFilter.rhs;
+            final CharSequence inverted = invertOrderingOperator(inner.token);
+            if (inverted != null && inner.type == ExpressionNode.OPERATION && inner.paramCount == 2) {
+                inner.token = inverted;
+                return inner;
+            }
+        }
+        return keepFilter;
+    }
+
+    /**
+     * ANDs an EXPIRE ROWS keep-filter into an existing WHERE clause (used for UPDATE, whose target
+     * cannot be wrapped in a sub-query the way a SELECT reference can — it needs row ids). Returns the
+     * keep-filter alone when there is no existing WHERE.
+     */
+    private ExpressionNode andKeepFilter(ExpressionNode existingWhere, ExpressionNode keepFilter) {
+        if (existingWhere == null) {
+            return keepFilter;
+        }
+        final ExpressionNode and = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, existingWhere.position);
+        and.paramCount = 2;
+        and.lhs = existingWhere;
+        and.rhs = keepFilter;
+        return and;
+    }
+
+    /**
+     * Parses {@code predicate} into the keep-filter node (the rows that have NOT expired), for ANDing
+     * into an UPDATE's WHERE. Same negation as {@link #expandExpiringTable}, but returns the node.
+     */
+    private ExpressionNode parseKeepFilterNode(
+            String predicate,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        final GenericLexer keepLexer = viewLexers.next();
+        keepLexer.of("not (" + predicate + ")");
+        return simplifyKeepFilter(expr(keepLexer, (IQueryModel) null, sqlParserCallback, decls));
     }
 
     /**
@@ -761,14 +838,21 @@ public class SqlParser {
         }
         try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
             final CairoTable table = metadataRO.getTable(tableToken);
-            if (table == null) {
-                return null;
+            if (table != null) {
+                final String predicate = table.getExpiryPredicate();
+                return predicate == null || predicate.isEmpty() ? null : predicate;
             }
-            final String predicate = table.getExpiryPredicate();
-            if (predicate == null || predicate.isEmpty()) {
-                return null;
-            }
-            return predicate;
+        }
+        // Cache miss for a resolvable table: the in-memory cache may not be hydrated yet (the brief
+        // startup window before MetadataCache.onStartupAsyncHydrator finishes). Fall back to the
+        // authoritative table metadata so the read filter is never silently skipped — that would
+        // otherwise expose expired rows until hydration caught up.
+        try (TableMetadata metadata = cairoEngine.getTableMetadata(tableToken)) {
+            final String predicate = metadata.getExpiryPredicate();
+            return predicate == null || predicate.isEmpty() ? null : predicate;
+        } catch (CairoException e) {
+            // Table concurrently dropped/renamed, or its metadata is briefly unavailable: treat as no policy.
+            return null;
         }
     }
 
@@ -2857,6 +2941,22 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok);
             }
 
+            // Row-expiry read filter on the UPDATE target: an UPDATE must not touch logically-expired
+            // rows, so AND the keep-filter into the WHERE. (Unlike a SELECT reference, an UPDATE target
+            // cannot be wrapped in a sub-query — it needs row ids — so we extend the WHERE instead.)
+            final ExpressionNode updateTarget = nestedModel.getTableNameExpr();
+            if (updateTarget != null && updateTarget.type == ExpressionNode.LITERAL
+                    && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()) {
+                final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(updateTarget.token));
+                final String predicate;
+                if (tt != null && !tt.isView() && (predicate = lookupExpiryPredicate(tt)) != null) {
+                    nestedModel.setWhereClause(andKeepFilter(
+                            nestedModel.getWhereClause(),
+                            parseKeepFilterNode(predicate, sqlParserCallback, decls)
+                    ));
+                }
+            }
+
             updateQueryModel.setNestedModel(fromModel);
         }
         return updateQueryModel;
@@ -4511,9 +4611,9 @@ public class SqlParser {
         // nested model above (tableNameExpr stays null), so it is naturally skipped.
         final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
         if (
-                expiryFilterEnabled
-                        && resolvedTableNameExpr != null
+                resolvedTableNameExpr != null
                         && resolvedTableNameExpr.type == ExpressionNode.LITERAL
+                        && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()
         ) {
             // Normalise to the unquoted name so the recursion guard matches regardless of quoting:
             // the outer reference may be "from t" while the synthetic inner is "from \"t\"".
@@ -5502,14 +5602,6 @@ public class SqlParser {
         }
     }
 
-    /**
-     * Master switch for the read-time row-expiry filter (approach A). When {@code false}, table
-     * references carrying an EXPIRE ROWS policy are left untouched. Reserved as the future bypass
-     * for the cleanup/refresh job.
-     */
-    public void setExpiryFilterEnabled(boolean expiryFilterEnabled) {
-        this.expiryFilterEnabled = expiryFilterEnabled;
-    }
 
     void clear() {
         queryModelPool.clear();

@@ -74,6 +74,32 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTtlAndExpiryCoexist() throws Exception {
+        // TTL (an older minor-version _meta scalar) and the new trailing expiry section must both
+        // round-trip. Guards the version-bump interaction: a broken offset walk or a mis-gated TTL read
+        // (e.g. the LATEST bump zeroing TTL) — or the ALTER rewrite dropping TTL when adding expiry —
+        // would surface here. bypass wal so the ALTERs rewrite _meta synchronously via serializer #2.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, v double, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("alter table t set ttl 7 days");
+            execute("alter table t set expire rows when v < 2.0 cleanup every 30m");
+
+            final TableToken token = engine.verifyTableName("t");
+
+            engine.releaseInactive();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+                assertEquals(7 * 24, metadata.getTtlHoursOrMonths()); // 7 days = 168 hours
+            }
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertEquals("v < 2.0", writer.getExpiryPredicate());
+                assertEquals(7 * 24, writer.getTtlHoursOrMonths());
+            }
+        });
+    }
+
+    @Test
     public void testExpirySurvivesAlter() throws Exception {
         assertMemoryLeak(() -> {
             // Non-WAL table so that ALTER goes straight through TableWriter and rewrites _meta

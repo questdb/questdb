@@ -25,48 +25,33 @@
 package io.questdb.cairo;
 
 /**
- * Shared helpers for the row-expiry feature. The stored expiry predicate describes WHEN a row
- * expires; both the read-time filter (in {@code SqlParser}) and the background cleanup job
- * ({@link RowExpiryCleanupJob}) need the logical negation of it (the "keep" filter), so the helper
- * lives here to keep the two in lockstep.
+ * Shared helper for the row-expiry feature's background cleanup job ({@link RowExpiryCleanupJob}).
+ * The stored expiry predicate describes WHEN a row expires; the cleanup job needs the logical
+ * negation of it (the "keep" filter) to select the surviving rows.
+ * <p>
+ * The read-time filter does NOT use this helper: it negates the predicate on the parsed expression
+ * tree (see {@code SqlParser.expandExpiringTable}) so the optimiser can prune partitions. The
+ * cleanup job's survivor query is already restricted to a single partition, so it has no such need,
+ * and a plain {@code NOT(...)} wrap — correct for every predicate shape — is sufficient here.
  */
 public final class RowExpiryUtil {
+
+    /**
+     * Default {@code CLEANUP EVERY} cadence (1 hour) used when the clause is omitted. Shared so the
+     * parser default and the SHOW CREATE "omit when default" check (and any divisor) cannot drift.
+     */
+    public static final long DEFAULT_CLEANUP_INTERVAL_MICROS = 3_600_000_000L;
 
     private RowExpiryUtil() {
     }
 
     /**
-     * Builds the keep-rows filter for a row-expiry predicate. The stored predicate describes WHEN
-     * a row expires, so the kept rows are the negation of it. For the common timestamp-vs-now()
-     * shapes ({@code col < now()}, {@code col <= now()}, {@code now() > col}, {@code now() >= col})
-     * we emit the equivalent {@code col >= now()} / {@code col > now()} form so the planner can use
-     * an interval/timestamp scan; otherwise we fall back to a generic {@code NOT (...)} wrap.
-     * <p>
-     * Ported verbatim from the expiring-view draft (193dddfd0c) buildTimestampCompareFilter.
+     * Builds the keep-rows filter (the rows that have NOT expired) for the cleanup job: the negation
+     * of the stored expiry predicate. Always {@code NOT (<predicate>)} — correct for any predicate,
+     * including compound ones. The predicate is wrapped in parentheses so its internal operator
+     * precedence cannot leak past the NOT.
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
-        final String trimmed = predicate.trim();
-        final String lower = trimmed.toLowerCase();
-
-        if (lower.endsWith("< now()") || lower.endsWith("<now()")) {
-            final String col = trimmed.substring(0, trimmed.lastIndexOf('<')).trim();
-            return col + " >= now()";
-        }
-        if (lower.endsWith("<= now()") || lower.endsWith("<=now()")) {
-            final String col = trimmed.substring(0, trimmed.lastIndexOf('<')).trim();
-            return col + " > now()";
-        }
-        if (lower.startsWith("now() >")) {
-            String rest = trimmed.substring(7).trim();
-            if (rest.startsWith("=")) {
-                // now() >= col means col <= now() is expired, so keep NOT(col <= now()) = col > now()
-                rest = rest.substring(1).trim();
-                return rest + " > now()";
-            }
-            // now() > col means col < now() is expired, so keep col >= now()
-            return rest + " >= now()";
-        }
-        // Fallback to generic negation
-        return "NOT (" + trimmed + ")";
+        return "NOT (" + predicate.trim() + ")";
     }
 }

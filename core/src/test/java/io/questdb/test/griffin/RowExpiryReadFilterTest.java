@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -197,7 +198,7 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
 
     @Test
     public void testBareNowPredicateUsesOptimizedFilter() throws Exception {
-        // Exercises buildRowExpiryKeepFilter's optimized "col < now()" -> "col >= now()" branch.
+        // Exercises SqlParser's optimized NOT(col < now()) -> col >= now() flip (so the planner prunes).
         assertMemoryLeak(() -> {
             setCurrentMicros(NOW_MICROS); // cutoff is exactly now() = 2024-01-10T00:00:00Z
             execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
@@ -238,6 +239,171 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
                     "select * from t order by ts"
             );
             assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testCompoundPredicateEndingInNow() throws Exception {
+        // Regression: a compound predicate that happens to END in "< now()" must NOT be mis-parsed as a
+        // bare "<col> < now()". NOT(v < 2.0 AND ts < now()) keeps any row that is not BOTH cheap AND old.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS); // now() = 2024-01-10T00:00:00Z
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0 AND ts < now()");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // cheap + old    -> expired
+            execute("insert into t values ('BBB', 1.0, '2024-01-11T00:00:00.000000Z')"); // cheap + future -> live
+            execute("insert into t values ('CCC', 5.0, '2024-01-05T00:00:00.000000Z')"); // dear + old     -> live
+            execute("insert into t values ('DDD', 5.0, '2024-01-11T00:00:00.000000Z')"); // dear + future  -> live
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "CCC\t5.0\t2024-01-05T00:00:00.000000Z\n" +
+                            "BBB\t1.0\t2024-01-11T00:00:00.000000Z\n" +
+                            "DDD\t5.0\t2024-01-11T00:00:00.000000Z\n",
+                    "select * from t order by ts, sym"
+            );
+            assertSql("count\n3\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testNullPredicateColumnRows() throws Exception {
+        // A row whose predicate column is NULL: NOT(NULL < 2.0) is NULL under SQL three-valued logic, so
+        // the row is treated as expired (hidden) — matching a plain "WHERE NOT(v < 2.0)" and consistent
+        // with the cleanup job. Documents and locks in that NULL behavior.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");  // v<2 -> expired
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')");  // v>=2 -> live
+            execute("insert into t values ('CCC', null, '2024-01-07T00:00:00.000000Z')"); // v NULL -> hidden
+            drainWalQueue();
+
+            assertSql("sym\tv\n" + "BBB\t5.0\n", "select sym, v from t order by sym");
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectFromPoliciedReadsLiveOnly() throws Exception {
+        // Reading a policied table as the SOURCE of INSERT...SELECT copies only live rows (the read
+        // filter applies to the SELECT source); the unrelated destination table is unaffected.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table src (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into src values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into src values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            execute("create table dst (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            execute("insert into dst select * from src");
+            drainWalQueue();
+
+            assertSql("sym\tv\n" + "BBB\t2.0\n", "select sym, v from dst order by sym");
+        });
+    }
+
+    @Test
+    public void testReadFilterFallsBackToMetadataOnCacheMiss() throws Exception {
+        // Startup-hydration race regression: when the metadata cache has no entry for a (resolvable)
+        // policied table — as during the brief async metadata hydration at startup — the read filter must
+        // still apply, by falling back to the authoritative table metadata. Simulated by clearing the
+        // cache; without the fallback the filter is silently skipped and expired rows leak.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            // Evict cached metadata so the next lookup misses, mimicking the pre-hydration window.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "BBB\t2.0\t2024-01-09T12:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            assertSql("count\n1\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testUpdateDoesNotTouchExpiredRows() throws Exception {
+        // The read filter must also apply to UPDATE: a logically-expired row must not be updated. Verified
+        // by dropping the policy afterwards (revealing all rows) and checking the expired row is unchanged.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            execute("update t set v = 9.0");
+            drainWalQueue();
+
+            assertSql("sym\tv\n" + "BBB\t9.0\n", "select sym, v from t order by sym");
+
+            // Reveal all rows: the expired AAA row must be UNCHANGED (the UPDATE skipped it).
+            execute("alter table t drop expire");
+            drainWalQueue();
+            assertSql(
+                    "sym\tv\n" +
+                            "AAA\t1.0\n" +
+                            "BBB\t9.0\n",
+                    "select sym, v from t order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateWithWhereOnPolicied() throws Exception {
+        // The user WHERE is ANDed with the keep-filter: only live rows matching the WHERE are updated.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live
+            execute("insert into t values ('CCC', 3.0, '2024-01-09T18:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            execute("update t set v = 9.0 where sym = 'BBB'");
+            drainWalQueue();
+            assertSql(
+                    "sym\tv\n" +
+                            "BBB\t9.0\n" +
+                            "CCC\t3.0\n",
+                    "select sym, v from t order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testCompoundOrPredicate() throws Exception {
+        // NOT(v < 2.0 OR ts < now()) == v >= 2.0 AND ts >= now(): only the dear AND future row survives.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0 OR ts < now()");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // cheap & old   -> expired
+            execute("insert into t values ('BBB', 1.0, '2024-01-11T00:00:00.000000Z')"); // cheap         -> expired
+            execute("insert into t values ('CCC', 5.0, '2024-01-05T00:00:00.000000Z')"); // old           -> expired
+            execute("insert into t values ('DDD', 5.0, '2024-01-11T00:00:00.000000Z')"); // dear & future -> live
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "DDD\t5.0\t2024-01-11T00:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            assertSql("count\n1\n", "select count() from t");
         });
     }
 }

@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
@@ -43,6 +42,7 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -56,7 +56,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * Primary-only background job that reclaims storage for tables and materialized views carrying an
  * {@code EXPIRE ROWS} policy. The read-time filter (see {@code SqlParser}) already hides expired rows
  * from every query, so this job is <b>best-effort</b>: correctness never depends on it, it only frees
- * disk space. For each policied object it scans non-active partitions and either:
+ * disk space. For each policied object it processes non-active <b>logical</b> partitions and either:
  * <ul>
  *     <li>drops partitions whose rows are all expired ({@code ALTER TABLE ... DROP PARTITION LIST}), or</li>
  *     <li>compacts partially expired partitions by atomically replacing the partition's timestamp range
@@ -66,21 +66,29 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * The REPLACE_RANGE commit writes a new partition version and switches atomically on commit, so a crash
  * mid-cleanup cannot lose surviving rows (the original partition stays intact until the single commit).
  * <p>
- * <b>Active-partition protection (mirrors TTL):</b> the newest (active) partition is never dropped or
- * replaced. TTL guards with a {@code getPartitionCount() < 2} style check; we replicate that intent by
- * processing only partition indices {@code [0, partitionCount - 1)}. Expired rows in the active
- * partition stay hidden by the read filter and are reclaimed once that partition ages out of the active
- * slot. Skipping it avoids fighting concurrent writers and avoids REPLACE_RANGE on the hot partition.
+ * <b>Logical (not physical) partitions:</b> O3 can split one logical day into several physical
+ * partitions. {@code DROP PARTITION} and the {@code ts IN '<day>'} interval both operate on the whole
+ * logical day, so this job collapses physical splits into their logical partition and acts per logical
+ * day. Acting per physical split would let a DROP of one split wipe a sibling split's surviving rows,
+ * and a split's directory name is not even a valid interval literal. Survivor totals come from the tx
+ * file ({@code getPartitionSize}, no column mapping), so parquet partitions are handled too without
+ * reading raw column memory.
+ * <p>
+ * <b>Active-partition protection (mirrors TTL):</b> the newest (active) logical partition is never
+ * dropped or replaced — including any earlier physical split that shares its logical day. Expired rows
+ * there stay hidden by the read filter and are reclaimed once that day ages out of the active slot.
  * <p>
  * <b>Read-filter interaction:</b> the survivor/count SQL references the policied table by name, so the
  * read filter ALSO wraps it. This is idempotent with the explicit keep-filter
- * ({@code NOT(pred) AND NOT(pred)} = {@code NOT(pred)}), so results stay correct; we rely on that
- * idempotency rather than disabling the read filter.
+ * ({@code NOT(pred) AND NOT(pred)} == {@code NOT(pred)}), so results stay correct.
  * <p>
- * Note on concurrency: cleanup decisions are taken from a reader snapshot, so a row written into an
- * already-expired range between the scan and the commit may be removed. For the common designated-timestamp
- * case this is correct by definition (such a row is itself expired); CUSTOM predicates accept this small
- * window (and the read filter would have hidden such a row anyway).
+ * <b>Best-effort window (concurrency):</b> survivors are read just before the REPLACE_RANGE commit, on a
+ * separate handle from any concurrent writer. For a designated-timestamp predicate this is safe — a row
+ * back-filled into the replaced (past) range is itself expired, so removing it is correct. For a CUSTOM
+ * predicate, a NON-expired row back-filled into a logical partition between the survivor read and the
+ * commit CAN be removed (the read filter does not hide such a row). This is the accepted best-effort
+ * window: the job only reclaims space, and the hiding of genuinely-expired rows (the correctness
+ * guarantee) is unaffected.
  */
 public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private static final int ACTION_DROP = 1;
@@ -100,9 +108,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final LongList dropFloors = new LongList();
     private final CairoEngine engine;
     private final CharSequenceLongHashMap lastRunByTable = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
+    // Per-cleanup snapshot of one object's non-active LOGICAL partitions.
     private final LongList partitionFloors = new LongList();
-    private final LongList partitionMaxTs = new LongList();
-    private final LongList partitionMinTs = new LongList();
     private final LongList partitionNextFloors = new LongList();
     private final LongList partitionRowCounts = new LongList();
     private final StringSink partitionSink = new StringSink();
@@ -128,6 +135,109 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         sqlExecutionContext = Misc.free(sqlExecutionContext);
     }
 
+    /**
+     * Physically reclaims expired rows from a single policied object, in place (no copy, no populate).
+     * Snapshots non-active LOGICAL partition totals from a reader, classifies each as DROP/REPLACE/SKIP
+     * via the keep-filter, then compacts via REPLACE_RANGE and batch-drops fully expired partitions.
+     */
+    public boolean cleanupTable(TableToken tableToken, String predicate, long cleanupIntervalMicros) {
+        final String tableName = tableToken.getTableName();
+        final String keepFilter = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
+
+        partitionFloors.clear();
+        partitionNextFloors.clear();
+        partitionRowCounts.clear();
+
+        final int partitionBy;
+        final int timestampType;
+        final String timestampColumnName;
+
+        // Snapshot non-active LOGICAL partitions. Totals come from the tx file (no column mapping, so
+        // parquet partitions are fine), and physical O3 splits of the same logical day are collapsed
+        // into one entry so DROP/REPLACE act on the whole day (see class javadoc). The newest (active)
+        // logical partition — and any earlier split that shares its logical day — is never touched.
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int timestampIndex = metadata.getTimestampIndex();
+            if (timestampIndex < 0) {
+                return false; // non-timestamp table; nothing to expire (should not happen for a WAL table)
+            }
+            partitionBy = reader.getPartitionedBy();
+            timestampType = metadata.getTimestampType();
+            timestampColumnName = metadata.getColumnName(timestampIndex);
+
+            final int partitionCount = reader.getPartitionCount();
+            // Active-partition protection: with < 2 partitions there is only the active partition.
+            if (partitionCount < 2) {
+                return false;
+            }
+            final TxReader txReader = reader.getTxFile();
+            final long activeLogicalFloor = txReader.getLogicalPartitionTimestamp(
+                    reader.getPartitionTimestampByIndex(partitionCount - 1));
+            long prevLogicalFloor = Numbers.LONG_NULL;
+            for (int i = 0, n = partitionCount - 1; i < n; i++) {
+                final long logicalFloor = txReader.getLogicalPartitionTimestamp(reader.getPartitionTimestampByIndex(i));
+                if (logicalFloor == activeLogicalFloor) {
+                    continue; // an earlier split of the active logical day; leave the whole active day alone
+                }
+                final long size = txReader.getPartitionSize(i);
+                if (size <= 0) {
+                    continue;
+                }
+                if (logicalFloor != prevLogicalFloor) {
+                    prevLogicalFloor = logicalFloor;
+                    partitionFloors.add(logicalFloor);
+                    partitionNextFloors.add(txReader.getNextLogicalPartitionTimestamp(logicalFloor));
+                    partitionRowCounts.add(size);
+                } else {
+                    // another physical split of the current logical partition: accumulate its rows
+                    final int last = partitionRowCounts.size() - 1;
+                    partitionRowCounts.setQuick(last, partitionRowCounts.getQuick(last) + size);
+                }
+            }
+        }
+
+        boolean workDone = false;
+        // Decide and act (reader closed). REPLACE_RANGE first (needs a WAL writer), then batch-drop.
+        dropFloors.clear();
+        WalWriter walWriter = null;
+        RecordToRowCopier copier = null;
+        try {
+            for (int i = 0, n = partitionFloors.size(); i < n; i++) {
+                final long floorTs = partitionFloors.getQuick(i);
+                final long nextFloorTs = partitionNextFloors.getQuick(i);
+                final long rowCount = partitionRowCounts.getQuick(i);
+                try {
+                    final int action = classifyPartition(tableName, keepFilter, timestampColumnName,
+                            timestampType, partitionBy, floorTs, rowCount);
+                    if (action == ACTION_DROP) {
+                        dropFloors.add(floorTs);
+                        workDone = true;
+                    } else if (action == ACTION_REPLACE) {
+                        if (walWriter == null) {
+                            walWriter = engine.getWalWriter(tableToken);
+                        }
+                        copier = replacePartition(tableName, keepFilter, timestampColumnName,
+                                timestampType, partitionBy, floorTs, nextFloorTs, walWriter, copier);
+                        workDone = true;
+                    }
+                } catch (Throwable th) {
+                    LOG.error().$("row-expiry partition cleanup failed [table=").$(tableName)
+                            .$(", partitionTs=").$(floorTs)
+                            .$(", msg=").$(th.getMessage())
+                            .I$();
+                }
+            }
+        } finally {
+            walWriter = Misc.free(walWriter);
+        }
+
+        if (dropFloors.size() > 0) {
+            workDone |= dropPartitions(tableName, timestampType, partitionBy, dropFloors);
+        }
+        return workDone;
+    }
+
     @Override
     protected boolean runSerially() {
         final long nowMicros = clock.getTicks();
@@ -137,6 +247,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             return false;
         }
         lastGlobalCheckMicros = nowMicros;
+
+        // Skip the whole-database scan when no table carries an EXPIRE ROWS policy (and the metadata
+        // cache has finished hydrating, so that signal is trustworthy).
+        if (!engine.getMetadataCache().mayHaveExpiryPolicy()) {
+            if (lastRunByTable.size() > 0) {
+                lastRunByTable.clear();
+            }
+            return false;
+        }
 
         // Discover policied objects via the metadata cache. Snapshot (token, predicate, interval) under
         // the read lock, then RELEASE the lock before doing ANY cleanup — cleanup borrows readers/writers
@@ -207,129 +326,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         return workDone;
     }
 
-    /**
-     * Physically reclaims expired rows from a single policied object, in place (no copy, no populate).
-     * Snapshots non-active partition stats from a reader, classifies each as DROP/REPLACE/SKIP, then
-     * compacts via REPLACE_RANGE and batch-drops fully expired partitions.
-     */
-    public boolean cleanupTable(TableToken tableToken, String predicate, long cleanupIntervalMicros) {
-        final String tableName = tableToken.getTableName();
-        final String keepFilter = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
-
-        partitionFloors.clear();
-        partitionNextFloors.clear();
-        partitionMinTs.clear();
-        partitionMaxTs.clear();
-        partitionRowCounts.clear();
-
-        final int partitionBy;
-        final int timestampType;
-        final long nowInTableUnits;
-        final String timestampColumnName;
-        final boolean timestampCompare;
-
-        // Snapshot the object's per-partition stats (cheap: per-partition min/max from the sorted
-        // designated timestamp). Only NON-ACTIVE partitions are considered: the newest partition is the
-        // active one and is left untouched (mirrors TTL's getPartitionCount() < 2 guard).
-        try (TableReader reader = engine.getReader(tableToken)) {
-            final TableReaderMetadata metadata = reader.getMetadata();
-            final int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex < 0) {
-                return false; // non-timestamp table; nothing to expire (should not happen for a WAL table)
-            }
-            partitionBy = reader.getPartitionedBy();
-            timestampType = metadata.getTimestampType();
-            timestampColumnName = metadata.getColumnName(timestampIndex);
-            nowInTableUnits = ColumnType.getTimestampDriver(timestampType).fromMicros(clock.getTicks());
-            timestampCompare = isTimestampCompare(predicate, timestampColumnName);
-
-            final int partitionCount = reader.getPartitionCount();
-            // Active-partition protection: never touch the newest partition. With < 2 partitions there is
-            // nothing but the active partition, so there is nothing to reclaim here.
-            if (partitionCount < 2) {
-                return false;
-            }
-            final int lastNonActive = partitionCount - 1; // exclusive upper bound => skips active partition
-            for (int i = 0; i < lastNonActive; i++) {
-                final long rowCount = reader.openPartition(i);
-                if (rowCount <= 0) {
-                    continue;
-                }
-                final int columnBase = reader.getColumnBase(i);
-                final MemoryCR tsColumn = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, timestampIndex));
-                // Designated timestamp is stored sorted ascending, so first/last rows are the partition min/max.
-                partitionMinTs.add(tsColumn.getLong(0));
-                partitionMaxTs.add(tsColumn.getLong((rowCount - 1) * 8L));
-                final long floorTs = reader.getPartitionTimestampByIndex(i);
-                partitionFloors.add(floorTs);
-                partitionNextFloors.add(reader.getTxFile().getNextLogicalPartitionTimestamp(floorTs));
-                partitionRowCounts.add(rowCount);
-            }
-        }
-
-        boolean workDone = false;
-        // Decide and act (reader closed). REPLACE_RANGE first (needs a WAL writer), then batch-drop.
-        dropFloors.clear();
-        WalWriter walWriter = null;
-        RecordToRowCopier copier = null;
-        try {
-            for (int i = 0, n = partitionFloors.size(); i < n; i++) {
-                final long floorTs = partitionFloors.getQuick(i);
-                final long nextFloorTs = partitionNextFloors.getQuick(i);
-                final long minTs = partitionMinTs.getQuick(i);
-                final long maxTs = partitionMaxTs.getQuick(i);
-                final long rowCount = partitionRowCounts.getQuick(i);
-                try {
-                    final int action = classifyPartition(timestampCompare, tableName, keepFilter,
-                            timestampColumnName, timestampType, partitionBy, floorTs, minTs, maxTs, rowCount, nowInTableUnits);
-                    if (action == ACTION_DROP) {
-                        dropFloors.add(floorTs);
-                        workDone = true;
-                    } else if (action == ACTION_REPLACE) {
-                        if (walWriter == null) {
-                            walWriter = engine.getWalWriter(tableToken);
-                        }
-                        copier = replacePartition(tableName, keepFilter, timestampColumnName,
-                                timestampType, partitionBy, floorTs, nextFloorTs, walWriter, copier);
-                        workDone = true;
-                    }
-                } catch (Throwable th) {
-                    LOG.error().$("row-expiry partition cleanup failed [table=").$(tableName)
-                            .$(", partitionTs=").$(floorTs)
-                            .$(", msg=").$(th.getMessage())
-                            .I$();
-                }
-            }
-        } finally {
-            walWriter = Misc.free(walWriter);
-        }
-
-        if (dropFloors.size() > 0) {
-            workDone |= dropPartitions(tableName, timestampType, partitionBy, dropFloors);
-        }
-        return workDone;
-    }
-
     private int classifyPartition(
-            boolean timestampCompare,
             String tableName,
             String keepFilter,
             String timestampColumnName,
             int timestampType,
             int partitionBy,
             long floorTs,
-            long minTs,
-            long maxTs,
-            long rowCount,
-            long nowInTableUnits
+            long rowCount
     ) throws SqlException {
-        if (timestampCompare) {
-            // Fast path: classification straight from the partition's designated-timestamp range, no SQL.
-            if (maxTs < nowInTableUnits) {
-                return ACTION_DROP;
-            }
-            return minTs < nowInTableUnits ? ACTION_REPLACE : ACTION_SKIP;
-        }
         final long survivors = countSurvivors(tableName, keepFilter, timestampColumnName, timestampType, partitionBy, floorTs);
         if (survivors == 0) {
             return ACTION_DROP;
@@ -398,41 +403,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
 
     private void initNow() {
         ((SqlExecutionContextImpl) sqlExecutionContext).initNow();
-    }
-
-    /**
-     * Detects whether {@code predicate} is an "older than now" comparison against the designated
-     * timestamp column — one of {@code <ts> < now()}, {@code <ts> <= now()}, {@code now() > <ts>},
-     * {@code now() >= <ts>} — AND the referenced column is exactly the designated timestamp. Only then
-     * is the partition min/max fast path valid (it relies on the sorted designated timestamp). Any other
-     * predicate falls back to the correct, slower CUSTOM path via {@link #countSurvivors}.
-     * <p>
-     * Mirrors {@code ExpiringViewDefinition.detectTimestampCompareColumn} from the expiring-view draft.
-     */
-    private static boolean isTimestampCompare(String predicate, String timestampColumnName) {
-        final String column = parseOlderThanNowColumn(predicate);
-        return column != null && Chars.equalsIgnoreCase(column, timestampColumnName);
-    }
-
-    private static String parseOlderThanNowColumn(String predicateSql) {
-        final String p = predicateSql.trim();
-        final String lower = p.toLowerCase();
-        String columnName = null;
-        if (lower.endsWith("< now()") || lower.endsWith("<now()")
-                || lower.endsWith("<= now()") || lower.endsWith("<=now()")) {
-            columnName = p.substring(0, p.lastIndexOf('<')).trim();
-        } else if (lower.startsWith("now()")) {
-            final String rest = p.substring(5).trim();
-            if (rest.startsWith(">=")) {
-                columnName = rest.substring(2).trim();
-            } else if (rest.startsWith(">")) {
-                columnName = rest.substring(1).trim();
-            }
-        }
-        if (columnName == null || columnName.isEmpty() || columnName.indexOf(' ') >= 0) {
-            return null;
-        }
-        return columnName;
     }
 
     private RecordToRowCopier replacePartition(
