@@ -3341,7 +3341,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     @Test
     public void testSchemaResentOnNewConnection() throws Exception {
         runInContext((port) -> {
-            // Connection 1: send two batches (batch 1 = full schema, batch 2 = reference)
+            // Connection 1: send two batches (each carries the full inline schema)
             try (QwpWebSocketSender sender = createSender(port)) {
                 for (int batch = 0; batch < 2; batch++) {
                     for (int i = 0; i < 5; i++) {
@@ -3356,7 +3356,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            // Connection 2: new sender must resend full schema, then schema ref
+            // Connection 2: a fresh sender carries the full inline schema on every batch
             try (QwpWebSocketSender sender = createSender(port)) {
                 for (int batch = 0; batch < 2; batch++) {
                     for (int i = 0; i < 5; i++) {

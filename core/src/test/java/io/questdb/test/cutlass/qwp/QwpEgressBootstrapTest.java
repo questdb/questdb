@@ -583,7 +583,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
      * hide the path because the no-op cache never returns a stale factory.
      */
     @Test
-    public void testDropRecreateDoesNotPoisonSchemaCache() throws Exception {
+    public void testDropRecreateRecompilesStaleFactory() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.HTTP_QUERY_CACHE_ENABLED.getEnvVarName(), "true"
