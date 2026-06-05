@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.str.Path;
@@ -187,6 +189,41 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
             Assert.assertTrue(engine.getMemoryTrackerProvider() instanceof PerQueryMemoryTrackerProvider);
             final int pooled = ((PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider()).getPooledCount();
             Assert.assertTrue("pooled=" + pooled, pooled >= 0 && pooled <= producerThreads + readerThreads + 1);
+        });
+    }
+
+    @Test
+    public void testMemoryColumnsNullForNestedRegistration() throws Exception {
+        // A nested registration (one whose context already has a tracker bound by an
+        // outer workload) leaves Entry.memoryTracker null, so register() acquires none
+        // of its own. query_activity must then read both memory_used and memory_limit as
+        // NULL for that row: the memoryTracker==null branch of the two columns, which
+        // neither the limit-configured nor the unlimited case reaches (both keep a bound
+        // tracker on the running query). Drive the registry directly, like the churn
+        // test, binding a tracker on a separate context first so register() takes the
+        // nested path.
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (SqlExecutionContext outerCtx = TestUtils.createSqlExecutionCtx(engine)) {
+                final MemoryTracker outerTracker = engine.getMemoryTrackerProvider().acquire(
+                        outerCtx.getSecurityContext(), -1, MemoryTrackerWorkload.QUERY);
+                outerCtx.setMemoryTracker(outerTracker);
+                final long id = registry.register("nested-no-tracker", outerCtx);
+                try {
+                    assertQuery("SELECT memory_used IS NULL used_null, memory_limit IS NULL limit_null " +
+                            "FROM query_activity() WHERE query = 'nested-no-tracker'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("used_null\tlimit_null\n" +
+                                    "true\ttrue\n");
+                } finally {
+                    // The nested register() did not acquire the tracker, so unregister()
+                    // leaves it bound; mimic the outer workload and free it by hand.
+                    registry.unregister(id, outerCtx);
+                    outerCtx.setMemoryTracker(null);
+                    outerTracker.close();
+                }
+            }
         });
     }
 }

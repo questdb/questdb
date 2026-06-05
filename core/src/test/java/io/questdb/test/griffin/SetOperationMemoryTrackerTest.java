@@ -30,6 +30,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
+import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
+import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
+import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
+import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -69,7 +74,9 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     public void testExceptAllFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             createLargeTables();
-            assertQueryBreaches("SELECT k FROM a EXCEPT ALL SELECT k FROM b");
+            final String sql = "SELECT k FROM a EXCEPT ALL SELECT k FROM b";
+            assertUsesFactory(sql, ExceptAllRecordCursorFactory.class);
+            assertQueryBreaches(sql);
         });
     }
 
@@ -77,7 +84,9 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     public void testExceptFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             createLargeTables();
-            assertQueryBreaches("SELECT k FROM a EXCEPT SELECT k FROM b");
+            final String sql = "SELECT k FROM a EXCEPT SELECT k FROM b";
+            assertUsesFactory(sql, ExceptRecordCursorFactory.class);
+            assertQueryBreaches(sql);
         });
     }
 
@@ -85,7 +94,9 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     public void testIntersectAllFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             createLargeTables();
-            assertQueryBreaches("SELECT k FROM a INTERSECT ALL SELECT k FROM b");
+            final String sql = "SELECT k FROM a INTERSECT ALL SELECT k FROM b";
+            assertUsesFactory(sql, IntersectAllRecordCursorFactory.class);
+            assertQueryBreaches(sql);
         });
     }
 
@@ -93,7 +104,9 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     public void testIntersectFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             createLargeTables();
-            assertQueryBreaches("SELECT k FROM a INTERSECT SELECT k FROM b");
+            final String sql = "SELECT k FROM a INTERSECT SELECT k FROM b";
+            assertUsesFactory(sql, IntersectRecordCursorFactory.class);
+            assertQueryBreaches(sql);
         });
     }
 
@@ -107,7 +120,7 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
             execute("CREATE TABLE b AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
             drainWalQueue();
-            assertOpenFailureReleasesAllocations("SELECT k FROM a INTERSECT SELECT k FROM b");
+            assertOpenFailureReleasesAllocations("SELECT k FROM a INTERSECT SELECT k FROM b", IntersectRecordCursorFactory.class);
         });
     }
 
@@ -133,7 +146,9 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE a AS (SELECT x::int k FROM long_sequence(100_000))");
             execute("CREATE TABLE b AS (SELECT x::long k FROM long_sequence(100_000))");
             drainWalQueue();
-            assertQueryBreaches("SELECT k FROM a INTERSECT SELECT k FROM b");
+            final String sql = "SELECT k FROM a INTERSECT SELECT k FROM b";
+            assertUsesFactory(sql, IntersectRecordCursorFactory.class);
+            assertQueryBreaches(sql);
         });
     }
 
@@ -180,7 +195,9 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     public void testUnionFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             createLargeTables();
-            assertQueryBreaches("SELECT k FROM a UNION SELECT k FROM b");
+            final String sql = "SELECT k FROM a UNION SELECT k FROM b";
+            assertUsesFactory(sql, UnionRecordCursorFactory.class);
+            assertQueryBreaches(sql);
         });
     }
 
@@ -193,7 +210,7 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
             execute("CREATE TABLE b AS (SELECT cast(x + 10 AS varchar) k FROM long_sequence(10))");
             drainWalQueue();
-            assertOpenFailureReleasesAllocations("SELECT k FROM a UNION SELECT k FROM b");
+            assertOpenFailureReleasesAllocations("SELECT k FROM a UNION SELECT k FROM b", UnionRecordCursorFactory.class);
         });
     }
 
@@ -211,10 +228,11 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
-    private void assertOpenFailureReleasesAllocations(String sql) throws Exception {
+    private void assertOpenFailureReleasesAllocations(String sql, Class<?> factoryClass) throws Exception {
         // Reuse one factory across opens, each expected to breach during the set-op
         // cursor's of(). Without freeing the cursor on the failed open, isOpen stays
         // set, a later open skips reopen() and stops breaching, tripping Assert.fail.
+        assertUsesFactory(sql, factoryClass);
         try (SqlCompiler compiler = engine.getSqlCompiler();
              RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             for (int i = 0; i < 5; i++) {
@@ -245,9 +263,36 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
         }
     }
 
+    private void assertUsesFactory(String sql, Class<?> factoryClass) throws Exception {
+        // Pin which set-operation factory the query routes to, so a later routing change
+        // cannot silently redirect the breach to a different structure and pass for the
+        // wrong reason.
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            if (!isFactoryInChain(factory, factoryClass)) {
+                Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
+            }
+        }
+    }
+
     private void createLargeTables() throws Exception {
         execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(100_000))");
         execute("CREATE TABLE b AS (SELECT cast(x AS varchar) k FROM long_sequence(100_000))");
         drainWalQueue();
+    }
+
+    private boolean isFactoryInChain(RecordCursorFactory factory, Class<?> factoryClass) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (factoryClass.isInstance(cur)) {
+                return true;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        return false;
     }
 }

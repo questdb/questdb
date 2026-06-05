@@ -37,7 +37,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -71,21 +70,16 @@ import org.junit.Test;
  * pinned to the synchronous cursor.
  */
 public class ParquetMemoryTrackerTest extends AbstractCairoTest {
-
     // 50k rows of ~256-byte varchar decode to ~12 MiB per row group, well over
     // the 512 KiB per-query limit.
     private static final int LARGE_ROWS = 50_000;
 
-    @BeforeClass
-    public static void beforeClass() {
-        // One row group per converted partition so a single decode crosses the limit.
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000_000);
-        // Pin read_parquet() to the synchronous ReadParquetRecordCursor.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, "false");
-    }
-
     @Override
     public void setUp() {
+        // Pin read_parquet() to the synchronous cursor and one row group per partition.
+        // Per test, before super.setUp(): @BeforeClass would be wiped by the override reset.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000_000);
         super.setUp();
         // 512 KiB: a single ~12 MiB row-group decode crosses it, while small inputs
         // stay under. Applied per test; the provider reads it live on each acquisition.
@@ -159,11 +153,14 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
             encodeToParquet("x_small", "x_small.parquet");
             assertQuery("SELECT * FROM read_parquet('x_small.parquet')")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .expectSize()
-                    .returns("s\tv\n" +
-                            "s1\t1\n" +
-                            "s2\t2\n" +
-                            "s3\t3\n");
+                    .returns("""
+                            s\tv
+                            s1\t1
+                            s2\t2
+                            s3\t3
+                            """);
         });
     }
 

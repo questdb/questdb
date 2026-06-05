@@ -74,9 +74,7 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
         // Shrink the window-store page so a range-frame ring buffer starts small (one
         // 4 KiB page) and a runaway frame breaches the 256 KiB limit after a few
         // doublings, while a small input stays comfortably under it. The default is
-        // 1 MiB, which would breach on the first allocation. The page size is re-read
-        // per query compile, so @Before (cleared by tearDown) is the right place; the
-        // limit itself is cached by the provider and must stay in @BeforeClass.
+        // 1 MiB, which would breach on the first allocation.
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024L);
     }
 
