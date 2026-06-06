@@ -36,6 +36,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.BindVarTuple;
@@ -113,6 +114,27 @@ public class QueryAssertion {
         this.query = null;
         this.factory = factory;
         this.leakCheck = false;
+    }
+
+    /**
+     * Terminal: assert the query prints exactly {@code expected} from a SINGLE cursor pass,
+     * skipping the second read, calculate-size, variable-column and factory-property checks that
+     * {@link #returns(CharSequence)} performs. Use for non-deterministic projections whose output is
+     * not stable across a re-read. Supports only {@link #ddl}, {@link #noLeakCheck},
+     * {@link #withContext} and {@link #withEngine}.
+     */
+    public void returnsOnce(CharSequence expected) throws Exception {
+        requireSingleShotCompatible();
+        runPrepareHook();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertSql(engine, context, query, sink, expected);
+            });
+        } else {
+            runDdl();
+            assertSql(engine, context, query, sink, expected);
+        }
     }
 
     public static boolean doubleEquals(double a, double b, double epsilon) {
@@ -419,24 +441,16 @@ public class QueryAssertion {
         dispatch(expectedBefore, expectedAfter);
     }
 
-    /**
-     * Terminal: assert the query prints exactly {@code expected} from a SINGLE cursor pass,
-     * skipping the second read, calculate-size, variable-column and factory-property checks that
-     * {@link #returns(CharSequence)} performs. Use for non-deterministic projections whose output is
-     * not stable across a re-read. Supports only {@link #ddl}, {@link #noLeakCheck},
-     * {@link #withContext} and {@link #withEngine}.
-     */
-    public void returnsOnce(CharSequence expected) throws Exception {
-        requireSingleShotCompatible();
-        runPrepareHook();
-        if (leakCheck) {
-            assertMemoryLeak(() -> {
-                runDdl();
-                TestUtils.assertSql(engine, context, query, sink, expected);
-            });
-        } else {
-            runDdl();
-            TestUtils.assertSql(engine, context, query, sink, expected);
+    private static void assertSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            CharSequence expected
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            TestUtils.assertEquals(expected, sink);
         }
     }
 

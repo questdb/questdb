@@ -1035,13 +1035,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertSegmentLocked(tableToken, walId, segmentId);
     }
 
-    // todo: delete
-    protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
-        }
-    }
-
     protected void assertSqlRunWithJit(CharSequence selectSql) throws Exception {
         try (RecordCursorFactory factory = select(selectSql)) {
             Assert.assertTrue("JIT was not enabled for selectSql: " + selectSql, factory.usesCompiledFilter());

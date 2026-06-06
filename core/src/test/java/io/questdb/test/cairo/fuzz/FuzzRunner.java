@@ -67,12 +67,12 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
-import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -813,7 +813,7 @@ public class FuzzRunner {
         drainWalQueue(applyRnd, tableName);
     }
 
-    private void assertMinMaxTimestamp(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+    private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
         try (TableReader reader = getReader(tableName)) {
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select ts from " + tableName + " order by ts limit 1")
@@ -1415,7 +1415,7 @@ public class FuzzRunner {
             long endNonWalMicro = System.nanoTime() / 1000;
             long nonWalTotal = endNonWalMicro - startMicro;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
+                assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
             }
 
             applyWal(transactions, tableNameWal, 1, rnd);
@@ -1424,7 +1424,7 @@ public class FuzzRunner {
             long walTotal = endWalMicro - endNonWalMicro;
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
+                assertMinMaxTimestamp(sqlExecutionContext, tableNameWal);
 
                 String limit = ""; // For debugging
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
@@ -1439,7 +1439,7 @@ public class FuzzRunner {
                 assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
                 LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
 
-                assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal2);
+                assertMinMaxTimestamp(sqlExecutionContext, tableNameWal2);
             }
 
             assertCounts(tableNameWal, timestampColumnName);
@@ -1511,8 +1511,8 @@ public class FuzzRunner {
                     String limit = ""; // For debugging
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
                     assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
-                    assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameNoWal);
-                    assertMinMaxTimestamp(compiler, sqlExecutionContext, tableNameWal);
+                    assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
+                    assertMinMaxTimestamp(sqlExecutionContext, tableNameWal);
                 }
             }
         } finally {
