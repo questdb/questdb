@@ -57,7 +57,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
         var sql = "select * from tmp where ts in '2025-07-11T03' order by ts desc";
         assertQuery(sql)
                 .noLeakCheck()
-                .returns(replaceTimestampSuffix("""
+                .returnsOnce(replaceTimestampSuffix("""
                         ts\td
                         2025-07-11T03:54:00.000000Z\t0.5522494170511608
                         2025-07-11T03:48:00.000000Z\t0.5298405941762054

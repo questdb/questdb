@@ -319,10 +319,9 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
 
     @Test
     public void testSimplePlan() throws Exception {
-        assertQuery("explain select dateadd('U', -5, now, 'Europe/Bratislava') from long_sequence(1)")
+        assertQuery("select dateadd('U', -5, now, 'Europe/Bratislava') from long_sequence(1)")
                 .noLeakCheck()
-                .returnsOnce("""
-                        QUERY PLAN
+                .assertsPlan("""
                         VirtualRecord
                           functions: [dateadd('U',-5,now(),'Europe/Bratislava')]
                             long_sequence count: 1
@@ -343,19 +342,17 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         assertQuery("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)")
                 .fails(20, "`null` is not a valid stride");
 
-        assertQuery("explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)")
+        assertQuery("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)")
                 .noLeakCheck()
-                .returnsOnce("""
-                        QUERY PLAN
+                .assertsPlan("""
                         VirtualRecord
                           functions: [dateadd('y',1587275359886758L,case([x::int,null,x]),'03:00')]
                             long_sequence count: 2
                         """);
 
-        assertQuery("explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns, '03:00') from long_sequence(2)")
+        assertQuery("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns, '03:00') from long_sequence(2)")
                 .noLeakCheck()
-                .returnsOnce("""
-                        QUERY PLAN
+                .assertsPlan("""
                         VirtualRecord
                           functions: [dateadd('y',2020-04-19T05:49:19.886758000Z,case([x::int,null,x]),'03:00')]
                             long_sequence count: 2

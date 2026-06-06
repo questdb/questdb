@@ -2593,12 +2593,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
         // Verify COLUMNS syntax survives parser round-trip
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
-            assertQuery("EXPLAIN SELECT u.val FROM t, UNNEST("
+            assertQuery("SELECT u.val FROM t, UNNEST("
                     + "t.payload COLUMNS(val DOUBLE)"
                     + ") u")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             SelectedRecord
                                 Unnest
                                   columns: [val]

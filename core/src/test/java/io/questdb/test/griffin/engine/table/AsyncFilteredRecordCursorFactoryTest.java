@@ -310,13 +310,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getMessage(), "unexpected reduce error");
                     }
 
-                    assertQuery("explain select timestamp, count() as trades" +
+                    assertQuery("select timestamp, count() as trades" +
                             " from x" +
                             " where symbol like '%_ETH' and (row_id != 100)" +
                             " sample by 1h")
                             .noLeakCheck()
-                            .returnsOnce("""
-                                    QUERY PLAN
+                            .assertsPlan("""
                                     Encode sort light
                                       keys: [timestamp]
                                         Async Group By workers: 1

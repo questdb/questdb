@@ -3402,19 +3402,17 @@ public class ArrayTest extends AbstractCairoTest {
                             [[null,0.9856290845874263],[null,0.5093827001617407]]
                             """);
 
-            assertQuery("explain select rnd_double_array(2, 1, 0, 2, 2)")
+            assertQuery("select rnd_double_array(2, 1, 0, 2, 2)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_double_array(2,1,ignored,2,2)]
                                 long_sequence count: 1
                             """);
 
-            assertQuery("explain select rnd_double_array(3, 1, 4)")
+            assertQuery("select rnd_double_array(3, 1, 4)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_double_array(3,1,4)]
                                 long_sequence count: 1

@@ -922,10 +922,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
 
             // partition + rows frame
-            assertQuery("explain select ts, i, covar_pop(y, x) over (partition by i order by ts rows between 3 preceding and current row) from tab")
+            assertQuery("select ts, i, covar_pop(y, x) over (partition by i order by ts rows between 3 preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [covar_pop(y,x) over (partition by [i] rows between 3 preceding and current row)]
                                 PageFrame
@@ -934,10 +933,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // no partition + rows frame
-            assertQuery("explain select ts, covar_pop(y, x) over (order by ts rows between 3 preceding and current row) from tab")
+            assertQuery("select ts, covar_pop(y, x) over (order by ts rows between 3 preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [covar_pop(y,x) over (rows between 3 preceding and current row)]
                                 PageFrame
@@ -4709,10 +4707,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test unbounded preceding with N preceding end (L847) - uses KSumOverPartitionRowsFrameFunction
             // "rows between unbounded preceding and 1 preceding" triggers frameLoBounded=false
-            assertQuery("explain select ts, i, val, ksum(val) over (partition by i order by ts rows between unbounded preceding and 1 preceding) from tab")
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts rows between unbounded preceding and 1 preceding) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [ksum(val) over (partition by [i] rows between unbounded preceding and 0 preceding)]
                                 PageFrame
@@ -4721,10 +4718,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test bounded preceding with N preceding end (L853)
-            assertQuery("explain select ts, i, val, ksum(val) over (partition by i order by ts rows between 3 preceding and 1 preceding) from tab")
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts rows between 3 preceding and 1 preceding) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [ksum(val) over (partition by [i] rows between 3 preceding and 0 preceding)]
                                 PageFrame
@@ -5041,10 +5037,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             // Test bounded rows with current row
-            assertQuery("explain select ts, val, ksum(val) over (order by ts rows between 3 preceding and current row) from tab")
+            assertQuery("select ts, val, ksum(val) over (order by ts rows between 3 preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [ksum(val) over ( rows between 3 preceding and current row)]
                                 PageFrame
@@ -5053,10 +5048,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test unbounded rows with N preceding end
-            assertQuery("explain select ts, val, ksum(val) over (order by ts rows between unbounded preceding and 1 preceding) from tab")
+            assertQuery("select ts, val, ksum(val) over (order by ts rows between unbounded preceding and 1 preceding) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [ksum(val) over ( rows between unbounded preceding and 0 preceding)]
                                 PageFrame
@@ -17810,10 +17804,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
 
             // partition + rows frame
-            assertQuery("explain select ts, i, stddev_pop(val) over (partition by i order by ts rows between 3 preceding and current row) from tab")
+            assertQuery("select ts, i, stddev_pop(val) over (partition by i order by ts rows between 3 preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [stddev_pop(val) over (partition by [i] rows between 3 preceding and current row)]
                                 PageFrame
@@ -17832,10 +17825,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
 
             // no partition + rows frame
-            assertQuery("explain select ts, stddev_pop(val) over (order by ts rows between 3 preceding and current row) from tab")
+            assertQuery("select ts, stddev_pop(val) over (order by ts rows between 3 preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [stddev_pop(val) over (rows between 3 preceding and current row)]
                                 PageFrame
@@ -17854,10 +17846,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
 
             // unbounded preceding to current row (Welford path)
-            assertQuery("explain select ts, i, stddev_pop(val) over (partition by i order by ts) from tab")
+            assertQuery("select ts, i, stddev_pop(val) over (partition by i order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [stddev_pop(val) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame

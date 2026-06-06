@@ -5866,6 +5866,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Light
+                                  condition: s.sym=m.sym
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: dyn_master
+                                    VirtualRecord
+                                      functions: [ts,sym_str::symbol]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: dyn_slave_src
+                            """)
                     .returns(replaceTimestampSuffix1("""
                                     sym	ts
                                     A	2025-01-01T00:00:00.000000Z
@@ -5878,22 +5891,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     """,
                             rightTableTimestampType.getTypeName()
                     ));
-            assertQuery("explain " + sql)
-                    .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
-                            SelectedRecord
-                                AsOf Join Light
-                                  condition: s.sym=m.sym
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: dyn_master
-                                    VirtualRecord
-                                      functions: [ts,sym_str::symbol]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: dyn_slave_src
-                            """);
         });
     }
 

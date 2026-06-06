@@ -117,10 +117,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
 
             // Test plan for percent_rank() over () - no partition, no order
-            assertQuery("explain select ts, percent_rank() over () from tab")
+            assertQuery("select ts, percent_rank() over () from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [percent_rank() over ()]
                                 PageFrame
@@ -129,10 +128,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test plan for percent_rank() over (partition by s) - with partition, no order
-            assertQuery("explain select ts, percent_rank() over (partition by s) from tab")
+            assertQuery("select ts, percent_rank() over (partition by s) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [percent_rank() over (partition by [s])]
                                 PageFrame
@@ -141,10 +139,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test plan for percent_rank() over (order by ts) - no partition, with order
-            assertQuery("explain select ts, percent_rank() over (order by ts) from tab")
+            assertQuery("select ts, percent_rank() over (order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               unorderedFunctions: [percent_rank() over (order by [ts])]
                                 PageFrame
@@ -153,10 +150,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test plan for percent_rank() over (partition by s order by ts) - with partition and order
-            assertQuery("explain select ts, percent_rank() over (partition by s order by ts) from tab")
+            assertQuery("select ts, percent_rank() over (partition by s order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
                                 PageFrame
@@ -167,10 +163,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // ORDER BY non-timestamp -> dismissOrder=false (grouped) path. Before the
             // SqlCodeGenerator fix that forwards ac.getOrderBy() to initRecordComparator,
             // this branch left orderBy null and toPlan rendered "order by null".
-            assertQuery("explain select ts, percent_rank() over (order by i) from tab")
+            assertQuery("select ts, percent_rank() over (order by i) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
                                 PageFrame
@@ -178,10 +173,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """);
 
-            assertQuery("explain select ts, percent_rank() over (partition by s order by i) from tab")
+            assertQuery("select ts, percent_rank() over (partition by s order by i) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
                                 PageFrame
