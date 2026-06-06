@@ -306,6 +306,26 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCtasWithExpire() throws Exception {
+        // CREATE ... AS SELECT captures the EXPIRE predicate and validates it against the SELECT's output
+        // columns BEFORE the table (and its copied data) is created; the read filter then hides expired
+        // CTAS rows. src carries no policy, so the CTAS copies both rows and only t2's policy filters.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table src (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into src values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired in t2
+            execute("insert into src values ('BBB', 2.0, '2024-01-09T12:00:00.000000Z')"); // live in t2
+            drainWalQueue();
+
+            execute("create table t2 as (select * from src) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            drainWalQueue();
+
+            assertSql("sym\tv\n" + "BBB\t2.0\n", "select sym, v from t2 order by sym");
+        });
+    }
+
+    @Test
     public void testInPredicateAtCreate() throws Exception {
         // Regression: 'col IN (...)' must work as an EXPIRE predicate at CREATE — the bare IN must not be
         // mistaken for the IN VOLUME clause. NOT(sym IN (...)) keeps rows whose sym is not in the list.

@@ -27,6 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.ExpressionParserListener;
@@ -213,6 +214,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public QueryBuilder query() {
             return delegate.query();
+        }
+
+        @Override
+        public void validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
+            delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
         }
 
         @Override

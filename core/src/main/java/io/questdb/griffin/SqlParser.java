@@ -1831,9 +1831,8 @@ public class SqlParser {
         // Optional: EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]. Mirrors CREATE TABLE:
         // it sits after the TTL/partition clauses and feeds the SAME CreateTableOperationBuilder
         // fields (which the underlying CreateTableOperation persists to _meta), exactly like TTL.
-        // TODO(row-expiry): predicate is captured as raw text but NOT validated at CREATE time
-        //  (the view columns don't exist yet here, so the ALTER-style probe SELECT can't run);
-        //  validation happens on ALTER MATERIALIZED VIEW ... SET EXPIRE, as for CREATE TABLE.
+        // The predicate is captured here as raw text and validated structurally before the view is
+        // created (SqlCompilerImpl.validateCreateExpiryPredicate, against the SELECT's output columns).
         if (tok != null && isExpireKeyword(tok)) {
             tok = parseCreateTableExpireRows(lexer, tableOpBuilder);
         }
@@ -2012,11 +2011,9 @@ public class SqlParser {
             }
 
             // Optional: EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]
-            // TODO(row-expiry): predicate is captured as raw text but NOT validated at CREATE time
-            //  (the table/columns don't exist yet here, so the ALTER-style probe SELECT can't run).
-            //  Validation currently happens only on ALTER TABLE ... SET EXPIRE
-            //  (SqlCompilerImpl.validateExpiryPredicate). Add create-time validation against the
-            //  columns being created (synthetic metadata) in a follow-up.
+            // The predicate is captured here as raw text and validated structurally before the table is
+            // created (SqlCompilerImpl.validateCreateExpiryPredicate, binding it against the columns being
+            // created). ALTER TABLE ... SET EXPIRE validates against the existing table instead.
             if (tok != null && isExpireKeyword(tok)) {
                 tok = parseCreateTableExpireRows(lexer, builder);
             }

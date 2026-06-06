@@ -4209,6 +4209,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
                             createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
                         }
+                        // Reject a bad EXPIRE ROWS predicate before the view exists.
+                        validateCreateExpiryPredicate(executionContext, createTableOp, metadata);
 
                         matViewDefinition = engine.createMatView(
                                 executionContext.getSecurityContext(),
@@ -4227,16 +4229,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
 
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
-                    // Validate the EXPIRE ROWS predicate now the view's columns exist; drop the view on
-                    // failure so a bad predicate cannot brick every read of it (see executeCreateTable).
-                    if (createTableOp.getExpiryPredicate() != null) {
-                        try {
-                            validateExpiryPredicate(executionContext, matViewToken, createTableOp.getExpiryPredicate(), createTableOp.getTableNamePosition());
-                        } catch (Throwable e) {
-                            engine.dropTableOrViewOrMatView(path, matViewToken);
-                            throw e;
-                        }
-                    }
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
                 }
@@ -4336,6 +4328,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     ) {
                         final RecordMetadata metadata = factory.getMetadata();
                         createTableOp.validateAndUpdateMetadataFromSelect(metadata, factory.getScanDirection());
+                        // Reject a bad EXPIRE ROWS predicate before the table (and its CTAS data) exists.
+                        validateCreateExpiryPredicate(executionContext, createTableOp, metadata);
                         boolean keepLock = !createTableOp.isWalEnabled();
 
                         // todo: test create table if exists with select
@@ -4393,6 +4387,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                             try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
                                 createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
+                                // Reject a bad EXPIRE ROWS predicate before the LIKE table exists.
+                                validateCreateExpiryPredicate(executionContext, createTableOp, null);
                                 tableToken = engine.createTable(
                                         executionContext.getSecurityContext(),
                                         mem,
@@ -4405,6 +4401,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 );
                             }
                         } else {
+                            // Reject a bad EXPIRE ROWS predicate before the table exists.
+                            validateCreateExpiryPredicate(executionContext, createTableOp, null);
                             tableToken = engine.createTable(
                                     executionContext.getSecurityContext(),
                                     mem,
@@ -4431,17 +4429,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                         throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
                                 .put(e.getFlyweightMessage());
-                    }
-                }
-                // The columns now exist, so validate the EXPIRE ROWS predicate (CREATE captured it as
-                // raw text). Drop the just-created table on failure so the statement fails atomically,
-                // rather than leaving a table whose every read is rewritten with an invalid predicate.
-                if (createTableOp.getExpiryPredicate() != null) {
-                    try {
-                        validateExpiryPredicate(executionContext, tableToken, createTableOp.getExpiryPredicate(), createTableOp.getTableNamePosition());
-                    } catch (Throwable e) {
-                        engine.dropTableOrViewOrMatView(path, tableToken);
-                        throw e;
                     }
                 }
             }
@@ -5282,6 +5269,81 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (SqlException | CairoException e) {
             throw SqlException.$(predicatePos, "invalid EXPIRE ROWS predicate: ").put(e.getFlyweightMessage());
+        }
+    }
+
+    /**
+     * Validates the EXPIRE ROWS predicate captured by a CREATE statement BEFORE the object is created,
+     * binding it against the columns the object will have. This is purely structural: it parses + binds
+     * the expression against {@code metadata} and checks the result is boolean. It touches no table, so
+     * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #validateExpiryPredicate})
+     * and, running before {@code createTable}/{@code createMatView}, cannot leave a half-created object
+     * behind on failure. CTAS / mat views pass the SELECT's output metadata; plain / LIKE tables pass
+     * {@code null} and the columns are taken from the operation itself.
+     */
+    private void validateCreateExpiryPredicate(
+            SqlExecutionContext executionContext,
+            CreateTableOperation createTableOp,
+            RecordMetadata selectMetadata
+    ) throws SqlException {
+        final String predicate = createTableOp.getExpiryPredicate();
+        if (predicate == null) {
+            return;
+        }
+        final RecordMetadata metadata;
+        if (selectMetadata != null) {
+            metadata = selectMetadata;
+        } else {
+            // Only name + type matter for binding the predicate; the 6-arg ctor tolerates symbol columns
+            // (the 2-arg one asserts against them), and index/symbol-table details are irrelevant here.
+            final GenericRecordMetadata m = new GenericRecordMetadata();
+            for (int i = 0, n = createTableOp.getColumnCount(); i < n; i++) {
+                m.add(new TableColumnMetadata(
+                        Chars.toString(createTableOp.getColumnName(i)),
+                        createTableOp.getColumnType(i),
+                        IndexType.NONE,
+                        0,
+                        false,
+                        null
+                ));
+            }
+            metadata = m;
+        }
+        // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
+        // The error caret points at the table name rather than the predicate: the predicate's source
+        // position is not threaded through CreateTableOperation, and the message already names the cause.
+        try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
+            validationCompiler.validateExpiryPredicateOnMetadata(
+                    executionContext, metadata, predicate, createTableOp.getTableNamePosition());
+        }
+    }
+
+    /**
+     * Parses + binds {@code predicate} against {@code metadata} and asserts the result is a boolean
+     * expression, rewriting any parse/bind error as a clear "invalid EXPIRE ROWS predicate" positioned
+     * at {@code position}. Runs on a freshly-borrowed compiler (its own lexer/parser/functionParser).
+     */
+    @Override
+    public void validateExpiryPredicateOnMetadata(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        Function f = null;
+        try {
+            try {
+                clear();
+                lexer.of(predicate);
+                f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
+            } catch (SqlException | CairoException e) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(e.getFlyweightMessage());
+            }
+            if (f == null || !ColumnType.isBoolean(f.getType())) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
+            }
+        } finally {
+            Misc.free(f);
         }
     }
 

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -71,6 +72,19 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     CairoEngine getEngine();
 
     QueryBuilder query();
+
+    /**
+     * Validates an EXPIRE ROWS predicate structurally by parsing and binding it against {@code metadata}
+     * (the columns the object will have) and checking the result is a boolean expression, without touching
+     * any table. Used by CREATE TABLE / CREATE MATERIALIZED VIEW to reject a bad predicate before the
+     * object is created. Any parse/bind error is rewritten as a clear SqlException at {@code position}.
+     */
+    void validateExpiryPredicateOnMetadata(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException;
 
     @TestOnly
     void setEnableJitNullChecks(boolean value);
