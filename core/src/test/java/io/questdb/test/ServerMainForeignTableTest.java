@@ -205,12 +205,10 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 qdb.start();
                 CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        new StringSink(),
-                        TABLE_START_CONTENT);
+                new QueryAssertion(context.getCairoEngine(), context, () -> {}, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(TABLE_START_CONTENT);
                 assertTableExists(tableToken, false, true);
             }
 
@@ -247,12 +245,10 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        new StringSink(),
-                        TABLE_START_CONTENT);
+                new QueryAssertion(context.getCairoEngine(), context, () -> {}, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(TABLE_START_CONTENT);
                 CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 assertTableExists(tableToken, false, true);
@@ -361,13 +357,10 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
                 qdb.awaitTxn(tableName, 1);
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        new StringSink(),
-                        TABLE_START_CONTENT
-                );
+                new QueryAssertion(context.getCairoEngine(), context, () -> {}, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(TABLE_START_CONTENT);
                 dropTable(context, tableToken);
             }
         });
