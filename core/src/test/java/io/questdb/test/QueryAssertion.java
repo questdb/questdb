@@ -85,6 +85,8 @@ public class QueryAssertion {
     private TimestampOrder expectedTimestampOrder = TimestampOrder.ASC;
     private RecordCursorFactory factory;
     private boolean fullFatJoins;
+    private boolean isRandomAccessInferred;
+    private boolean isTimestampInferred;
     private boolean leakCheck = true;
     private long memoryUsage = -1;
     private boolean overridden;
@@ -344,6 +346,46 @@ public class QueryAssertion {
     }
 
     /**
+     * Infer random-access support from the compiled factory instead of asserting it. The assertion
+     * adopts {@link RecordCursorFactory#recordCursorSupportsRandomAccess()} and exercises the matching
+     * battery: when the factory supports random access it runs the full record-positioning checks, and
+     * when it does not it asserts the random-access methods throw.
+     * <p>
+     * Like {@link #inferTimestamp()} this is a deliberately weaker check than the explicit default or
+     * {@link #noRandomAccess()}: it confirms the factory's cursor behaves consistently with its own
+     * declared capability but does NOT pin that capability, so it cannot catch a query whose
+     * random-access support silently changes. Use it only for bulk assertions over a heterogeneous list
+     * of queries; prefer the explicit default or {@link #noRandomAccess()} whenever the expected behavior
+     * is known. Mutually exclusive with {@link #noRandomAccess()} / {@link #supportsRandomAccess(boolean)}
+     * set to {@code false}.
+     */
+    public QueryAssertion inferRandomAccess() {
+        this.isRandomAccessInferred = true;
+        return this;
+    }
+
+    /**
+     * Infer the designated timestamp from the compiled factory's metadata instead of pinning it
+     * explicitly. When the factory declares a designated timestamp, the assertion adopts that column and
+     * the scan direction the factory reports: a forward scan asserts ascending order, a backward scan
+     * descending, and an indeterminate ({@link RecordCursorFactory#SCAN_DIRECTION_OTHER}, e.g. a
+     * bind-variable {@code generate_series} step) scan asserts only that the column exists and is of
+     * TIMESTAMP type. When the factory declares no timestamp, the step asserts nothing.
+     * <p>
+     * This is a deliberately weaker check than {@link #timestamp(CharSequence)}: it confirms the
+     * timestamp data is self-consistent with the factory's own metadata (a forward-scanning factory does
+     * emit ascending rows) but does NOT pin the expected column, so it cannot catch a query that
+     * silently gains, loses or relabels its designated timestamp. Use it only for bulk assertions over a
+     * heterogeneous list of queries whose per-query timestamp is not known up front; prefer the explicit
+     * {@code timestamp*()} steps whenever the expected timestamp is known. Mutually exclusive with
+     * {@link #timestamp}/{@link #timestampAsc}/{@link #timestampDesc}.
+     */
+    public QueryAssertion inferTimestamp() {
+        this.isTimestampInferred = true;
+        return this;
+    }
+
+    /**
      * Terminal: compile the query once, then for each {@link MutationStep} run its statement against the
      * live engine (typically an INSERT that grows the input table) and re-assert the SAME held factory
      * against that step's expected result. The stepwise generalization of {@link #mutateWith}: it holds
@@ -596,7 +638,9 @@ public class QueryAssertion {
     public QueryAssertion withPlanContaining(CharSequence... fragments) {
         final ObjList<CharSequence> list = new ObjList<>(fragments.length);
         for (CharSequence fragment : fragments) {
-            list.add(fragment);
+            if (fragment != null) {
+                list.add(fragment);
+            }
         }
         this.planFragments = list;
         return this;
@@ -675,10 +719,15 @@ public class QueryAssertion {
 
     private static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        while (walApplyJob.run(0)) ;
+        drainWalQueue0(walApplyJob);
         if (checkWalTransactionsJob.run(0)) {
-            while (walApplyJob.run(0)) ;
+            drainWalQueue0(walApplyJob);
         }
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    private static void drainWalQueue0(ApplyWal2TableJob walApplyJob) {
+        while (walApplyJob.run(0)) ;
     }
 
     private static void releaseInactive(CairoEngine engine) {
@@ -1162,6 +1211,7 @@ public class QueryAssertion {
             boolean sizeCanBeVariable, // this means size() can either be -1 in some cases or known in others
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        supportsRandomAccess = resolveRandomAccess(supportsRandomAccess, factory);
         boolean cursorAsserted;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertEquals("supports random access (" + (factory.recordCursorSupportsRandomAccess() ? "remove" : "add") + " .noRandomAccess())", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
@@ -1290,7 +1340,7 @@ public class QueryAssertion {
         final LongList localRows = new LongList();
         assertBaseFactoryClass(factory);
         assertColumnTypes(factory);
-        if (expectedTimestamp != null) {
+        if (expectedTimestamp != null || isTimestampInferred) {
             assertTimestamp(expectedTimestamp, expectedTimestampOrder, factory, context);
         }
         if (assertExternalFactoryCursor(expected, localSink, localRows)) {
@@ -1302,10 +1352,11 @@ public class QueryAssertion {
 
     private boolean assertExternalFactoryCursor(CharSequence expected, StringSink localSink, LongList localRows) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(context)) {
-            Assert.assertEquals("supports random access (" + (factory.recordCursorSupportsRandomAccess() ? "remove" : "add") + " .noRandomAccess())", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
+            final boolean randomAccess = resolveRandomAccess(supportsRandomAccess, factory);
+            Assert.assertEquals("supports random access (" + (factory.recordCursorSupportsRandomAccess() ? "remove" : "add") + " .noRandomAccess())", randomAccess, factory.recordCursorSupportsRandomAccess());
             return assertCursor(
                     expected,
-                    supportsRandomAccess,
+                    randomAccess,
                     expectSize,
                     sizeCanBeVariable,
                     cursor,
@@ -1323,16 +1374,15 @@ public class QueryAssertion {
             RecordCursorFactory factory,
             boolean supportsRandomAccess,
             SqlExecutionContext executionContext,
-            boolean expectSize,
-            boolean sizeCanBeVariable
+            boolean expectSize
     ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, false, executionContext);
         // v Please keep this check after ^ that one.
         // Factories that have a scan order dependent on the bind variable will not test correctly.
         // See generate_series
         assertTimestamp(expectedTimestamp, expectedTimestampOrder, factory, executionContext);
         // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, false, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
         assertVariableColumns(factory, executionContext);
     }
@@ -1530,6 +1580,27 @@ public class QueryAssertion {
     }
 
     private void assertTimestamp(CharSequence column, TimestampOrder order, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (isTimestampInferred) {
+            if (column != null) {
+                throw new IllegalStateException("inferTimestamp() cannot be combined with timestamp()/timestampAsc()/timestampDesc()");
+            }
+            final int timestampIdx = factory.getMetadata().getTimestampIndex();
+            if (timestampIdx == -1) {
+                // The factory declares no designated timestamp. With an inferred expectation there is
+                // nothing to pin, so assert nothing.
+                return;
+            }
+            final int scanDirection = factory.getScanDirection();
+            if (scanDirection == RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+                // The row order is runtime-dependent (e.g. a bind-variable generate_series step), so we
+                // cannot assert monotonicity in a fixed direction. Confirm only that the inferred column
+                // exists and is of TIMESTAMP type.
+                Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(factory.getMetadata().getColumnType(timestampIdx)));
+                return;
+            }
+            column = factory.getMetadata().getColumnName(timestampIdx);
+            order = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD ? TimestampOrder.DESC : TimestampOrder.ASC;
+        }
         if (column == null || column.isEmpty()) {
             int timestampIdx = factory.getMetadata().getTimestampIndex();
             if (timestampIdx != -1) {
@@ -1646,13 +1717,13 @@ public class QueryAssertion {
                 compiler.setFullFatJoins(true);
             }
             try (RecordCursorFactory factory = CairoEngine.select(compiler, query, context)) {
-                assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize, false);
+                assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize);
             }
         } else {
             try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
                 fullFatCompiler.setFullFatJoins(true);
                 try (RecordCursorFactory factory = CairoEngine.select(fullFatCompiler, query, context)) {
-                    assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize, false);
+                    assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize);
                 }
             }
         }
@@ -1672,7 +1743,7 @@ public class QueryAssertion {
             }
             if (compiler != null || ddl != null || ddlMore != null || fullFatJoins
                     || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
-                throw new IllegalStateException("external-factory mode supports only withContext()/withBaseFactoryClass()/columnType()/timestamp()/noRandomAccess()/expectSize()/sizeMayVary()");
+                throw new IllegalStateException("external-factory mode supports only withContext()/withBaseFactoryClass()/columnType()/timestamp()/inferTimestamp()/noRandomAccess()/inferRandomAccess()/expectSize()/sizeMayVary()");
             }
             assertExternalFactory(expected);
             return;
@@ -1753,14 +1824,14 @@ public class QueryAssertion {
     }
 
     private void requireFailsCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || !supportsRandomAccess
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || !supportsRandomAccess
                 || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException("fails(...)/failsWith(...) supports only ddl()/fullFatJoins()/withCompiler()/noLeakCheck()/withContext()/withEngine()");
         }
     }
 
     private void requireMutateStepwiseCompatible() {
-        if (ddl2 != null || fullFatJoins || compiler != null
+        if (ddl2 != null || fullFatJoins || compiler != null || isTimestampInferred
                 || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException(
                     "mutateStepwise(...) supports only ddl()/expectSize()/noRandomAccess()/sizeMayVary()/noLeakCheck()/withContext()/withEngine()");
@@ -1768,22 +1839,32 @@ public class QueryAssertion {
     }
 
     private void requirePlanOnlyCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || fullFatJoins
                 || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...)/assertsPlanNotContaining(...) supports only ddl()/noLeakCheck()/withCompiler()/withContext()/withEngine()");
         }
     }
 
     private void requireRecordPathCompatible() {
-        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || overridden) {
+        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || isRandomAccessInferred || overridden) {
             throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
         }
     }
 
     private void requireSingleShotCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
             throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
         }
+    }
+
+    private boolean resolveRandomAccess(boolean supportsRandomAccess, RecordCursorFactory factory) {
+        if (isRandomAccessInferred) {
+            if (!supportsRandomAccess) {
+                throw new IllegalStateException("inferRandomAccess() cannot be combined with noRandomAccess()/supportsRandomAccess(false)");
+            }
+            return factory.recordCursorSupportsRandomAccess();
+        }
+        return supportsRandomAccess;
     }
 
     private TimestampOrder resolveTimestampOrder(BindVarTuple testCase) {

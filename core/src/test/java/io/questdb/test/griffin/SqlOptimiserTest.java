@@ -1862,7 +1862,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """);
             assertQuery(query)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                             a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
@@ -1897,7 +1898,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertQuery(query)
                     .noLeakCheck()
-                    .assertsPlan("""
+                    .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 SelectedRecord
                                     Cross Join
@@ -1909,10 +1910,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t2
-                            """);
-            assertQuery(query)
-                    .noLeakCheck()
-                    .returnsOnce("""
+                            """)
+                    .noRandomAccess()
+                    .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                             a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
@@ -2106,7 +2106,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
             assertQuery(query)
                     .noLeakCheck()
-                    .assertsPlan("""
+                    .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
                                 SelectedRecord
                                     Cross Join
@@ -2118,10 +2118,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t2
-                            """);
-            assertQuery(query)
-                    .noLeakCheck()
-                    .returnsOnce("""
+                            """)
+                    .noRandomAccess()
+                    .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                             a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z

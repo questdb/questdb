@@ -6100,7 +6100,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "WINDOW JOIN prices p ON p.sym = t.symbol " +
                     "RANGE BETWEEN 1 second PRECEDING and 1 second FOLLOWING LIMIT 100")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
                             symbol\tside\tprice\tamount\ttimestamp\tavg_bid\tavg_ask
                             IBBT\tsell\t27.62658038426882\t25.755174211876263\t2025-01-01T00:00:00.000000Z\tnull\tnull
                             SRGO\tsell\t23.775851060898002\t10.159709099174506\t2025-01-01T00:00:00.010000Z\tnull\tnull

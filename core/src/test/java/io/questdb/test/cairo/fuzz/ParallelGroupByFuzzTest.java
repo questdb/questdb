@@ -2564,11 +2564,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            final StringSink sink = new StringSink();
                             TestUtils.await(barrier);
                             try {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
+                                    assertQueries(engine, sqlExecutionContext, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
@@ -3739,11 +3738,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            final StringSink sink = new StringSink();
                             TestUtils.await(barrier);
                             try {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
+                                    assertQueries(engine, sqlExecutionContext, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
@@ -4034,8 +4032,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         assertQuery("SELECT key, min(achar) FROM tab ORDER BY key LIMIT -1")
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
+                                .expectSize()
                                 .noLeakCheck()
-                                .returnsOnce("key\tmin\n99\t\n");
+                                .returns("key\tmin\n99\t\n");
                     },
                     configuration,
                     LOG
@@ -5355,7 +5354,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce(expected);
+                                .expectSize()
+                                .returns(expected);
 
                         if (enableParallelGroupBy) {
                             // Make sure that we're testing Rosti here.
@@ -5542,10 +5542,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws Exception {
-        assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
-    }
-
-    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws Exception {
         for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
             final String query = queriesAndExpectedResults[i];
             final String expected = queriesAndExpectedResults[i + 1];
@@ -5561,20 +5557,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final String expected = queriesExpectedResultsAndPlans[i + 1];
             new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
                     .noLeakCheck()
-                    .returnsOnce(expected);
-
-            // verify the plan, optionally
-            final String expectedPlanFragment = queriesExpectedResultsAndPlans[i + 2];
-            if (expectedPlanFragment != null) {
-                sink.clear();
-                TestUtils.printSql(
-                        engine,
-                        sqlExecutionContext,
-                        "EXPLAIN " + query,
-                        sink
-                );
-                TestUtils.assertContains(sink, expectedPlanFragment);
-            }
+                    .withPlanContaining(queriesExpectedResultsAndPlans[i + 2])
+                    .sizeMayVary()
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .returns(expected);
         }
     }
 

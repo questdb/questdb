@@ -1977,6 +1977,51 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinSkipRowsIsReentrant() throws Exception {
+        // Regression test: CrossJoinRecordCursor.skipRows() used to be correct only when called from a
+        // master-row boundary. A second skipRows() call (e.g. the one a wrapping LIMIT cursor issues from
+        // calculateSize()) re-skipped the already-consumed master cursor and silently dropped the
+        // remaining rows of the partially iterated master row. A single master row is the cleanest
+        // trigger: after the first skip consumes it, the second skip would find the master exhausted and
+        // skip nothing. The original failure (testOrderByAdviceWorksWithCrossJoin1a) was seed-dependent;
+        // the exhaustive skip split below reproduces it deterministically.
+        assertMemoryLeak(() -> {
+            final long[][] shapes = {{1, 9}, {3, 4}, {1, 1}, {5, 1}};
+            for (int s = 0; s < shapes.length; s++) {
+                final long masterRows = shapes[s][0];
+                final long slaveRows = shapes[s][1];
+                final long total = masterRows * slaveRows;
+                final String query = "select * from long_sequence(" + masterRows
+                        + ") a cross join long_sequence(" + slaveRows + ") b";
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        // Split the skip across two skipRows() calls so the second one lands mid-stream.
+                        for (long skip1 = 0; skip1 <= total; skip1++) {
+                            for (long skip2 = 0; skip2 <= total - skip1; skip2++) {
+                                cursor.toTop();
+                                counter.set(skip1);
+                                cursor.skipRows(counter);
+                                Assert.assertEquals("first skip should fully apply", 0, counter.get());
+                                counter.set(skip2);
+                                cursor.skipRows(counter);
+                                Assert.assertEquals("second skip should fully apply", 0, counter.get());
+                                long remaining = 0;
+                                while (cursor.hasNext()) {
+                                    remaining++;
+                                }
+                                Assert.assertEquals(
+                                        query + " skip1=" + skip1 + " skip2=" + skip2,
+                                        total - skip1 - skip2, remaining);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
