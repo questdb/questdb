@@ -269,19 +269,20 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
 
     @Test
     public void testNullPredicateColumnRows() throws Exception {
-        // A row whose predicate column is NULL: NOT(NULL < 2.0) is NULL under SQL three-valued logic, so
-        // the row is treated as expired (hidden) — matching a plain "WHERE NOT(v < 2.0)" and consistent
-        // with the cleanup job. Documents and locks in that NULL behavior.
+        // A row whose predicate column is NULL has NOT expired: a row expires only when the predicate is
+        // TRUE, and "v < 2.0" is UNKNOWN (not TRUE) for NULL v, so the row MUST stay visible. The keep
+        // filter is CASE WHEN (v < 2.0) THEN false ELSE true END (keeps FALSE and NULL); a plain
+        // "WHERE NOT(v < 2.0)" would (wrongly) drop the NULL row — QuestDB filtering is three-valued.
         assertMemoryLeak(() -> {
             setCurrentMicros(NOW_MICROS);
             execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
                     "EXPIRE ROWS WHEN v < 2.0");
             execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");  // v<2 -> expired
             execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')");  // v>=2 -> live
-            execute("insert into t values ('CCC', null, '2024-01-07T00:00:00.000000Z')"); // v NULL -> hidden
+            execute("insert into t values ('CCC', null, '2024-01-07T00:00:00.000000Z')"); // v NULL -> live
             drainWalQueue();
 
-            assertSql("sym\tv\n" + "BBB\t5.0\n", "select sym, v from t order by sym");
+            assertSql("sym\tv\n" + "BBB\t5.0\n" + "CCC\tnull\n", "select sym, v from t order by sym");
         });
     }
 
@@ -344,10 +345,11 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
 
     @Test
     public void testReadFilterFallsBackToMetadataOnCacheMiss() throws Exception {
-        // Startup-hydration race regression: when the metadata cache has no entry for a (resolvable)
-        // policied table — as during the brief async metadata hydration at startup — the read filter must
-        // still apply, by falling back to the authoritative table metadata. Simulated by clearing the
-        // cache; without the fallback the filter is silently skipped and expired rows leak.
+        // Cache-miss fallback regression: when the metadata cache has no entry for a (resolvable) policied
+        // table — e.g. during the brief async metadata hydration at startup — the read filter must still
+        // apply, by falling back to the authoritative table metadata. Simulated by clearing the cache (the
+        // monotonic anyExpiryPolicySeen gate stays open, so the lookup still runs and hits the empty cache);
+        // without the fallback the filter is silently skipped and expired rows leak.
         assertMemoryLeak(() -> {
             setCurrentMicros(NOW_MICROS);
             execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +

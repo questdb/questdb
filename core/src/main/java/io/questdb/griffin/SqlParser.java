@@ -163,6 +163,9 @@ public class SqlParser {
     // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
     // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
     private final LowerCaseCharSequenceHashSet expiringTablesBeingExpanded = new LowerCaseCharSequenceHashSet();
+    // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
+    // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
+    private CharSequence expiryTimestampColumnName;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -747,21 +750,24 @@ public class SqlParser {
             IQueryModel model,
             CharSequence tableName,
             String predicate,
+            CharSequence designatedTimestampColumn,
             int position,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        // Quote the table name so names that need quoting (or look like keywords) parse correctly.
-        // Wrap the predicate verbatim in NOT(...) and let the SQL parser turn it into a proper
-        // expression AST — a read must see the rows that have NOT expired. Negating structurally
-        // (rather than string-munging the predicate text) handles every shape correctly: compound
-        // AND/OR, function calls, IN/BETWEEN, etc.
-        final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE not (" + predicate + ")";
+        // Quote the table name so names that need quoting (or look like keywords) parse correctly. The
+        // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
+        // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
+        // see keepFilterWhereText for the NULL/three-valued and partition-pruning details.
+        final boolean flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, model.getDecls());
+        final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE " + keepFilterWhereText(predicate, flip);
 
         final GenericLexer subLexer = viewLexers.next();
         subLexer.of(syntheticSql);
 
         final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, model.getDecls(), true);
-        subQuery.setWhereClause(simplifyKeepFilter(subQuery.getWhereClause()));
+        if (flip) {
+            subQuery.setWhereClause(simplifyKeepFilter(subQuery.getWhereClause(), designatedTimestampColumn));
+        }
         model.setNestedModel(subQuery);
         model.setNestedModelIsSubQuery(true);
         if (model.getAlias() == null) {
@@ -792,22 +798,134 @@ public class SqlParser {
     }
 
     /**
+     * Returns the keep-filter WHERE-clause text for an EXPIRE ROWS predicate — the rows that have NOT
+     * expired. A row expires only when the predicate is TRUE, so the keep-filter must keep rows for which
+     * the predicate is FALSE or NULL.
+     * <ul>
+     *     <li>{@code flip} (a designated-timestamp ordering comparison, see
+     *     {@link #isTimestampFlippablePredicate}): {@code NOT (predicate)}, which the caller then rewrites
+     *     in-place to the flipped bare comparison (e.g. {@code ts >= now()}) via {@link #simplifyKeepFilter}
+     *     so {@link WhereClauseParser} can extract a timestamp interval and prune partitions. Safe because
+     *     the timestamp is never NULL.</li>
+     *     <li>otherwise: {@code CASE WHEN (predicate) THEN false ELSE true END}, which keeps FALSE and NULL
+     *     rows for EVERY predicate shape. A plain {@code NOT(predicate)} would wrongly drop rows whose
+     *     predicate is UNKNOWN (NULL operand — QuestDB filtering is three-valued), and
+     *     {@code (predicate) IS NOT TRUE} is unreliable for composite booleans such as {@code IN}.</li>
+     * </ul>
+     */
+    private static String keepFilterWhereText(String predicate, boolean flip) {
+        return flip
+                ? "NOT (" + predicate + ")"
+                : "CASE WHEN (" + predicate + ") THEN false ELSE true END";
+    }
+
+    /**
+     * Builds the keep-filter node for ANDing into an UPDATE's WHERE (an UPDATE target cannot be wrapped in
+     * a sub-query — it needs row ids). Parses {@link #keepFilterWhereText} inline and applies the same
+     * timestamp flip the read path uses.
+     */
+    private ExpressionNode buildKeepFilterNode(
+            String predicate,
+            CharSequence designatedTimestampColumn,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        final boolean flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, decls);
+        final GenericLexer keepLexer = viewLexers.next();
+        keepLexer.of(keepFilterWhereText(predicate, flip));
+        final ExpressionNode node = expr(keepLexer, (IQueryModel) null, sqlParserCallback, decls);
+        return flip ? simplifyKeepFilter(node, designatedTimestampColumn) : node;
+    }
+
+    /**
+     * Whether the predicate is a designated-timestamp ordering comparison whose other operand references
+     * no column — i.e. the {@code ts < now()} shape, for which {@code NOT(predicate)} can be safely flipped
+     * to a bare comparison for partition pruning. Parses the predicate purely to inspect it (the node is
+     * discarded). Returns false (keep the always-correct CASE form) for everything else.
+     */
+    private boolean isTimestampFlippablePredicate(
+            String predicate,
+            CharSequence designatedTimestampColumn,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        if (designatedTimestampColumn == null) {
+            return false;
+        }
+        final GenericLexer probeLexer = viewLexers.next();
+        probeLexer.of(predicate);
+        final ExpressionNode pred = expr(probeLexer, (IQueryModel) null, sqlParserCallback, decls);
+        return pred != null && pred.type == ExpressionNode.OPERATION && pred.paramCount == 2
+                && invertOrderingOperator(pred.token) != null
+                && isNullSafeOrderingFlip(pred.lhs, pred.rhs, designatedTimestampColumn);
+    }
+
+    /**
      * Rewrites a {@code NOT(<ordering comparison>)} keep-filter into the equivalent flipped comparison
      * (e.g. {@code NOT(ts < now())} -> {@code ts >= now()}) so {@link WhereClauseParser} can extract a
-     * timestamp interval and prune partitions — it interval-extracts a bare comparison (and NOT(IN) /
-     * NOT(BETWEEN)) but not NOT(<). Compound and other shapes are returned unchanged (still NOT(...)).
+     * timestamp interval and prune partitions. Only applied when the caller has already established (via
+     * {@link #isTimestampFlippablePredicate}) that the comparison is on the never-NULL designated timestamp.
      */
-    private static ExpressionNode simplifyKeepFilter(ExpressionNode keepFilter) {
+    private static ExpressionNode simplifyKeepFilter(ExpressionNode keepFilter, CharSequence designatedTimestampColumn) {
         if (keepFilter != null && keepFilter.paramCount == 1 && keepFilter.rhs != null
                 && Chars.equalsIgnoreCase(keepFilter.token, "not")) {
             final ExpressionNode inner = keepFilter.rhs;
             final CharSequence inverted = invertOrderingOperator(inner.token);
-            if (inverted != null && inner.type == ExpressionNode.OPERATION && inner.paramCount == 2) {
+            if (inverted != null && inner.type == ExpressionNode.OPERATION && inner.paramCount == 2
+                    && isNullSafeOrderingFlip(inner.lhs, inner.rhs, designatedTimestampColumn)) {
                 inner.token = inverted;
                 return inner;
             }
         }
         return keepFilter;
+    }
+
+    /**
+     * Whether {@code NOT(a <op> b)} can be safely rewritten to the flipped bare comparison {@code a <inv> b}.
+     * QuestDB comparisons are two-valued: a NULL operand makes BOTH {@code a < b} and {@code a >= b} false, so
+     * {@code NOT(a < b)} (which is true when an operand is NULL) is NOT equivalent to {@code a >= b} (false)
+     * unless both operands are guaranteed non-null. The flip is therefore allowed only when one operand is the
+     * designated timestamp column (never NULL) and the other references no column (a constant / now()-style
+     * expression, also never NULL) — exactly the {@code ts < now()} shape the partition-pruning optimisation
+     * targets. Every other shape keeps the {@code NOT(...)} wrap, which is always correct (it just does not
+     * prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on a nullable column would
+     * hide (and the cleanup job would delete) rows whose {@code v} is NULL even though they never expired.
+     */
+    private static boolean isNullSafeOrderingFlip(ExpressionNode a, ExpressionNode b, CharSequence designatedTimestampColumn) {
+        if (a == null || b == null || designatedTimestampColumn == null) {
+            return false;
+        }
+        return (isDesignatedTimestamp(a, designatedTimestampColumn) && hasNoColumnReference(b))
+                || (isDesignatedTimestamp(b, designatedTimestampColumn) && hasNoColumnReference(a));
+    }
+
+    private static boolean isDesignatedTimestamp(ExpressionNode node, CharSequence designatedTimestampColumn) {
+        // Case-sensitive exact match against the actual column name: a non-match merely skips the flip
+        // (keeps the always-correct NOT(...)), so being strict here can only cost a pruning opportunity.
+        return node.type == ExpressionNode.LITERAL && Chars.equals(node.token, designatedTimestampColumn);
+    }
+
+    /**
+     * True if the sub-tree contains no column reference (LITERAL) or bind variable (BIND_VARIABLE) — i.e. it
+     * is built only from constants and functions of constants (e.g. {@code now()}, {@code dateadd('d', -1,
+     * now())}), so it cannot evaluate to NULL on a per-row basis.
+     */
+    private static boolean hasNoColumnReference(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            return false;
+        }
+        if (!hasNoColumnReference(node.lhs) || !hasNoColumnReference(node.rhs)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!hasNoColumnReference(node.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -827,20 +945,6 @@ public class SqlParser {
     }
 
     /**
-     * Parses {@code predicate} into the keep-filter node (the rows that have NOT expired), for ANDing
-     * into an UPDATE's WHERE. Same negation as {@link #expandExpiringTable}, but returns the node.
-     */
-    private ExpressionNode parseKeepFilterNode(
-            String predicate,
-            SqlParserCallback sqlParserCallback,
-            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
-    ) throws SqlException {
-        final GenericLexer keepLexer = viewLexers.next();
-        keepLexer.of("not (" + predicate + ")");
-        return simplifyKeepFilter(expr(keepLexer, (IQueryModel) null, sqlParserCallback, decls));
-    }
-
-    /**
      * Returns the EXPIRE ROWS predicate for the given table token, or null if the table is unknown,
      * is not a regular table, or carries no policy. Uses the in-memory metadata cache
      * ({@link io.questdb.cairo.MetadataCache#readLock()} + map lookup): a shared read lock plus a
@@ -848,6 +952,7 @@ public class SqlParser {
      * cache-miss caveat.
      */
     private String lookupExpiryPredicate(TableToken tableToken) {
+        expiryTimestampColumnName = null;
         if (tableToken == null || tableToken.isView()) {
             return null;
         }
@@ -855,7 +960,12 @@ public class SqlParser {
             final CairoTable table = metadataRO.getTable(tableToken);
             if (table != null) {
                 final String predicate = table.getExpiryPredicate();
-                return predicate == null || predicate.isEmpty() ? null : predicate;
+                if (predicate == null || predicate.isEmpty()) {
+                    return null;
+                }
+                // Copy: the CairoTable's name view must not outlive the read lock we are about to release.
+                expiryTimestampColumnName = Chars.toString(table.getTimestampName());
+                return predicate;
             }
         }
         // Cache miss for a resolvable table: the in-memory cache may not be hydrated yet (the brief
@@ -864,7 +974,12 @@ public class SqlParser {
         // otherwise expose expired rows until hydration caught up.
         try (TableMetadata metadata = cairoEngine.getTableMetadata(tableToken)) {
             final String predicate = metadata.getExpiryPredicate();
-            return predicate == null || predicate.isEmpty() ? null : predicate;
+            if (predicate == null || predicate.isEmpty()) {
+                return null;
+            }
+            final int tsIndex = metadata.getTimestampIndex();
+            expiryTimestampColumnName = tsIndex >= 0 ? Chars.toString(metadata.getColumnName(tsIndex)) : null;
+            return predicate;
         } catch (CairoException e) {
             // Table concurrently dropped/renamed, or its metadata is briefly unavailable: treat as no policy.
             return null;
@@ -2964,7 +3079,7 @@ public class SqlParser {
                 if (tt != null && !tt.isView() && (predicate = lookupExpiryPredicate(tt)) != null) {
                     nestedModel.setWhereClause(andKeepFilter(
                             nestedModel.getWhereClause(),
-                            parseKeepFilterNode(predicate, sqlParserCallback, decls)
+                            buildKeepFilterNode(predicate, expiryTimestampColumnName, sqlParserCallback, decls)
                     ));
                 }
             }
@@ -4635,6 +4750,7 @@ public class SqlParser {
                 final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
                 final String predicate;
                 if (tt != null && !tt.isView() && (predicate = lookupExpiryPredicate(tt)) != null) {
+                    final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
                     final int position = resolvedTableNameExpr.position;
                     model.setTableNameExpr(null);
                     // The set stores references, not copies, and unquote() of a quoted token yields a
@@ -4643,7 +4759,7 @@ public class SqlParser {
                     final String guardKey = Chars.toString(unquotedName);
                     expiringTablesBeingExpanded.add(guardKey);
                     try {
-                        expandExpiringTable(model, guardKey, predicate, position, sqlParserCallback);
+                        expandExpiringTable(model, guardKey, predicate, designatedTimestampColumn, position, sqlParserCallback);
                     } finally {
                         expiringTablesBeingExpanded.remove(guardKey);
                     }

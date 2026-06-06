@@ -28,13 +28,18 @@ import io.questdb.std.str.CharSink;
 
 /**
  * Shared helper for the row-expiry feature's background cleanup job ({@link RowExpiryCleanupJob}).
- * The stored expiry predicate describes WHEN a row expires; the cleanup job needs the logical
- * negation of it (the "keep" filter) to select the surviving rows.
+ * The stored expiry predicate describes WHEN a row expires; the cleanup job needs the complementary
+ * "keep" filter (the rows that have NOT expired) to select the surviving rows.
  * <p>
- * The read-time filter does NOT use this helper: it negates the predicate on the parsed expression
- * tree (see {@code SqlParser.expandExpiringTable}) so the optimiser can prune partitions. The
- * cleanup job's survivor query is already restricted to a single partition, so it has no such need,
- * and a plain {@code NOT(...)} wrap — correct for every predicate shape — is sufficient here.
+ * A row expires only when the predicate is TRUE, so the keep-filter is
+ * {@code CASE WHEN (predicate) THEN false ELSE true END}, which keeps rows for which the predicate is
+ * FALSE or NULL. A plain {@code NOT(predicate)} would be wrong: QuestDB filtering is three-valued, so for
+ * a NULL predicate operand the predicate is UNKNOWN and {@code NOT(UNKNOWN)} is UNKNOWN — the row would be
+ * dropped (deleted) even though it never expired. ({@code (predicate) IS NOT TRUE} handles NULL but is
+ * unreliable for composite booleans such as {@code IN}, so the CASE form is used.) This matches the
+ * read-time filter (see {@code SqlParser.buildKeepFilter}); the read filter additionally flips a
+ * designated-timestamp comparison to a bare comparison so the optimiser can prune partitions, which the
+ * cleanup's already-single-partition survivor query does not need.
  */
 public final class RowExpiryUtil {
 
@@ -66,12 +71,14 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Builds the keep-rows filter (the rows that have NOT expired) for the cleanup job: the negation
-     * of the stored expiry predicate. Always {@code NOT (<predicate>)} — correct for any predicate,
-     * including compound ones. The predicate is wrapped in parentheses so its internal operator
-     * precedence cannot leak past the NOT.
+     * Builds the keep-rows filter (the rows that have NOT expired) for the cleanup job:
+     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, which keeps rows for which the predicate is
+     * FALSE or NULL. The predicate is wrapped in parentheses so its internal operator precedence cannot
+     * leak. Correct for any predicate shape, including compound ones, {@code IN}, and NULL operands (see
+     * the class note on why a plain {@code NOT(...)} would wrongly delete not-expired rows whose predicate
+     * column is NULL).
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
-        return "NOT (" + predicate.trim() + ")";
+        return "CASE WHEN (" + predicate.trim() + ") THEN false ELSE true END";
     }
 }

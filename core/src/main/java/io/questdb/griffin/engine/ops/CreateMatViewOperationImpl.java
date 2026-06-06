@@ -647,27 +647,26 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // base table's partition unit. NOTE: a single very dense base partition still commits as one
         // batch, since the refresh step cannot subdivide below one sampler bucket.
         switch (basePartitionBy) {
-            case PartitionBy.HOUR:
+            case PartitionBy.HOUR -> {
                 samplingInterval = 1;
                 samplingIntervalUnit = 'h';
-                break;
-            case PartitionBy.WEEK:
+            }
+            case PartitionBy.WEEK -> {
                 samplingInterval = 7;
                 samplingIntervalUnit = 'd';
-                break;
-            case PartitionBy.MONTH:
+            }
+            case PartitionBy.MONTH -> {
                 samplingInterval = 1;
                 samplingIntervalUnit = 'M';
-                break;
-            case PartitionBy.YEAR:
+            }
+            case PartitionBy.YEAR -> {
                 samplingInterval = 1;
                 samplingIntervalUnit = 'y';
-                break;
-            case PartitionBy.DAY:
-            default:
+            }
+            default -> { // DAY (and any non-time-unit partitioning)
                 samplingInterval = 1;
                 samplingIntervalUnit = 'd';
-                break;
+            }
         }
     }
 

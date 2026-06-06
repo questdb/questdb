@@ -196,7 +196,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // Decide and act (reader closed). REPLACE_RANGE first (needs a WAL writer), then batch-drop.
         dropFloors.clear();
         WalWriter walWriter = null;
-        RecordToRowCopier copier = null;
         try {
             for (int i = 0, n = partitionFloors.size(); i < n; i++) {
                 final long floorTs = partitionFloors.getQuick(i);
@@ -212,20 +211,19 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         if (walWriter == null) {
                             walWriter = engine.getWalWriter(tableToken);
                         }
-                        copier = replacePartition(tableName, keepFilter, timestampColumnName,
-                                timestampType, partitionBy, floorTs, nextFloorTs, walWriter, copier);
+                        replacePartition(tableName, keepFilter, timestampColumnName,
+                                timestampType, partitionBy, floorTs, nextFloorTs, walWriter);
                         workDone = true;
                     }
                 } catch (Throwable th) {
                     // A REPLACE that failed mid-append leaves uncommitted rows in the (reused) writer.
                     // Free it so those rows are rolled back on close and cannot be committed into the
                     // NEXT partition's REPLACE_RANGE (which would resurrect them outside the deleted
-                    // range). A fresh writer + copier are acquired on the next REPLACE.
+                    // range). A fresh writer is acquired on the next REPLACE.
                     walWriter = Misc.free(walWriter);
-                    copier = null;
-                    LOG.error().$("row-expiry partition cleanup failed [table=").$(tableName)
+                    LOG.error().$("row-expiry partition cleanup failed [table=").$safe(tableName)
                             .$(", partitionTs=").$(floorTs)
-                            .$(", msg=").$(th.getMessage())
+                            .$(", msg=").$safe(th.getMessage())
                             .I$();
                 }
             }
@@ -323,8 +321,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     workDone = true;
                 }
             } catch (Throwable th) {
-                LOG.error().$("row-expiry cleanup failed [table=").$(tableKey)
-                        .$(", msg=").$(th.getMessage())
+                LOG.error().$("row-expiry cleanup failed [table=").$safe(tableKey)
+                        .$(", msg=").$safe(th.getMessage())
                         .I$();
             }
             lastRunByTable.put(Chars.toString(tableKey), nowMicros);
@@ -393,11 +391,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         }
         try {
             executeSql(sqlSink);
-            LOG.info().$("dropped ").$(floors.size()).$(" fully-expired partitions [table=").$(tableName).I$();
+            LOG.info().$("dropped ").$(floors.size()).$(" fully-expired partitions [table=").$safe(tableName).I$();
             return true;
         } catch (Throwable th) {
-            LOG.error().$("failed to drop expired partitions [table=").$(tableName)
-                    .$(", msg=").$(th.getMessage()).I$();
+            LOG.error().$("failed to drop expired partitions [table=").$safe(tableName)
+                    .$(", msg=").$safe(th.getMessage()).I$();
             return false;
         }
     }
@@ -411,7 +409,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         ((SqlExecutionContextImpl) sqlExecutionContext).initNow();
     }
 
-    private RecordToRowCopier replacePartition(
+    private void replacePartition(
             String tableName,
             String keepFilter,
             String timestampColumnName,
@@ -419,8 +417,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             int partitionBy,
             long floorTs,
             long nextFloorTs,
-            WalWriter walWriter,
-            RecordToRowCopier copier
+            WalWriter walWriter
     ) throws SqlException {
         partitionSink.clear();
         PartitionBy.setSinkForPartition(partitionSink, timestampType, partitionBy, floorTs);
@@ -430,16 +427,18 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         initNow();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try (RecordCursorFactory factory = compiler.compile(sqlSink, sqlExecutionContext).getRecordCursorFactory()) {
-                if (copier == null) {
-                    columnFilter.of(factory.getMetadata().getColumnCount());
-                    copier = RecordToRowCopierUtils.generateCopier(
-                            asm,
-                            factory.getMetadata(),
-                            walWriter.getMetadata(),
-                            columnFilter,
-                            engine.getConfiguration()
-                    );
-                }
+                // Generate the copier per partition: a concurrent structural ALTER (applied on the shared
+                // write pool) could change the column layout between partitions, so a copier reused from an
+                // earlier partition could map columns wrongly. Regenerating is cheap relative to the
+                // per-partition survivor scan, and this is a low-frequency background job.
+                columnFilter.of(factory.getMetadata().getColumnCount());
+                final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                        asm,
+                        factory.getMetadata(),
+                        walWriter.getMetadata(),
+                        columnFilter,
+                        engine.getConfiguration()
+                );
                 final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampColumnName);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final Record record = cursor.getRecord();
@@ -454,8 +453,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         }
         // Atomically replace [floorTs, nextFloorTs) with exactly the surviving rows appended above.
         walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
-        LOG.info().$("compacted expired-rows partition [table=").$(tableName)
+        LOG.info().$("compacted expired-rows partition [table=").$safe(tableName)
                 .$(", partition=").$(partitionSink).I$();
-        return copier;
     }
 }

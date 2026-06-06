@@ -143,6 +143,34 @@ public class RowExpiryCleanupJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJobKeepsNullPredicateColumnRow() throws Exception {
+        // Data-loss regression: a row whose predicate column is NULL has NOT expired ("v < 2.0" is UNKNOWN,
+        // not TRUE, for NULL v), so the cleanup job MUST keep it. A plain NOT(v < 2.0) keep-filter would
+        // (wrongly) drop it; the job uses CASE WHEN (v < 2.0) THEN false ELSE true END, which keeps NULL.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            // 2024-01-05 (non-active): expired (v=1.0), live (v=5.0), live-because-NULL (v=null) -> REPLACE
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into t values ('BBB', 5.0, '2024-01-05T06:00:00.000000Z')");
+            execute("insert into t values ('CCC', null, '2024-01-05T12:00:00.000000Z')");
+            // active partition keeps it non-active
+            execute("insert into t values ('EEE', 5.0, '2024-01-10T06:00:00.000000Z')");
+            drainWalQueue();
+
+            assertEquals(3, rawRowCountWhere("t", "2024-01-05"));
+            runCleanup();
+            drainWalQueue();
+
+            // Only the v=1.0 row is expired; the v=5.0 and the NULL-v rows both survive physically.
+            assertEquals(2, rawRowCountWhere("t", "2024-01-05"));
+            // Bypassing the read filter, the NULL-v row is still on disk (it was never expired).
+            assertSql("sym\n" + "CCC\n", "select sym from t where v is null");
+        });
+    }
+
+    @Test
     public void testJobReplacePartialPartition() throws Exception {
         // A non-active partition with mixed expired+fresh rows: after the job its raw row count equals
         // the survivor count, and other partitions are intact.
