@@ -1720,6 +1720,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             byte walFlag
     ) throws SqlException {
+        if (engine.isReadOnlyMode()) {
+            // SET TYPE writes the _convert marker via createConvertFile during compilation,
+            // outside the engine writer chokepoint, so the per-statement ingress write-gate (which
+            // runs after compile() for parse-time-executed statements) cannot stop it. Refuse the
+            // instant the node is read-only. This also closes the demote window: isReadOnlyMode()
+            // flips first, while a connection's security context may still be the PRIMARY one that
+            // authorizeAlterTableSetType() would accept, so the check must precede the auth call.
+            throw CairoException.authorization().put("replica access is read-only");
+        }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
             try (TableReader reader = engine.getReader(tableToken)) {
