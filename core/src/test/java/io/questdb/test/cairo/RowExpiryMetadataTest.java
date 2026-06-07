@@ -31,6 +31,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -39,6 +40,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Verifies that the per-table row-expiry policy (predicate + cleanup interval) is persisted to and
@@ -84,6 +86,37 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
                 assertEquals(0, metadata.getTtlHoursOrMonths());
                 assertNull(metadata.getExpiryPredicate());
                 assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
+            }
+        });
+    }
+
+    @Test
+    public void testExpiryRoundTripsWithCoveringIndexColumn() throws Exception {
+        // The trailing expiry section sits AFTER the per-column covering-index section in _meta. A POSTING
+        // index that INCLUDEs a column produces a NON-EMPTY covering section, so getMetaExpiryPolicyOffset
+        // must skip past it to locate the policy. Every other expiry test uses an empty covering section,
+        // so this guards the offset walk over a non-empty one (both _meta readers + the metadata cache).
+        assertMemoryLeak(() -> {
+            execute("create table t (" +
+                    "s symbol index type posting include (v), v double, ts timestamp" +
+                    ") timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+
+            final TableToken token = engine.verifyTableName("t");
+
+            // Re-read from disk (drop pooled readers) so the offset walk runs against the file.
+            engine.releaseInactive();
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                // Sanity: the POSTING INCLUDE produced a non-empty covering section, so the offset walk is
+                // genuinely tested over it (otherwise this would degenerate to the empty-covering case).
+                final IntList covering = metadata.getColumnMetadata(metadata.getColumnIndex("s")).getCoveringColumnIndices();
+                assertTrue("expected a non-empty covering-index section", covering != null && covering.size() > 0);
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, metadata.getExpiryCleanupIntervalMicros());
+            }
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                assertEquals("v < 2.0", writer.getExpiryPredicate());
+                assertEquals(30 * MICROS_PER_MINUTE, writer.getExpiryCleanupIntervalMicros());
             }
         });
     }
