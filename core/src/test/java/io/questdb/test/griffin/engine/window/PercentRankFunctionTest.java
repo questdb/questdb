@@ -211,7 +211,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // Row 501: (501-1)/(1000-1) = 500/999 = 0.5005005005...
             assertQuery("select min(pr), max(pr) from (select percent_rank() over (order by v) as pr from tab)")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             min\tmax
                             0.0\t1.0
                             """);
