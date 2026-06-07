@@ -47,6 +47,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNK_AUX_SIZE_OFFSET;
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_DATA_SIZE_OFFSET;
+    private static final long CHUNK_PAGE_BUFFERS_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
     private final int memoryTag;
     private long ptr;
@@ -95,6 +96,19 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_DATA_SIZE_OFFSET);
     }
 
+    /**
+     * Total bytes retained in the chunk's {@code page_buffers} (decompressed page/dict
+     * buffers that VARCHAR_SLICE aux pointers reference). Zero for non-VARCHAR_SLICE
+     * columns and for VARCHAR_SLICE chunks whose bytes are borrowed from the mmap or
+     * already counted by {@link #getChunkDataSize(int)} (the DeltaByteArray spill path).
+     * The decode-cache byte budget adds this so VARCHAR_SLICE frames are not undercounted.
+     */
+    public long getChunkPageBuffersSize(int columnIndex) {
+        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
+        return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_PAGE_BUFFERS_SIZE_OFFSET);
+    }
+
     public long ptr() {
         return ptr;
     }
@@ -114,6 +128,8 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
 
     private static native long chunkDataSizeOffset();
 
+    private static native long chunkPageBuffersSizeOffset();
+
     private static native long columnBuffersPtrOffset();
 
     private static native long columnChunkBuffersSize();
@@ -129,6 +145,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         CHUNK_STRUCT_SIZE = columnChunkBuffersSize();
         CHUNK_DATA_PTR_OFFSET = chunkDataPtrOffset();
         CHUNK_DATA_SIZE_OFFSET = chunkDataSizeOffset();
+        CHUNK_PAGE_BUFFERS_SIZE_OFFSET = chunkPageBuffersSizeOffset();
         CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
         CHUNK_AUX_SIZE_OFFSET = chunkAuxSizeOffset();
     }

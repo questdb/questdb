@@ -122,6 +122,15 @@ pub struct ColumnChunkBuffers {
     pub aux_ptr: *mut u8,
     pub aux_vec: AcVec<u8>,
 
+    /// Total `len()` of the buffers retained in `page_buffers`. For VarcharSlice
+    /// columns under the Plain / DeltaLengthByteArray / dictionary encodings the
+    /// decoded string bytes live in these retained pages (the aux entries hold
+    /// pointers into them) while `data_vec` stays empty, so this is the decode's
+    /// heap footprint beyond `data_size` + `aux_size`. Java's decode-cache byte
+    /// budget adds it so VarcharSlice frames are not undercounted. Refreshed by
+    /// `refresh_ptrs` at the end of each column-chunk decode; 0 for every other
+    /// column type (and for uncompressed pages borrowed from the mmap).
+    pub page_buffers_size: usize,
     pub page_buffers: Vec<Vec<u8>>,
 }
 

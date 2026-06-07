@@ -51,6 +51,7 @@ impl ColumnChunkBuffers {
             aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
+            page_buffers_size: 0,
             page_buffers: Vec::new(),
         }
     }
@@ -65,6 +66,12 @@ impl ColumnChunkBuffers {
             self.aux_size = self.aux_vec.len();
             self.aux_ptr = self.aux_vec.as_mut_ptr();
         }
+
+        // Total bytes retained in page_buffers (decompressed page/dict buffers that
+        // VarcharSlice aux pointers reference). O(number of pages) - a handful per
+        // column chunk. page_buffers is fully populated before every refresh_ptrs
+        // call, and reset() zeroes this for the next decode.
+        self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
     }
 
     pub fn reset(&mut self) {
@@ -76,6 +83,7 @@ impl ColumnChunkBuffers {
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
 
+        self.page_buffers_size = 0;
         self.page_buffers.clear();
     }
 }
@@ -2287,6 +2295,30 @@ mod tests {
     const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
     const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
     const UUID_NULL: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128];
+
+    #[test]
+    fn page_buffers_size_tracks_retained_page_bytes() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        // Fresh buffer: nothing retained.
+        bufs.refresh_ptrs();
+        assert_eq!(bufs.page_buffers_size, 0);
+
+        // A VarcharSlice decode retains decompressed page/dict buffers here, with the
+        // aux pointers referencing them. refresh_ptrs must sum their lengths so the
+        // Java decode-cache budget counts the string bytes.
+        bufs.page_buffers.push(vec![0u8; 100]);
+        bufs.page_buffers.push(vec![0u8; 56]);
+        bufs.refresh_ptrs();
+        assert_eq!(bufs.page_buffers_size, 156);
+
+        // reset() must zero it so a reused buffer does not carry stale bytes.
+        bufs.reset();
+        assert_eq!(bufs.page_buffers_size, 0);
+        assert!(bufs.page_buffers.is_empty());
+    }
 
     #[test]
     fn test_decode_int_column_v2_nulls() {

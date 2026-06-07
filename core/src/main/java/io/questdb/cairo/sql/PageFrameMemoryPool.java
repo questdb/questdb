@@ -1429,7 +1429,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 long bytes = 0;
                 final boolean isTrackingForSpill = spillManager != null;
                 for (int s = 0; s < slotCount; s++) {
-                    bytes += rowGroupBuffers.getChunkDataSize(s) + rowGroupBuffers.getChunkAuxSize(s);
+                    // getChunkPageBuffersSize covers VARCHAR_SLICE string bytes retained in
+                    // native page buffers; getChunkDataSize does not see them because data_vec
+                    // stays empty for the Plain/DeltaLength/dictionary encodings. Without this
+                    // term the budget undercounts varchar frames and the byte cap fails to
+                    // bound RSS for the heaviest column type.
+                    bytes += rowGroupBuffers.getChunkDataSize(s)
+                            + rowGroupBuffers.getChunkAuxSize(s)
+                            + rowGroupBuffers.getChunkPageBuffersSize(s);
                     if (isTrackingForSpill) {
                         slotParquetIndexes.add(parquetColumns.get(2L * s));
                         slotColumnTypes.add(parquetColumns.get(2L * s + 1));
@@ -1660,7 +1667,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             long bytes = 0;
             for (int s = 0; s < slotCount; s++) {
                 bytes += rowGroupBuffers.getChunkDataSize(startSlot + s)
-                        + rowGroupBuffers.getChunkAuxSize(startSlot + s);
+                        + rowGroupBuffers.getChunkAuxSize(startSlot + s)
+                        + rowGroupBuffers.getChunkPageBuffersSize(startSlot + s);
             }
             return bytes;
         }
