@@ -251,7 +251,10 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce(expected);
+                            .inferTimestamp()
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .returns(expected);
                 }
             }, configuration, LOG);
         });

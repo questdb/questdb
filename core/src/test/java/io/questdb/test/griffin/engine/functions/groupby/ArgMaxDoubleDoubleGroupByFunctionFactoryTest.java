@@ -140,7 +140,8 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce(
+                                .expectSize()
+                                .returns(
                                         """
                                                 sym\targ_max
                                                 A\tnull

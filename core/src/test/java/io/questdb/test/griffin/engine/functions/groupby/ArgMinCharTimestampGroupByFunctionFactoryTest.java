@@ -79,7 +79,8 @@ public class ArgMinCharTimestampGroupByFunctionFactoryTest extends AbstractCairo
                         .withEngine(engine)
                         .withContext(sqlExecutionContext)
                         .noLeakCheck()
-                        .returnsOnce("sym\targ_min\nA\t\nB\t\nC\t\nD\t\nE\t\n");
+                        .expectSize()
+                        .returns("sym\targ_min\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
         }
     }
