@@ -1546,6 +1546,9 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     ) u
                     WHERE u.id = 'item_1'
                     """)
+                    // returnsOnce(): json_extract() lazily allocates ~2MB of internal buffers during
+                    // cursor execution that outlive the cursor, so the full returns() battery's
+                    // factory-memory check fails. The single-pass returnsOnce() closes the factory at once.
                     .noLeakCheck()
                     .returnsOnce("""
                             id\tvalue\tscore
@@ -3793,7 +3796,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     + "t.payload COLUMNS(s VARCHAR)"
                     + ") u")
                     .noLeakCheck()
-                    .returnsOnce("s\n"
+                    .noRandomAccess()
+                    .returns("s\n"
                             + exactVal + "\n");
         });
     }
