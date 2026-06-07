@@ -15031,10 +15031,21 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {
-        // returnsOnce() does a single cursor pass without asserting the designated timestamp, which varies
-        // per caller (e.g. testSampleByWithProjection projects to NYTime), so one chain fits every caller.
-        assertQuery(sql).noLeakCheck().returnsOnce(expected);
-        assertQuery(sql + " ALIGN TO FIRST OBSERVATION;").noLeakCheck().returnsOnce(expected);
+        // One chain fits every caller: the designated timestamp, random-access support and size all vary
+        // per caller (e.g. testSampleByWithProjection projects the timestamp through to_timezone to NYTime)
+        // and per alignment, so the assertion infers them from each compiled factory rather than pinning.
+        assertQuery(sql)
+                .noLeakCheck()
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns(expected);
+        assertQuery(sql + " ALIGN TO FIRST OBSERVATION;")
+                .noLeakCheck()
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns(expected);
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {

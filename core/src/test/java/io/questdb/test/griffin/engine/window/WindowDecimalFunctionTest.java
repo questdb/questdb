@@ -11081,7 +11081,10 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                         "sum(" + col + ") OVER (PARTITION BY grp) s " +
                         "FROM t) ORDER BY ts")
                         .noLeakCheck()
-                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n");
             }
         });
     }
@@ -11436,11 +11439,17 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // OverPartitionRangeFrame
                 assertQuery("SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t)")
                         .noLeakCheck()
-                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
                 // OverPartitionRowsFrame
                 assertQuery("SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) av FROM t)")
                         .noLeakCheck()
-                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
             }
         });
     }
@@ -11462,7 +11471,10 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // Just verify it runs (5 rows expected).
                 assertQuery("SELECT ts, av FROM (" + query + ") WHERE 1=0")
                         .noLeakCheck()
-                        .returnsOnce("ts\tav\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\tav\n");
             }
         });
     }

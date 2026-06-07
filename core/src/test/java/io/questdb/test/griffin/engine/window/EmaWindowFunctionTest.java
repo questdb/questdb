@@ -362,7 +362,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Just verify it runs without error and returns expected row count
             assertQuery("select count(*) from (select ts, i, val, avg(val, 'alpha', 0.1) over (partition by i order by ts) from tab)")
                     .noLeakCheck()
-                    .returnsOnce("count\n1000\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1000\n");
         });
     }
 
@@ -1114,7 +1116,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Verify it runs and returns expected row count
             assertQuery("select count(*) from (select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab)")
                     .noLeakCheck()
-                    .returnsOnce("count\n100\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n100\n");
         });
     }
 

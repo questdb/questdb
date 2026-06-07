@@ -912,10 +912,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String tenSeconds = timestampType == TestTimestampType.MICRO ? "10000000" : "10000000000";
 
             // partition + range frame
-            assertQuery("explain select ts, i, covar_pop(y, x) over (partition by i order by ts range between 10 second preceding and current row) from tab")
+            assertQuery("select ts, i, covar_pop(y, x) over (partition by i order by ts range between 10 second preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [covar_pop(y,x) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -4619,20 +4618,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
 
             // Test bounded range frame plan
-            assertQuery("explain select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab")
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [ksum(val) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             // Test unbounded preceding plan
-            assertQuery("explain select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab")
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [ksum(val) over (partition by [i] range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -4946,20 +4943,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
 
             // Test bounded range with current row
-            assertQuery("explain select ts, val, ksum(val) over (order by ts range between 10 second preceding and current row) from tab")
+            assertQuery("select ts, val, ksum(val) over (order by ts range between 10 second preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [ksum(val) over (range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             // Test unbounded preceding with N preceding end
-            assertQuery("explain select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab")
+            assertQuery("select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [ksum(val) over (range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -17794,10 +17789,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
 
             // partition + range frame
-            assertQuery("explain select ts, i, stddev_pop(val) over (partition by i order by ts range between 10 second preceding and current row) from tab")
+            assertQuery("select ts, i, stddev_pop(val) over (partition by i order by ts range between 10 second preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [stddev_pop(val) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -17815,10 +17809,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // no partition + range frame
-            assertQuery("explain select ts, stddev_pop(val) over (order by ts range between 10 second preceding and current row) from tab")
+            assertQuery("select ts, stddev_pop(val) over (order by ts range between 10 second preceding and current row) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [stddev_pop(val) over (range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -17836,10 +17829,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // unbounded preceding range
-            assertQuery("explain select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab")
+            assertQuery("select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab")
                     .noLeakCheck()
-                    .returnsOnce("QUERY PLAN\n" +
-                            "Window\n" +
+                    .assertsPlan("Window\n" +
                             "  functions: [stddev_pop(val) over (partition by [i] range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +

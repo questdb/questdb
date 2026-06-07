@@ -6083,35 +6083,50 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts2\tts1
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z
                             """);
 
             assertQuery("select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tts2\tx\tts3\tx1
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2
                             """);
 
             assertQuery("select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tx\tts11
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                             """);
 
             assertQuery("select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tx\tts11
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                             """);
 
             assertQuery("select t2.ts as TS, t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tx\tts11
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                             """);
