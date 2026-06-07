@@ -684,7 +684,8 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
         for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
             final String query = queriesAndExpectedResults[i];
             final String expected = queriesAndExpectedResults[i + 1];
-            new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, query)
                     .noLeakCheck()
                     .returnsOnce(expected);
         }

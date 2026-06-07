@@ -121,7 +121,8 @@ public class SampleByConfigTest extends AbstractBootstrapTest {
                 // present, otherwise the configured default.
                 final boolean calendarAligned = Chars.contains(query, "ALIGN TO CALENDAR")
                         || (!Chars.contains(query, "ALIGN TO FIRST OBSERVATION") && expectedConfig);
-                new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, query)
                         .noLeakCheck()
                         .timestamp("ts")
                         .supportsRandomAccess(calendarAligned)

@@ -261,8 +261,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
             drainWalQueue();
 
             assertQuery("select avg(l2price(14, ask_size, ask_value)) " +
-                            "- avg(l2price(14, bid_size, bid_value))" +
-                            " as spread from x")
+                    "- avg(l2price(14, bid_size, bid_value))" +
+                    " as spread from x")
                     .noLeakCheck()
                     .assertsPlan("VirtualRecord\n" +
                             "  functions: [avg1-avg]\n" +
@@ -275,8 +275,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "            Frame forward scan on: x\n");
 
             assertQuery("select l2price(14, ask_size, ask_value) " +
-                            "- l2price(14, bid_size, bid_value)" +
-                            " as spread from x")
+                    "- l2price(14, bid_size, bid_value)" +
+                    " as spread from x")
                     .noLeakCheck()
                     .assertsPlan("VirtualRecord\n" +
                             "  functions: [l2price([14,ask_size,ask_value])-l2price([14,bid_size,bid_value])]\n" +

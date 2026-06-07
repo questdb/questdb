@@ -5545,7 +5545,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
             final String query = queriesAndExpectedResults[i];
             final String expected = queriesAndExpectedResults[i + 1];
-            new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, query)
                     .noLeakCheck()
                     .returnsOnce(expected);
         }
@@ -5555,7 +5556,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         for (int i = 0, n = queriesExpectedResultsAndPlans.length; i < n; i += 3) {
             final String query = queriesExpectedResultsAndPlans[i];
             final String expected = queriesExpectedResultsAndPlans[i + 1];
-            new QueryAssertion(engine, sqlExecutionContext, () -> {}, query)
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, query)
                     .noLeakCheck()
                     .withPlanContaining(queriesExpectedResultsAndPlans[i + 2])
                     .sizeMayVary()

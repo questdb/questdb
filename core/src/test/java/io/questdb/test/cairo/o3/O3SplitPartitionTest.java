@@ -227,7 +227,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     );
 
 
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select ts, metric, loggerChannel from monthly_col_top")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select ts, metric, loggerChannel from monthly_col_top")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -251,7 +252,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     2022-06-08T04:50:00.000000Z\t14\t2
                                     """, timestampTypeName));
 
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '2'")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from monthly_col_top where loggerChannel = '2'")
                             .noLeakCheck()
                             .timestamp("ts")
                             .returns(replaceTimestampSuffix1("""
@@ -271,7 +273,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "('2022-06-08T04:50:00.000000Z', '18', '4', '3')", sqlExecutionContext
                     );
 
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from monthly_col_top where loggerChannel = '3'")
                             .noLeakCheck()
                             .timestamp("ts")
                             .returns(replaceTimestampSuffix1("""
@@ -292,7 +295,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "('2022-06-08T02:50:00.000000Z', '21', '4', '3')", sqlExecutionContext
                     );
 
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from monthly_col_top where loggerChannel = '3'")
                             .noLeakCheck()
                             .timestamp("ts")
                             .returns(replaceTimestampSuffix1("""
@@ -888,7 +892,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     drainWalQueue(engine);
 
                     // Open reader
-                    new QueryAssertion(engine, executionContext, () -> {}, "select sum(j), ts, last(str2) from x sample by 1d")
+                    new QueryAssertion(engine, executionContext, () -> {
+                    }, "select sum(j), ts, last(str2) from x sample by 1d")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -917,7 +922,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     drainWalQueue(engine);
 
-                    new QueryAssertion(engine, executionContext, () -> {}, "select sum(j), ts, last(str2) from x sample by 1d")
+                    new QueryAssertion(engine, executionContext, () -> {
+                    }, "select sum(j), ts, last(str2) from x sample by 1d")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -954,7 +960,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     drainWalQueue(engine);
 
                     // Open reader
-                    new QueryAssertion(engine, executionContext, () -> {}, "select sum(j), ts, last(str2) from x sample by 1d")
+                    new QueryAssertion(engine, executionContext, () -> {
+                    }, "select sum(j), ts, last(str2) from x sample by 1d")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -983,7 +990,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     drainWalQueue(engine);
 
-                    new QueryAssertion(engine, executionContext, () -> {}, "select sum(j), ts, last(str2) from x sample by 1d")
+                    new QueryAssertion(engine, executionContext, () -> {
+                    }, "select sum(j), ts, last(str2) from x sample by 1d")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()

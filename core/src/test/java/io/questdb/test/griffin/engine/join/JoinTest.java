@@ -2952,18 +2952,18 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                    SelectedRecord
-                        Filter filter: (T1.ts<T2.ts and now()=now())
-                            Cross Join
-                                Async JIT Filter workers: 1
-                                  filter: 0<val
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
+                            SelectedRecord
+                                Filter filter: (T1.ts<T2.ts and now()=now())
+                                    Cross Join
+                                        Async JIT Filter workers: 1
+                                          filter: 0<val
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 

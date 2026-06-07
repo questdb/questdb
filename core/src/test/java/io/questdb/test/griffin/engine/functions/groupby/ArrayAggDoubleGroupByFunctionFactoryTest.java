@@ -272,7 +272,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                             .append('\t').append((double) grpSums[g]).append('\n');
                 }
                 assertQuery("SELECT grp, array_count(array_agg(val)) cnt, array_sum(array_agg(val)) total " +
-                                "FROM tab ORDER BY grp")
+                        "FROM tab ORDER BY grp")
                         .withEngine(engine)
                         .withContext(sqlExecutionContext)
                         .noLeakCheck()

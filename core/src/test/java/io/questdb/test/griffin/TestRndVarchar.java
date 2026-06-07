@@ -162,6 +162,6 @@ public class TestRndVarchar extends AbstractCairoTest {
                         "\n" +
                         "<T/g\"\n" +
                         "\n"
-        );
+                );
     }
 }

@@ -1165,19 +1165,20 @@ public class O3Test extends AbstractO3Test {
                     }
                     Assert.assertTrue(max > (2L << 30));
 
-                    new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from " + tableName + " limit -5")
+                    new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
                             .returns(
-                            replaceTimestampSuffix1(
-                                    "str\tts\n" +
-                                            strColVal + "\t2022-02-24T00:51:43.301000Z\n" +
-                                            strColVal + "\t2022-02-24T00:51:43.302000Z\n" +
-                                            strColVal + "\t2022-02-24T00:51:43.303000Z\n" +
-                                            "abcd\t2022-02-24T00:51:43.303000Z\n" +
-                                            strColVal + "\t2022-02-24T00:51:43.304000Z\n", timestampTypeName)
-                    );
+                                    replaceTimestampSuffix1(
+                                            "str\tts\n" +
+                                                    strColVal + "\t2022-02-24T00:51:43.301000Z\n" +
+                                                    strColVal + "\t2022-02-24T00:51:43.302000Z\n" +
+                                                    strColVal + "\t2022-02-24T00:51:43.303000Z\n" +
+                                                    "abcd\t2022-02-24T00:51:43.303000Z\n" +
+                                                    strColVal + "\t2022-02-24T00:51:43.304000Z\n", timestampTypeName)
+                            );
                 }, new TestFilesFacadeImpl() {
                     @Override
                     public long write(long fd, long address, long len, long offset) {
@@ -4500,13 +4501,14 @@ public class O3Test extends AbstractO3Test {
 
         engine.execute("insert into x select * from append", sqlExecutionContext);
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "x")
                 .noLeakCheck()
                 .timestamp("ts")
                 .expectSize()
                 .returns(
-                expected
-        );
+                        expected
+                );
 
         assertMaxTimestamp(
                 engine,
@@ -4691,13 +4693,14 @@ public class O3Test extends AbstractO3Test {
 
         engine.execute("insert into x select * from append", sqlExecutionContext);
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "x")
                 .noLeakCheck()
                 .timestamp("ts")
                 .expectSize()
                 .returns(
-                expected
-        );
+                        expected
+                );
 
         assertMaxTimestamp(
                 engine,
@@ -4915,7 +4918,8 @@ public class O3Test extends AbstractO3Test {
         }
 
         String suffix = timestampTypeName.endsWith("_NS") ? "000Z\n" : "Z\n";
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from x")
                 .noLeakCheck()
                 .timestamp("ts")
                 .expectSize()
@@ -5095,7 +5099,7 @@ public class O3Test extends AbstractO3Test {
                         "97\t9.7\t97.97\t9700.97\t97000.0097\t9700.000097\t970.00000097\t2022-01-01T00:01:37.000000" + suffix +
                         "98\t9.8\t98.98\t9800.98\t98000.0098\t9800.000098\t980.00000098\t2022-01-01T00:01:38.000000" + suffix +
                         "99\t9.9\t99.99\t9900.99\t99000.0099\t9900.000099\t990.00000099\t2022-01-01T00:01:39.000000" + suffix
-        );
+                );
     }
 
     private static void testLagOverflowBySize0(
@@ -5251,7 +5255,8 @@ public class O3Test extends AbstractO3Test {
             );
         }
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select sum(i) from x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select sum(i) from x")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -5259,7 +5264,7 @@ public class O3Test extends AbstractO3Test {
                         sum
                         527250
                         """
-        );
+                );
     }
 
     private static void testO3EdgeBug(
@@ -7807,20 +7812,21 @@ public class O3Test extends AbstractO3Test {
         );
 
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '2'")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from monthly_col_top where loggerChannel = '2'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                        replaceTimestampSuffix1("""
-                                2022-06-08T02:50:00.000000Z\t9\t\t\t2
-                                2022-06-08T02:50:00.000000Z\t10\t\t\t2
-                                2022-06-08T03:50:00.000000Z\t11\t\t\t2
-                                2022-06-08T03:50:00.000000Z\t12\t\t\t2
-                                2022-06-08T04:50:00.000000Z\t13\t\t\t2
-                                2022-06-08T04:50:00.000000Z\t14\t\t\t2
-                                """, timestampTypeName)
-        );
+                        "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                                replaceTimestampSuffix1("""
+                                        2022-06-08T02:50:00.000000Z\t9\t\t\t2
+                                        2022-06-08T02:50:00.000000Z\t10\t\t\t2
+                                        2022-06-08T03:50:00.000000Z\t11\t\t\t2
+                                        2022-06-08T03:50:00.000000Z\t12\t\t\t2
+                                        2022-06-08T04:50:00.000000Z\t13\t\t\t2
+                                        2022-06-08T04:50:00.000000Z\t14\t\t\t2
+                                        """, timestampTypeName)
+                );
 
         // OOO appends to last partition
         engine.execute(
@@ -7829,20 +7835,21 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T04:50:00.000000Z', '18', '4', '3')", sqlExecutionContext
         );
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from monthly_col_top where loggerChannel = '3'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                        replaceTimestampSuffix1("""
-                                2022-06-08T02:50:00.000000Z\t5\t\t\t3
-                                2022-06-08T02:50:00.000000Z\t6\t\t\t3
-                                2022-06-08T03:30:00.000000Z\t15\t\t2\t3
-                                2022-06-08T03:30:00.000000Z\t16\t\t2\t3
-                                2022-06-08T04:50:00.000000Z\t18\t\t4\t3
-                                2022-06-08T05:30:00.000000Z\t17\t\t4\t3
-                                """, timestampTypeName)
-        );
+                        "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                                replaceTimestampSuffix1("""
+                                        2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                        2022-06-08T02:50:00.000000Z\t6\t\t\t3
+                                        2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                        2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                        2022-06-08T04:50:00.000000Z\t18\t\t4\t3
+                                        2022-06-08T05:30:00.000000Z\t17\t\t4\t3
+                                        """, timestampTypeName)
+                );
 
         // OOO merges and appends to last partition
         engine.execute(
@@ -7852,23 +7859,24 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T02:50:00.000000Z', '21', '4', '3')", sqlExecutionContext
         );
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from monthly_col_top where loggerChannel = '3'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                        replaceTimestampSuffix1("""
-                                2022-06-08T02:50:00.000000Z\t5\t\t\t3
-                                2022-06-08T02:50:00.000000Z\t6\t\t\t3
-                                2022-06-08T02:50:00.000000Z\t20\t\t4\t3
-                                2022-06-08T02:50:00.000000Z\t21\t\t4\t3
-                                2022-06-08T03:30:00.000000Z\t15\t\t2\t3
-                                2022-06-08T03:30:00.000000Z\t16\t\t2\t3
-                                2022-06-08T04:50:00.000000Z\t18\t\t4\t3
-                                2022-06-08T05:30:00.000000Z\t17\t\t4\t3
-                                2022-06-08T05:30:00.000000Z\t19\t\t4\t3
-                                """, timestampTypeName)
-        );
+                        "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                                replaceTimestampSuffix1("""
+                                        2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                        2022-06-08T02:50:00.000000Z\t6\t\t\t3
+                                        2022-06-08T02:50:00.000000Z\t20\t\t4\t3
+                                        2022-06-08T02:50:00.000000Z\t21\t\t4\t3
+                                        2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                        2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                        2022-06-08T04:50:00.000000Z\t18\t\t4\t3
+                                        2022-06-08T05:30:00.000000Z\t17\t\t4\t3
+                                        2022-06-08T05:30:00.000000Z\t19\t\t4\t3
+                                        """, timestampTypeName)
+                );
     }
 
     private static void testRebuildIndexWithColumnTopPrevPartition(
@@ -7921,18 +7929,19 @@ public class O3Test extends AbstractO3Test {
         );
 
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from monthly_col_top where loggerChannel = '3'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                replaceTimestampSuffix1("""
-                        ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
-                        2022-06-08T02:50:00.000000Z\t5\t\t\t3
-                        2022-06-08T02:55:00.000000Z\t6\t\t\t3
-                        2022-06-08T03:30:00.000000Z\t15\t\t2\t3
-                        2022-06-08T03:30:00.000000Z\t16\t\t2\t3
-                        """, timestampTypeName)
-        );
+                        replaceTimestampSuffix1("""
+                                ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                2022-06-08T02:55:00.000000Z\t6\t\t\t3
+                                2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                """, timestampTypeName)
+                );
 
         // OOO insert mid prev partition
         engine.execute(
@@ -7941,20 +7950,21 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T02:56:00.000000Z', '18', '3')", sqlExecutionContext
         );
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from monthly_col_top where loggerChannel = '3'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                replaceTimestampSuffix1("""
-                        ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
-                        2022-06-08T02:50:00.000000Z\t5\t\t\t3
-                        2022-06-08T02:54:00.000000Z\t17\t\t\t3
-                        2022-06-08T02:55:00.000000Z\t6\t\t\t3
-                        2022-06-08T02:56:00.000000Z\t18\t\t\t3
-                        2022-06-08T03:30:00.000000Z\t15\t\t2\t3
-                        2022-06-08T03:30:00.000000Z\t16\t\t2\t3
-                        """, timestampTypeName)
-        );
+                        replaceTimestampSuffix1("""
+                                ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                2022-06-08T02:54:00.000000Z\t17\t\t\t3
+                                2022-06-08T02:55:00.000000Z\t6\t\t\t3
+                                2022-06-08T02:56:00.000000Z\t18\t\t\t3
+                                2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                """, timestampTypeName)
+                );
 
         // OOO insert overlaps prev partition and adds new rows at the end
         engine.execute(
@@ -7964,23 +7974,24 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T04:31:00.000000Z', '21', '3')", sqlExecutionContext
         );
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3'")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from monthly_col_top where loggerChannel = '3'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                replaceTimestampSuffix1("""
-                        ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
-                        2022-06-08T02:50:00.000000Z\t5\t\t\t3
-                        2022-06-08T02:54:00.000000Z\t17\t\t\t3
-                        2022-06-08T02:55:00.000000Z\t6\t\t\t3
-                        2022-06-08T02:56:00.000000Z\t18\t\t\t3
-                        2022-06-08T03:15:00.000000Z\t19\t\t\t3
-                        2022-06-08T03:30:00.000000Z\t15\t\t2\t3
-                        2022-06-08T03:30:00.000000Z\t16\t\t2\t3
-                        2022-06-08T04:30:00.000000Z\t20\t\t\t3
-                        2022-06-08T04:31:00.000000Z\t21\t\t\t3
-                        """, timestampTypeName)
-        );
+                        replaceTimestampSuffix1("""
+                                ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                2022-06-08T02:54:00.000000Z\t17\t\t\t3
+                                2022-06-08T02:55:00.000000Z\t6\t\t\t3
+                                2022-06-08T02:56:00.000000Z\t18\t\t\t3
+                                2022-06-08T03:15:00.000000Z\t19\t\t\t3
+                                2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                2022-06-08T04:30:00.000000Z\t20\t\t\t3
+                                2022-06-08T04:31:00.000000Z\t21\t\t\t3
+                                """, timestampTypeName)
+                );
 
         // OOO insert overlaps prev partition and adds new rows at the top
         engine.execute(
@@ -7990,26 +8001,27 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T00:40:00.000000Z', '24', '3')", sqlExecutionContext
         );
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                replaceTimestampSuffix1("""
-                        ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
-                        2022-06-08T00:40:00.000000Z\t24\t\t\t3
-                        2022-06-08T02:50:00.000000Z\t5\t\t\t3
-                        2022-06-08T02:54:00.000000Z\t17\t\t\t3
-                        2022-06-08T02:55:00.000000Z\t6\t\t\t3
-                        2022-06-08T02:56:00.000000Z\t18\t\t\t3
-                        2022-06-08T03:15:00.000000Z\t19\t\t\t3
-                        2022-06-08T03:15:00.000000Z\t22\t\t\t3
-                        2022-06-08T03:15:00.000000Z\t23\t\t\t3
-                        2022-06-08T03:30:00.000000Z\t15\t\t2\t3
-                        2022-06-08T03:30:00.000000Z\t16\t\t2\t3
-                        2022-06-08T04:30:00.000000Z\t20\t\t\t3
-                        2022-06-08T04:31:00.000000Z\t21\t\t\t3
-                        """, timestampTypeName)
-        );
+                        replaceTimestampSuffix1("""
+                                ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                2022-06-08T00:40:00.000000Z\t24\t\t\t3
+                                2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                2022-06-08T02:54:00.000000Z\t17\t\t\t3
+                                2022-06-08T02:55:00.000000Z\t6\t\t\t3
+                                2022-06-08T02:56:00.000000Z\t18\t\t\t3
+                                2022-06-08T03:15:00.000000Z\t19\t\t\t3
+                                2022-06-08T03:15:00.000000Z\t22\t\t\t3
+                                2022-06-08T03:15:00.000000Z\t23\t\t\t3
+                                2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                2022-06-08T04:30:00.000000Z\t20\t\t\t3
+                                2022-06-08T04:31:00.000000Z\t21\t\t\t3
+                                """, timestampTypeName)
+                );
     }
 
     private static void testRepeatedIngest0(
@@ -8245,13 +8257,14 @@ public class O3Test extends AbstractO3Test {
                 0\t2020-03-10T20:36:00.001000Z
                 """, timestampTypeName);
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "x")
                 .noLeakCheck()
                 .timestamp("ts")
                 .expectSize()
                 .returns(
-                expected
-        );
+                        expected
+                );
     }
 
     private static void testSendDuplicates(
@@ -8711,30 +8724,32 @@ public class O3Test extends AbstractO3Test {
 
         // Insert OOO to create partition dir 2020-01-01.1
         engine.execute("insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select count() from x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select count() from x")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
                 .returns(
-                """
-                        count
-                        11
                         """
-        );
+                                count
+                                11
+                                """
+                );
 
         // Close and open writer. Partition dir 2020-01-01.1 should not be purged
         engine.releaseAllWriters();
         engine.execute("insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select count() from x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select count() from x")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
                 .returns(
-                """
-                        count
-                        12
                         """
-        );
+                                count
+                                12
+                                """
+                );
     }
 
     private static void testWriterOpensUnmappedPage(
@@ -8841,13 +8856,14 @@ public class O3Test extends AbstractO3Test {
             o3.commit();
         }
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select count() from x")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select count() from x")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
                 .returns(
-                "count\n" + (2 * idBatchSize + 1) + "\n"
-        );
+                        "count\n" + (2 * idBatchSize + 1) + "\n"
+                );
         engine.releaseAllReaders();
         try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
             o3.truncate();
@@ -9045,13 +9061,14 @@ public class O3Test extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {}, "select * from x where str = 'cc'")
+        new QueryAssertion(sqlExecutionContext.getCairoEngine(), sqlExecutionContext, () -> {
+        }, "select * from x where str = 'cc'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(
-                "str\tts\tx\tstr2\ty\n" +
-                        "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
-                        "cc\t" + ts2 + "\t11111\tdd\t22222\n"
-        );
+                        "str\tts\tx\tstr2\ty\n" +
+                                "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
+                                "cc\t" + ts2 + "\t11111\tdd\t22222\n"
+                );
     }
 }

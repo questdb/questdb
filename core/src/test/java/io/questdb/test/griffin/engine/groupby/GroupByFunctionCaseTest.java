@@ -192,19 +192,19 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
             );
 
             assertQuery("""
-                            SELECT \s
-                                trade_timestamp as candle_st,
-                                venue,
-                                count(*) AS num_ticks,
-                                SUM(qty*price) AS quote_volume,
-                                SUM(qty*price)/SUM(qty) AS vwap
-                              FROM 'spot_trades'
-                              WHERE\s
-                                instrument_key like 'ETH_USD_S_%'
-                                AND trade_timestamp >= '2022-01-01 00:00'
-                                AND venue in ('CBS', 'FUS', 'LMX', 'BTS')
-                              SAMPLE BY 1h\s
-                              ALIGN TO CALENDAR TIME ZONE 'UTC'""")
+                    SELECT \s
+                        trade_timestamp as candle_st,
+                        venue,
+                        count(*) AS num_ticks,
+                        SUM(qty*price) AS quote_volume,
+                        SUM(qty*price)/SUM(qty) AS vwap
+                      FROM 'spot_trades'
+                      WHERE\s
+                        instrument_key like 'ETH_USD_S_%'
+                        AND trade_timestamp >= '2022-01-01 00:00'
+                        AND venue in ('CBS', 'FUS', 'LMX', 'BTS')
+                      SAMPLE BY 1h\s
+                      ALIGN TO CALENDAR TIME ZONE 'UTC'""")
                     .noLeakCheck()
                     .assertsPlan("""
                             Encode sort light

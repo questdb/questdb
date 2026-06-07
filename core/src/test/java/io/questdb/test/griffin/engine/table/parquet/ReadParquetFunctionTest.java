@@ -682,16 +682,16 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     assertQuery(sink)
                             .noLeakCheck()
                             .assertsPlan(""" 
-                            parquet page frame scan
-                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
-                            """);
+                                    parquet page frame scan
+                                      columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                                    """);
                 } else {
                     assertQuery(sink)
                             .noLeakCheck()
                             .assertsPlan(""" 
-                            parquet file sequential scan
-                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
-                            """);
+                                    parquet file sequential scan
+                                      columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                                    """);
                 }
 
                 sink.put(" where 1 = 2");

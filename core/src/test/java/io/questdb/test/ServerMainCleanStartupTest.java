@@ -64,7 +64,8 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 cairoEngine.execute("insert into y values(200, 2)", sqlExecutionContext);
 
                 // wait for txns to be written
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select wait_wal_table('y')")
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select wait_wal_table('y')")
                         .noLeakCheck()
                         .expectSize()
                         .returns("""
@@ -73,7 +74,8 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                                 """);
 
                 // ensure transactions
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select * from wal_tables order by 1")
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select * from wal_tables order by 1")
                         .noLeakCheck()
                         .returns("""
                                 name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
@@ -82,7 +84,8 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                                 """);
 
 
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
                         .noLeakCheck()
                         .returns("""
                                 table_name\townership_reason
@@ -98,7 +101,8 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
             ) {
                 serverMain.start();
 
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
                         .noLeakCheck()
                         .returns("table_name\townership_reason\n");
             }

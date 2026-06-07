@@ -816,27 +816,29 @@ public class FuzzRunner {
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
         try (TableReader reader = getReader(tableName)) {
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
-                new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select ts from " + tableName + " order by ts limit 1")
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, "select ts from " + tableName + " order by ts limit 1")
                         .noLeakCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
-                        "ts\n" +
-                                Micros.toUSecString(reader.getMinTimestamp())
-                                + "\n"
-                );
+                                "ts\n" +
+                                        Micros.toUSecString(reader.getMinTimestamp())
+                                        + "\n"
+                        );
             }
 
             if (reader.getMaxTimestamp() != Long.MIN_VALUE) {
-                new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select ts from " + tableName + " order by ts limit -1")
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, "select ts from " + tableName + " order by ts limit -1")
                         .noLeakCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
-                        "ts\n" +
-                                Micros.toUSecString(reader.getMaxTimestamp())
-                                + "\n"
-                );
+                                "ts\n" +
+                                        Micros.toUSecString(reader.getMaxTimestamp())
+                                        + "\n"
+                        );
             }
         }
     }

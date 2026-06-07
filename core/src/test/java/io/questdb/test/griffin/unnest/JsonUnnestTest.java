@@ -1392,8 +1392,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.5]')");
             assertQuery("SELECT u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val DOUBLE)"
-                            + ") u")
+                    + "t.payload COLUMNS(val DOUBLE)"
+                    + ") u")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
@@ -1413,8 +1413,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.5]')");
             assertQuery("SELECT u.val, u.pos FROM t, UNNEST("
-                            + "t.payload COLUMNS(val DOUBLE)"
-                            + ") WITH ORDINALITY u(val, pos)")
+                    + "t.payload COLUMNS(val DOUBLE)"
+                    + ") WITH ORDINALITY u(val, pos)")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord

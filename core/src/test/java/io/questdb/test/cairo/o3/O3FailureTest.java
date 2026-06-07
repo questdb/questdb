@@ -634,7 +634,8 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from " + tableName + " limit -5")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -650,7 +651,8 @@ public class O3FailureTest extends AbstractO3Test {
                     // Insert ok after failure
                     o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from " + tableName + " limit -5")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -992,7 +994,8 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from " + tableName + " limit -5")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -1006,7 +1009,8 @@ public class O3FailureTest extends AbstractO3Test {
                     // Insert ok after failure
                     o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from " + tableName + " limit -5")
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
                             .noLeakCheck()
                             .timestamp("ts")
                             .expectSize()
@@ -3704,7 +3708,8 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        new QueryAssertion(engine, sqlExecutionContext, () -> {}, "x")
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
                 .noLeakCheck()
                 .timestamp("ts")
                 .expectSize()
@@ -3712,7 +3717,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         engine.execute("insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)", sqlExecutionContext);
 
-        new QueryAssertion(engine, sqlExecutionContext, () -> {}, "x")
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
                 .noLeakCheck()
                 .timestamp("ts")
                 .expectSize()
@@ -3723,7 +3729,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         engine.execute("insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)", sqlExecutionContext);
 
-        new QueryAssertion(engine, sqlExecutionContext, () -> {}, "x")
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
                 .noLeakCheck()
                 .timestamp("ts")
                 .expectSize()

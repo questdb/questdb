@@ -2473,9 +2473,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             assertQuery("""
-                            select x, y
-                            from l left join rr on l.x = rr.y
-                            where y > 0 or y > 10""")
+                    select x, y
+                    from l left join rr on l.x = rr.y
+                    where y > 0 or y > 10""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -2533,10 +2533,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select x, y
-                            from l right join rr on l.x = rr.y
-                            where y > 0 or y > 10
-                            order by y""")
+                    select x, y
+                    from l right join rr on l.x = rr.y
+                    where y > 0 or y > 10
+                    order by y""")
                     .noLeakCheck()
                     .returns("""
                             x\ty
@@ -3941,9 +3941,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
 
             assertQuery("""
-                            SELECT * FROM balances\s
-                            WHERE cust_id = 'c1' and balance_ccy='EUR'\s
-                            LATEST ON timestamp PARTITION BY cust_id, balance_ccy""")
+                    SELECT * FROM balances\s
+                    WHERE cust_id = 'c1' and balance_ccy='EUR'\s
+                    LATEST ON timestamp PARTITION BY cust_id, balance_ccy""")
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .expectSize()
@@ -5683,15 +5683,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             );
 
             assertQuery("""
-                            SELECT ts, a.city, a.make, avg(temp)
-                            FROM readings timestamp(ts)
-                            JOIN
-                                (SELECT ID sensId, city, make
-                                FROM sensors
-                                WHERE city='Miami' AND make='Omron') a
-                            ON readings.sensorId = a.sensId
-                            WHERE ts in '2019-10-21;1d'
-                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION;""")
+                    SELECT ts, a.city, a.make, avg(temp)
+                    FROM readings timestamp(ts)
+                    JOIN
+                        (SELECT ID sensId, city, make
+                        FROM sensors
+                        WHERE city='Miami' AND make='Omron') a
+                    ON readings.sensorId = a.sensId
+                    WHERE ts in '2019-10-21;1d'
+                    SAMPLE BY 1h ALIGN TO FIRST OBSERVATION;""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .timestamp("ts")
@@ -7148,15 +7148,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                Async Group By workers: 1
-                  keys: [b,c,d,e,f,g,h,a]
-                  values: [max(i)]
-                  filter: b!=''
-                    PageFrame
-                        Row forward scan
-                        Interval forward scan on: foo
-                          intervals: [("2023-10-23T00:00:00.000000Z","MAX")]
-                """);
+                        Async Group By workers: 1
+                          keys: [b,c,d,e,f,g,h,a]
+                          values: [max(i)]
+                          filter: b!=''
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: foo
+                                  intervals: [("2023-10-23T00:00:00.000000Z","MAX")]
+                        """);
     }
 
     @Test
@@ -7201,15 +7201,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                Async Group By workers: 1
-                  keys: [b,c,d,e,f,g,h,a]
-                  values: [max(i)]
-                  filter: b!=''
-                    PageFrame
-                        Row forward scan
-                        Interval forward scan on: foo
-                          intervals: [("2023-10-23T00:00:00.000000Z","MAX")]
-                """);
+                        Async Group By workers: 1
+                          keys: [b,c,d,e,f,g,h,a]
+                          values: [max(i)]
+                          filter: b!=''
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: foo
+                                  intervals: [("2023-10-23T00:00:00.000000Z","MAX")]
+                        """);
     }
 
     @Test
@@ -9171,9 +9171,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             assertQuery("""
-                            select metric, sum(value) from x\s
-                            where node in ('node1', 'node2') and metric in ('cpu')\s
-                            latest on ts partition by node""")
+                    select metric, sum(value) from x\s
+                    where node in ('node1', 'node2') and metric in ('cpu')\s
+                    latest on ts partition by node""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -9349,9 +9349,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             assertQuery("""
-                            select * from x\s
-                            where node in ('node2') and metric in ('cpu', 'memory')\s
-                            latest on ts partition by node, metric""")
+                    select * from x\s
+                    where node in ('node2') and metric in ('cpu', 'memory')\s
+                    latest on ts partition by node, metric""")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()

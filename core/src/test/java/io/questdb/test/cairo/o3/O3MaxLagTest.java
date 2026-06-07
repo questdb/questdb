@@ -1334,7 +1334,8 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         // We will not insert value 'aa' in str column. The count of rows with 'aa' is our invariant
         int aaCount = 2 * (initialCount + additionalCount);
-        new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select count() from x where str = 'aa'")
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "select count() from x where str = 'aa'")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -1420,7 +1421,8 @@ public class O3MaxLagTest extends AbstractO3Test {
             appendRowsWithDroppedColumn(tw, halfCount, rnd);
             tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
-            new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from x where str = 'aa'")
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, "select * from x where str = 'aa'")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(replaceTimestampSuffix("""
@@ -1432,7 +1434,8 @@ public class O3MaxLagTest extends AbstractO3Test {
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
             tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
-            new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from x where str = 'aa'")
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, "select * from x where str = 'aa'")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(replaceTimestampSuffix("""
@@ -1450,7 +1453,8 @@ public class O3MaxLagTest extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        new QueryAssertion(engine, sqlExecutionContext, () -> {}, "select * from x where str = 'aa'")
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "select * from x where str = 'aa'")
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns(replaceTimestampSuffix("""

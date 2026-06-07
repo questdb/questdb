@@ -67,7 +67,8 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static void assertNumOfRows(CairoEngine engine, String tableName, int count) throws Exception {
         try (SqlExecutionContext context = createSqlExecutionContext(engine)) {
-            new QueryAssertion(engine, context, () -> {}, "SELECT count() FROM " + tableName)
+            new QueryAssertion(engine, context, () -> {
+            }, "SELECT count() FROM " + tableName)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()

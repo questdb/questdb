@@ -305,11 +305,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Wait for WAL transactions to be applied
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select wait_wal_table('tracker_test1')")
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select wait_wal_table('tracker_test1')")
                         .noLeakCheck()
                         .expectSize()
                         .returns("wait_wal_table('tracker_test1')\ntrue\n");
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {}, "select wait_wal_table('tracker_test2')")
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select wait_wal_table('tracker_test2')")
                         .noLeakCheck()
                         .expectSize()
                         .returns("wait_wal_table('tracker_test2')\ntrue\n");

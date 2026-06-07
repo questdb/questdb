@@ -112,18 +112,18 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                             """);
 
             assertQuery("select dateadd(period, stride, ts, tz) val," +
-                            " dateadd(period, stride, null, tz) val2," +
-                            " dateadd(period, stride, ts_ns, tz) val3," +
-                            " ts," +
-                            " period," +
-                            " stride," +
-                            " tz" +
-                            " from test_tab" +
-                            " where stride is not null" +
-                            " and tz <> 'unknown/unknown'" +
-                            " and period is not null" +
-                            " and tz is not null" +
-                            " and period <> 'x'")
+                    " dateadd(period, stride, null, tz) val2," +
+                    " dateadd(period, stride, ts_ns, tz) val3," +
+                    " ts," +
+                    " period," +
+                    " stride," +
+                    " tz" +
+                    " from test_tab" +
+                    " where stride is not null" +
+                    " and tz <> 'unknown/unknown'" +
+                    " and period is not null" +
+                    " and tz is not null" +
+                    " and period <> 'x'")
                     .noLeakCheck()
                     .assertsPlan("""
                             VirtualRecord
