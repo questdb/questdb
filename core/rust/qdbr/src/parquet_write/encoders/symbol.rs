@@ -51,6 +51,18 @@ use crate::parquet_write::util::{
 
 const BITS_PER_WORD: usize = u64::BITS as usize;
 
+/// Largest dictionary size (number of symbol keys) for which page statistics
+/// deduplicate via the per-page `seen` bitmap. The bitmap holds one bit per key
+/// and `build_symbol_page_stats` clears the whole thing once per page, so its
+/// cost grows with the dictionary size, not with the keys a page actually
+/// references. Below this many keys the clear is cheap (an 8 KiB, L1-resident
+/// bitmap) and the dedup turns a per-row min/max comparison into one per
+/// distinct key. Above it the per-page clear outweighs what the dedup saves, so
+/// the encoder updates statistics once per row instead (no bitmap). The
+/// serialized statistics are identical either way; only the work to compute
+/// them differs.
+const MAX_SYMBOL_STATS_BITMAP_KEYS: usize = 1 << 16;
+
 pub struct SymbolGlobalInfo {
     pub used_keys: HashSet<u32>,
     pub max_key: u32,
@@ -122,9 +134,12 @@ pub fn encode(
     let mut data_pages = Vec::with_capacity(total_rows.div_ceil(rows_per_page));
     // Scratch "key already seen in this page" bitmap (1 bit per key), reused
     // across pages so page statistics visit each distinct dictionary key once
-    // instead of once per row. Only build_symbol_page_stats consults it, so
-    // skip the allocation entirely when statistics are disabled.
-    let mut seen_in_page = if options.write_statistics {
+    // instead of once per row. Only build_symbol_page_stats consults it, and
+    // only for a small enough dictionary (see MAX_SYMBOL_STATS_BITMAP_KEYS);
+    // skip the allocation entirely otherwise.
+    let dedup_page_stats =
+        options.write_statistics && value_ranges.len() <= MAX_SYMBOL_STATS_BITMAP_KEYS;
+    let mut seen_in_page = if dedup_page_stats {
         vec![0u64; value_ranges.len().div_ceil(BITS_PER_WORD)]
     } else {
         Vec::new()
@@ -144,13 +159,18 @@ pub fn encode(
             "validity null count disagrees with a direct scan of the page keys"
         );
         let page_stats = options.write_statistics.then(|| {
+            let seen = if dedup_page_stats {
+                Some(seen_in_page.as_mut_slice())
+            } else {
+                None
+            };
             build_symbol_page_stats(
                 page_values,
                 &dict_buffer,
                 &value_ranges,
                 primitive_type,
                 null_count,
-                &mut seen_in_page,
+                seen,
             )
         });
         let data_page = symbol_to_data_page_with_validity(
@@ -360,21 +380,35 @@ fn build_symbol_page_stats(
     value_ranges: &[Range<usize>],
     primitive_type: &PrimitiveType,
     null_count: usize,
-    seen: &mut [u64],
+    seen: Option<&mut [u64]>,
 ) -> ParquetStatistics {
     let mut stats = BinaryMaxMinStats::new(primitive_type);
     // A page's min/max is decided solely by the distinct dictionary keys it
-    // references, so compare each key's bytes once rather than on every row.
-    // `seen` is a 1-bit-per-key bitmap of the keys this page has already hit.
-    seen.fill(0);
-    for &key in page_values {
-        if key >= 0 {
-            let key = key as usize;
-            let word = key / BITS_PER_WORD;
-            let bit = 1u64 << (key % BITS_PER_WORD);
-            if seen[word] & bit == 0 {
-                seen[word] |= bit;
-                stats.update(&dict_buffer[value_ranges[key].clone()]);
+    // references. With a small dictionary, dedup via the `seen` bitmap (one bit
+    // per key) so each distinct key's bytes are compared once instead of on
+    // every row. With a large dictionary the caller passes None: clearing a
+    // key-sized bitmap each page would cost more than the dedup saves, so we
+    // compare on every row. Both modes yield identical min/max.
+    match seen {
+        Some(seen) => {
+            seen.fill(0);
+            for &key in page_values {
+                if key >= 0 {
+                    let key = key as usize;
+                    let word = key / BITS_PER_WORD;
+                    let bit = 1u64 << (key % BITS_PER_WORD);
+                    if seen[word] & bit == 0 {
+                        seen[word] |= bit;
+                        stats.update(&dict_buffer[value_ranges[key].clone()]);
+                    }
+                }
+            }
+        }
+        None => {
+            for &key in page_values {
+                if key >= 0 {
+                    stats.update(&dict_buffer[value_ranges[key as usize].clone()]);
+                }
             }
         }
     }
@@ -799,5 +833,82 @@ mod tests {
         assert!(stats.min_value.is_none(), "all-null page must have no min");
         assert!(stats.max_value.is_none(), "all-null page must have no max");
         assert_eq!(stats.null_count, Some(4));
+    }
+
+    #[test]
+    fn symbol_page_stats_dedup_and_per_row_agree() {
+        // build_symbol_page_stats must produce identical statistics whether it
+        // deduplicates via the `seen` bitmap (small dictionary) or compares
+        // every row (large dictionary, seen = None). Build the dictionary the
+        // way encode does, then run both modes over the same page of repeated,
+        // null-interspersed keys and assert the serialized stats are equal.
+        let (chars, offsets) = serialize_as_symbols(vec!["aaa", "bbb", "ccc", "ddd"]);
+        let used_keys: HashSet<u32> = [0, 1, 2, 3].into_iter().collect();
+        let global_info = SymbolGlobalInfo { used_keys, max_key: 3 };
+        let (dict_buffer, _entry_count, value_ranges) =
+            prepare_symbol_dictionary(&global_info, &offsets, &chars, None).expect("dict");
+
+        let page_values: Vec<i32> = vec![3, 0, -1, 1, 0, 2, 3, -1, 1, 0, 3];
+        let null_count = page_values.iter().filter(|&&k| k < 0).count();
+        let pt = primitive_type();
+
+        let mut seen = vec![0u64; value_ranges.len().div_ceil(BITS_PER_WORD)];
+        let deduped = build_symbol_page_stats(
+            &page_values,
+            &dict_buffer,
+            &value_ranges,
+            &pt,
+            null_count,
+            Some(&mut seen),
+        );
+        let per_row = build_symbol_page_stats(
+            &page_values,
+            &dict_buffer,
+            &value_ranges,
+            &pt,
+            null_count,
+            None,
+        );
+
+        assert_eq!(
+            deduped, per_row,
+            "dedup and per-row stats must be identical"
+        );
+        assert_eq!(deduped.null_count, Some(2));
+    }
+
+    #[test]
+    fn symbol_large_dictionary_uses_per_row_stats() {
+        // A dictionary larger than MAX_SYMBOL_STATS_BITMAP_KEYS routes
+        // build_symbol_page_stats through its per-row path (no `seen` bitmap).
+        // Only two keys are used, but the highest key value forces a dictionary
+        // bigger than the threshold; the page statistics must still be correct.
+        let (chars, base_offsets) = serialize_as_symbols(vec!["lo", "hi"]);
+        // "hi" (0x68,0x69) sorts before "lo" (0x6c,0x6f): min="hi", max="lo".
+        let high_key = MAX_SYMBOL_STATS_BITMAP_KEYS as i32; // dict size = high_key + 1 > threshold
+                                                            // Sparse offsets: build_dict_buffer reads offsets only for used keys, so
+                                                            // the gaps between 0 and high_key are never dereferenced.
+        let mut offsets = vec![0u64; high_key as usize + 1];
+        offsets[0] = base_offsets[0];
+        offsets[high_key as usize] = base_offsets[1];
+
+        let keys: Vec<i32> = vec![0, high_key, -1, high_key, 0, 0, high_key];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let pages = encode(
+            &[col],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+        .expect("encode");
+
+        assert_eq!(pages.len(), 2); // 1 dict + 1 data
+        assert_eq!(page_v2_num_nulls(&pages[1]), 1);
+        assert_eq!(
+            page_binary_stats(&pages[1]),
+            (b"hi".to_vec(), b"lo".to_vec(), 1)
+        );
     }
 }
