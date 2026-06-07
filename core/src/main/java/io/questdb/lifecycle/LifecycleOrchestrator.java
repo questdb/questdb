@@ -194,12 +194,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
         startAllInTopologicalOrder();
         if (anyFailed()) {
             close();
-            // Chain the first failed component's throwable so the real cause (the specific error
-            // message or error-code URL the component threw) is visible to operators and to
-            // boot tests that assert on the specific failure, not only the generic wrapper.
+            // Chain the first failed component's throwable AND fold its message into the wrapper
+            // text, so the real cause (the specific error message or error-code URL the component
+            // threw) is visible directly in the top-level boot error an operator sees in the log,
+            // not only via getCause(). The throwable stays chained for callers that unwrap it.
             if (firstFailedComponentThrowable != null) {
+                String causeMessage = firstFailedComponentThrowable.getMessage();
                 throw new LifecycleStartupException(
-                        "boot-essential component(s) failed [component=" + firstFailedComponentName + "]",
+                        "boot-essential component(s) failed [component=" + firstFailedComponentName + "]"
+                                + (causeMessage != null ? ": " + causeMessage : ""),
                         firstFailedComponentThrowable
                 );
             }
