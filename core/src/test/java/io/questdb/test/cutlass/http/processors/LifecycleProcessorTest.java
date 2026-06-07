@@ -6,6 +6,7 @@ import io.questdb.cutlass.http.processors.LifecycleProcessor;
 import io.questdb.lifecycle.LifecycleSnapshot;
 import io.questdb.lifecycle.RestoreProgress;
 import io.questdb.lifecycle.State;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.ObjList;
@@ -73,6 +74,34 @@ public class LifecycleProcessorTest {
         String body = captureResponseBody(snap);
         Assert.assertTrue("body must contain restore progress payload",
                 body.contains("\"latestProgress\":{\"type\":\"restore\",\"tablesDone\":3,\"tablesTotal\":7,\"bytesDone\":0,\"bytesTotal\":0}"));
+    }
+
+    @Test
+    public void testResumableSerializationAcrossBufferOverflow() throws Exception {
+        // Build a snapshot whose full JSON (~700 bytes) far exceeds the 200-byte bounded buffer,
+        // so the resumable serializer must overflow and flush several times to emit it all.
+        ObjList<LifecycleSnapshot.ComponentSnapshot> components = new ObjList<>();
+        for (int i = 0; i < 5; i++) {
+            components.add(new LifecycleSnapshot.ComponentSnapshot(
+                    "comp" + i, State.READY, 100L + i, null, listOf("factory-provider"), new ObjList<>()));
+        }
+        LifecycleSnapshot snap = new LifecycleSnapshot(1000L, components);
+
+        // Canonical full body via the non-resumable writer.
+        StringBuilder full = new StringBuilder();
+        LifecycleProcessor.writeSnapshot(new FakeHttpChunkedResponse(full), snap);
+
+        // Resumable writer through a small bounded buffer that forces overflow/flush cycles.
+        BoundedFakeHttpChunkedResponse bounded = new BoundedFakeHttpChunkedResponse(200);
+        LifecycleProcessor.writeSnapshotResumable(bounded, snap);
+
+        Assert.assertEquals(
+                "resumable output across overflow boundaries must equal the full snapshot",
+                full.toString(), bounded.flushed.toString());
+        Assert.assertTrue(
+                "the bounded buffer must have forced at least one mid-write flush; partialFlushes="
+                        + bounded.partialFlushes,
+                bounded.partialFlushes > 0);
     }
 
     @Test
@@ -145,6 +174,101 @@ public class LifecycleProcessorTest {
 
         @Override
         public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        }
+
+        @Override
+        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        }
+
+        @Override
+        public void shutdownWrite() {
+        }
+
+        @Override
+        public void status(int status, CharSequence contentType) {
+        }
+
+        @Override
+        public int writeBytes(long srcAddr, int len) {
+            return len;
+        }
+    }
+
+    /**
+     * A fake response with a fixed-size working buffer that throws
+     * {@link NoSpaceLeftInResponseBufferException} once the buffer is full, mirroring the real
+     * HttpChunkedResponse overflow contract so the resumable serializer's bookmark / reset /
+     * sendChunk loop can be exercised without a live HTTP server. {@code bookmark} marks the
+     * current write position; {@code resetToBookmark} rewinds to it and reports whether there is
+     * committed content before the mark to flush; {@code sendChunk} flushes the buffer into
+     * {@code flushed} and clears it.
+     */
+    private static final class BoundedFakeHttpChunkedResponse implements HttpChunkedResponse {
+        final StringBuilder flushed = new StringBuilder();
+        int partialFlushes;
+        private final int cap;
+        private final StringBuilder working = new StringBuilder();
+        private int bookmark;
+
+        BoundedFakeHttpChunkedResponse(int cap) {
+            this.cap = cap;
+        }
+
+        @Override
+        public void bookmark() {
+            bookmark = working.length();
+        }
+
+        @Override
+        public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        }
+
+        @Override
+        public HttpResponseHeader headers() {
+            return null;
+        }
+
+        @Override
+        public @NotNull BoundedFakeHttpChunkedResponse put(byte b) {
+            if (working.length() + 1 > cap) {
+                throw NoSpaceLeftInResponseBufferException.instance(1, cap - working.length(), cap);
+            }
+            working.append((char) (b & 0xFF));
+            return this;
+        }
+
+        @Override
+        public @NotNull BoundedFakeHttpChunkedResponse put(@Nullable Utf8Sequence us) {
+            if (us != null) {
+                final String s = us.toString();
+                for (int i = 0, n = s.length(); i < n; i++) {
+                    put((byte) s.charAt(i));
+                }
+            }
+            return this;
+        }
+
+        @Override
+        public @NotNull BoundedFakeHttpChunkedResponse putNonAscii(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public boolean resetToBookmark() {
+            working.setLength(bookmark);
+            // True only when there is committed content before the bookmark that flushing can clear;
+            // false when the bookmark is at the buffer start (the unit alone exceeds capacity).
+            return bookmark > 0;
+        }
+
+        @Override
+        public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (!done) {
+                partialFlushes++;
+            }
+            flushed.append(working);
+            working.setLength(0);
+            bookmark = 0;
         }
 
         @Override

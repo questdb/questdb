@@ -6,9 +6,11 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.lifecycle.LifecycleSnapshot;
 import io.questdb.lifecycle.ProgressEvent;
 import io.questdb.lifecycle.RestoreProgress;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.ObjList;
@@ -47,6 +49,7 @@ import java.util.function.Supplier;
  * </pre>
  */
 public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProcessor {
+    private static final LocalValue<LifecycleState> LV = new LocalValue<>();
     private final byte requiredAuthType;
     private final Supplier<LifecycleSnapshot> snapshotSupplier;
 
@@ -75,8 +78,125 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         final HttpChunkedResponse response = context.getChunkedResponse();
         response.status(200, "application/json; charset=utf-8");
         response.sendHeader();
-        writeSnapshot(response, snapshotSupplier.get());
+
+        // Fetch the snapshot and initialise the per-connection cursor at the start of serialisation.
+        final LifecycleSnapshot snap = snapshotSupplier.get();
+        LifecycleState state = LV.get(context);
+        if (state == null) {
+            LV.set(context, state = new LifecycleState());
+        }
+        state.reset(snap);
+
+        resumeSnapshot(response, state);
+    }
+
+    @Override
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final LifecycleState state = LV.get(context);
+        if (state == null || state.snapshot == null) {
+            // No pending serialisation: nothing to resume.
+            return;
+        }
+        resumeSnapshot(context.getChunkedResponse(), state);
+    }
+
+    /**
+     * Serializes the lifecycle snapshot into the response buffer, resuming from the cursor saved in
+     * {@code state} across multiple calls if the TCP send buffer fills. A snapshot of a
+     * fully-populated server can exceed the default {@code http.min.send.buffer.size} of 1024 bytes,
+     * so each phase places a bookmark before each write and, on
+     * {@link NoSpaceLeftInResponseBufferException}, rewinds to the bookmark and flushes the buffered
+     * chunk with {@code sendChunk(false)} before retrying. If the TCP send buffer is also full,
+     * {@code sendChunk(false)} throws {@link PeerIsSlowToReadException}, which propagates out so the
+     * HTTP framework parks the connection and calls {@link #resumeSend} when the socket drains. This
+     * mirrors the OSS JSON query processor and the enterprise {@code EntLifecycleProcessor} overlay.
+     */
+    private static void resumeSnapshot(
+            HttpChunkedResponse response,
+            LifecycleState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final LifecycleSnapshot snap = state.snapshot;
+        final ObjList<LifecycleSnapshot.ComponentSnapshot> components = snap.components();
+        final int n = components.size();
+
+        // Phase 1: header — the preamble before the components array.
+        if (!state.headerWritten) {
+            while (true) {
+                try {
+                    response.bookmark();
+                    response.putAscii('{')
+                            .putAsciiQuoted("capturedAtMicros").putAscii(':').put(snap.capturedAtMicros()).putAscii(',')
+                            .putAsciiQuoted("components").putAscii(':').putAscii('[');
+                    state.headerWritten = true;
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException ignored) {
+                    if (response.resetToBookmark()) {
+                        response.sendChunk(false);
+                        // sendChunk(false) throws PeerIsSlowToReadException if the TCP buffer is full;
+                        // that propagates out and the framework calls resumeSend later. If it returns
+                        // normally, the buffer is clear — retry the header write.
+                    } else {
+                        // Header is larger than the buffer capacity: should not happen for the
+                        // fixed-layout lifecycle JSON, but guard defensively.
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Phase 2: components — one entry per cursor position.
+        while (state.cursor < n) {
+            while (true) {
+                try {
+                    response.bookmark();
+                    if (state.cursor > 0) {
+                        response.putAscii(',');
+                    }
+                    writeComponent(response, components.getQuick(state.cursor));
+                    state.cursor++;
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException ignored) {
+                    if (response.resetToBookmark()) {
+                        response.sendChunk(false);
+                    } else {
+                        // Component exceeds buffer capacity: skip (defensive, should not occur).
+                        state.cursor++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Phase 3: footer.
+        if (!state.footerWritten) {
+            while (true) {
+                try {
+                    response.bookmark();
+                    response.putAscii(']').putAscii('}');
+                    state.footerWritten = true;
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException ignored) {
+                    if (response.resetToBookmark()) {
+                        response.sendChunk(false);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // All phases complete: close the chunked transfer.
+        state.snapshot = null;
         response.sendChunk(true);
+    }
+
+    // Visible for testing: drives the resumable serialization in a single pass with a fresh cursor,
+    // so a test can exercise the bookmark/overflow/flush loop without a live HTTP server.
+    public static void writeSnapshotResumable(HttpChunkedResponse r, LifecycleSnapshot snap)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final LifecycleState state = new LifecycleState();
+        state.reset(snap);
+        resumeSnapshot(r, state);
     }
 
     // Visible for testing: allows LifecycleProcessorTest to invoke without a live HTTP server.
@@ -137,5 +257,22 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
                 .putAsciiQuoted("softDependencies").putAscii(':');
         encodeStringList(r, c.softDependencies());
         r.putAscii('}');
+    }
+
+    /**
+     * Per-connection serialization cursor for resumable GET /lifecycle responses.
+     */
+    static final class LifecycleState {
+        int cursor;
+        boolean footerWritten;
+        boolean headerWritten;
+        LifecycleSnapshot snapshot;
+
+        void reset(LifecycleSnapshot snap) {
+            cursor = 0;
+            footerWritten = false;
+            headerWritten = false;
+            snapshot = snap;
+        }
     }
 }
