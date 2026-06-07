@@ -20059,6 +20059,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             }
 
                             try {
+                                // returnsOnce(): query is built per iteration across a large matrix of window function,
+                                // frame and order-by combinations - a single-pass smoke check per generated query.
                                 assertQuery(query)
                                         .noLeakCheck()
                                         .returnsOnce("count\n10\n");
