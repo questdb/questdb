@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -109,6 +110,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.Os;
 import io.questdb.std.PagedDirectLongList;
 import io.questdb.std.ReadOnlyObjList;
@@ -132,6 +134,7 @@ import io.questdb.tasks.ColumnTask;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -186,6 +189,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     };
     private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
+    private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
+    private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
+    private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 1;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
     private static final int ROW_ACTION_O3 = 3;
@@ -215,6 +221,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
     private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
+    private final ObjList<PostingSealPurgeTask> deferredPostingSealPurges = new ObjList<>();
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
@@ -225,6 +232,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
+    private final PostingIndexChainWriter linkPostingIndexChainWriter = new PostingIndexChainWriter();
+    private final LongList linkPostingIndexOrphanSealTxns = new LongList();
     // This is the same message bus. When TableWriter instance is created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus, it must not free it up.
     // On another hand, when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
@@ -309,9 +318,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+    private ObjectStackPool<PostingSealPurgeTask> deferredPostingSealPurgeTaskPool;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    private boolean hasPostingIndexers;
     private int indexCount;
     private boolean isInCtorRecovery;
     private int lastErrno;
@@ -567,6 +578,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // wal specific
             segmentFileCache = metadata.isWalEnabled() ? new TableWriterSegmentFileCache(tableToken, configuration) : null;
+
+            // Replay any posting seal-purge intents a prior close spilled to a
+            // table-local file because it could not reach the purge queue or the
+            // shared purge-log writer. This is best-effort and never fails open.
+            recoverSpilledPostingSealPurges();
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -861,7 +877,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long rowsAffected = operation.apply(this, true);
             if (txnBefore == getTxn()) {
                 // Commit to update seqTxn
-                txWriter.commit(denseSymbolMapWriters);
+                commitTxWriter();
             }
             return rowsAffected;
         } catch (CairoException ex) {
@@ -1090,7 +1106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
+            commitTxWriter();
 
             if (parquetFileSize > -1) {
                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
@@ -1421,7 +1437,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void commitSeqTxn(long seqTxn) {
         txWriter.setSeqTxn(seqTxn);
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWriter();
     }
 
     public void commitSeqTxn() {
@@ -1429,7 +1445,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriterMetrics().incrementCommits();
             syncColumns();
         }
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWriterAndPublishPendingPostingSealPurges();
     }
 
     public void commitWalInsertTransactions(
@@ -1602,7 +1618,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
+            commitTxWriter();
 
         } catch (Throwable th) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -1690,7 +1706,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.resetPartitionParquetFormat(partitionTimestamp);
             txWriter.resetPartitionParquetGenerated(partitionIndex);
             txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
+            commitTxWriter();
 
         } catch (Throwable th) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -1883,7 +1899,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnVersionWriter.commit();
 
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
-                txWriter.commit(denseSymbolMapWriters);
+                commitTxWriter();
 
                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                     metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
@@ -2149,7 +2165,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 columnVersionWriter.commit();
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
-                txWriter.commit(denseSymbolMapWriters);
+                commitTxWriter();
             } else {
                 // all partitions are deleted, effectively the same as truncating the table
                 rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -2497,7 +2513,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             txWriter.setPartitionParquetGenerated(partitionIndex, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
+            commitTxWriter();
             return true;
         } finally {
             path.trimTo(pathSize);
@@ -2506,7 +2522,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void markSeqTxnCommitted(long seqTxn) {
         setSeqTxn(seqTxn);
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWriter();
     }
 
     @Override
@@ -2742,7 +2758,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.removeAllPartitions();
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
 
         closeActivePartition(false);
@@ -2998,6 +3014,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
+                rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
                     // Potentially failed in row writing like putSym() call.
@@ -3148,6 +3165,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         squashSplitPartitions(0, txWriter.getPartitionCount(), 1, false);
     }
 
+    @TestOnly
+    public void publishDeferredPostingSealPurgesOnFullQueueForTesting() {
+        publishDeferredPostingSealPurges(txWriter.getTxn(), true);
+    }
+
     @Override
     public void squashPartitions() {
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
@@ -3232,7 +3254,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // clear the parquet generated flag, because the parquet file has been removed.
                 txWriter.resetPartitionParquetGenerated(partitionIndex);
                 txWriter.bumpPartitionTableVersion();
-                txWriter.commit(denseSymbolMapWriters);
+                commitTxWriter();
                 return SWITCH_NO_PARQUET;
             }
 
@@ -3273,14 +3295,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
-            linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+            linkPartitionIndexFiles(partitionTimestamp, partitionNameTxn, partitionDirLen, newPartitionDirLen);
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
+            commitTxWriter();
         } catch (Throwable e) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove partition dir [path=").$(other).I$();
@@ -4636,6 +4658,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void closeDeferredPostingSealPurges() {
+        long currentTableTxn = txWriter != null ? txWriter.getTxn() : -1L;
+        if (txWriter != null) {
+            publishDeferredPostingSealPurgesOnClose(currentTableTxn);
+        }
+        // Ready (committed-superseded) tasks the publish attempt could not hand
+        // off would otherwise be dropped, orphaning the superseded .pv/.pc
+        // sidecar files for the process lifetime. Spill them to a table-local
+        // file the next writer open replays. Future (uncommitted) entries are
+        // re-discovered from the posting chain on reopen, so they need no spill.
+        boolean spilled = spillReadyPostingSealPurges(currentTableTxn);
+        for (int i = deferredPostingSealPurges.size() - 1; i >= 0; i--) {
+            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
+            if (!spilled && (currentTableTxn < 0 || task.getToTableTxn() <= currentTableTxn)) {
+                LOG.critical()
+                        .$("posting seal-purge deferred entry dropped on writer close [table=").$(tableToken)
+                        .$(", indexName=").$(task.getIndexColumnName())
+                        .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                        .$(", sealTxn=").$(task.getSealTxn())
+                        .I$();
+            }
+            releaseDeferredPostingSealPurgeTask(task);
+        }
+        deferredPostingSealPurges.clear();
+    }
+
     /**
      * Commits newly added rows of data. This method updates transaction file with pointers to the end of appended data.
      * <p>
@@ -4713,7 +4761,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         syncColumns();
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWriterAndPublishPendingPostingSealPurges();
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
     }
@@ -4721,12 +4769,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void commitRemovePartitionOperation() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWriter();
         processPartitionRemoveCandidates();
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
         }
+    }
+
+    private void commitTxWriter() {
+        txWriter.commit(denseSymbolMapWriters);
+        publishDeferredPostingSealPurges(txWriter.getTxn(), false);
+    }
+
+    private void commitTxWriterAndPublishPendingPostingSealPurges() {
+        txWriter.commit(denseSymbolMapWriters);
+        long currentTableTxn = txWriter.getTxn();
+        publishPendingPostingSealPurges(currentTableTxn);
+        publishDeferredPostingSealPurges(currentTableTxn, false);
     }
 
     private void configureAppendPosition() {
@@ -5012,7 +5072,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // colTop == 0: no NULL prefix to materialise, just hard-link the
                     // existing index trio (key + value + posting aux).
-                    linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType);
+                    linkColumnIndexFiles(
+                            srcDirLen,
+                            dstDirLen,
+                            columnName,
+                            columnNameTxn,
+                            indexType,
+                            partitionTimestamp,
+                            oldPartitionNameTxn
+                    );
                 }
             }
         } finally {
@@ -5940,6 +6008,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void deferPendingPostingSealPurges(ColumnIndexer indexer, long currentTableTxn) {
+        // First publish entries already safe for the current committed txn.
+        // Only finite future entries must cross an indexer reopen in the
+        // TableWriter-owned list below.
+        indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
+
+        IndexWriter writer = indexer.getWriter();
+        writer.drainPendingFuturePurges(
+                deferredPostingSealPurges,
+                getDeferredPostingSealPurgeTaskPool(),
+                tableToken,
+                partitionBy,
+                timestampType,
+                currentTableTxn
+        );
+    }
+
+    private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
+        int writePos = 0;
+        for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
+            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
+            if (task.getToTableTxn() > currentTableTxn) {
+                releaseDeferredPostingSealPurgeTask(task);
+            } else {
+                deferredPostingSealPurges.setQuick(writePos++, task);
+            }
+        }
+        for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
+            deferredPostingSealPurges.remove(i);
+        }
+    }
+
     private void dispatchColumnTasks(
             long long0,
             long long1,
@@ -5992,6 +6092,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void doClose(boolean truncate) {
         // destroy() may have already closed everything
         boolean tx = inTransaction();
+        // Best-effort cleanup that now does I/O: a spill mmap, and a direct
+        // purge-log persist that can open a TableWriter+SqlCompiler. A throw
+        // here would skip every free below and the lock release, leaking the
+        // writer's native memory and stranding the table lock. The I/O leaf
+        // methods already log-and-swallow, but the orchestration around them
+        // is not guarded, so an Error or a future throwing edit could still
+        // escape. Wrap the call to keep doClose's cleanup invariant intact.
+        try {
+            closeDeferredPostingSealPurges();
+        } catch (Throwable th) {
+            LOG.critical()
+                    .$("posting seal-purge close cleanup failed [table=").$(tableToken)
+                    .$(", err=").$(th)
+                    .I$();
+        }
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
@@ -6041,6 +6156,98 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
             LOG.debug().$("closed [table=").$(tableToken).I$();
+        }
+    }
+
+    private long dropFuturePostingIndexChainEntriesBeforeLink(
+            int srcDirLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
+        try {
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(srcDirLen), columnName, columnNameTxn);
+            if (!ff.exists(keyFile)) {
+                return -1L;
+            }
+            long keyFileSize = ff.length(keyFile);
+            if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+                return -1L;
+            }
+
+            // Rename and parquet partition switch copy the committed source
+            // namespace into a new destination namespace. If the
+            // source chain still has abandoned future heads, copying the raw
+            // head would link the wrong .pv generation: readers pinned at the
+            // destination's committed txn skip that head and choose the
+            // previous visible entry. Run the same recovery trim that
+            // writer-open uses before resolving the live sealTxn for
+            // hard-linking.
+            linkPostingIndexOrphanSealTxns.clear();
+            try (MemoryMARW keyMem = Vm.getCMARWInstance(
+                    ff,
+                    keyFile,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    keyFileSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    CairoConfiguration.O_NONE
+            )) {
+                PostingIndexChainWriter chain = linkPostingIndexChainWriter;
+                chain.resetState();
+                long currentTableTxn = txWriter.getTxn();
+                chain.openExisting(keyMem);
+                int dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, linkPostingIndexOrphanSealTxns);
+                if (dropped > 0 || chain.isHeadTrimmedOnLastRecovery()) {
+                    LOG.info().$("posting index link recovery [table=").$(tableToken)
+                            .$(", column=").$(columnName)
+                            .$(", columnNameTxn=").$(columnNameTxn)
+                            .$(", dropped=").$(dropped)
+                            .$(", isHeadTrimmed=").$(chain.isHeadTrimmedOnLastRecovery())
+                            .I$();
+                }
+                publishAbandonedPostingSealPurges(
+                        columnName,
+                        columnNameTxn,
+                        partitionTimestamp,
+                        partitionNameTxn,
+                        currentTableTxn,
+                        linkPostingIndexOrphanSealTxns
+                );
+                // Mirror PostingIndexWriter.close(): set the CMARW append offset
+                // to the live chain regionLimit so the close trims trailing
+                // slack, but floor it at keyFileSize so the close can never
+                // SHRINK the .pk below its current on-disk size.
+                //
+                // Grow (head-trim recovery): recoveryDropAbandoned relocated the
+                // trimmed head entry to virgin space past the old regionLimit via
+                // positional writes that grow the mapping but not the append
+                // offset. Without this setSize the close would truncate back to
+                // ceilPageSize(keyFileSize) and lop off the relocated head,
+                // leaving the linked .pk header pointing past EOF. Here liveSize
+                // exceeds keyFileSize, so Math.max keeps the relocated head.
+                //
+                // Shrink (dropped future entries): regionLimit rewinds below the
+                // on-disk size. The source .pk is hard-linked, not copied, and
+                // RENAME COLUMN / CONVERT PARTITION TO PARQUET do not quiesce
+                // readers, so a pre-link reader may still mmap this inode. Posting
+                // readers map grow-only ("File can only have grown" in
+                // AbstractPostingIndexReader) and bound entry reads against their
+                // stale mmap size, dereferencing the head entry before the
+                // stillStable seqlock re-check -- truncating the tail away would
+                // fault those pages past EOF (SIGBUS). The smaller regionLimit is
+                // already republished in the header, so readers pinned at <=
+                // currentTableTxn still select the right entry; the dead tail is
+                // reclaimed by a later writer-close or column/partition purge.
+                long liveSize = chain.getRegionLimit();
+                if (liveSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+                    liveSize = PostingIndexUtils.KEY_FILE_RESERVED;
+                }
+                keyMem.setSize(Math.max(liveSize, keyFileSize));
+                return chain.getHeadSealTxn();
+            }
+        } finally {
+            path.trimTo(srcDirLen);
         }
     }
 
@@ -6389,6 +6596,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return convertOperatorImpl;
     }
 
+    private ObjectStackPool<PostingSealPurgeTask> getDeferredPostingSealPurgeTaskPool() {
+        if (deferredPostingSealPurgeTaskPool == null) {
+            deferredPostingSealPurgeTaskPool = new ObjectStackPool<>(PostingSealPurgeTask::new, 16);
+        }
+        return deferredPostingSealPurgeTaskPool;
+    }
+
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
@@ -6577,11 +6791,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ColumnType.isVarSize(columnType)) {
             linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
         } else if (ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
+            long liveSealTxn = -1L;
+            if (IndexType.isPosting(indexType)) {
+                liveSealTxn = dropFuturePostingIndexChainEntriesBeforeLink(plen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+            }
             linkFile(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), keyFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
             if (IndexType.isPosting(indexType)) {
                 // POSTING: link active .pv (resolved from .pk sealTxn) plus .pci and
                 // all sidecar .pc<N>.* files under the renamed (name, nameTxn).
-                linkPostingIndexAuxFiles(plen, plen, columnName, columnNameTxn, newName, newColumnNameTxn);
+                linkPostingIndexAuxFiles(plen, plen, columnName, columnNameTxn, newName, newColumnNameTxn, liveSealTxn);
             } else {
                 // BITMAP: sealTxn is unused, single .v file.
                 linkFile(ff,
@@ -7032,17 +7250,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int dstDirLen,
             CharSequence columnName,
             long columnNameTxn,
-            byte indexType
+            byte indexType,
+            long partitionTimestamp,
+            long partitionNameTxn
     ) {
         long linkSealTxn = columnNameTxn;
+        long liveSealTxn = -1L;
         if (IndexType.isPosting(indexType)) {
-            // Strict read: throw if .pk header is unreadable while .pv files
-            // exist in the partition (silent fallback to columnNameTxn would
-            // point valueFileName at .pv.<col>.<col>, which never exists).
-            long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
-                    ff, path, srcDirLen, columnName, columnNameTxn,
-                    keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
-            linkSealTxn = fromPk >= 0 ? fromPk : 0L;
+            liveSealTxn = dropFuturePostingIndexChainEntriesBeforeLink(srcDirLen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+            linkSealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
         }
         if (
                 !linkFile(ff,
@@ -7058,11 +7274,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(']');
         }
         if (IndexType.isPosting(indexType)) {
-            linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn);
+            linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn, liveSealTxn);
         }
     }
 
-    private void linkPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
+    private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -7078,7 +7294,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         newPartitionDirLen,
                         metadata.getColumnName(columnIndex),
                         getColumnNameTxn(partitionTimestamp, columnIndex),
-                        metadata.getColumnIndexType(columnIndex)
+                        metadata.getColumnIndexType(columnIndex),
+                        partitionTimestamp,
+                        partitionNameTxn
                 );
             }
         } catch (CairoException e) {
@@ -7109,10 +7327,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence srcColumnName,
             long srcColumnNameTxn,
             CharSequence dstColumnName,
-            long dstColumnNameTxn
+            long dstColumnNameTxn,
+            long liveSealTxn
     ) {
-        // Read the live sealTxn from src .pk and use it for both the .pv link and
-        // the .pc<N> visitor filter. Linking only the live generation mirrors how
+        // Use the live post-recovery sealTxn for both the .pv link and the
+        // .pc<N> visitor filter. Linking only the live generation mirrors how
         // .pv has always worked here and preserves two invariants:
         //   1. No race with PostingSealPurgeJob. The purge only targets superseded
         //      sealTxns; rename holds the writer lock so no new seal can occur,
@@ -7123,16 +7342,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         //      get purged by their queued tasks, but the dst copies would survive
         //      until the dst column is dropped (no purge task targets the dst
         //      namespace).
-        // Use the strict variant: if the .pk header read fails (e.g. a transient
-        // pread error returning -1) AND .pv files for this column exist in the
-        // partition, the function throws rather than silently skipping the link.
-        // Silent skip would leave the renamed column with .d + .pk but no .pv,
-        // and any later indexed read would fail with "file does not exist" on
-        // the chain's referenced .pv.{sealTxn}.
-        final long liveSealTxn = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
-                ff, path, srcDirLen, srcColumnName, srcColumnNameTxn,
-                keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
-        );
         // When the chain is empty (liveSealTxn < 0) the column is in its
         // pre-seal state: the live unsealed values sit in .pv.<colTxn>.0
         // rather than under a chain-published sealTxn. ADD COLUMN creates
@@ -7320,6 +7529,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
         return row;
+    }
+
+    private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
+        long cursor = pubSeq.next();
+        for (int i = 0; cursor < 0 && i < retryCount; i++) {
+            if (i > 0) {
+                Os.sleep(1);
+            } else {
+                Os.pause();
+            }
+            cursor = pubSeq.next();
+        }
+        return cursor;
     }
 
     /**
@@ -8436,15 +8658,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         performRecovery = false;
     }
 
+    private void persistDeferredPostingSealPurgesDirect(long currentTableTxn) {
+        if (!PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, 0, deferredPostingSealPurges.size(), currentTableTxn)) {
+            return;
+        }
+        int writePos = 0;
+        for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
+            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
+            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
+                releaseDeferredPostingSealPurgeTask(task);
+            } else {
+                deferredPostingSealPurges.setQuick(writePos++, task);
+            }
+        }
+        for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
+            deferredPostingSealPurges.remove(i);
+        }
+    }
+
     private void populateDenseIndexerList() {
         denseIndexers.clear();
+        boolean hasPostingIndexers = false;
         for (int i = 0, n = indexers.size(); i < n; i++) {
             ColumnIndexer indexer = indexers.getQuick(i);
             if (indexer != null) {
                 denseIndexers.add(indexer);
+                if (IndexType.isPosting(indexer.getWriter().getIndexType())) {
+                    hasPostingIndexers = true;
+                }
             }
         }
         indexCount = denseIndexers.size();
+        this.hasPostingIndexers = hasPostingIndexers;
     }
 
     /**
@@ -10482,6 +10727,123 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
+    private void publishAbandonedPostingSealPurges(
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTableTxn,
+            LongList orphanSealTxns
+    ) {
+        if (orphanSealTxns.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = orphanSealTxns.size(); i < n; i++) {
+            PostingSealPurgeTask task = getDeferredPostingSealPurgeTaskPool().next();
+            task.of(
+                    tableToken,
+                    columnName,
+                    columnNameTxn,
+                    orphanSealTxns.getQuick(i),
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    partitionBy,
+                    timestampType,
+                    0L,
+                    currentTableTxn
+            );
+            deferredPostingSealPurges.add(task);
+        }
+        publishDeferredPostingSealPurges(currentTableTxn, true);
+    }
+
+    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull) {
+        publishDeferredPostingSealPurges(currentTableTxn, persistOnQueueFull, 0);
+    }
+
+    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+        if (deferredPostingSealPurges.size() == 0) {
+            return;
+        }
+        if (messageBus == null) {
+            if (persistOnQueueFull) {
+                persistDeferredPostingSealPurgesDirect(currentTableTxn);
+            }
+            return;
+        }
+        Sequence pubSeq = messageBus.getPostingSealPurgePubSeq();
+        RingQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
+        int writePos = 0;
+        for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
+            PostingSealPurgeTask deferredTask = deferredPostingSealPurges.getQuick(readPos);
+            if (deferredTask.isEmpty()) {
+                releaseDeferredPostingSealPurgeTask(deferredTask);
+                continue;
+            }
+
+            long deferredToTxn = deferredTask.getToTableTxn();
+            if (deferredToTxn > currentTableTxn) {
+                deferredPostingSealPurges.setQuick(writePos++, deferredTask);
+                continue;
+            }
+
+            long cursor = nextPostingSealPurgePubSeq(pubSeq, queueRetryCount);
+            if (cursor < 0) {
+                // A live PostingSealPurgeJob owns the purge-log writer, so
+                // direct persist is mostly useful when no job/message bus owns
+                // that table. Close gives the ring a bounded drain chance first.
+                if (persistOnQueueFull && PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, readPos, n, currentTableTxn)) {
+                    writePos = releaseDirectPersistedPostingSealPurges(readPos, writePos, n, currentTableTxn);
+                } else {
+                    for (int i = readPos; i < n; i++) {
+                        deferredPostingSealPurges.setQuick(writePos++, deferredPostingSealPurges.getQuick(i));
+                    }
+                }
+                break;
+            }
+            try {
+                PostingSealPurgeTask queueTask = queue.get(cursor);
+                queueTask.of(
+                        deferredTask.getTableToken(),
+                        deferredTask.getIndexColumnName(),
+                        deferredTask.getPostingColumnNameTxn(),
+                        deferredTask.getSealTxn(),
+                        deferredTask.getPartitionTimestamp(),
+                        deferredTask.getPartitionNameTxn(),
+                        deferredTask.getPartitionBy(),
+                        deferredTask.getTimestampType(),
+                        deferredTask.getFromTableTxn(),
+                        deferredToTxn
+                );
+            } finally {
+                pubSeq.done(cursor);
+            }
+            releaseDeferredPostingSealPurgeTask(deferredTask);
+        }
+        for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
+            deferredPostingSealPurges.remove(i);
+        }
+    }
+
+    private void publishDeferredPostingSealPurgesOnClose(long currentTableTxn) {
+        publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
+    }
+
+    private void publishPendingPostingSealPurges(long currentTableTxn) {
+        if (!hasPostingIndexers) {
+            return;
+        }
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            denseIndexers.getQuick(i).publishPendingPurges(
+                    messageBus,
+                    tableToken,
+                    partitionBy,
+                    timestampType,
+                    currentTableTxn
+            );
+        }
+    }
+
     private void publishPostingIndexesForLastPartitionFastLag() {
         // Fast-lag has no sealPostingIndexesForO3Partitions sweep to follow,
         // so this is the only place pending POSTING entries from
@@ -11006,6 +11368,116 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Some writer in-memory state will be still dirty, and it's not easy to roll everything back
         // for all the failure points. It's safer to re-open the writer object after a column-add failure.
         distressed = true;
+    }
+
+    /**
+     * Replays posting seal-purge intents that a prior {@link #closeDeferredPostingSealPurges()}
+     * spilled to {@link #POSTING_SEAL_PURGE_PENDING_FILE_NAME} because the ring
+     * queue was full and the shared purge-log writer was held. Reads are bounded
+     * by the on-disk file length so a torn or corrupt file can never read past
+     * the mapping; whatever parses cleanly is re-published through the normal
+     * path. The file is always removed afterwards: a corrupt file is discarded,
+     * and recovered tasks are then owned in memory (and re-spilled on the next
+     * close if they still cannot be handed off). Best-effort: never throws.
+     */
+    private void recoverSpilledPostingSealPurges() {
+        path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
+        if (!ff.exists(path.$())) {
+            path.trimTo(pathSize);
+            return;
+        }
+        final long fileSize = ff.length(path.$());
+        int recovered = 0;
+        MemoryCMR mem = null;
+        try {
+            if (fileSize >= 2L * Integer.BYTES) {
+                mem = Vm.getCMRInstance(ff, path.$(), fileSize, MemoryTag.MMAP_TABLE_WRITER);
+                if (mem.getInt(0) == POSTING_SEAL_PURGE_PENDING_FORMAT) {
+                    // count is the spill commit marker: 0 means the write was torn.
+                    final int count = mem.getInt(Integer.BYTES);
+                    final long fixed = 6L * Long.BYTES + 2L * Integer.BYTES;
+                    long offset = 2L * Integer.BYTES;
+                    for (int i = 0; i < count; i++) {
+                        if (offset + fixed + Integer.BYTES > fileSize) {
+                            break; // truncated file: stop, keep what parsed cleanly
+                        }
+                        long postingColumnNameTxn = mem.getLong(offset);
+                        offset += Long.BYTES;
+                        long sealTxn = mem.getLong(offset);
+                        offset += Long.BYTES;
+                        long partitionTimestamp = mem.getLong(offset);
+                        offset += Long.BYTES;
+                        long partitionNameTxn = mem.getLong(offset);
+                        offset += Long.BYTES;
+                        int taskPartitionBy = mem.getInt(offset);
+                        offset += Integer.BYTES;
+                        int taskTimestampType = mem.getInt(offset);
+                        offset += Integer.BYTES;
+                        long fromTableTxn = mem.getLong(offset);
+                        offset += Long.BYTES;
+                        long toTableTxn = mem.getLong(offset);
+                        offset += Long.BYTES;
+                        int nameLen = mem.getInt(offset);
+                        if (nameLen < 0 || offset + Vm.getStorageLength(nameLen) > fileSize) {
+                            break; // corrupt name length: stop
+                        }
+                        CharSequence indexColumnName = mem.getStrA(offset);
+                        offset += Vm.getStorageLength(nameLen);
+                        PostingSealPurgeTask task = getDeferredPostingSealPurgeTaskPool().next();
+                        task.of(
+                                tableToken,
+                                indexColumnName,
+                                postingColumnNameTxn,
+                                sealTxn,
+                                partitionTimestamp,
+                                partitionNameTxn,
+                                taskPartitionBy,
+                                taskTimestampType,
+                                fromTableTxn,
+                                toTableTxn
+                        );
+                        deferredPostingSealPurges.add(task);
+                        recovered++;
+                    }
+                } else {
+                    LOG.advisory().$("posting seal-purge pending file has unknown format, discarding [table=").$(tableToken)
+                            .$(", format=").$(mem.getInt(0)).I$();
+                }
+            }
+            if (recovered > 0) {
+                publishDeferredPostingSealPurges(txWriter.getTxn(), true);
+                LOG.info().$("posting seal-purge replayed pending entries on writer open [table=").$(tableToken)
+                        .$(", recovered=").$(recovered)
+                        .$(", pending=").$(deferredPostingSealPurges.size())
+                        .I$();
+            }
+        } catch (Throwable th) {
+            LOG.error().$("posting seal-purge pending recovery failed [table=").$(tableToken)
+                    .$(", err=").$(th).I$();
+        } finally {
+            Misc.free(mem);
+            path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
+            ff.removeQuiet(path.$());
+            path.trimTo(pathSize);
+        }
+    }
+
+    private void releaseDeferredPostingSealPurgeTask(PostingSealPurgeTask task) {
+        if (deferredPostingSealPurgeTaskPool != null) {
+            deferredPostingSealPurgeTaskPool.release(task);
+        }
+    }
+
+    private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
+        for (int i = readPos; i < n; i++) {
+            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
+            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
+                releaseDeferredPostingSealPurgeTask(task);
+            } else {
+                deferredPostingSealPurges.setQuick(writePos++, task);
+            }
+        }
+        return writePos;
     }
 
     private void releaseIndexerWriters() {
@@ -11650,6 +12122,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void rollbackDeferredPostingSealPurges() {
+        long currentTableTxn = txWriter.getTxn();
+        publishDeferredPostingSealPurges(currentTableTxn, false);
+        discardAbandonedDeferredPostingSealPurges(currentTableTxn);
+    }
+
     private void rollbackIndexes() {
         final long maxRow = txWriter.getTransientRowCount() - 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
@@ -11898,12 +12376,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // T-pinned readers on the prev entry until
                         // txWriter.commit lands, and recoveryDropAbandoned
                         // can drop the SEAL entry on a partial-publish
-                        // distress. publishPendingPurges clamps toTableTxn
-                        // back to getTxn() so the scoreboard max is not
-                        // pushed past the not-yet-committed table txn.
+                        // distress. The matching purge is deferred until
+                        // after txWriter.commit lands, so the old seal file
+                        // remains available to T-pinned readers and recovery.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         indexer.rebuildSidecars();
-                        indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                        deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                     } finally {
                         unmapCoveringColumns(coverCount);
                         // Drop the writer's reference to o3SealAddrs so that
@@ -11944,7 +12422,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         indexer.getWriter().commitDense();
                     }
-                    indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                    deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                 }
             }
         } finally {
@@ -12100,6 +12578,78 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (o3mem2 != null) {
                 o3mem2.truncate();
             }
+        }
+    }
+
+    /**
+     * Persists the ready (committed-superseded) deferred posting seal-purge
+     * tasks to {@link #POSTING_SEAL_PURGE_PENDING_FILE_NAME} in the table's own
+     * directory, which the closing writer owns exclusively, so the write never
+     * contends with the shared purge-log writer. The next writer open replays
+     * the file via {@link #recoverSpilledPostingSealPurges()}. Future
+     * (uncommitted) entries are left for chain recovery and are not spilled.
+     *
+     * @return true when all ready tasks were spilled (or there were none), false
+     * when the spill could not be performed and the caller must fall back to
+     * dropping them with a critical log.
+     */
+    private boolean spillReadyPostingSealPurges(long currentTableTxn) {
+        if (currentTableTxn < 0) {
+            // No committed table txn (writer never fully opened): readiness is
+            // undefined, so do not spill. Fall back to the drop path.
+            return false;
+        }
+        int readyCount = 0;
+        for (int i = 0, n = deferredPostingSealPurges.size(); i < n; i++) {
+            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
+            if (!task.isEmpty() && task.getToTableTxn() <= currentTableTxn) {
+                readyCount++;
+            }
+        }
+        if (readyCount == 0) {
+            return true;
+        }
+        MemoryMARW mem = null;
+        try {
+            path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
+            mem = Vm.getCMARWInstance();
+            mem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+            mem.jumpTo(0);
+            mem.putInt(POSTING_SEAL_PURGE_PENDING_FORMAT);
+            mem.putInt(0); // record count placeholder; written last as a commit marker
+            for (int i = 0, n = deferredPostingSealPurges.size(); i < n; i++) {
+                PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
+                if (task.isEmpty() || task.getToTableTxn() > currentTableTxn) {
+                    continue;
+                }
+                mem.putLong(task.getPostingColumnNameTxn());
+                mem.putLong(task.getSealTxn());
+                mem.putLong(task.getPartitionTimestamp());
+                mem.putLong(task.getPartitionNameTxn());
+                mem.putInt(task.getPartitionBy());
+                mem.putInt(task.getTimestampType());
+                mem.putLong(task.getFromTableTxn());
+                mem.putLong(task.getToTableTxn());
+                mem.putStr(task.getIndexColumnName());
+            }
+            // Persist the records, then write the count as the final step. close()
+            // rounds the file up to a page, so a torn write would otherwise leave
+            // zero-filled trailing slots that parse as empty records. Writing the
+            // count last leaves it at 0 on a crash, so the next open discards the
+            // file rather than replaying half-written entries.
+            mem.sync(false);
+            mem.putInt(Integer.BYTES, readyCount);
+            mem.sync(false);
+            LOG.info().$("posting seal-purge spilled deferred entries on writer close [table=").$(tableToken)
+                    .$(", count=").$(readyCount).I$();
+            return true;
+        } catch (Throwable th) {
+            LOG.error().$("posting seal-purge spill on writer close failed [table=").$(tableToken)
+                    .$(", err=").$(th).I$();
+            return false;
+        } finally {
+            Misc.free(mem);
+            path.trimTo(pathSize);
         }
     }
 
@@ -12382,7 +12932,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Commit the new transaction with the partitions squashed
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.commit(denseSymbolMapWriters);
+        commitTxWriterAndPublishPendingPostingSealPurges();
     }
 
     private int squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(long timestampMax) {
@@ -12478,7 +13028,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 writer.setNextTxnAtSeal(publishTxn);
                 writer.commit();
                 writer.sealIfMultiGen(sealThreshold);
-                indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                deferPendingPostingSealPurges(indexer, txWriter.getTxn());
             } catch (CairoException e) {
                 throwDistressException(e);
             }
@@ -12514,13 +13064,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 denseSymbolMapWriters.getQuick(i).sync(async);
             }
         }
-        // Forward each indexer's accumulated purge entries to the global
-        // queue. The background PostingSealPurgeJob persists them and runs
-        // the actual file deletion under the TxnScoreboard's supervision.
-        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
-            denseIndexers.getQuick(i).publishPendingPurges(
-                    messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
-        }
+        // Forward each indexer's purge entries that are already safe for the
+        // current committed txn. Future finite ranges stay in the indexer and
+        // are retried after txWriter.commit makes the new txn durable.
+        publishPendingPostingSealPurges(txWriter.getTxn());
     }
 
     private void syncColumns0(boolean async) {

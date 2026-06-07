@@ -54,6 +54,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -696,6 +697,50 @@ public class PostingIndexWriter implements IndexWriter {
         allocateNativeBuffers();
     }
 
+    @Override
+    public void drainPendingFuturePurges(
+            ObjList<PostingSealPurgeTask> sink,
+            ObjectStackPool<PostingSealPurgeTask> pool,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
+        if (pendingPurges.size() == 0 || partitionPath.size() == 0 || tableToken == null) {
+            return;
+        }
+        int writePos = 0;
+        for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
+            PendingSealPurge entry = pendingPurges.getQuick(readPos);
+            if (entry.partitionTimestamp != Long.MIN_VALUE
+                    && entry.toTableTxn != Long.MAX_VALUE
+                    && entry.toTableTxn > currentTableTxn) {
+                PostingSealPurgeTask task = pool.next();
+                task.of(
+                        tableToken,
+                        indexName,
+                        entry.postingColumnNameTxn,
+                        entry.sealTxn,
+                        entry.partitionTimestamp,
+                        entry.partitionNameTxn,
+                        partitionBy,
+                        timestampType,
+                        entry.fromTableTxn,
+                        entry.toTableTxn
+                );
+                assert task.getToTableTxn() != Long.MAX_VALUE && task.getToTableTxn() > currentTableTxn;
+                sink.add(task);
+                entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
+                pendingPurgePool.add(entry);
+            } else {
+                pendingPurges.setQuick(writePos++, entry);
+            }
+        }
+        for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
+            pendingPurges.remove(i);
+        }
+    }
+
     @TestOnly
     public int getAdaptiveDeltaAtOrAbove() {
         return encodeCtx.adaptiveDeltaAtOrAbove;
@@ -1036,12 +1081,6 @@ public class PostingIndexWriter implements IndexWriter {
                 pendingPurges.setQuick(writePos++, entry);
                 continue;
             }
-            long cursor = pubSeq.next();
-            if (cursor < 0) {
-                // Queue full or contended — keep entry for retry on next commit.
-                pendingPurges.setQuick(writePos++, entry);
-                continue;
-            }
             // Chain-derived intervals are meaningful: {@code entry.toTableTxn}
             // is the {@code txnAtSeal} of the new head that superseded this
             // file. The empty-chain branch in recordPostingSealPurge and the
@@ -1054,8 +1093,25 @@ public class PostingIndexWriter implements IndexWriter {
             // open until the next reset. Clamp to {@code currentTableTxn},
             // which is a safe upper bound: no reader pinned right now can
             // hold a txn beyond it, so dropping the file at this txn is
-            // already protected by the regular reader-pin check.
-            long toTableTxn = Math.min(entry.toTableTxn, currentTableTxn);
+            // already protected by the regular reader-pin check. For finite
+            // chain intervals, never clamp a future upper bound down to the
+            // current committed txn: until that future txn is durable, the
+            // superseded file is still the committed reader/recovery view.
+            long toTableTxn;
+            if (entry.toTableTxn == Long.MAX_VALUE) {
+                toTableTxn = currentTableTxn;
+            } else if (entry.toTableTxn > currentTableTxn) {
+                pendingPurges.setQuick(writePos++, entry);
+                continue;
+            } else {
+                toTableTxn = entry.toTableTxn;
+            }
+            long cursor = pubSeq.next();
+            if (cursor < 0) {
+                // Queue full or contended — keep entry for retry on next commit.
+                pendingPurges.setQuick(writePos++, entry);
+                continue;
+            }
             try {
                 PostingSealPurgeTask task = queue.get(cursor);
                 task.of(
