@@ -26,6 +26,7 @@ package io.questdb.log;
 
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.mp.CarrierIdentity;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
@@ -50,7 +51,7 @@ import static io.questdb.ParanoiaState.*;
  * Per-carrier {@link LogRecord} builder. One instance lives in
  * {@link AbstractLogRecord#tl} per carrier; {@code AbstractLogRecord.prepareLogRecord}
  * performs a single {@link io.questdb.std.CarrierLocal#get()} (one FFI downcall via
- * {@link io.questdb.mp.CarrierIdentity#current()}) at the start of a chain, then all
+ * {@link CarrierIdentity#current()}) at the start of a chain, then all
  * {@code $(...)}/{@code $()} calls read this record's plain fields. The previous
  * design routed every chain segment through {@code tl.get().sink}, paying the FFI
  * cost ~6 times per chain.

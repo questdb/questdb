@@ -88,4 +88,36 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testSeqTxnAsColumnReferenceIsRejected() throws Exception {
+        // A plain column reference is neither a constant nor a runtime constant. Overload resolution
+        // admits it (the seq_txn slot is declared non-constant), so the factory's own guard rejects it
+        // at compile time.
+        assertMemoryLeak(() -> {
+            execute("create table x (v long)");
+            assertQuery("select wait_wal_table('x', v) from x")
+                    .noLeakCheck()
+                    .failsWith("seq_txn argument must be a constant or runtime constant");
+        });
+    }
+
+    @Test
+    public void testSeqTxnAsRuntimeConstantBindVariable() throws Exception {
+        // $1 is a runtime constant (LONG bind variable), not a compile-time constant. Before the
+        // seq_txn slot was declared non-constant, overload resolution rejected it as an unknown
+        // signature; it must now reach newInstance() and pass the constant-or-runtime-constant guard.
+        // A non-WAL table leaves seqTxnTracker null, so the function returns immediately and the wait
+        // can never park -- the test verifies acceptance of the bind variable, not the wait mechanics.
+        assertMemoryLeak(() -> {
+            execute("create table notwal (v long)");
+            bindVariableService.setLong(0, 42);
+            assertQuery("select wait_wal_table('notwal', $1) waited")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            waited
+                            true
+                            """);
+        });
+    }
 }

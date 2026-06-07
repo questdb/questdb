@@ -105,7 +105,7 @@ public interface Job {
      * Runs and returns true if it should be rescheduled ASAP.
      * <p>
      * {@code workerId} is the calling carrier's globally-unique id (see
-     * {@link io.questdb.mp.CarrierIdentity}). Unlike the legacy pool-local
+     * {@link CarrierIdentity}). Unlike the legacy pool-local
      * worker index, ids do NOT overlap across pools: shared:0 and io:0 carriers
      * receive distinct ids. The {@link Worker} loop body fills this argument
      * with {@code CarrierIdentity.current()} at every call site.

@@ -28,14 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
-import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.client.cutlass.http.client.Fragment;
 import io.questdb.client.cutlass.http.client.HttpClient;
 import io.questdb.client.cutlass.http.client.HttpClientFactory;
 import io.questdb.client.cutlass.http.client.Response;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -269,12 +267,10 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
 
                 if (!failures.isEmpty()) {
                     Throwable head = failures.peek();
-                    AssertionError summary = new AssertionError(
+                    throw new AssertionError(
                             "fuzz produced " + failures.size() + " failures (seeds=" + seed0 + "L, " + seed1 + "L; first: "
-                                    + head.getMessage()
-                    );
-                    summary.initCause(head);
-                    throw summary;
+                                    + head.getMessage(),
+                            head);
                 }
 
                 // Final liveness check: server must still serve a query promptly
@@ -366,7 +362,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 waiter.start();
 
                 Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
-                awaitWaiterRegistered(serverMain, "foo");
+                awaitWaiterRegistered(serverMain);
 
                 // Drop the table while the wait is parked. notifyOnDrop sets the
                 // dropped flag and fires waiters; the resumed cont must observe
@@ -445,7 +441,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 waiter.start();
 
                 Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
-                awaitWaiterRegistered(serverMain, "foo");
+                awaitWaiterRegistered(serverMain);
 
                 // Drive WAL apply manually. This advances writerTxn, which fires the
                 // waiter and schedules the parked cont onto the network pool's
@@ -504,7 +500,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 waiter.start();
 
                 Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
-                awaitWaiterRegistered(serverMain, "foo");
+                awaitWaiterRegistered(serverMain);
 
                 // Drive WAL apply manually -- advances writerTxn, fires the waiter.
                 TestUtils.drainWalQueue(serverMain.getEngine());
@@ -620,7 +616,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
 
                 Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
                 // If NULL incorrectly short-circuited, no waiter would ever register.
-                awaitWaiterRegistered(serverMain, "foo");
+                awaitWaiterRegistered(serverMain);
 
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
@@ -676,7 +672,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 waiter.start();
 
                 Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
-                awaitWaiterRegistered(serverMain, "foo");
+                awaitWaiterRegistered(serverMain);
 
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
@@ -786,7 +782,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 waiter.start();
 
                 Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
-                awaitWaiterRegistered(serverMain, "foo");
+                awaitWaiterRegistered(serverMain);
 
                 // While the wait is parked, the single worker must still serve a
                 // simple query on a different connection -- proving the wait is
@@ -870,7 +866,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 waiter.start();
 
                 Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
-                awaitWaiterRegistered(serverMain, "foo");
+                awaitWaiterRegistered(serverMain);
 
                 // While the wait is parked, the single worker must still serve a
                 // simple HTTP query -- proving the wait is freeing the carrier.
@@ -918,8 +914,8 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
      * box, JDBC connect + parse + suspend may exceed any chosen sleep, leaving the test
      * to drive its trigger (drop, drain, probe) before the waiter is actually parked.
      */
-    private static void awaitWaiterRegistered(ServerMain serverMain, String tableName) throws Exception {
-        awaitWaiterRegistered(serverMain, tableName, 1);
+    private static void awaitWaiterRegistered(ServerMain serverMain) throws Exception {
+        awaitWaiterRegistered(serverMain, "foo", 1);
     }
 
     /**
@@ -1023,6 +1019,13 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
         }
         runner.join(35_000);
         Assert.assertFalse("dropped wait runner did not exit", runner.isAlive());
+        // The runner must have unwound via the expected PSQLException; surface either an
+        // unexpected success (the wait returned instead of erroring on the dropped FD) or
+        // any other throwable it captured, both of which would otherwise be swallowed.
+        final Throwable unexpected = outcome.get();
+        if (unexpected != null) {
+            throw new AssertionError("dropped-connection wait produced an unexpected outcome", unexpected);
+        }
         counter.incrementAndGet();
     }
 

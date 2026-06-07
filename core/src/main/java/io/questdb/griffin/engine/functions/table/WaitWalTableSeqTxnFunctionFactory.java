@@ -35,7 +35,12 @@ import io.questdb.std.ObjList;
 public class WaitWalTableSeqTxnFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "wait_wal_table(sl)";
+        // Uppercase 'L' (non-constant) so overload resolution admits runtime constants (e.g. bind
+        // variables); the newInstance() guard below then enforces constant-or-runtime-constant.
+        // A lowercase 'l' would make the parser reject anything but a compile-time constant, leaving
+        // the guard unreachable. The table name stays lowercase 's' because newInstance() reads it
+        // at compile time, so it genuinely must be a compile-time constant.
+        return "wait_wal_table(sL)";
     }
 
     @Override

@@ -163,6 +163,10 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    // Hard cap on TableReferenceOutOfDateException recompile retries in execute(). A
+    // healthy table converges in 1-2 retries; an unbounded loop here turns a permanent
+    // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
+    private static final int MAX_EXECUTE_RETRIES = 1000;
     private static final int MAX_SLEEP_MILLIS = 250;
     private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
@@ -800,12 +804,28 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        int retryCount = 0;
         while (true) {
             try (SqlCompiler compiler = getSqlCompiler()) {
                 execute(compiler, sqlText, sqlExecutionContext, eventSubSeq);
                 return;
             } catch (TableReferenceOutOfDateException e) {
                 // Retry on this exception, all interfaces like HTTP, Pg wire are supposed to retry too.
+                // The retry is bounded: a permanent mismatch (stale metadata/token vs writer) would
+                // otherwise spin here forever with no output, which is exactly the CI hang we are
+                // chasing. Surface the offending SQL and the exception detail and give up instead.
+                if (++retryCount >= MAX_EXECUTE_RETRIES) {
+                    LOG.error().$("giving up recompiling, table reference repeatedly out of date [retries=").$(retryCount)
+                            .$(", sql=").$(sqlText)
+                            .$(", ex=").$(e.getFlyweightMessage())
+                            .$(']').$();
+                    throw e;
+                }
+                if (retryCount == 1) {
+                    LOG.info().$("retrying execute after table reference out of date [sql=").$(sqlText)
+                            .$(", ex=").$(e.getFlyweightMessage())
+                            .$(']').$();
+                }
             }
         }
     }
