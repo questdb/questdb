@@ -1162,12 +1162,18 @@ public class ServerMain implements Closeable {
 
         @Override
         public void stop() {
-            Misc.free(server);
-            server = null;
+            // Halt the dedicated http-min worker pool BEFORE freeing the server. A worker thread
+            // can still be inside IODispatcherWindows.runSerially() touching the dispatcher's native
+            // FDSet; freeing the server first releases that native memory and the in-flight select()
+            // then dereferences a freed FDSet, crashing the JVM (EXCEPTION_ACCESS_VIOLATION on
+            // Windows). pool.halt() joins the worker threads, so after it returns no thread can be
+            // running select(), making it safe to free the server.
             if (pool != null) {
                 pool.halt();
                 pool = null;
             }
+            Misc.free(server);
+            server = null;
         }
     }
 
