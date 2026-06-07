@@ -3142,7 +3142,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (predicate != null) {
             // Open the read-filter gate before the policy is written/hydrated, so a query racing this
             // SET (e.g. the first policy on the database) cannot skip the filter and expose expired rows.
-            engine.getMetadataCache().markExpiryPolicyPossible();
+            engine.getMetadataCache().markExpiryPolicyPossible(getTableToken().getTableId());
         }
         metadata.setExpiry(predicate, cleanupIntervalMicros);
         // writeMetadataToDisk() rewrites _meta (persisting the policy via the ALTER-rewrite

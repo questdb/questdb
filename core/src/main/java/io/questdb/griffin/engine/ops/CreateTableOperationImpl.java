@@ -84,6 +84,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long batchO3MaxLag;
     private long batchSize;
     private int defaultSymbolCapacity = -1;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean ignoreIfExists;
     private String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
@@ -105,8 +107,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
-    private long expiryCleanupIntervalMicros;
-    private String expiryPredicate;
     private String volumeAlias;
     private int volumePosition;
     private boolean walEnabled;

@@ -105,9 +105,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
+    private boolean passthrough;
     private int periodLength;
     private char periodLengthUnit;
-    private boolean passthrough;
     private long samplingInterval;
     private char samplingIntervalUnit;
     private long timerStartUs;

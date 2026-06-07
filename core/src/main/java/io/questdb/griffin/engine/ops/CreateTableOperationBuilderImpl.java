@@ -57,6 +57,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
     private int defaultSymbolCapacity;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
@@ -72,8 +74,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
     private int ttlPosition;
-    private long expiryCleanupIntervalMicros;
-    private String expiryPredicate;
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;

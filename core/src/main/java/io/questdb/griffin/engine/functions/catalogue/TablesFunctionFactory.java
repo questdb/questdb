@@ -140,16 +140,6 @@ public class TablesFunctionFactory implements FunctionFactory {
         return (ttl % 12 == 0) ? (ttl / 12) : ttl;
     }
 
-    // Renders the cleanup cadence micros as a stride (e.g. 30m, 1h, 2d); null when there is no policy.
-    static String formatCleanupEvery(long micros) {
-        if (micros <= 0) {
-            return null;
-        }
-        StringSink sink = new StringSink();
-        RowExpiryUtil.appendCleanupEvery(sink, micros);
-        return sink.toString();
-    }
-
     @Override
     public String getSignature() {
         return "tables()";
@@ -384,7 +374,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case PARTITION_BY_COLUMN -> table.getPartitionByName();
                         case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
                         case EXPIRE_PREDICATE_COLUMN -> table.getExpiryPredicate();
-                        case EXPIRE_CLEANUP_EVERY_COLUMN -> formatCleanupEvery(table.getExpiryCleanupIntervalMicros());
+                        case EXPIRE_CLEANUP_EVERY_COLUMN -> RowExpiryUtil.formatCleanupEvery(table.getExpiryCleanupIntervalMicros());
                         case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {

@@ -212,9 +212,20 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return true;
     }
 
+    // Whether the read-time row-expiry filter should be applied to policied tables referenced by queries
+    // compiled with this context. Always true except for the row-expiry cleanup job's own context, which
+    // disables it so the cleanup computes survivors from its authoritative keep-filter alone, decoupled
+    // from the read filter (so a read-filter change cannot affect physical deletion).
+    default boolean isExpiryReadFilterEnabled() {
+        return true;
+    }
+
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;
+    }
+
+    default void setExpiryReadFilterEnabled(boolean enabled) {
     }
 
     boolean isParallelFilterEnabled();

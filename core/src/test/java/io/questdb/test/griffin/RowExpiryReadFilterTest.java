@@ -344,6 +344,41 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPerTablePolicyGateAfterFullHydration() throws Exception {
+        // Per-table policy gate (perf): after startup hydration completes (fullyHydrated=true), the read
+        // filter only takes the cache lock + looks up the predicate for tables in the policied-id set, not
+        // for every table once any policy exists. This verifies the production path (tests normally run
+        // with fullyHydrated=false, taking the catch-all branch): a table CREATEd or ALTERed to carry a
+        // policy AFTER hydration must still be filtered (its id is added before it becomes queryable), and
+        // a non-policied table must be unaffected.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            // Force fullyHydrated=true so mayTableHaveExpiryPolicy() consults the id set, not !fullyHydrated.
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            // (a) Policy at CREATE, after hydration.
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')"); // live
+            drainWalQueue();
+            assertSql("sym\tv\n" + "BBB\t5.0\n", "select sym, v from t order by sym");
+
+            // (b) A non-policied table created after hydration is unaffected (no filter).
+            execute("create table plain (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into plain values (1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into plain values (5.0, '2024-01-06T00:00:00.000000Z')");
+            drainWalQueue();
+            assertSql("v\n" + "1.0\n" + "5.0\n", "select v from plain order by v");
+
+            // (c) Policy added via ALTER after hydration (markExpiryPolicyPossible adds the id).
+            execute("alter table plain set expire rows when v < 2.0");
+            drainWalQueue();
+            assertSql("v\n" + "5.0\n", "select v from plain order by v");
+        });
+    }
+
+    @Test
     public void testReadFilterFallsBackToMetadataOnCacheMiss() throws Exception {
         // Cache-miss fallback regression: when the metadata cache has no entry for a (resolvable) policied
         // table — e.g. during the brief async metadata hydration at startup — the read filter must still

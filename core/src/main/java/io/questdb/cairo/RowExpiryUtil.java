@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 /**
  * Shared helper for the row-expiry feature's background cleanup job ({@link RowExpiryCleanupJob}).
@@ -58,6 +59,21 @@ public final class RowExpiryUtil {
      * SHOW CREATE TABLE and the {@code tables()}/{@code materialized_views()} catalogue functions so
      * the rendering cannot drift.
      */
+    /**
+     * Renders the cleanup cadence as a stride string (e.g. {@code 30m}, {@code 1h}, {@code 2d}), or null
+     * when there is no policy ({@code micros <= 0}). Shared by the {@code tables()} and
+     * {@code materialized_views()} catalogue functions. Allocates a String — acceptable on the cold
+     * catalogue path; use {@link #appendCleanupEvery} to render into an existing sink.
+     */
+    public static String formatCleanupEvery(long micros) {
+        if (micros <= 0) {
+            return null;
+        }
+        final StringSink sink = new StringSink();
+        appendCleanupEvery(sink, micros);
+        return sink.toString();
+    }
+
     public static void appendCleanupEvery(CharSink<?> sink, long micros) {
         if (micros % 86_400_000_000L == 0) {
             sink.put(micros / 86_400_000_000L).put('d');

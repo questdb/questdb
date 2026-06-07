@@ -264,6 +264,52 @@ public class RowExpiryCleanupJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJobRespectsCleanupEveryCadence() throws Exception {
+        // The per-table CLEANUP EVERY cadence in runSerially() must skip a table whose interval has not
+        // elapsed since its last cleanup — even though it has expired rows — and reclaim once it has. Uses
+        // far-past (always expired) and far-future (active, kept) rows so expiry is clock-independent; only
+        // the cadence gates whether the expired row is reclaimed. One job instance across runs (the cadence
+        // state is per-instance).
+        assertMemoryLeak(() -> {
+            final long t0 = NOW_MICROS;
+            final long oneHourMicros = 3_600_000_000L;
+            setCurrentMicros(t0);
+            execute("create table p (sym symbol, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < now() CLEANUP EVERY 1h");
+            execute("insert into p values ('AAA', '2020-01-05T00:00:00.000000Z')"); // expired, non-active
+            execute("insert into p values ('ZZZ', '2099-01-01T00:00:00.000000Z')"); // active partition, kept
+            drainWalQueue();
+            assertEquals(2, rawRowCount("p"));
+
+            final RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine);
+            try {
+                // Run 1 (first ever): reclaims the expired 2020 partition.
+                job.run(0);
+                drainWalQueue();
+                assertEquals(1, rawRowCount("p"));
+
+                // Insert another expired row; run again past the 1s global throttle but WITHIN the 1h
+                // per-table interval: the table is skipped, so the new expired row is not reclaimed.
+                execute("insert into p values ('BBB', '2020-01-06T00:00:00.000000Z')");
+                drainWalQueue();
+                assertEquals(2, rawRowCount("p"));
+                setCurrentMicros(t0 + 10_000_000L); // +10s
+                job.run(0);
+                drainWalQueue();
+                assertEquals("within CLEANUP EVERY: expired row not yet reclaimed", 2, rawRowCount("p"));
+
+                // Advance past the CLEANUP EVERY interval: the next run reclaims the new expired partition.
+                setCurrentMicros(t0 + oneHourMicros + 10_000_000L);
+                job.run(0);
+                drainWalQueue();
+                assertEquals(1, rawRowCount("p"));
+            } finally {
+                Misc.free(job);
+            }
+        });
+    }
+
+    @Test
     public void testJobParquetPartition() throws Exception {
         // Finding D regression: a parquet (non-native) partition must not crash cleanup. The job reads
         // partition totals from the tx file (not raw column memory), so parquet partitions are classified

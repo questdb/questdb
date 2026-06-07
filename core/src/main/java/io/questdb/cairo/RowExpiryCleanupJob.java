@@ -128,6 +128,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 null,
                 null
         );
+        // The cleanup computes survivors from its own authoritative keep-filter; disable the read-time
+        // row-expiry filter on this context so the survivor query is not ALSO wrapped by it (which would
+        // be redundant, and would couple physical deletion to any read-filter change).
+        this.sqlExecutionContext.setExpiryReadFilterEnabled(false);
     }
 
     /**
@@ -339,6 +343,13 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             long floorTs,
             long rowCount
     ) throws SqlException {
+        // Classify with a read-only count() scan, then copy only REPLACE partitions. This is deliberately
+        // NOT folded into the copy: for an arbitrary predicate the class of a partition is unknown until it
+        // is scanned, and the common cases (a fully-live recent partition -> SKIP, a fully-expired old one
+        // -> DROP) are decided here with a cheap read-only scan and no WAL writes. Folding the count into
+        // the copy would instead append every survivor to the WAL writer and then roll back the SKIP
+        // partitions — turning the common fully-live partition from a read-only scan into a scan plus
+        // discarded WAL write I/O. Only the (few) partially-expired partitions pay for a second scan.
         final long survivors = countSurvivors(tableName, keepFilter, timestampColumnName, timestampType, partitionBy, floorTs);
         if (survivors == 0) {
             return ACTION_DROP;

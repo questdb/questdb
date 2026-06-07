@@ -71,6 +71,9 @@ public class MatViewDefinition implements Mutable {
     private long fixedOffset;
     private String matViewSql;
     private volatile TableToken matViewToken;
+    // When true, this is a non-aggregating "passthrough" view (e.g. SELECT * FROM base) with no SAMPLE BY;
+    // samplingInterval/samplingIntervalUnit then describe the refresh commit chunk, not an aggregation bucket.
+    private boolean passthrough;
     private int periodDelay;
     private char periodDelayUnit;
     private int periodLength;
@@ -84,9 +87,6 @@ public class MatViewDefinition implements Mutable {
     private @Nullable TimeZoneRules rules;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    // When true, this is a non-aggregating "passthrough" view (e.g. SELECT * FROM base) with no SAMPLE BY;
-    // samplingInterval/samplingIntervalUnit then describe the refresh commit chunk, not an aggregation bucket.
-    private boolean passthrough;
     private @Nullable String timeZone;
     private @Nullable String timeZoneOffset;
     private int timerInterval;

@@ -166,6 +166,10 @@ public class SqlParser {
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
+    // Whether to apply the read-time row-expiry filter for the current parse. Set from the execution
+    // context at parse() entry; the cleanup job disables it on its context so its survivor query is not
+    // wrapped by the read filter (it uses its own authoritative keep-filter instead).
+    private boolean rowExpiryReadFilterEnabled = true;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -3072,11 +3076,12 @@ public class SqlParser {
             // rows, so AND the keep-filter into the WHERE. (Unlike a SELECT reference, an UPDATE target
             // cannot be wrapped in a sub-query — it needs row ids — so we extend the WHERE instead.)
             final ExpressionNode updateTarget = nestedModel.getTableNameExpr();
-            if (updateTarget != null && updateTarget.type == ExpressionNode.LITERAL
+            if (rowExpiryReadFilterEnabled && updateTarget != null && updateTarget.type == ExpressionNode.LITERAL
                     && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()) {
                 final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(updateTarget.token));
                 final String predicate;
-                if (tt != null && !tt.isView() && (predicate = lookupExpiryPredicate(tt)) != null) {
+                if (tt != null && !tt.isView() && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
+                        && (predicate = lookupExpiryPredicate(tt)) != null) {
                     nestedModel.setWhereClause(andKeepFilter(
                             nestedModel.getWhereClause(),
                             buildKeepFilterNode(predicate, expiryTimestampColumnName, sqlParserCallback, decls)
@@ -4738,7 +4743,8 @@ public class SqlParser {
         // nested model above (tableNameExpr stays null), so it is naturally skipped.
         final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
         if (
-                resolvedTableNameExpr != null
+                rowExpiryReadFilterEnabled
+                        && resolvedTableNameExpr != null
                         && resolvedTableNameExpr.type == ExpressionNode.LITERAL
                         && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()
         ) {
@@ -4749,7 +4755,8 @@ public class SqlParser {
             if (!expiringTablesBeingExpanded.contains(unquotedName)) {
                 final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
                 final String predicate;
-                if (tt != null && !tt.isView() && (predicate = lookupExpiryPredicate(tt)) != null) {
+                if (tt != null && !tt.isView() && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
+                        && (predicate = lookupExpiryPredicate(tt)) != null) {
                     final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
                     final int position = resolvedTableNameExpr.position;
                     model.setTableNameExpr(null);
@@ -5730,7 +5737,6 @@ public class SqlParser {
         }
     }
 
-
     void clear() {
         queryModelPool.clear();
         queryColumnPool.clear();
@@ -5798,6 +5804,8 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        // Capture the read-filter toggle for this whole parse (the row-expiry cleanup job disables it).
+        rowExpiryReadFilterEnabled = executionContext == null || executionContext.isExpiryReadFilterEnabled();
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {

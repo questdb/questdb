@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -385,7 +386,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_PERIOD_LENGTH_UNIT -> getIntervalUnit(periodLengthUnit);
                         case COLUMN_PERIOD_DELAY_UNIT -> getIntervalUnit(periodDelayUnit);
                         case COLUMN_EXPIRE_PREDICATE -> expirePredicate;
-                        case COLUMN_EXPIRE_CLEANUP_EVERY -> TablesFunctionFactory.formatCleanupEvery(expireCleanupMicros);
+                        case COLUMN_EXPIRE_CLEANUP_EVERY -> RowExpiryUtil.formatCleanupEvery(expireCleanupMicros);
                         default -> null;
                     };
                 }
