@@ -664,6 +664,12 @@ mod tests {
             columns: vec![ts_col],
         };
 
+        // An unspecified designated timestamp defaults to delta_binary_packed.
+        assert_eq!(
+            crate::parquet_write::schema::to_encodings(&partition)[0],
+            parquet2::encoding::Encoding::DeltaBinaryPacked,
+        );
+
         let sorting_columns = Some(vec![SortingColumn::new(0, false, false)]); // descending=false
         ParquetWriter::new(&mut buf)
             .with_statistics(true)
