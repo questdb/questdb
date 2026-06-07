@@ -118,10 +118,21 @@ pub fn encode(
 
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let mut data_pages = Vec::with_capacity(total_rows.div_ceil(rows_per_page));
+    // Scratch "key already seen in this page" bitmap (1 bit per key), reused
+    // across pages so page statistics visit each distinct dictionary key once
+    // instead of once per row.
+    let mut seen_in_page = vec![0u64; value_ranges.len().div_ceil(64)];
     for window in page_row_windows(total_rows, rows_per_page) {
         let page_values = &merged_keys[window.row_offset..window.row_offset + window.row_count];
         let validity = build_symbol_validity(page_values, 0);
-        let null_count = page_values.iter().filter(|&&key| key < 0).count();
+        // build_symbol_validity counted the nulls while filling the bitmap, so
+        // read that count back instead of scanning the page keys a second time.
+        let null_count = validity.null_count();
+        debug_assert_eq!(
+            null_count,
+            page_values.iter().filter(|&&key| key < 0).count(),
+            "validity null count disagrees with a direct scan of the page keys"
+        );
         let page_stats = options.write_statistics.then(|| {
             build_symbol_page_stats(
                 page_values,
@@ -129,6 +140,7 @@ pub fn encode(
                 &value_ranges,
                 primitive_type,
                 null_count,
+                &mut seen_in_page,
             )
         });
         let data_page = symbol_to_data_page_with_validity(
@@ -200,7 +212,15 @@ fn symbol_to_data_page_with_validity(
     let total_null_count = def_levels.null_count;
 
     let bits_per_key = util::bit_width(max_key as u64);
-    let non_null_len = column_values.iter().filter(|&&value| value >= 0).count();
+    // encode_def_levels reported the page's null count from the validity
+    // bitmap. Every remaining row carries a key, so derive the non-null count
+    // by subtraction rather than scanning the keys a second time.
+    let non_null_len = column_values.len() - total_null_count;
+    debug_assert_eq!(
+        non_null_len,
+        column_values.iter().filter(|&&value| value >= 0).count(),
+        "derived non-null length disagrees with a direct scan; validity is out of sync with column_values"
+    );
     let local_keys =
         column_values
             .iter()
@@ -332,12 +352,22 @@ fn build_symbol_page_stats(
     value_ranges: &[Range<usize>],
     primitive_type: &PrimitiveType,
     null_count: usize,
+    seen: &mut [u64],
 ) -> ParquetStatistics {
     let mut stats = BinaryMaxMinStats::new(primitive_type);
+    // A page's min/max is decided solely by the distinct dictionary keys it
+    // references, so compare each key's bytes once rather than on every row.
+    // `seen` is a 1-bit-per-key bitmap of the keys this page has already hit.
+    seen.fill(0);
     for &key in page_values {
         if key >= 0 {
-            let range = &value_ranges[key as usize];
-            stats.update(&dict_buffer[range.clone()]);
+            let key = key as usize;
+            let word = key >> 6;
+            let bit = 1u64 << (key & 63);
+            if seen[word] & bit == 0 {
+                seen[word] |= bit;
+                stats.update(&dict_buffer[value_ranges[key].clone()]);
+            }
         }
     }
     stats.into_parquet_stats(null_count)
@@ -390,6 +420,7 @@ mod tests {
     use parquet2::compression::CompressionOptions;
     use parquet2::page::DataPageHeader;
     use parquet2::schema::types::PhysicalType;
+    use parquet2::statistics::BinaryStatistics;
     use parquet2::write::Version;
     use qdb_core::col_type::ColumnTypeTag;
 
@@ -418,6 +449,34 @@ mod tests {
             },
             _ => panic!("expected data page"),
         }
+    }
+
+    fn page_v2_num_nulls(page: &Page) -> i32 {
+        match page {
+            Page::Data(data) => match &data.header {
+                DataPageHeader::V2(h) => h.num_nulls,
+                DataPageHeader::V1(_) => panic!("expected V2 header"),
+            },
+            _ => panic!("expected data page"),
+        }
+    }
+
+    /// Read back a data page's (min, max, null_count) statistics.
+    fn page_binary_stats(page: &Page) -> (Vec<u8>, Vec<u8>, i64) {
+        let data = match page {
+            Page::Data(data) => data,
+            _ => panic!("expected data page"),
+        };
+        let arc = data.statistics().expect("statistics present").expect("ok");
+        let stats = arc
+            .as_any()
+            .downcast_ref::<BinaryStatistics>()
+            .expect("BinaryStatistics");
+        (
+            stats.min_value.clone().expect("min"),
+            stats.max_value.clone().expect("max"),
+            stats.null_count.expect("null_count"),
+        )
     }
 
     /// Build a Symbol Column borrowing the supplied keys / chars / offsets.
@@ -613,5 +672,51 @@ mod tests {
             }
             _ => panic!("expected data page at index 1"),
         }
+    }
+
+    #[test]
+    fn symbol_multi_page_with_nulls_derives_counts_and_stats() {
+        // Spread distinct keys and interspersed nulls across several pages so
+        // the fused per-page null derivation (null_count from the validity
+        // bitmap, non_null_len = rows - null_count) is exercised on every
+        // page, and each page's statistics cover only the distinct keys it
+        // references. With data_page_size 64 the encoder packs 8 rows per
+        // page, giving pages of 8, 8 and 4 rows.
+        let (chars, offsets) = serialize_as_symbols(vec!["aaa", "bbb", "ccc", "ddd"]);
+        let keys: Vec<i32> = vec![
+            0, -1, 1, 0, -1, 1, 0, 1, // page 1: keys {0,1}, 2 nulls
+            2, 3, -1, 2, 3, 2, -1, 3, // page 2: keys {2,3}, 2 nulls
+            0, 3, -1, -1, // page 3: keys {0,3}, 2 nulls
+        ];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let opts = WriteOptions { data_page_size: Some(64), ..write_options() };
+        let pages = encode(&[col], 0, keys.len(), &primitive_type(), opts, None).expect("encode");
+
+        // 1 dict page + 3 data pages.
+        assert_eq!(pages.len(), 4);
+        assert!(matches!(pages[0], Page::Dict(_)));
+
+        // Row and null counts per page come straight from the validity bitmap.
+        assert_eq!(page_v2_num_values(&pages[1]), 8);
+        assert_eq!(page_v2_num_nulls(&pages[1]), 2);
+        assert_eq!(page_v2_num_values(&pages[2]), 8);
+        assert_eq!(page_v2_num_nulls(&pages[2]), 2);
+        assert_eq!(page_v2_num_values(&pages[3]), 4);
+        assert_eq!(page_v2_num_nulls(&pages[3]), 2);
+
+        // Statistics are scoped to each page's referenced keys; the reported
+        // null_count must match the derived per-page null count.
+        assert_eq!(
+            page_binary_stats(&pages[1]),
+            (b"aaa".to_vec(), b"bbb".to_vec(), 2)
+        );
+        assert_eq!(
+            page_binary_stats(&pages[2]),
+            (b"ccc".to_vec(), b"ddd".to_vec(), 2)
+        );
+        assert_eq!(
+            page_binary_stats(&pages[3]),
+            (b"aaa".to_vec(), b"ddd".to_vec(), 2)
+        );
     }
 }
