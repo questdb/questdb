@@ -74,17 +74,15 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
-import static io.questdb.cairo.TableUtils.setPathForNativePartition;
+import static io.questdb.cairo.TableUtils.*;
 
 /**
  * Red tests for the critical findings raised in the PR review of #6861.
@@ -523,8 +521,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             final int batches = 40;
             final int rowsPerBatch = 100_000; // per-commit hot-key spill (~hundreds of KiB) exceeds the 256 KiB budget
-            final long base = 1_700_000_000_000_000L; // arbitrary instant; all rows stay in one day
-            long start = base;
+            // arbitrary instant; all rows stay in one day
+            long start = 1_700_000_000_000_000L;
             for (int b = 0; b < batches; b++) {
                 execute("INSERT INTO flt " +
                         "SELECT timestamp_sequence(cast(" + start + " as timestamp), 1), 'KCAS', 1.0 " +
@@ -566,9 +564,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // must still be chosen.
             assertPlanNoLeakCheck(
                     "SELECT ts, val FROM x WHERE sym = 'b'",
-                    "SelectedRecord\n" +
-                            "    CoveringIndex on: sym with: ts, val\n" +
-                            "      filter: sym='b'\n"
+                    """
+                            SelectedRecord
+                                CoveringIndex on: sym with: ts, val
+                                  filter: sym='b'
+                            """
             );
         });
     }
@@ -589,9 +589,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL CAPACITY 16 INDEX TYPE POSTING INCLUDE (val), val DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String coveringPlan =
-                    "SelectedRecord\n" +
-                            "    CoveringIndex on: sym with: ts, val\n" +
-                            "      filter: sym='zzz'\n";
+                    """
+                            SelectedRecord
+                                CoveringIndex on: sym with: ts, val
+                                  filter: sym='zzz'
+                            """;
             assertPlanNoLeakCheck("SELECT ts, val FROM x WHERE sym = 'zzz'", coveringPlan);
 
             final long dayMicros = 86_400_000_000L;
@@ -4523,9 +4525,22 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             // The covering path must return every 'A' row: 400 (sum 1..400 =
             // 80200) plus the 20:00 sentinel (1000000) = 401 rows, sum 1080200.
+            // Assert the covering plan alongside the result so a future optimizer
+            // change that silently falls back to a base-table scan (sym.d/price.d
+            // intact, only the covering sidecar corrupt) fails here instead of
+            // masking the bug.
             assertQuery("SELECT count(), sum(price) FROM t_squash_spill WHERE sym = 'A'")
-                    .noLeakCheck()
-                    .returnsOnce("count\tsum\n401\t1080200.0\n");
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n401\t1080200.0\n");
         });
     }
 
@@ -4596,10 +4611,20 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             """);
 
             // 400 'A' rows (sum 1..400 = 80200) plus the 23:00 sentinel
-            // (1000000) = 401 rows, sum 1080200.
+            // (1000000) = 401 rows, sum 1080200. The withPlan pin keeps the read
+            // on the CoveringIndex so a base-scan fallback cannot mask the bug.
             assertQuery("SELECT count(), sum(price) FROM t_multisplit WHERE sym = 'A'")
-                    .noLeakCheck()
-                    .returnsOnce("count\tsum\n401\t1080200.0\n");
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n401\t1080200.0\n");
         });
     }
 
@@ -4669,10 +4694,20 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             """);
 
             // 2000 'A' rows (sum 1..2000 = 2001000) plus the 23:00 sentinel
-            // (1000000) = 2001 rows, sum 3001000, served through the covering index.
+            // (1000000) = 2001 rows, sum 3001000. The withPlan pin keeps the read
+            // on the CoveringIndex so a base-scan fallback cannot mask the bug.
             assertQuery("SELECT count(), sum(price) FROM t_manysplit WHERE sym = 'A'")
-                    .noLeakCheck()
-                    .returnsOnce("count\tsum\n2001\t3001000.0\n");
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n2001\t3001000.0\n");
         });
     }
 
@@ -4782,10 +4817,20 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
 
             // 400 'A' rows (sum 1..400 = 80200) plus the 23:00 sentinel (1000000)
-            // = 401 rows, sum 1080200, served through the covering index.
+            // = 401 rows, sum 1080200. The withPlan pin keeps the read on the
+            // CoveringIndex so a base-scan fallback cannot mask the bug.
             assertQuery("SELECT count(), sum(price) FROM t_wal_squash_spill WHERE sym = 'A'")
-                    .noLeakCheck()
-                    .returnsOnce("count\tsum\n401\t1080200.0\n");
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n401\t1080200.0\n");
         });
     }
 
@@ -4833,13 +4878,34 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // The hot key (which drove the mid-stream spill) and the O3-inserted
             // rows must both come back intact through the covering index. The
             // aggregates are deterministic: 'A' = 400 rows, sum(1..400) = 80200;
-            // 'B' = 3 rows, sum(-1,-2,-3) = -6.
+            // 'B' = 3 rows, sum(-1,-2,-3) = -6. Assert the covering plan alongside
+            // the result so a future fallback to a base-table scan (sym.d/price.d
+            // intact, only the covering sidecar corrupt) fails here instead of
+            // masking the bug.
             assertQuery("SELECT count(), sum(price) FROM t_o3_reseal WHERE sym = 'A'")
-                    .noLeakCheck()
-                    .returnsOnce("count\tsum\n400\t80200.0\n");
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n400\t80200.0\n");
             assertQuery("SELECT count(), sum(price) FROM t_o3_reseal WHERE sym = 'B'")
-                    .noLeakCheck()
-                    .returnsOnce("count\tsum\n3\t-6.0\n");
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='B'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n3\t-6.0\n");
         });
     }
 
@@ -4851,8 +4917,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * sealPostingIndexForPartition's parquet branch in finishO3Commit) re-materialises
      * the covering from the rewritten parquet. Without it a reader opens the new version,
      * walks the chain (count correct) but finds coverCount=0 and resolves covered values
-     * as NULL. The covering cursor is forced/verified by expectSize()+noRandomAccess();
-     * the sum(price)/first(tag) assertions would read NULL covered values without the fix.
+     * as NULL. A withPlan() check forces the covering cursor (expectSize()/
+     * noRandomAccess() describe only the outer aggregation and would also pass a base-scan
+     * fallback); the sum(price)/first(tag) assertions would read NULL covered values
+     * without the fix.
      */
     @Test
     public void testO3CoveringPostingParquetResealKeepsCoveredValues() throws Exception {
@@ -4894,19 +4962,37 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseAllWriters();
 
-            // expectSize()+noRandomAccess() => the covering cursor was selected and not
-            // a forward-scan fallback; sum(price)/first(tag) come from the .pc sidecars.
+            // Assert the covering plan alongside the result: sum(price)/first(tag)
+            // must be served by the CoveringIndex, not a base-table scan.
+            // expectSize()/noRandomAccess() describe only the outer aggregation and
+            // pass either way, so without this plan check a future optimizer
+            // fallback to a forward scan (intact base columns, NULL-ed covering
+            // sidecars) would mask the bug.
             assertQuery("SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_pq_cov_reseal WHERE sym = 'A'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price),first(tag)]
+                              filter: null
+                                CoveringIndex on: sym with: price, tag
+                                  filter: sym='A'
+                            """)
                     .noRandomAccess()
                     .expectSize()
-                    .noLeakCheck()
                     .returns("rows\tsum_price\tfirst_tag\n210\t30155.0\tTA\n");
             // The O3-inserted 'B' rows live in the rewritten parquet partition; their
             // covered values must be non-NULL after the reseal.
             assertQuery("SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_pq_cov_reseal WHERE sym = 'B'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price),first(tag)]
+                              filter: null
+                                CoveringIndex on: sym with: price, tag
+                                  filter: sym='B'
+                            """)
                     .noRandomAccess()
                     .expectSize()
-                    .noLeakCheck()
                     .returns("rows\tsum_price\tfirst_tag\n2\t-3.0\tTB\n");
         });
     }
@@ -6683,9 +6769,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);
             final long[] expectedRows = new long[K];
-            for (int k = 0; k < K; k++) {
-                expectedRows[k] = initialRowsPerSym;
-            }
+            Arrays.fill(expectedRows, initialRowsPerSym);
             try {
                 final int batches = 8 + rnd.nextInt(12);
                 for (int b = 0; b < batches && bgError.get() == null; b++) {
@@ -7112,9 +7196,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * the writer's covering schema (coverCount, sidecarMems) so a
      * subsequent commit() between seals still publishes a chain entry
      * with a correctly-sized cover footer. This is the symmetric
-     * counterpart to {@link #testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit},
-     * which documents that the old clearCovering()-then-commit() flow
-     * shrinks the footer.
+     * counterpart to {@link #testWriterEntryPreservesCoverFooterAfterClearCoveringCommit},
+     * which covers the clearCovering()-then-commit() flow, where the
+     * footer instead survives via publishToChain's head-footer snapshot.
      */
     @Test
     public void testWriterEntrysCoverFooterPersistsAfterReleaseReadMappingsCommit() throws Exception {
