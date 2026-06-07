@@ -1,15 +1,19 @@
 package io.questdb.lifecycle;
 
 import io.questdb.WorkerPoolManager;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.SynchronousQueue;
@@ -90,7 +94,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
         this.injectedLog = injectedLog != null ? injectedLog : LOG;
         this.workerPoolManager = workerPoolManager;
         this.tokioRuntime = tokioRuntime;
-        this.executor = new ThreadPoolExecutor(
+        // PathClearingThreadPoolExecutor.afterExecute clears the per-thread Path thread-locals after
+        // every task. The lifecycle-N threads are plain JDK threads, not WorkerPool workers, so they
+        // never get the WorkerPool.setupPathCleaner path cleanup that runs Path.THREAD_LOCAL_CLEANER +
+        // O3PartitionJob.THREAD_LOCAL_CLEANER on worker halt. Any task that touches a thread-local Path
+        // (a role-switch cascade, the mat-view writer-pool drain, or a stable-below callback) would
+        // otherwise leave a 256-byte native NATIVE_PATH_THREAD_LOCAL malloc behind on the lifecycle
+        // thread; when the thread idle-times-out the JVM drops the ThreadLocalMap but never close()s the
+        // native Path, leaking it for the life of the server across repeated switches.
+        this.executor = new PathClearingThreadPoolExecutor(
                 Math.min(Runtime.getRuntime().availableProcessors(), MAX_THREADS),
                 Math.min(Runtime.getRuntime().availableProcessors(), MAX_THREADS),
                 10L, TimeUnit.SECONDS,
@@ -623,6 +635,35 @@ public class LifecycleOrchestrator implements QuietCloseable {
             reverse.add(order.getQuick(i));
         }
         reverseTopoOrder = reverse;
+    }
+
+    /**
+     * ThreadPoolExecutor that clears the per-thread Path thread-locals after every task. Mirrors
+     * {@link io.questdb.mp.WorkerPool}'s path cleanup (Path.THREAD_LOCAL_CLEANER +
+     * O3PartitionJob.THREAD_LOCAL_CLEANER, run on worker halt), but does it after each task instead of
+     * once at thread end. afterExecute runs on the worker thread that just ran the task, so clearing
+     * here is deterministic and survives the executor's idle-timeout thread reaping -- a plain
+     * ThreadFactory wrapper would only clear at the worker loop's top-level runnable, which never
+     * returns until the thread idle-times-out, by which point the leak is already in place.
+     */
+    private static final class PathClearingThreadPoolExecutor extends ThreadPoolExecutor {
+        PathClearingThreadPoolExecutor(
+                int corePoolSize,
+                int maximumPoolSize,
+                long keepAliveTime,
+                TimeUnit unit,
+                BlockingQueue<Runnable> workQueue,
+                ThreadFactory threadFactory
+        ) {
+            super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory);
+        }
+
+        @Override
+        protected void afterExecute(Runnable r, Throwable t) {
+            super.afterExecute(r, t);
+            Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+        }
     }
 
     private static final class StableWatch {
