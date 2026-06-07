@@ -127,13 +127,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * any row within the frame.
      */
     public void navigateTo(int frameIndex, PageFrameMemoryRecord record) {
-        if (record.getFrameIndex() == frameIndex) {
-            return;
-        }
-
         final byte format = addressCache.getFrameFormat(frameIndex);
         final int columnOffset = addressCache.toColumnOffset(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            // Native page addresses come from the address cache and stay valid for the whole
+            // query, so a matching frame index proves the record is already positioned here.
+            if (record.getFrameIndex() == frameIndex) {
+                return;
+            }
             record.init(
                     frameIndex,
                     format,
@@ -145,6 +146,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     columnOffset
             );
         } else if (format == PartitionFormat.PARQUET) {
+            // A matching frame index is NOT enough to early-return for parquet: the record may
+            // still be bound to a reduce task's parquet buffers that were already freed, since
+            // PageFrameReduceTask.collected() releases parquet buffers eagerly even while a
+            // query is in flight. Always re-navigate so the record points to this pool's live
+            // buffers. nextFreeBuffers() returns the cached buffer without re-decoding, so a
+            // repeated visit to the same frame stays cheap.
             openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);

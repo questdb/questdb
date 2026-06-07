@@ -682,6 +682,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
                             .timestamp("ts")
+                            .expectSize()
                             .returns(expected2);
                 },
                 configuration,
