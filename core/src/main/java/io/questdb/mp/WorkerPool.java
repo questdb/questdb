@@ -27,6 +27,7 @@ package io.questdb.mp;
 import io.questdb.Metrics;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -36,9 +37,14 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
+    // Generous backstop used by the unbounded halt() so a wedged worker cannot block shutdown forever.
+    // Callers that want a tighter, shared budget across several pools pass an explicit timeout to halt(long).
+    public static final long DEFAULT_HALT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30);
+    private static final Log LOG = LogFactory.getLog(WorkerPool.class);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
@@ -133,13 +139,40 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
+        halt(DEFAULT_HALT_TIMEOUT_NANOS);
+    }
+
+    /**
+     * Halts the pool, bounding how long it blocks waiting for worker threads.
+     * <p>
+     * The unbounded variant of this wait could block the caller forever: if a worker is wedged
+     * (GC-starvation, a stuck native job) it never reaches halted.countDown(), so a plain
+     * halted.await() in the close path made server shutdown unkillable under SIGTERM. This variant
+     * waits at most timeoutNanos for started/halted and then logs a warning and proceeds, so the
+     * caller can finish closing.
+     * <p>
+     * Tradeoff: proceeding while a worker is still running means that worker may touch state that
+     * later cleanup frees. Keep the timeout generous -- it is only a backstop against a truly
+     * wedged worker, not a normal-path tuning knob. Healthy pools count down well within it.
+     *
+     * @param timeoutNanos upper bound on the combined wait for started and halted, in nanoseconds
+     */
+    public void halt(long timeoutNanos) {
         if (closed.compareAndSet(false, true)) {
             if (running.compareAndSet(true, false)) {
-                started.await();
-                for (int i = 0; i < workerCount; i++) {
-                    workers.getQuick(i).halt();
+                final long deadline = System.nanoTime() + timeoutNanos;
+                if (started.await(remaining(deadline))) {
+                    for (int i = 0; i < workerCount; i++) {
+                        workers.getQuick(i).halt();
+                    }
+                    if (!halted.await(remaining(deadline))) {
+                        LOG.error().$("timed out waiting for worker pool to halt; proceeding with close [pool=").$(poolName)
+                                .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
+                    }
+                } else {
+                    LOG.error().$("timed out waiting for worker pool to start; proceeding with close [pool=").$(poolName)
+                            .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
                 }
-                halted.await();
             }
             workers.clear(); // Worker is not closable
             Misc.freeObjListAndClear(freeOnExit);
@@ -211,6 +244,12 @@ public class WorkerPool implements Closeable {
             }
         }
         workerMetrics.update(min, max);
+    }
+
+    private static long remaining(long deadline) {
+        // Never hand SOCountDownLatch.await() a non-positive budget; parkNanos(<=0) returns
+        // immediately, which is the intended behaviour once the overall deadline has passed.
+        return Math.max(1, deadline - System.nanoTime());
     }
 
     private void setupPathCleaner() {

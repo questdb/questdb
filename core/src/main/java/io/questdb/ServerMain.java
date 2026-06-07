@@ -210,8 +210,12 @@ public class ServerMain implements Closeable {
             // Guard for the case where close() is called before the worker pool manager is
             // constructed (e.g. an exception during engine load). WorkerPoolManagerEnvelope.stop()
             // already applies this guard; the check here keeps the two call sites consistent.
+            // Bound the halt so a wedged worker (GC-starvation, a stuck native job) cannot make
+            // close() block forever. WorkerPool.halt()'s waits on started/halted were unbounded, so
+            // a hung worker turned this close path into an unkillable shutdown under SIGTERM. The
+            // bounded variant waits up to a shared deadline across all pools, then logs and proceeds.
             if (workerPoolManager != null) {
-                workerPoolManager.halt();
+                workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
             }
             freeOnExit.close();
         }
