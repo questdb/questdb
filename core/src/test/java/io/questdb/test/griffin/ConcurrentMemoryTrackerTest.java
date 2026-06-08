@@ -176,13 +176,18 @@ public class ConcurrentMemoryTrackerTest extends AbstractCairoTest {
             Assert.assertTrue("expected the high-cardinality queries to breach", breaches.get() > 0);
             Assert.assertTrue("expected the low-cardinality queries to succeed", successes.get() > 0);
 
-            // Pool integrity: every thread holds at most one tracker at a time and the
-            // main thread holds none here, so a healthy pool retains no more than the
-            // peak concurrency. A negative or runaway count would mean a double-release
-            // or a lost tracker.
+            // Pool integrity: getPooledCount() reads the engine's shared tracker pool,
+            // whose count tracks the peak concurrency of every pool user, not just this
+            // test's threads. A double-release would drive it negative; a per-iteration
+            // leak or systematic double-release would push it toward threadCount *
+            // iterations, so staying well under iterations rules that out. A tight bound
+            // off this test's own thread count would flake when another workload shares
+            // the engine (a parallel test, or background query activity) without proving
+            // anything extra: isolation is already covered by errors == 0 above, and a
+            // leaked tracker's native block by assertMemoryLeak.
             Assert.assertTrue(engine.getMemoryTrackerProvider() instanceof PerQueryMemoryTrackerProvider);
             final int pooled = ((PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider()).getPooledCount();
-            Assert.assertTrue("pooled=" + pooled, pooled >= 0 && pooled <= threadCount + 1);
+            Assert.assertTrue("pooled=" + pooled, pooled >= 0 && pooled < iterations);
         });
     }
 

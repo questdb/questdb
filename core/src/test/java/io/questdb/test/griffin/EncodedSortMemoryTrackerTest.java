@@ -92,6 +92,40 @@ public class EncodedSortMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEncodedSortLightBuildBreachDoesNotLeakReader() throws Exception {
+        // EncodedSort sizes its (key, rowId) entry buffer in the build pass on the first
+        // hasNext() (entryMem.setCapacity to the row count), not in of(), so the breach
+        // lands mid-build with the base cursor held. close() after a breaching build must
+        // free that base cursor; tests keep leaked readers, so a leak shows as a busy reader.
+        assertMemoryLeak(() -> {
+            // 100k rows size the entry buffer well past the 256 KiB limit, so the build
+            // breaches at setCapacity on the first hasNext().
+            execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(100_000))");
+            drainWalQueue();
+            final String sql = "SELECT * FROM tab ORDER BY k";
+            assertUsesFactory(sql, EncodedSortLightRecordCursorFactory.class);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until the build-pass breach
+                        }
+                        Assert.fail("expected per-query memory breach during build at iteration " + i);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+            // Every breaching build must have returned its base cursor's reader.
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
     public void testEncodedSortLightFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(100_000))");

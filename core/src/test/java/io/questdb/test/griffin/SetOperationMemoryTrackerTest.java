@@ -81,6 +81,20 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExceptAllOpenFailureReleasesAllocations() throws Exception {
+        // EXCEPT ALL open-failure check: an inflated map makes of() breach on the
+        // first reopen(), and the failed open must free the cursor so reopen() runs
+        // (and breaches) again on every reuse.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
+            execute("CREATE TABLE b AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
+            drainWalQueue();
+            assertOpenFailureReleasesAllocations("SELECT k FROM a EXCEPT ALL SELECT k FROM b", ExceptAllRecordCursorFactory.class);
+        });
+    }
+
+    @Test
     public void testExceptFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             createLargeTables();
@@ -91,12 +105,39 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExceptOpenFailureReleasesAllocations() throws Exception {
+        // Two-map EXCEPT variant of the open-failure check: the failed open must free
+        // the cursor so reopen() runs (and breaches) again on every reuse.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
+            execute("CREATE TABLE b AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
+            drainWalQueue();
+            assertOpenFailureReleasesAllocations("SELECT k FROM a EXCEPT SELECT k FROM b", ExceptRecordCursorFactory.class);
+        });
+    }
+
+    @Test
     public void testIntersectAllFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
             createLargeTables();
             final String sql = "SELECT k FROM a INTERSECT ALL SELECT k FROM b";
             assertUsesFactory(sql, IntersectAllRecordCursorFactory.class);
             assertQueryBreaches(sql);
+        });
+    }
+
+    @Test
+    public void testIntersectAllOpenFailureReleasesAllocations() throws Exception {
+        // INTERSECT ALL open-failure check: an inflated map makes of() breach on the
+        // first reopen(), and the failed open must free the cursor so reopen() runs
+        // (and breaches) again on every reuse.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
+            execute("CREATE TABLE b AS (SELECT cast(x AS varchar) k FROM long_sequence(10))");
+            drainWalQueue();
+            assertOpenFailureReleasesAllocations("SELECT k FROM a INTERSECT ALL SELECT k FROM b", IntersectAllRecordCursorFactory.class);
         });
     }
 

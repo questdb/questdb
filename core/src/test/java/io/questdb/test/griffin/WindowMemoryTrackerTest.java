@@ -320,6 +320,36 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStreamingPartitionMapOpenBreachDoesNotLeakReader() throws Exception {
+        // of()-time breach (not the hasNext() drain the other streaming tests use): a
+        // tiny limit makes the cursor's of() breach when it reopens the partition map,
+        // after super.of() took the base cursor. The getCursor() catch must close the
+        // cursor and free that base cursor, otherwise the leak shows as a busy reader.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT (x % 5) AS k, x::double AS v FROM long_sequence(50))");
+            drainWalQueue();
+            final String query = "SELECT k, first_value(v) OVER (PARTITION BY k) FROM tab";
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                // Shrink the limit now (read live per open) so of()'s map reopen() breaches.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("expected per-query memory breach during cursor open, got cursor: " + cursor);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+            // Every failed open must have returned its base cursor's reader.
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
     public void testStreamingPartitionMapSucceedsOnLowCardinality() throws Exception {
         // A handful of partitions keep the map well under the limit; the query
         // returns one row per input row and the tracker accounting stays balanced.
