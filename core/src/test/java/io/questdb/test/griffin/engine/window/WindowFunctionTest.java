@@ -8724,7 +8724,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Verify via plan that dedup happened: only one window function in the plan
             assertQuery("SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
-                            "FROM t WINDOW w AS (ORDER BY ts)")
+                    "FROM t WINDOW w AS (ORDER BY ts)")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
@@ -8747,7 +8747,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Two named windows with different specs should NOT deduplicate
             assertQuery("SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
-                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)")
+                    "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)")
                     .noLeakCheck()
                     .assertsPlan("""
                             Window
@@ -16444,27 +16444,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc), " +
-                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   rank() over (partition by i order by j asc), " +
-                            "   dense_rank() over (partition by i order by j asc), " +
-                            "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc), " +
-                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
-                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   rank() over (partition by i order by j asc), " +
+                    "   dense_rank() over (partition by i order by j asc), " +
+                    "   lag(j) over (partition by i order by j asc), " +
+                    "   lead(j) over (partition by i order by j asc), " +
+                    "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                    "   lead(j) ignore nulls over (partition by i order by j asc) " +
+                    "from tab " +
+                    "order by ts asc")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
@@ -17159,30 +17159,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\t\t1970-01-01T00:00:00.000006Z
                     """);
             assertQuery("select ts, i, j, " +
-                                "avg(d) over (order by ts range between 2 preceding and 4 preceding)," +
-                                "sum(d) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "first_value(j) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "last_value(j) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(*) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(d) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(s) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(c) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "max(d) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "min(d) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "lead(ts) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "lag(ts) over (order by ts rows between 2 preceding and 4 preceding), " +
-                                "from tab")
+                    "avg(d) over (order by ts range between 2 preceding and 4 preceding)," +
+                    "sum(d) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "first_value(j) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "last_value(j) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(*) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(d) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(s) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(c) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "max(d) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "min(d) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "lead(ts) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "lag(ts) over (order by ts rows between 2 preceding and 4 preceding), " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(true)
                     .withPlan("""
-                                CachedWindow
-                                  unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                                """)
+                            CachedWindow
+                              unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """)
                     .returns(expectedResult1);
 
             String expectedResult = replaceTimestampSuffix("""
@@ -17196,30 +17196,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\t\t1970-01-01T00:00:00.000002Z
                     """);
             assertQuery("select ts, i, j, " +
-                                "avg(d) over (partition by s order by ts range between 2 preceding and 4 preceding)," +
-                                "sum(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "first_value(j) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "last_value(j) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(*) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(s) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "count(c) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "max(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "min(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "lead(ts) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "lag(ts) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
-                                "from tab")
+                    "avg(d) over (partition by s order by ts range between 2 preceding and 4 preceding)," +
+                    "sum(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "first_value(j) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "last_value(j) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(*) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(s) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "count(c) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "max(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "min(d) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "lead(ts) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "lag(ts) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(true)
                     .withPlan("""
-                                CachedWindow
-                                  unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                                """)
+                            CachedWindow
+                              unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """)
                     .returns(expectedResult);
         });
     }
@@ -18833,300 +18833,300 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // table scans
             assertQuery("select ts, i, j, " +
-                                "first_value(j) over(), " +
-                                "first_value(j) ignore nulls over(), " +
-                                "last_value(j) over(), " +
-                                "last_value(j) ignore nulls over(), " +
-                                "avg(j) over (), " +
-                                "sum(j) over (), " +
-                                "count(j) over (), " +
-                                "count(*) over (), " +
-                                "count(c) over (), " +
-                                "count(sym) over (), " +
-                                "max(j) over (), " +
-                                "min(j) over (), " +
-                                "row_number() over (), " +
-                                "rank() over (), " +
-                                "dense_rank() over (), " +
-                                "lag(j) over (), " +
-                                "lead(j) over (), " +
-                                "lag(j) ignore nulls over (), " +
-                                "lead(j) ignore nulls over () " +
-                                "from tab")
+                    "first_value(j) over(), " +
+                    "first_value(j) ignore nulls over(), " +
+                    "last_value(j) over(), " +
+                    "last_value(j) ignore nulls over(), " +
+                    "avg(j) over (), " +
+                    "sum(j) over (), " +
+                    "count(j) over (), " +
+                    "count(*) over (), " +
+                    "count(c) over (), " +
+                    "count(sym) over (), " +
+                    "max(j) over (), " +
+                    "min(j) over (), " +
+                    "row_number() over (), " +
+                    "rank() over (), " +
+                    "dense_rank() over (), " +
+                    "lag(j) over (), " +
+                    "lead(j) over (), " +
+                    "lag(j) ignore nulls over (), " +
+                    "lead(j) ignore nulls over () " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan(replacePlanTimestamp("""
-                                CachedWindow
-                                  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                                """))
+                            CachedWindow
+                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """))
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n");
 
             assertQuery("select ts, i, j, first_value(j) over(), first_value(j) ignore nulls over(), last_value(j) over(), last_value(j) ignore nulls over(), avg(j) over (), sum(j) over (), count(*) over (), count(j) over (), count(sym) over (), count(c) over (), " +
-                                "max(j) over (), min(j) over () from tab order by ts desc")
+                    "max(j) over (), min(j) over () from tab order by ts desc")
                     .noLeakCheck()
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                                CachedWindow
-                                  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: tab
-                                """)
+                            CachedWindow
+                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
-                                "first_value(j) over(order by ts), " +
-                                "first_value(j) ignore nulls over(order by ts), " +
-                                "last_value(j) over(order by ts), " +
-                                "last_value(j) ignore nulls over(order by ts), " +
-                                "avg(j) over (order by ts), " +
-                                "sum(j) over (order by ts), " +
-                                "count(*) over (order by ts), " +
-                                "count(j) over (order by ts), " +
-                                "count(sym) over (order by ts), " +
-                                "count(c) over (order by ts), " +
-                                "max(j) over (order by ts), " +
-                                "min(j) over (order by ts) " +
-                                "from tab")
+                    "first_value(j) over(order by ts), " +
+                    "first_value(j) ignore nulls over(order by ts), " +
+                    "last_value(j) over(order by ts), " +
+                    "last_value(j) ignore nulls over(order by ts), " +
+                    "avg(j) over (order by ts), " +
+                    "sum(j) over (order by ts), " +
+                    "count(*) over (order by ts), " +
+                    "count(j) over (order by ts), " +
+                    "count(sym) over (order by ts), " +
+                    "count(c) over (order by ts), " +
+                    "max(j) over (order by ts), " +
+                    "min(j) over (order by ts) " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                                CachedWindow
-                                  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                                """)
+                            CachedWindow
+                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
-                                "first_value(j) over (order by ts desc), " +
-                                "first_value(j) ignore nulls over (order by ts desc), " +
-                                "last_value(j) over (order by ts desc), " +
-                                "last_value(j) ignore nulls over (order by ts desc), " +
-                                "avg(j) over (order by ts desc), " +
-                                "sum(j) over (order by ts desc), " +
-                                "count(*) over (order by ts desc), " +
-                                "count(j) over (order by ts desc), " +
-                                "count(sym) over (order by ts desc), " +
-                                "count(c) over (order by ts desc), " +
-                                "max(j) over (order by ts desc), " +
-                                "min(j) over (order by ts desc) " +
-                                "from tab order by ts desc")
+                    "first_value(j) over (order by ts desc), " +
+                    "first_value(j) ignore nulls over (order by ts desc), " +
+                    "last_value(j) over (order by ts desc), " +
+                    "last_value(j) ignore nulls over (order by ts desc), " +
+                    "avg(j) over (order by ts desc), " +
+                    "sum(j) over (order by ts desc), " +
+                    "count(*) over (order by ts desc), " +
+                    "count(j) over (order by ts desc), " +
+                    "count(sym) over (order by ts desc), " +
+                    "count(c) over (order by ts desc), " +
+                    "max(j) over (order by ts desc), " +
+                    "min(j) over (order by ts desc) " +
+                    "from tab order by ts desc")
                     .noLeakCheck()
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                                CachedWindow
-                                  unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: tab
-                                """)
+                            CachedWindow
+                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
-                                "first_value(j) over (partition by i), " +
-                                "first_value(j) ignore nulls over (partition by i), " +
-                                "last_value(j) over (partition by i), " +
-                                "last_value(j) ignore nulls over (partition by i), " +
-                                "avg(j) over (partition by i), " +
-                                "sum(j) over (partition by i), " +
-                                "count(*) over (partition by i), " +
-                                "count(j) over (partition by i), " +
-                                "count(sym) over (partition by i), " +
-                                "count(c) over (partition by i), " +
-                                "max(j) over (partition by i), " +
-                                "min(j) over (partition by i) " +
-                                "from tab")
+                    "first_value(j) over (partition by i), " +
+                    "first_value(j) ignore nulls over (partition by i), " +
+                    "last_value(j) over (partition by i), " +
+                    "last_value(j) ignore nulls over (partition by i), " +
+                    "avg(j) over (partition by i), " +
+                    "sum(j) over (partition by i), " +
+                    "count(*) over (partition by i), " +
+                    "count(j) over (partition by i), " +
+                    "count(sym) over (partition by i), " +
+                    "count(c) over (partition by i), " +
+                    "max(j) over (partition by i), " +
+                    "min(j) over (partition by i) " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                                CachedWindow
-                                  unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                                """)
+                            CachedWindow
+                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
-                                "first_value(j) over (partition by i), " +
-                                "first_value(j) ignore nulls over (partition by i), " +
-                                "last_value(j) over (partition by i), " +
-                                "last_value(j) ignore nulls over (partition by i), " +
-                                "avg(j) over (partition by i), " +
-                                "sum(j) over (partition by i), " +
-                                "count(*) over (partition by i), " +
-                                "count(j) over (partition by i), " +
-                                "count(sym) over (partition by i), " +
-                                "count(c) over (partition by i), " +
-                                "max(j) over (partition by i), " +
-                                "min(j) over (partition by i) " +
-                                "from tab order by ts desc")
+                    "first_value(j) over (partition by i), " +
+                    "first_value(j) ignore nulls over (partition by i), " +
+                    "last_value(j) over (partition by i), " +
+                    "last_value(j) ignore nulls over (partition by i), " +
+                    "avg(j) over (partition by i), " +
+                    "sum(j) over (partition by i), " +
+                    "count(*) over (partition by i), " +
+                    "count(j) over (partition by i), " +
+                    "count(sym) over (partition by i), " +
+                    "count(c) over (partition by i), " +
+                    "max(j) over (partition by i), " +
+                    "min(j) over (partition by i) " +
+                    "from tab order by ts desc")
                     .noLeakCheck()
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                                CachedWindow
-                                  unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: tab
-                                """)
+                            CachedWindow
+                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
-                                "first_value(j) over (partition by i order by ts), " +
-                                "first_value(j) ignore nulls over (partition by i order by ts), " +
-                                "last_value(j) over (partition by i order by ts), " +
-                                "last_value(j) ignore nulls over (partition by i order by ts), " +
-                                "avg(j) over (partition by i order by ts), " +
-                                "sum(j) over (partition by i order by ts), " +
-                                "count(*) over (partition by i order by ts), " +
-                                "count(j) over (partition by i order by ts), " +
-                                "count(sym) over (partition by i order by ts), " +
-                                "count(c) over (partition by i order by ts), " +
-                                "max(j) over (partition by i order by ts), " +
-                                "min(j) over (partition by i order by ts) " +
-                                "from tab")
+                    "first_value(j) over (partition by i order by ts), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts), " +
+                    "last_value(j) over (partition by i order by ts), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts), " +
+                    "avg(j) over (partition by i order by ts), " +
+                    "sum(j) over (partition by i order by ts), " +
+                    "count(*) over (partition by i order by ts), " +
+                    "count(j) over (partition by i order by ts), " +
+                    "count(sym) over (partition by i order by ts), " +
+                    "count(c) over (partition by i order by ts), " +
+                    "max(j) over (partition by i order by ts), " +
+                    "min(j) over (partition by i order by ts) " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .supportsRandomAccess(false)
                     .expectSize(true)
                     .withPlan("""
-                                Window
-                                  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                                """)
+                            Window
+                              functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
-                                "first_value(j) over (partition by i order by ts desc), " +
-                                "first_value(j) ignore nulls over (partition by i order by ts desc), " +
-                                "last_value(j) over (partition by i order by ts desc), " +
-                                "last_value(j) ignore nulls over (partition by i order by ts desc), " +
-                                "avg(j) over (partition by i order by ts desc), " +
-                                "sum(j) over (partition by i order by ts desc), " +
-                                "count(*) over (partition by i order by ts desc), " +
-                                "count(j) over (partition by i order by ts desc), " +
-                                "count(sym) over (partition by i order by ts desc), " +
-                                "count(c) over (partition by i order by ts desc), " +
-                                "max(j) over (partition by i order by ts desc), " +
-                                "min(j) over (partition by i order by ts desc) " +
-                                "from tab " +
-                                "order by ts desc")
+                    "first_value(j) over (partition by i order by ts desc), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc), " +
+                    "last_value(j) over (partition by i order by ts desc), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc), " +
+                    "avg(j) over (partition by i order by ts desc), " +
+                    "sum(j) over (partition by i order by ts desc), " +
+                    "count(*) over (partition by i order by ts desc), " +
+                    "count(j) over (partition by i order by ts desc), " +
+                    "count(sym) over (partition by i order by ts desc), " +
+                    "count(c) over (partition by i order by ts desc), " +
+                    "max(j) over (partition by i order by ts desc), " +
+                    "min(j) over (partition by i order by ts desc) " +
+                    "from tab " +
+                    "order by ts desc")
                     .noLeakCheck()
                     .timestampDesc("ts")
                     .supportsRandomAccess(false)
                     .expectSize(true)
                     .withPlan("""
-                                Window
-                                  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: tab
-                                """)
+                            Window
+                              functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select i, j, " +
-                                "first_value(j) over (partition by i order by ts), " +
-                                "first_value(j) ignore nulls over (partition by i order by ts), " +
-                                "last_value(j) over (partition by i order by ts), " +
-                                "last_value(j) ignore nulls over (partition by i order by ts), " +
-                                "avg(j) over (partition by i order by ts), " +
-                                "sum(j) over (partition by i order by ts), " +
-                                "count(*) over (partition by i order by ts), " +
-                                "count(j) over (partition by i order by ts), " +
-                                "count(sym) over (partition by i order by ts), " +
-                                "count(c) over (partition by i order by ts), " +
-                                "max(j) over (partition by i order by ts), " +
-                                "min(j) over (partition by i order by ts) " +
-                                "from tab " +
-                                "order by ts")
+                    "first_value(j) over (partition by i order by ts), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts), " +
+                    "last_value(j) over (partition by i order by ts), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts), " +
+                    "avg(j) over (partition by i order by ts), " +
+                    "sum(j) over (partition by i order by ts), " +
+                    "count(*) over (partition by i order by ts), " +
+                    "count(j) over (partition by i order by ts), " +
+                    "count(sym) over (partition by i order by ts), " +
+                    "count(c) over (partition by i order by ts), " +
+                    "max(j) over (partition by i order by ts), " +
+                    "min(j) over (partition by i order by ts) " +
+                    "from tab " +
+                    "order by ts")
                     .noLeakCheck()
                     .timestamp(null)
                     .supportsRandomAccess(false)
                     .expectSize(true)
                     .withPlan("""
-                                SelectedRecord
-                                    Window
-                                      functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                """)
+                            SelectedRecord
+                                Window
+                                  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
                     .returns("i\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select i, j, " +
-                                "first_value(j) over (partition by i order by ts desc), " +
-                                "first_value(j) ignore nulls over (partition by i order by ts desc), " +
-                                "last_value(j) over (partition by i order by ts desc), " +
-                                "last_value(j) ignore nulls over (partition by i order by ts desc), " +
-                                "avg(j) over (partition by i order by ts desc), " +
-                                "sum(j) over (partition by i order by ts desc), " +
-                                "count(*) over (partition by i order by ts desc), " +
-                                "count(j) over (partition by i order by ts desc), " +
-                                "count(sym) over (partition by i order by ts desc), " +
-                                "count(c) over (partition by i order by ts desc), " +
-                                "max(j) over (partition by i order by ts desc), " +
-                                "min(j) over (partition by i order by ts desc) " +
-                                "from tab " +
-                                "order by ts desc")
+                    "first_value(j) over (partition by i order by ts desc), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc), " +
+                    "last_value(j) over (partition by i order by ts desc), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc), " +
+                    "avg(j) over (partition by i order by ts desc), " +
+                    "sum(j) over (partition by i order by ts desc), " +
+                    "count(*) over (partition by i order by ts desc), " +
+                    "count(j) over (partition by i order by ts desc), " +
+                    "count(sym) over (partition by i order by ts desc), " +
+                    "count(c) over (partition by i order by ts desc), " +
+                    "max(j) over (partition by i order by ts desc), " +
+                    "min(j) over (partition by i order by ts desc) " +
+                    "from tab " +
+                    "order by ts desc")
                     .noLeakCheck()
                     .timestamp(null)
                     .supportsRandomAccess(false)
                     .expectSize(true)
                     .withPlan("""
-                                SelectedRecord
-                                    Window
-                                      functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: tab
-                                """)
+                            SelectedRecord
+                                Window
+                                  functions: [first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] range between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(sym) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: tab
+                            """)
                     .returns("i\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select i, j, " +
-                                "first_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "first_value(j) ignore nulls over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "last_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "last_value(j) ignore nulls over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "avg(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "sum(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "count(*) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "count(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "count(sym) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "count(c) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "max(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "min(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
-                                "ts from tab")
+                    "first_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "avg(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "count(sym) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between 10 seconds preceding and current row), " +
+                    "ts from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .supportsRandomAccess(false)
                     .expectSize(true)
                     .withPlan(replacePlanTimestamp("""
-                                Window
-                                  functions: [first_value(j) over (partition by [i] range between 10000000 preceding and current row),first_value(j) ignore nulls over (partition by [i] range between 10000000 preceding and current row),last_value(j) over (partition by [i] range between 10000000 preceding and current row),last_value(j) ignore nulls over (partition by [i] range between 10000000 preceding and 0 preceding),avg(j) over (partition by [i] range between 10000000 preceding and current row),sum(j) over (partition by [i] range between 10000000 preceding and current row),count(*) over (partition by [i] range between 10000000 preceding and current row),count(j) over (partition by [i] range between 10000000 preceding and current row),count(sym) over (partition by [i] range between 10000000 preceding and current row),count(c) over (partition by [i] range between 10000000 preceding and current row),max(j) over (partition by [i] range between 10000000 preceding and current row),min(j) over (partition by [i] range between 10000000 preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                                """))
+                            Window
+                              functions: [first_value(j) over (partition by [i] range between 10000000 preceding and current row),first_value(j) ignore nulls over (partition by [i] range between 10000000 preceding and current row),last_value(j) over (partition by [i] range between 10000000 preceding and current row),last_value(j) ignore nulls over (partition by [i] range between 10000000 preceding and 0 preceding),avg(j) over (partition by [i] range between 10000000 preceding and current row),sum(j) over (partition by [i] range between 10000000 preceding and current row),count(*) over (partition by [i] range between 10000000 preceding and current row),count(j) over (partition by [i] range between 10000000 preceding and current row),count(sym) over (partition by [i] range between 10000000 preceding and current row),count(c) over (partition by [i] range between 10000000 preceding and current row),max(j) over (partition by [i] range between 10000000 preceding and current row),min(j) over (partition by [i] range between 10000000 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """))
                     .returns("i\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\tts\n");
 
             // index scans
@@ -19136,13 +19136,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .supportsRandomAccess(false)
                     .expectSize(false)
                     .withPlan("""
-                                Window
-                                  functions: [row_number()]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: sym deferred: true
-                                          filter: sym='X'
-                                        Frame forward scan on: tab
-                                """)
+                            Window
+                              functions: [row_number()]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: sym deferred: true
+                                      filter: sym='X'
+                                    Frame forward scan on: tab
+                            """)
                     .returns("ts\ti\tj\trow_number\n");
 
             assertQuery("select ts, i, j, row_number() over () from tab where sym = 'X' order by ts desc")
@@ -19151,13 +19151,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .supportsRandomAccess(false)
                     .expectSize(false)
                     .withPlan("""
-                                Window
-                                  functions: [row_number()]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index backward scan on: sym deferred: true
-                                          filter: sym='X'
-                                        Frame backward scan on: tab
-                                """)
+                            Window
+                              functions: [row_number()]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index backward scan on: sym deferred: true
+                                      filter: sym='X'
+                                    Frame backward scan on: tab
+                            """)
                     .returns("ts\ti\tj\trow_number\n");
 
             assertQuery("select ts, i, j, row_number() over () from tab where sym IN ('X', 'Y') order by sym")
@@ -19166,17 +19166,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .supportsRandomAccess(false)
                     .expectSize(false)
                     .withPlan("""
-                                SelectedRecord
-                                    Window
-                                      functions: [row_number()]
-                                        FilterOnValues symbolOrder: asc
-                                            Cursor-order scan
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='X'
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='Y'
-                                            Frame forward scan on: tab
-                                """)
+                            SelectedRecord
+                                Window
+                                  functions: [row_number()]
+                                    FilterOnValues symbolOrder: asc
+                                        Cursor-order scan
+                                            Index forward scan on: sym deferred: true
+                                              filter: sym='X'
+                                            Index forward scan on: sym deferred: true
+                                              filter: sym='Y'
+                                        Frame forward scan on: tab
+                            """)
                     .returns("ts\ti\tj\trow_number\n");
 
             // lead(j) over() and lead(j) respect nulls over() are identical (respect nulls is default)
@@ -19187,14 +19187,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                                SelectedRecord
-                                    CachedWindow
-                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                        DeferredSingleSymbolFilterPageFrame
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='X'
-                                            Frame forward scan on: tab
-                                """)
+                            SelectedRecord
+                                CachedWindow
+                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='X'
+                                        Frame forward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
             // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
@@ -19204,14 +19204,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                                SelectedRecord
-                                    CachedWindow
-                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                        DeferredSingleSymbolFilterPageFrame
-                                            Index backward scan on: sym deferred: true
-                                              filter: sym='X'
-                                            Frame backward scan on: tab
-                                """)
+                            SelectedRecord
+                                CachedWindow
+                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index backward scan on: sym deferred: true
+                                          filter: sym='X'
+                                        Frame backward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
             // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
@@ -19222,18 +19222,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
+                            SelectedRecord
                                 SelectedRecord
-                                    SelectedRecord
-                                        CachedWindow
-                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                            FilterOnValues symbolOrder: asc
-                                                Cursor-order scan
-                                                    Index forward scan on: sym deferred: true
-                                                      filter: sym='X'
-                                                    Index forward scan on: sym deferred: true
-                                                      filter: sym='Y'
-                                                Frame forward scan on: tab
-                                """)
+                                    CachedWindow
+                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                        FilterOnValues symbolOrder: asc
+                                            Cursor-order scan
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='Y'
+                                            Frame forward scan on: tab
+                            """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
         });
     }
@@ -19816,7 +19816,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "        Frame forward scan on: tab\n");
 
                 assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts asc rows between 1 preceding and current row) ".replace("#FUNCT_NAME", func).replace("#COLUMN", "1") +
-                                "from tab where sym in ( 'A', 'B') order by ts asc")
+                        "from tab where sym in ( 'A', 'B') order by ts asc")
                         .noLeakCheck()
                         .assertsPlan("Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
