@@ -29,6 +29,73 @@ import org.junit.Test;
 public class ViewQueryTest extends AbstractViewTest {
 
     @Test
+    public void testAggregateOverUnionAllOfLatestOnView() throws Exception {
+        // Regression test: count()/sum() over a VIEW defined as a UNION ALL of LATEST ON
+        // sub-queries used to crash with an AssertionError in SqlCodeGenerator
+        // (presenting as a 500 in the web console). Top-down column pruning over the
+        // union chain pruned one branch down to just the LATEST ON partition key while
+        // leaving the others with all projected columns, so the union sides diverged in
+        // column count.
+        assertMemoryLeak(() -> {
+            for (String t : new String[]{"equity_price_1m", "crypto_price_1m", "forex_price_1m", "commodity_price_1m"}) {
+                execute(
+                        "CREATE TABLE '" + t + "' (" +
+                                "timestamp TIMESTAMP, " +
+                                "tvId SYMBOL INDEX CAPACITY 256, " +
+                                "symbol SYMBOL INDEX CAPACITY 256, " +
+                                "open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE" +
+                                ") timestamp(timestamp) PARTITION BY DAY WAL " +
+                                "DEDUP UPSERT KEYS(timestamp,tvId)"
+                );
+            }
+            // equity: A -> latest close 11, B -> 20  (2 rows after LATEST ON)
+            execute("INSERT INTO equity_price_1m(timestamp, tvId, close) VALUES " +
+                    "('2024-01-01T00:00:01.000000Z', 'A', 10.0), " +
+                    "('2024-01-01T00:00:02.000000Z', 'A', 11.0), " +
+                    "('2024-01-01T00:00:01.000000Z', 'B', 20.0)");
+            // crypto: C -> 30  (1 row)
+            execute("INSERT INTO crypto_price_1m(timestamp, tvId, close) VALUES ('2024-01-01T00:00:01.000000Z', 'C', 30.0)");
+            // forex: D -> latest close 41  (1 row)
+            execute("INSERT INTO forex_price_1m(timestamp, tvId, close) VALUES " +
+                    "('2024-01-01T00:00:01.000000Z', 'D', 40.0), " +
+                    "('2024-01-01T00:00:02.000000Z', 'D', 41.0)");
+            // commodity: E -> 50  (1 row)
+            execute("INSERT INTO commodity_price_1m(timestamp, tvId, close) VALUES ('2024-01-01T00:00:01.000000Z', 'E', 50.0)");
+            drainWalQueue();
+
+            final String query1 = "SELECT tvId, close price, timestamp mts FROM equity_price_1m LATEST ON timestamp PARTITION BY tvId " +
+                    "UNION ALL " +
+                    "SELECT tvId, close price, timestamp mts FROM crypto_price_1m LATEST ON timestamp PARTITION BY tvId " +
+                    "UNION ALL " +
+                    "SELECT tvId, close price, timestamp mts FROM forex_price_1m LATEST ON timestamp PARTITION BY tvId " +
+                    "UNION ALL " +
+                    "SELECT tvId, close price, timestamp mts FROM commodity_price_1m LATEST ON timestamp PARTITION BY tvId";
+            execute("CREATE VIEW latest_prices AS (" + query1 + ")");
+            drainWalAndViewQueues();
+
+            // 2 + 1 + 1 + 1 = 5 rows
+            assertQuery("select count() from latest_prices")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            5
+                            """);
+
+            // 11 + 20 + 30 + 41 + 50 = 152
+            assertQuery("select sum(price) from latest_prices")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            152.0
+                            """);
+        });
+    }
+
+    @Test
     public void testCreateConstantView() throws Exception {
         assertMemoryLeak(() -> {
             final String query1 = "select 42 as col";
