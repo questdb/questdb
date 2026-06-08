@@ -3876,6 +3876,72 @@ mod tests {
     }
 
     #[test]
+    fn decode_page_empty_delta_buffer_decodes_all_null() {
+        // Backward-compat coverage through the real decode.rs path: a
+        // DELTA_BINARY_PACKED page with an EMPTY values buffer (no header) -- as
+        // written by pre-fix QuestDB and some foreign encoders -- must decode as
+        // all-null. Every all-null integration test goes through the current,
+        // header-emitting writer, so this is the only test that drives
+        // MiniblockIterator::try_new's empty-buffer branch through decode_page.
+        // Reverting just the reader fix makes this fail (try_new rejects the
+        // empty buffer) while the integration round-trips still pass.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // Definition levels: n rows, all null (level 0), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(0u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        // The values buffer is left empty -- the shape this branch must tolerate.
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaBinaryPacked.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "long_col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::Int64,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::Long.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+
+        // Every row decodes as the LONG null sentinel.
+        assert_eq!(bufs.data_vec.len(), n * size_of::<i64>());
+        let out: &[i64] = unsafe { std::slice::from_raw_parts(bufs.data_vec.as_ptr().cast(), n) };
+        assert_eq!(out, &[i64::MIN; 10]);
+    }
+
+    #[test]
     fn test_decode_flba_decimal_sign_extended_filtered() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
