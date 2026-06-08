@@ -50,16 +50,18 @@ where
 {
     pub fn try_new(page_data: &'a [u8]) -> ParquetResult<(Self, U)> {
         if page_data.is_empty() {
-            // An all-null data page carries no encoded values. Before the
-            // all-null fix QuestDB's own writer emitted an empty values buffer
-            // (no DELTA_BINARY_PACKED header) for column-top integer columns;
-            // this branch keeps those older Parquet files readable. The page's
-            // definition levels drive null filling, so the value decoder is only
-            // asked for nulls and never reads this iterator. `has_values` is
-            // false: if a value IS requested anyway (a corrupt/truncated page
-            // whose definition levels claim a non-null), the decoder rejects it
-            // on the first request with "not enough values to iterate" rather
-            // than silently decoding the phantom first value as 0.
+            // A DELTA_BINARY_PACKED page with no non-null values can be written
+            // as an empty values buffer (no header at all). QuestDB's current
+            // writer does not do this -- since the all-null fix it emits a
+            // self-describing value_count=0 header, which the normal path below
+            // parses -- but pre-fix QuestDB files and foreign encoders can, so
+            // this branch keeps them readable. The page's definition levels drive
+            // null filling, so the value decoder is only asked for nulls and
+            // never reads this iterator. `has_values` is false: if a value IS
+            // requested anyway (a corrupt/truncated page whose definition levels
+            // claim a non-null), the decoder rejects it on the first request with
+            // "not enough values to iterate" rather than silently decoding the
+            // phantom first value as 0.
             let iterator = Self {
                 page_data,
                 miniblocks_per_block: 0,
