@@ -436,11 +436,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
                         """);
 
-                final String expected = "s\tsym\tprice\n"
-                        + "A\tA\t1.0\n"
-                        + "B\tB\t2.0\n"
-                        + "C\t\tnull\n"
-                        + "\t\t9.0\n";
+                final String expected = """
+                        s\tsym\tprice
+                        A\tA\t1.0
+                        B\tB\t2.0
+                        C\t\tnull
+                        \t\t9.0
+                        """;
                 assertQuery("SELECT m.s, s.sym, s.price FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym")
                         .withCompiler(compiler)
                         .withContext(sqlExecutionContext)
@@ -490,11 +492,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
                         """);
 
-                final String expected = "v\tsym\tprice\n"
-                        + "A\tA\t1.0\n"
-                        + "B\tB\t2.0\n"
-                        + "C\t\tnull\n"
-                        + "\t\t9.0\n";
+                final String expected = """
+                        v\tsym\tprice
+                        A\tA\t1.0
+                        B\tB\t2.0
+                        C\t\tnull
+                        \t\t9.0
+                        """;
                 assertQuery("SELECT m.v, s.sym, s.price FROM master_vch m ASOF JOIN slave_sym s ON m.v = s.sym")
                         .withCompiler(compiler)
                         .withContext(sqlExecutionContext)
@@ -1201,11 +1205,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
-                    .returns("s\tsym\tprice\n"
-                            + "A\tA\t1.0\n"
-                            + "B\tB\t2.0\n"
-                            + "C\t\tnull\n"
-                            + "\t\t9.0\n");
+                    .returns("""
+                            s\tsym\tprice
+                            A\tA\t1.0
+                            B\tB\t2.0
+                            C\t\tnull
+                            \t\t9.0
+                            """);
 
             // VARCHAR (master) = SYMBOL (slave) on the Light path
             assertQuery("SELECT /*+ asof_linear(m s) */ m.v, s.sym, s.price "
@@ -1213,11 +1219,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
-                    .returns("v\tsym\tprice\n"
-                            + "A\tA\t1.0\n"
-                            + "B\tB\t2.0\n"
-                            + "C\t\tnull\n"
-                            + "\t\t9.0\n");
+                    .returns("""
+                            v\tsym\tprice
+                            A\tA\t1.0
+                            B\tB\t2.0
+                            C\t\tnull
+                            \t\t9.0
+                            """);
         });
     }
 

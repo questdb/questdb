@@ -312,16 +312,15 @@ public class InIPv4Test extends AbstractCairoTest {
     public void testPlan() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (ip ipv4, ts timestamp) timestamp(ts)");
-            assertPlanNoLeakCheck(
-                    "test where ip in ('127.0.0.1', '192.168.0.1')",
-                    """
+            assertQuery("test where ip in ('127.0.0.1', '192.168.0.1')")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ip in [127.0.0.1,192.168.0.1]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: test
-                            """
-            );
+                            """);
         });
     }
 

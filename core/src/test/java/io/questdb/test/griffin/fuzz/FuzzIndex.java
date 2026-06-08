@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,14 +38,7 @@ import io.questdb.std.str.StringSink;
  * The designated timestamp is auto-appended to every posting index's covering
  * set by the engine, so the generator never lists it in {@link #coveringColumns}.
  */
-public final class FuzzIndex {
-    private final ObjList<String> coveringColumns;
-    private final Kind kind;
-
-    public FuzzIndex(Kind kind, ObjList<String> coveringColumns) {
-        this.kind = kind;
-        this.coveringColumns = coveringColumns;
-    }
+public record FuzzIndex(Kind kind, ObjList<String> coveringColumns) {
 
     /**
      * Appends the column-level DDL fragment that follows the column type in
@@ -80,14 +73,6 @@ public final class FuzzIndex {
         StringSink sink = new StringSink();
         appendDdl(sink);
         return sink.toString();
-    }
-
-    public ObjList<String> getCoveringColumns() {
-        return coveringColumns;
-    }
-
-    public Kind getKind() {
-        return kind;
     }
 
     public boolean isPosting() {

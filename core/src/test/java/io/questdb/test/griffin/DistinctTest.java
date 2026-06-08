@@ -52,9 +52,11 @@ public class DistinctTest extends AbstractCairoTest {
                 " WHERE (t0.x > (t0.x - t0.x) AND t0.x IS NOT NULL)" +
                 " ORDER BY e0 DESC LIMIT 2")
                 .expectSize()
-                .returns("e0\te1\te2\te3\te4\n" +
-                        "-676\t36\t-97\t2024-01-23T16:57:00.000000Z\t36\n" +
-                        "-676\t26\t-97\t2024-01-23T16:57:00.000000Z\t26\n");
+                .returns("""
+                        e0\te1\te2\te3\te4
+                        -676\t36\t-97\t2024-01-23T16:57:00.000000Z\t36
+                        -676\t26\t-97\t2024-01-23T16:57:00.000000Z\t26
+                        """);
     }
 
     @Test
@@ -64,9 +66,11 @@ public class DistinctTest extends AbstractCairoTest {
         // limited group-by and crashed with AIOOBE.
         assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
                 .expectSize()
-                .returns("e0\te1\te4\n" +
-                        "-1\t3\t3\n" +
-                        "-1\t2\t2\n");
+                .returns("""
+                        e0\te1\te4
+                        -1\t3\t3
+                        -1\t2\t2
+                        """);
     }
 
     @Test
@@ -198,8 +202,12 @@ public class DistinctTest extends AbstractCairoTest {
                               keys: [e1,e4]
                                 long_sequence count: 3
                     """;
-            assertPlanNoLeakCheck(base + "ORDER BY e1 DESC LIMIT 2", pushedPlan);
-            assertPlanNoLeakCheck(base + "ORDER BY 2 DESC LIMIT 2", pushedPlan);
+            assertQuery(base + "ORDER BY e1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan);
+            assertQuery(base + "ORDER BY 2 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan);
 
             // position 1 == e0 (virtual-only constant): not pushed, same plan as the alias form, no AIOOBE.
             final String notPushedPlan = """
@@ -211,13 +219,27 @@ public class DistinctTest extends AbstractCairoTest {
                               keys: [e1,e4]
                                 long_sequence count: 3
                     """;
-            assertPlanNoLeakCheck(base + "ORDER BY e0 DESC LIMIT 2", notPushedPlan);
-            assertPlanNoLeakCheck(base + "ORDER BY 1 DESC LIMIT 2", notPushedPlan);
+            assertQuery(base + "ORDER BY e0 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(notPushedPlan);
+            assertQuery(base + "ORDER BY 1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(notPushedPlan);
 
             // e1 is unique, so the key-ordered result is deterministic.
-            assertSql("e0\te1\te4\n-1\t3\t3\n-1\t2\t2\n", base + "ORDER BY 2 DESC LIMIT 2");
+            assertQuery(base + "ORDER BY 2 DESC LIMIT 2")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("e0\te1\te4\n-1\t3\t3\n-1\t2\t2\n");
             // constant order is unspecified (all e0 equal); assert only the row count and no crash.
-            assertSql("c\n2\n", "SELECT count() c FROM (" + base + "ORDER BY 1 DESC LIMIT 2)");
+            assertQuery("SELECT count() c FROM (" + base + "ORDER BY 1 DESC LIMIT 2)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("c\n2\n");
 
             // Qualified ORDER BY t0.x strips to x (single join model). The constant e0 forces the
             // outer virtual, and the unaliased middle column makes x a group-by key, so the
@@ -232,9 +254,18 @@ public class DistinctTest extends AbstractCairoTest {
                               keys: [x,e4]
                                 long_sequence count: 3
                     """;
-            assertPlanNoLeakCheck(base2 + "ORDER BY x DESC LIMIT 2", pushedPlan2);
-            assertPlanNoLeakCheck(base2 + "ORDER BY t0.x DESC LIMIT 2", pushedPlan2);
-            assertSql("e0\tx\te4\n-1\t3\t3\n-1\t2\t2\n", base2 + "ORDER BY t0.x DESC LIMIT 2");
+            assertQuery(base2 + "ORDER BY x DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan2);
+            assertQuery(base2 + "ORDER BY t0.x DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan2);
+            assertQuery(base2 + "ORDER BY t0.x DESC LIMIT 2")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("e0\tx\te4\n-1\t3\t3\n-1\t2\t2\n");
         });
     }
 
@@ -250,14 +281,18 @@ public class DistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             bindVariableService.clear();
             bindVariableService.setStr("b0", "Y");
-            assertSql(
-                    "cast\tcast1\tx\n" +
-                            "Y\t\t1\n" +
-                            "Y\t\t2\n" +
-                            "Y\t\t3\n",
-                    "SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
-                            " FROM long_sequence(3) t0"
-            );
+            assertQuery("SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
+                            " FROM long_sequence(3) t0")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            cast\tcast1\tx
+                            Y\t\t1
+                            Y\t\t2
+                            Y\t\t3
+                            """);
         });
     }
 
@@ -272,9 +307,11 @@ public class DistinctTest extends AbstractCairoTest {
                 " FROM long_sequence(2) t0" +
                 " ORDER BY e1")
                 .expectSize()
-                .returns("e0\te1\te2\te3\te4\n" +
-                        "-614\t1\t786\t-716\t278444\n" +
-                        "-614\t2\t786\t-716\t556888\n");
+                .returns("""
+                        e0\te1\te2\te3\te4
+                        -614\t1\t786\t-716\t278444
+                        -614\t2\t786\t-716\t556888
+                        """);
     }
 
     @Test
@@ -284,10 +321,12 @@ public class DistinctTest extends AbstractCairoTest {
         // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
         assertQuery("SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)")
                 .expectSize()
-                .returns("e0\te1\te2\n" +
-                        "1\t1\t1\n" +
-                        "2\t2\t2\n" +
-                        "3\t3\t3\n");
+                .returns("""
+                        e0\te1\te2
+                        1\t1\t1
+                        2\t2\t2
+                        3\t3\t3
+                        """);
     }
 
     @Test

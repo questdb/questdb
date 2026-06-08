@@ -474,7 +474,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute("CREATE TABLE tab (ts TIMESTAMP, sym SYMBOL) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
                         final int rowsPerPartition = MIN_PAGE_FRAME_MAX_ROWS;
                         final int partitions = 40;
@@ -485,13 +485,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " FROM long_sequence(" + (rowsPerPartition * partitions) + ")",
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT ARRAY[0.5] k, count_distinct(sym) c FROM tab",
-                                sink,
-                                "k\tc\n[0.5]\t5\n"
-                        );
+                        TestUtils.printSql(engine, sqlExecutionContext, "SELECT ARRAY[0.5] k, count_distinct(sym) c FROM tab", sink);
+                        TestUtils.assertEquals("k\tc\n[0.5]\t5\n", sink);
                     },
                     configuration,
                     LOG

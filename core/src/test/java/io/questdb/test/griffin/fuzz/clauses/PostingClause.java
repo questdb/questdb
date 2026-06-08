@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -84,7 +84,7 @@ public final class PostingClause {
             FuzzIndex idx = c.getIndex();
             if (idx != null && idx.isPosting()) {
                 posting.add(c);
-                if (idx.getCoveringColumns() != null && idx.getCoveringColumns().size() > 0) {
+                if (idx.coveringColumns() != null && idx.coveringColumns().size() > 0) {
                     covering.add(c);
                 }
             }
@@ -130,7 +130,7 @@ public final class PostingClause {
         // designated timestamp} for the covering read path to be chosen.
         ObjList<String> candidates = new ObjList<>();
         candidates.add(col.getName());
-        ObjList<String> coveringColumns = col.getIndex().getCoveringColumns();
+        ObjList<String> coveringColumns = col.getIndex().coveringColumns();
         for (int i = 0, n = coveringColumns.size(); i < n; i++) {
             candidates.add(coveringColumns.getQuick(i));
         }

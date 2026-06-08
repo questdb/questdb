@@ -1247,8 +1247,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static void freeWorkerFunctionsByFlag(
             IntList projectionFunctionFlags,
-            ObjList<ObjList<Function>> perThreadFunctions,
-            int flag
+            ObjList<ObjList<Function>> perThreadFunctions
     ) {
         // No per-worker copies were made: workers share the owner functions, nothing to free.
         if (perThreadFunctions == null) {
@@ -1257,7 +1256,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = perThreadFunctions.size(); i < n; i++) {
             ObjList<Function> funcs = perThreadFunctions.getQuick(i);
             for (int j = 0, m = funcs.size(); j < m; j++) {
-                if (projectionFunctionFlags.get(j) == flag) {
+                if (projectionFunctionFlags.get(j) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
                     Misc.free(funcs.getQuick(j));
                 }
             }
@@ -4567,8 +4566,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // above and the COLUMN slots are null.
                 freeWorkerFunctionsByFlag(
                         projectionFunctionFlags,
-                        perWorkerInnerProjectionFunctions,
-                        GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
+                        perWorkerInnerProjectionFunctions
                 );
 
                 // Compile per-worker GROUP BY functions
@@ -7270,8 +7268,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // invariant. The VIRTUAL slots are owned by perWorkerKeyFunctions and the COLUMN slots are null.
             freeWorkerFunctionsByFlag(
                     projectionFunctionFlags,
-                    perWorkerInnerProjectionFunctions,
-                    GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
+                    perWorkerInnerProjectionFunctions
             );
 
             // Transfer ownership to the factory

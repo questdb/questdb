@@ -66,12 +66,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
-import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -992,21 +990,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, cursor, metadata, true);
     }
 
-    // asserts plan without having to prefix a query with 'explain', specify the fixed output header, etc.
-    protected void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws SqlException {
-        StringSink sink = new StringSink();
-        sink.put("EXPLAIN ").put(query);
-        try (
-                ExplainPlanFactory planFactory = getPlanFactory(sink);
-                RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
-        ) {
-            if (!JitUtil.isJitSupported()) {
-                expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
-            }
-            TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
-        }
-    }
-
     /**
      * Entry point for the fluent query-assertion builder. The expected output is supplied to the
      * terminal step ({@link QueryAssertion#returns}, {@link QueryAssertion#returnsRecords},
@@ -1050,12 +1033,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertSegmentLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
         assertSegmentLocked(tableToken, walId, segmentId);
-    }
-
-    protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
-        }
     }
 
     protected void assertSqlRunWithJit(CharSequence selectSql) throws Exception {
@@ -1145,10 +1122,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 latch.countDown();
             }
         };
-    }
-
-    protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
-        return (ExplainPlanFactory) select(query);
     }
 
     protected PlanSink getPlanSink(CharSequence query) throws SqlException {

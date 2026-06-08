@@ -105,18 +105,13 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
                         engine.execute("CREATE TABLE prices (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
                         engine.execute("INSERT INTO trades SELECT (x * 3_600_000_000)::timestamp, ('s' || (x % 5))::symbol, x % 7 FROM long_sequence(" + ROW_COUNT + ")", sqlExecutionContext);
                         engine.execute("INSERT INTO prices SELECT (x * 3_600_000_000)::timestamp, x * 1.5 FROM long_sequence(" + ROW_COUNT + ")", sqlExecutionContext);
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "SELECT ARRAY[0.5] k, count_distinct(t.qty) c FROM trades t HORIZON JOIN prices p RANGE FROM 0s TO 0s STEP 1s AS h",
-                                sink,
-                                "k\tc\n[0.5]\t7\n"
-                        );
+                        TestUtils.printSql(engine, sqlExecutionContext, "SELECT ARRAY[0.5] k, count_distinct(t.qty) c FROM trades t HORIZON JOIN prices p RANGE FROM 0s TO 0s STEP 1s AS h", sink);
+                        TestUtils.assertEquals("k\tc\n[0.5]\t7\n", sink);
                     },
                     configuration,
                     LOG
@@ -361,7 +356,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 3);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Force parallel execution regardless of randomized setUp() value.
                         sqlExecutionContext.setParallelHorizonJoinEnabled(true);
 
@@ -523,7 +518,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         if (initializer != null) {
                             initializer.init(sqlExecutionContext);
                         }
@@ -637,7 +632,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // 50,000 prices at 1us spacing (all within one partition).
                         // RARE at row 0, COMMON everywhere else.
                         // The rare key causes deep backward scans that trigger the adaptive switch.
@@ -810,7 +805,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         if (initializer != null) {
                             initializer.init(sqlExecutionContext);
                         }

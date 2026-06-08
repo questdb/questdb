@@ -874,7 +874,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private Function lookupBindVariable(CharSequence token) {
         BindVariableService svc = executionContext.getBindVariableService();
-        if (svc == null || token == null || token.length() == 0) {
+        if (svc == null || token == null || token.isEmpty()) {
             return null;
         }
         if (token.charAt(0) == ':') {

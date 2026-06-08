@@ -7064,8 +7064,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertSql("count\n0\n",
-                    "SELECT count() FROM t_in_unres_pf WHERE sym IN ('XX', 'YY')");
+            assertQuery("SELECT count() FROM t_in_unres_pf WHERE sym IN ('XX', 'YY')")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
         });
     }
 
@@ -7169,19 +7173,28 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Cursor path: ts-ascending across partitions 1 and 3, with
             // partition 2 silently skipped.
-            assertSql("""
+            assertQuery("SELECT ts, sym, price FROM t_in_skip WHERE sym IN ('A', 'B') ORDER BY ts")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
                     ts\tsym\tprice
                     2024-01-01T00:00:00.000000Z\tA\t1.0
                     2024-01-01T01:00:00.000000Z\tB\t2.0
                     2024-01-03T00:00:00.000000Z\tA\t3.0
                     2024-01-03T01:00:00.000000Z\tB\t4.0
-                    """, "SELECT ts, sym, price FROM t_in_skip WHERE sym IN ('A', 'B') ORDER BY ts");
+                    """);
 
             // Page-frame path via vectorized count + sum: correct totals
             // prove the middle partition is skipped without producing a
             // bogus frame.
-            assertSql("c\ts\n4\t10.0\n",
-                    "SELECT count() c, sum(price) s FROM t_in_skip WHERE sym IN ('A', 'B')");
+            assertQuery("SELECT count() c, sum(price) s FROM t_in_skip WHERE sym IN ('A', 'B')")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("c\ts\n4\t10.0\n");
         });
     }
 
@@ -7211,14 +7224,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertSql("""
+            assertQuery("SELECT ts, sym, price FROM t_in_asc WHERE sym IN ('A', 'B') ORDER BY ts")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
                     ts\tsym\tprice
                     2024-01-01T00:00:00.000000Z\tA\t1.0
                     2024-01-01T01:00:00.000000Z\tB\t2.0
                     2024-01-01T02:00:00.000000Z\tA\t3.0
                     2024-01-01T03:00:00.000000Z\tB\t4.0
                     2024-01-01T04:00:00.000000Z\tA\t5.0
-                    """, "SELECT ts, sym, price FROM t_in_asc WHERE sym IN ('A', 'B') ORDER BY ts");
+                    """);
         });
     }
 
@@ -7243,19 +7261,23 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')",
-                    """
+            assertQuery("SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             CoveringIndex on: sym with: ts, price
                               filter: sym IN ['A','B','XQCE']
-                            """
-            );
-            assertSql("""
+                            """);
+            assertQuery("SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
                     ts\tsym\tprice
                     2024-01-01T00:00:00.000000Z\tA\t1.0
                     2024-01-01T01:00:00.000000Z\tB\t2.0
                     2024-01-01T02:00:00.000000Z\tA\t3.0
-                    """, "SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')");
+                    """);
         });
     }
 
@@ -14200,25 +14222,28 @@ public class CoveringIndexTest extends AbstractCairoTest {
             String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
                     + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
                     + "ORDER BY e0";
-            assertPlanNoLeakCheck(
-                    q,
-                    "Encode sort light\n" +
-                            "  keys: [e0]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [e0]\n" +
-                            "      values: [avg(-1)]\n" +
-                            "      filter: null\n" +
-                            "        SelectedRecord\n" +
-                            "            SelectedRecord\n" +
-                            "                CoveringIndex on: sym with: k\n" +
-                            "                  filter: sym=null\n"
-            );
+            assertQuery(q)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Encode sort light
+                              keys: [e0]
+                                Async Group By workers: 1
+                                  keys: [e0]
+                                  values: [avg(-1)]
+                                  filter: null
+                                    SelectedRecord
+                                        SelectedRecord
+                                            CoveringIndex on: sym with: k
+                                              filter: sym=null
+                            """);
             assertQuery(q)
                     .expectSize()
                     .noLeakCheck()
-                    .returns("e0\ta0\n" +
-                            "k1\t-1.0\n" +
-                            "k2\t-1.0\n");
+                    .returns("""
+                            e0\ta0
+                            k1\t-1.0
+                            k2\t-1.0
+                            """);
         });
     }
 
