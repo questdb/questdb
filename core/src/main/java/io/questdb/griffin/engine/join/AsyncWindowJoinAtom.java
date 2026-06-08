@@ -234,13 +234,15 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            this.ownerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Lazy allocators (openOnInit=false): reopen() allocates the chunk index under the
+            // per-query tracker it binds there, keeping malloc/free symmetric on that counter.
+            this.ownerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerFunctionAllocator);
             if (perWorkerGroupByFunctions != null) {
                 this.perWorkerFunctionAllocators = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    GroupByAllocator workerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    GroupByAllocator workerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                     perWorkerFunctionAllocators.extendAndSet(i, workerFunctionAllocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerFunctionAllocator);
                 }
@@ -248,7 +250,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 this.perWorkerFunctionAllocators = null;
             }
 
-            this.ownerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.ownerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             this.ownerLongList = new GroupByLongList(INITIAL_LIST_CAPACITY);
             ownerLongList.setAllocator(ownerTemporaryAllocator);
             this.ownerTimestampList = new GroupByLongList(INITIAL_LIST_CAPACITY);
@@ -259,7 +261,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             perWorkerSelectivityStats = new ObjList<>(slotCount);
 
             for (int i = 0; i < slotCount; i++) {
-                GroupByAllocator workerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                GroupByAllocator workerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 perWorkerTemporaryAllocators.extendAndSet(i, workerTemporaryAllocator);
 
                 final GroupByLongList workerRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
@@ -388,6 +390,31 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         Misc.free(ownerWindowLoFunc);
         Misc.freeObjList(perWorkerWindowHiFuncs);
         Misc.freeObjList(perWorkerWindowLoFuncs);
+        // The chunk index is retained across queries (restoreInitialCapacity() in clear()) and
+        // freed here after the last query's tracker was pooled. Null the tracker so this final
+        // free charges the global counter only and does not underflow the released block.
+        if (ownerFunctionAllocator != null) {
+            ownerFunctionAllocator.setMemoryTracker(null);
+        }
+        if (perWorkerFunctionAllocators != null) {
+            for (int i = 0, n = perWorkerFunctionAllocators.size(); i < n; i++) {
+                final GroupByAllocator allocator = perWorkerFunctionAllocators.getQuick(i);
+                if (allocator != null) {
+                    allocator.setMemoryTracker(null);
+                }
+            }
+        }
+        if (ownerTemporaryAllocator != null) {
+            ownerTemporaryAllocator.setMemoryTracker(null);
+        }
+        if (perWorkerTemporaryAllocators != null) {
+            for (int i = 0, n = perWorkerTemporaryAllocators.size(); i < n; i++) {
+                final GroupByAllocator allocator = perWorkerTemporaryAllocators.getQuick(i);
+                if (allocator != null) {
+                    allocator.setMemoryTracker(null);
+                }
+            }
+        }
         Misc.free(ownerFunctionAllocator);
         Misc.freeObjList(perWorkerFunctionAllocators);
         Misc.free(ownerTemporaryAllocator);
@@ -509,10 +536,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     public long getMasterTsScale() {
         return masterTsScale;
-    }
-
-    public MemoryTracker getMemoryTracker() {
-        return memoryTracker;
     }
 
     // Thread-unsafe, should be used by query owner thread only.
@@ -703,16 +726,24 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     public void reopen() {
+        // init() runs before reopen(), so memoryTracker is bound here before the lazy chunk index
+        // is allocated, charging function state and the temporary lists to the per-query limit.
+        ownerFunctionAllocator.setMemoryTracker(memoryTracker);
         ownerFunctionAllocator.reopen();
         if (perWorkerFunctionAllocators != null) {
             for (int i = 0, n = perWorkerFunctionAllocators.size(); i < n; i++) {
-                perWorkerFunctionAllocators.getQuick(i).reopen();
+                final GroupByAllocator allocator = perWorkerFunctionAllocators.getQuick(i);
+                allocator.setMemoryTracker(memoryTracker);
+                allocator.reopen();
             }
         }
 
+        ownerTemporaryAllocator.setMemoryTracker(memoryTracker);
         ownerTemporaryAllocator.reopen();
         for (int i = 0, n = perWorkerTemporaryAllocators.size(); i < n; i++) {
-            perWorkerTemporaryAllocators.getQuick(i).reopen();
+            final GroupByAllocator allocator = perWorkerTemporaryAllocators.getQuick(i);
+            allocator.setMemoryTracker(memoryTracker);
+            allocator.reopen();
         }
     }
 
