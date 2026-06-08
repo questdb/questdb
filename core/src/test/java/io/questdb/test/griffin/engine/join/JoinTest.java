@@ -2153,6 +2153,26 @@ public class JoinTest extends AbstractCairoTest {
                     "query is not allowed here",
                     sqlExecutionContext
             );
+            // The same rejection must hold two lambda levels deep. The ON-clause reject fires inside
+            // a parseExpr frame whose scope-stack bottom was raised by the outer lambdas; this used
+            // to leak an internal "Tried to set bottom beyond the top of the stack" IllegalStateException
+            // instead of the positioned SqlException.
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on x.symbol in (select symbol from trades)))",
+                    132,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on (select symbol from trades)))",
+                    120,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
         });
     }
 

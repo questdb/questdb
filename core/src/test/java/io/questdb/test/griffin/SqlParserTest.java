@@ -8758,6 +8758,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testNestedSubQueryParseErrorIsPositioned() throws Exception {
+        // A parse error inside a sub-query nested two lambda levels deep throws from a parseExpr
+        // frame whose scope-stack bottom was raised by the enclosing lambdas. The error-unwind path
+        // used to restore that stale bottom over an already-cleared stack and leak an internal
+        // "Tried to set bottom beyond the top of the stack" IllegalStateException, masking the real
+        // positioned error. The user must still see the original syntax error.
+        assertSyntaxError(
+                "select * from x where a in " +
+                        "(select a from x where a in " +
+                        "(select a from x where b > ))",
+                80,
+                "too few arguments for '>'",
+                modelOf("x").col("a", ColumnType.SYMBOL).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
                 "select-virtual day(ts) day, isin, last from (select-group-by [ts, isin, last(start_price) last] ts, isin, last(start_price) last from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') sample by 1d)",

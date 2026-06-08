@@ -2194,7 +2194,10 @@ public class ExpressionParser {
             paramCountStack.clear();
             throw e;
         } finally {
-            scopeStack.setBottom(savedScopeStackBottom);
+            // The SqlException catch already cleared scopeStack (bottom=0); a nested frame's
+            // savedScopeStackBottom can then exceed the emptied stack, so clamp to avoid a masking
+            // IllegalStateException. No-op on the happy path (sizeRaw() >= savedScopeStackBottom).
+            scopeStack.setBottom(Math.min(savedScopeStackBottom, scopeStack.sizeRaw()));
             argStackDepthStack.popAll();
             paramCountStack.popAll();
         }
