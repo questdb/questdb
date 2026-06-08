@@ -174,6 +174,37 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedFillNoneOpenBreachDoesNotLeakReader() throws Exception {
+        // of()-time breach (not the hasNext() drain the other tests use): a tiny
+        // limit makes of() breach in super.of() after it took the base cursor but
+        // before isOpen flips true. close() must still free that base cursor;
+        // tests use freeLeakedReaders=false, so a leak shows as a busy reader.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            // Build the table under the @Before limit so DDL and WAL apply don't breach.
+            createSmallTable();
+            final String query = "SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NONE) ALIGN TO FIRST OBSERVATION";
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertUsesFactory(factory, SampleByFillNoneRecordCursorFactory.class);
+                // Shrink the limit now (read live per open) so of()'s allocator.reopen() breaches.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("expected per-query memory breach during cursor open, got cursor: " + cursor);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+            // Every failed open must have returned its base cursor's reader.
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
     public void testKeyedFillNullFailsOnHighCardinality() throws Exception {
         // FILL(NULL) routes through SampleByFillValueRecordCursor; the keyed map
         // it builds during the key-discovery pass grows with the key set and
