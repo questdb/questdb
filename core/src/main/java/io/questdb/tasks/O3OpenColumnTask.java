@@ -25,7 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.idx.IndexWriter;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.O3TableWriterView;
 import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,7 +71,7 @@ public class O3OpenColumnTask {
     private long suffixHi;
     private long suffixLo;
     private int suffixType;
-    private TableWriter tableWriter;
+    private O3TableWriterView tableWriterView;
     private long timestampMergeIndexAddr;
     private long timestampMergeIndexSize;
     private long timestampMin;
@@ -237,8 +237,8 @@ public class O3OpenColumnTask {
         return suffixType;
     }
 
-    public TableWriter getTableWriter() {
-        return tableWriter;
+    public O3TableWriterView getTableWriterView() {
+        return tableWriterView;
     }
 
     public long getTimestampMergeIndexAddr() {
@@ -298,7 +298,7 @@ public class O3OpenColumnTask {
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3NewPartitionSize,
-            TableWriter tableWriter,
+            O3TableWriterView tableWriterView,
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
@@ -341,7 +341,7 @@ public class O3OpenColumnTask {
         this.indexBlockCapacity = indexBlockCapacity;
         this.activeFixFd = activeFixFd;
         this.activeVarFd = activeVarFd;
-        this.tableWriter = tableWriter;
+        this.tableWriterView = tableWriterView;
         this.indexWriter = indexWriter;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.columnIndex = columnIndex;
