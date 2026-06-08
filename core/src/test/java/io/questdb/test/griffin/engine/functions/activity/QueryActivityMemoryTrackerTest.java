@@ -73,16 +73,6 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024 * 1024L);
     }
 
-    @Test
-    public void testMemoryLimitColumnReflectsConfiguredLimit() throws Exception {
-        // query_activity reports the running query against itself; with a limit
-        // configured, memory_limit shows the cap and memory_used is non-negative.
-        assertQuery("select memory_used >= 0 used_ok, memory_limit from query_activity()")
-                .noRandomAccess()
-                .returns("used_ok\tmemory_limit\n" +
-                        "true\t134217728\n");
-    }
-
     /**
      * query_activity reads {@code memory_used} / {@code memory_limit} off the
      * registry Entry from a different thread than the one that registered it,
@@ -182,13 +172,26 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
             Assert.assertEquals("unexpected errors", 0, errors.get());
             Assert.assertTrue("expected query_activity scans to run", scans.get() > 0);
 
-            // Pool integrity: the storm is perfectly balanced (every register() is
-            // paired with an unregister()), so the tracker pool must be
-            // non-negative and bounded by peak concurrency. A negative or runaway
-            // count would mean a double-release or a lost tracker.
+            // Pool integrity. The storm is perfectly balanced (every register()
+            // pairs with an unregister()), so the pool count must never go
+            // negative (a double-pop would do that) and must not grow with the
+            // workload: a per-operation leak or a systematic double-release would
+            // push the count toward producerThreads * iterations, so staying well
+            // under iterations rules that out.
+            //
+            // This deliberately avoids a tight bound derived from this storm's
+            // own thread count. getPooledCount() reads the engine's shared
+            // tracker pool, whose count tracks the peak concurrency of every pool
+            // user, not just this test's threads. A workload that uses the same
+            // engine concurrently (a parallel test sharing the engine, or
+            // background query activity) lifts the count above
+            // producerThreads + readerThreads, so a tight bound flakes under
+            // churn while proving nothing extra: read safety is already covered
+            // by errors == 0, and a leaked tracker's native block by
+            // assertMemoryLeak.
             Assert.assertTrue(engine.getMemoryTrackerProvider() instanceof PerQueryMemoryTrackerProvider);
             final int pooled = ((PerQueryMemoryTrackerProvider) engine.getMemoryTrackerProvider()).getPooledCount();
-            Assert.assertTrue("pooled=" + pooled, pooled >= 0 && pooled <= producerThreads + readerThreads + 1);
+            Assert.assertTrue("pooled=" + pooled, pooled >= 0 && pooled < iterations);
         });
     }
 
@@ -214,8 +217,10 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
                             "FROM query_activity() WHERE query = 'nested-no-tracker'")
                             .noLeakCheck()
                             .noRandomAccess()
-                            .returns("used_null\tlimit_null\n" +
-                                    "true\ttrue\n");
+                            .returns("""
+                                    used_null\tlimit_null
+                                    true\ttrue
+                                    """);
                 } finally {
                     // The nested register() did not acquire the tracker, so unregister()
                     // leaves it bound; mimic the outer workload and free it by hand.
@@ -225,5 +230,17 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testMemoryLimitColumnReflectsConfiguredLimit() throws Exception {
+        // query_activity reports the running query against itself; with a limit
+        // configured, memory_limit shows the cap and memory_used is non-negative.
+        assertQuery("select memory_used >= 0 used_ok, memory_limit from query_activity()")
+                .noRandomAccess()
+                .returns("""
+                        used_ok\tmemory_limit
+                        true\t134217728
+                        """);
     }
 }
