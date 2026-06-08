@@ -2087,9 +2087,9 @@ public class ParquetTest extends AbstractCairoTest {
 
             assertSqlCursors(
                     "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices_native p ON t.sym = p.sym " +
-                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym",
+                            "RANGE BETWEEN 3_600_000_000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym",
                     "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
-                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym"
+                            "RANGE BETWEEN 3_600_000_000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym"
             );
 
             Assert.assertTrue("async window join did not propagate SCATTERED hint; spill never fired [spills="
@@ -3627,9 +3627,9 @@ public class ParquetTest extends AbstractCairoTest {
 
             assertSqlCursors(
                     "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices_native p ON t.sym = p.sym " +
-                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym",
+                            "RANGE BETWEEN 3_600_000_000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym",
                     "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
-                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym"
+                            "RANGE BETWEEN 3_600_000_000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym"
             );
 
             Assert.assertTrue("window join did not propagate SCATTERED hint; spill never fired [spills="

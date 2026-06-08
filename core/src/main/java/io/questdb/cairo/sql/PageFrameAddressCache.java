@@ -51,9 +51,9 @@ import org.jetbrains.annotations.TestOnly;
  * Meant to be used along with {@link PageFrameMemoryPool}.
  */
 public class PageFrameAddressCache implements QuietCloseable, Mutable {
+    private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
     @TestOnly
     public static volatile boolean IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
-    private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
     // Flat arrays storing per-frame, per-column data. Indexed as: frameIndex * columnCount + columnIndex.
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
@@ -74,7 +74,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private int columnCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
-    private boolean isColdParquetForcedSnapshot;
 
     public PageFrameAddressCache() {
         this.auxPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
@@ -111,7 +110,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
-            isCold = frame.isColdParquetPartition() || isColdParquetForcedSnapshot;
+            isCold = frame.isColdParquetPartition() || IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST;
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
@@ -251,7 +250,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
         this.columnMapping.copyFrom(columnMapping);
         this.external = external;
-        this.isColdParquetForcedSnapshot = IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST;
     }
 
     /**
@@ -281,6 +279,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
+            coldParquetPartitions.setQuick(frameIndex, frame.isColdParquetPartition() || IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST);
         }
     }
 
