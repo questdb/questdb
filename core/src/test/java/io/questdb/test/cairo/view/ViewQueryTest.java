@@ -37,16 +37,17 @@ public class ViewQueryTest extends AbstractViewTest {
         // leaving the others with all projected columns, so the union sides diverged in
         // column count.
         assertMemoryLeak(() -> {
-            for (String t : new String[]{"equity_price_1m", "crypto_price_1m", "forex_price_1m", "commodity_price_1m"}) {
-                execute(
-                        "CREATE TABLE '" + t + "' (" +
-                                "timestamp TIMESTAMP, " +
-                                "tvId SYMBOL INDEX CAPACITY 256, " +
-                                "symbol SYMBOL INDEX CAPACITY 256, " +
-                                "open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE" +
-                                ") timestamp(timestamp) PARTITION BY DAY WAL " +
-                                "DEDUP UPSERT KEYS(timestamp,tvId)"
-                );
+            execute(
+                    "CREATE TABLE 'equity_price_1m' (" +
+                            "timestamp TIMESTAMP, " +
+                            "tvId SYMBOL INDEX CAPACITY 256, " +
+                            "symbol SYMBOL INDEX CAPACITY 256, " +
+                            "open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE" +
+                            ") timestamp(timestamp) PARTITION BY DAY WAL " +
+                            "DEDUP UPSERT KEYS(timestamp,tvId)"
+            );
+            for (String t : new String[]{"crypto_price_1m", "forex_price_1m", "commodity_price_1m"}) {
+                execute("CREATE TABLE '" + t + "' (LIKE equity_price_1m)");
             }
             // equity: A -> latest close 11, B -> 20  (2 rows after LATEST ON)
             execute("INSERT INTO equity_price_1m(timestamp, tvId, close) VALUES " +
