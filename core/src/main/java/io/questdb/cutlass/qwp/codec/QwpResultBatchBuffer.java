@@ -94,6 +94,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // the appendRow hot loop so the inner iteration reads from plain arrays instead
     // of ObjList.getQuick + def getter chains per cell.
     private QwpEgressColumnDef[] defsArr = EMPTY_DEFS;
+    // Byte size of the first batch's inline schema block (col_count varint +
+    // per-column descriptors). It depends only on the column shape, so beginBatch
+    // computes it once and emitTableBlockImpl reuses it on every dry-run and real
+    // emit -- without it the partial-emit binary search re-walks the column list
+    // on every probe.
+    private int inlineSchemaBytes;
     private int physicalRowCount;
     private int[] qdbTypesArr = EMPTY_INTS;
     private QwpColumnScratch[] scratchesArr = EMPTY_SCRATCHES;
@@ -365,6 +371,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int i = columnCount; i < defsArr.length; i++) {
             symbolTablesArr[i] = null;
         }
+        // Cache the first-batch schema block size once; it depends only on the
+        // column shape, so the partial-emit binary search reads the field rather
+        // than re-deriving it on every probe.
+        this.inlineSchemaBytes = QwpVarint.encodedLength(columnCount) + inlineColumnsSize();
     }
 
     @Override
@@ -378,6 +388,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         physicalRowCount = 0;
         startRow = 0;
         columnCount = 0;
+        inlineSchemaBytes = 0;
         batchDeltaStart = 0;
         batchDeltaWireBytesAtStart = 0;
     }
@@ -489,6 +500,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         startRow = 0;
         columnCount = 0;
         columns = null;
+        inlineSchemaBytes = 0;
         batchDeltaStart = 0;
         batchDeltaWireBytesAtStart = 0;
     }
@@ -1114,8 +1126,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         // inline column descriptors; continuation batches carry rows only -- the
         // client holds the schema between batches of the same query.
         if (isFirstBatch) {
-            int colsVarLen = QwpVarint.encodedLength(columnCount);
-            int schemaBytes = colsVarLen + inlineColumnsSize();
+            int schemaBytes = inlineSchemaBytes;
             if (p + schemaBytes > wireLimit) return -1;
             if (!dryRun) {
                 long startP = p;
@@ -1129,7 +1140,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     }
                     Unsafe.putByte(p++, col.getWireType());
                 }
-                assert p - startP == schemaBytes : "inline schema byte count drifted from inlineColumnsSize";
+                assert p - startP == schemaBytes : "inline schema emit drifted from cached inlineSchemaBytes";
             } else {
                 p += schemaBytes;
             }
