@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.window;
 
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
@@ -91,7 +92,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     chainTypes,
                     recordSink,
                     configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages()
+                    configuration.getSqlWindowCacheMaxPagesResolved(),
+                    configuration.getSqlWindowCacheMaxPagesConfigKey()
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;

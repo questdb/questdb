@@ -34,18 +34,16 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createTable(TABLE1);
             final String query = "select ts, k, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             createView("test", query, TABLE1);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("show columns from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from test",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -55,17 +53,15 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createTable(TABLE1);
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create view test as (" + query + ")");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("show create view test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE VIEW 'test' AS (\s
                             select ts, v+v doubleV, avg(v) from table1 sample by 30s
                             );
-                            """,
-                    "show create view test",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -104,6 +100,19 @@ public class ViewsFunctionTest extends AbstractViewTest {
                 17,
                 "view does not exist [view=test]"
         );
+    }
+
+    @Test
+    public void testShowCreateViewFailMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createMatView("test_mv", "select ts, k, avg(v) from " + TABLE1 + " sample by 30s");
+            assertExceptionNoLeakCheck(
+                    "show create view test_mv",
+                    17,
+                    "view name expected, got materialized view name"
+            );
+        });
     }
 
     @Test

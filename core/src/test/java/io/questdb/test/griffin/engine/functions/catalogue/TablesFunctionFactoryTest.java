@@ -53,13 +53,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Initially, table_memory_pressure_level should be 0 (no pressure)
-            assertSql(
-                    """
+            assertQuery("select table_name, table_memory_pressure_level from tables() where table_name = 'test_mem_pressure'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_memory_pressure_level
                             test_mem_pressure\t0
-                            """,
-                    "select table_name, table_memory_pressure_level from tables() where table_name = 'test_mem_pressure'"
-            );
+                            """);
         });
     }
 
@@ -70,13 +70,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE test_non_wal_mem (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             // Non-WAL tables should show null for table_memory_pressure_level
-            assertSql(
-                    """
+            assertQuery("select table_name, table_memory_pressure_level from tables() where table_name = 'test_non_wal_mem'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_memory_pressure_level
                             test_non_wal_mem\tnull
-                            """,
-                    "select table_name, table_memory_pressure_level from tables() where table_name = 'test_non_wal_mem'"
-            );
+                            """);
         });
     }
 
@@ -91,14 +91,14 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             tm1.timestamp("ts2");
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-            assertSql(
-                    """
+            assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
                             2\ttable2\tts2\tNONE\t1000\t300000000
                             1\ttable1\tts1\tDAY\t1000\t300000000
-                            """,
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc"
-            );
+                            """);
         });
     }
 
@@ -113,13 +113,14 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             tm1.timestamp("ts1");
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-            assertSql(
-                    """
+            assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
                             1\ttable1\tts1\tDAY\t83737\t28000
-                            """,
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
-            );
+                            """);
         });
     }
 
@@ -144,11 +145,8 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                 filesFacade.remove(path.$());
             }
 
-            assertException(
-                    "select hydrate_table_metadata('*')",
-                    7,
-                    "could not open, file does not exist"
-            );
+            assertQuery("select hydrate_table_metadata('*')")
+                    .fails(7, "could not open, file does not exist");
         });
     }
 
@@ -163,13 +161,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             tm1.timestamp("ts2");
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-            assertSql(
-                    """
+            assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'table1'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
                             1\ttable1\tts1\tDAY\t1000\t300000000
-                            """,
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'table1'"
-            );
+                            """);
         });
     }
 
@@ -184,13 +182,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             tm1.timestamp("ts2");
             createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-            assertSql(
-                    """
+            assertQuery("select designatedTimestamp from tables where table_name = 'table1'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             designatedTimestamp
                             ts1
-                            """,
-                    "select designatedTimestamp from tables where table_name = 'table1'"
-            );
+                            """);
         });
     }
 
@@ -215,14 +213,14 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertEquals("wal_max_timestamp should be null for non-WAL table", Numbers.LONG_NULL, tracker.getLastWalTimestamp(tableToken));
 
             // Query via tables() function
-            assertSql(
-                    """
+            assertQuery("select table_name, table_txn, wal_txn, wal_max_timestamp from tables() where table_name = 'test_non_wal'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_txn\twal_txn\twal_max_timestamp
                             test_non_wal\t""" + writerTxn + """
                             \tnull\t
-                            """,
-                    "select table_name, table_txn, wal_txn, wal_max_timestamp from tables() where table_name = 'test_non_wal'"
-            );
+                            """);
         });
     }
 
@@ -236,13 +234,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             tracker.clear();
 
             // Before any writes, table_row_count and table_last_write_timestamp should be null
-            assertSql(
-                    """
+            assertQuery("select table_name, table_row_count, table_last_write_timestamp from tables() where table_name = 'test_writes'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_row_count\ttable_last_write_timestamp
                             test_writes\tnull\t
-                            """,
-                    "select table_name, table_row_count, table_last_write_timestamp from tables() where table_name = 'test_writes'"
-            );
+                            """);
 
             // Insert rows and drain WAL
             long beforeWrite = configuration.getMicrosecondClock().getTicks();
@@ -257,13 +255,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(3L, tracker.getRowCount(tableToken));
 
             // Query via tables() function
-            assertSql(
-                    """
+            assertQuery("select table_name, table_row_count from tables() where table_name = 'test_writes'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_row_count
                             test_writes\t3
-                            """,
-                    "select table_name, table_row_count from tables() where table_name = 'test_writes'"
-            );
+                            """);
 
             // Verify table_last_write_timestamp is within expected range
             long lastWriteTimestamp = tracker.getWriteTimestamp(tableToken);
@@ -286,37 +284,37 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Initially, the table should not be suspended
-            assertSql(
-                    """
+            assertQuery("select table_name, table_suspended from tables() where table_name = 'test_suspended'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_suspended
                             test_suspended\tfalse
-                            """,
-                    "select table_name, table_suspended from tables() where table_name = 'test_suspended'"
-            );
+                            """);
 
             // Suspend the table
             sequencerAPI.suspendTable(tableToken, ErrorTag.DISK_FULL, "test suspension");
 
             // Now the table should be suspended
-            assertSql(
-                    """
+            assertQuery("select table_name, table_suspended from tables() where table_name = 'test_suspended'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_suspended
                             test_suspended\ttrue
-                            """,
-                    "select table_name, table_suspended from tables() where table_name = 'test_suspended'"
-            );
+                            """);
 
             // Resume the table
             sequencerAPI.resumeTable(tableToken, 0);
 
             // Table should no longer be suspended
-            assertSql(
-                    """
+            assertQuery("select table_name, table_suspended from tables() where table_name = 'test_suspended'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_suspended
                             test_suspended\tfalse
-                            """,
-                    "select table_name, table_suspended from tables() where table_name = 'test_suspended'"
-            );
+                            """);
         });
     }
 
@@ -327,13 +325,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE test_non_wal_suspended (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             // Non-WAL tables should always show table_suspended=false
-            assertSql(
-                    """
+            assertQuery("select table_name, table_suspended from tables() where table_name = 'test_non_wal_suspended'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_suspended
                             test_non_wal_suspended\tfalse
-                            """,
-                    "select table_name, table_suspended from tables() where table_name = 'test_non_wal_suspended'"
-            );
+                            """);
         });
     }
 
@@ -356,13 +354,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
 
             // Query via tables() function
             // The key assertion is that years should be in the 2024 range, not 57000+ (bug symptom)
-            assertSql(
-                    """
+            assertQuery("select table_name, table_min_timestamp, table_max_timestamp from tables() where table_name = 'test_ts_ns'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_min_timestamp\ttable_max_timestamp
                             test_ts_ns\t2024-01-01T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "select table_name, table_min_timestamp, table_max_timestamp from tables() where table_name = 'test_ts_ns'"
-            );
+                            """);
 
             // Also verify wal_max_timestamp is correctly converted
             TableToken tableToken = engine.verifyTableName("test_ts_ns");
@@ -373,11 +371,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertTrue("wal_max_timestamp should be in nanoseconds (large value)", walMaxTs > 1_000_000_000_000_000L);
 
             // Via the tables() function, year should be 2024, not 1970 or 57000+
-            assertSql("""
+            assertQuery("select year(wal_max_timestamp) as yr from tables() where table_name = 'test_ts_ns'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             yr
                             2024
-                            """,
-                    "select year(wal_max_timestamp) as yr from tables() where table_name = 'test_ts_ns'");
+                            """);
         });
     }
 
@@ -391,13 +391,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             tracker.clear();
 
             // Before any writes, all txn columns should be null
-            assertSql(
-                    """
+            assertQuery("select table_name, table_txn, wal_txn, wal_max_timestamp from tables() where table_name = 'test_txn'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_txn\twal_txn\twal_max_timestamp
                             test_txn\tnull\tnull\t
-                            """,
-                    "select table_name, table_txn, wal_txn, wal_max_timestamp from tables() where table_name = 'test_txn'"
-            );
+                            """);
 
             // Insert rows and drain WAL
             execute("INSERT INTO test_txn VALUES ('2024-01-01T00:00:00.000000Z', 1)");
@@ -415,14 +415,14 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertTrue("wal_max_timestamp should be positive", walTimestamp > 0);
 
             // Query via tables() function - verify columns are present and have values
-            assertSql(
-                    """
+            assertQuery("select table_name, table_txn, wal_txn from tables() where table_name = 'test_txn'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\ttable_txn\twal_txn
                             test_txn\t""" + writerTxn + "\t" + sequencerTxn + """
                             
-                            """,
-                    "select table_name, table_txn, wal_txn from tables() where table_name = 'test_txn'"
-            );
+                            """);
         });
     }
 }

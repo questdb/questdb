@@ -790,25 +790,42 @@ public interface CairoConfiguration {
 
     int getSqlSortKeyMaterializationThreshold();
 
-    int getSqlSortKeyMaxPages();
+    long getSqlSortKeyMaxBytes();
 
     long getSqlSortKeyPageSize();
 
-    int getSqlSortLightValueMaxPages();
+    long getSqlSortLightValueMaxBytes();
 
     long getSqlSortLightValuePageSize();
 
-    int getSqlSortValueMaxPages();
+    long getSqlSortValueMaxBytes();
 
     int getSqlSortValuePageSize();
 
     int getSqlUnorderedMapMaxEntrySize();
 
+    long getSqlWindowCacheMaxBytes();
+
+    /**
+     * Resolves which config key the CachedWindow record-store cap was sourced from. Returned as a
+     * property path string (e.g. "cairo.sql.window.cache.max.bytes") so error messages can name the
+     * actual binding constraint when growth fails. The new bytes key wins when explicitly set; the
+     * legacy pages key wins when only it is explicit; the new bytes default wins otherwise.
+     */
+    String getSqlWindowCacheMaxPagesConfigKey();
+
+    /**
+     * Effective cap (in pages of {@link #getSqlWindowStorePageSize()}) on the CachedWindow record
+     * store, after reconciling cairo.sql.window.cache.max.bytes and the legacy
+     * cairo.sql.window.store.max.pages. Paired with {@link #getSqlWindowCacheMaxPagesConfigKey()}.
+     */
+    int getSqlWindowCacheMaxPagesResolved();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();
 
-    int getSqlWindowRowIdMaxPages();
+    long getSqlWindowRowIdMaxBytes();
 
     int getSqlWindowRowIdPageSize();
 
@@ -816,7 +833,7 @@ public interface CairoConfiguration {
 
     int getSqlWindowStorePageSize();
 
-    int getSqlWindowTreeKeyMaxPages();
+    long getSqlWindowTreeKeyMaxBytes();
 
     int getSqlWindowTreeKeyPageSize();
 
@@ -931,6 +948,18 @@ public interface CairoConfiguration {
     int getWriterTickRowsCountMod();
 
     boolean isCairoMetadataCacheSnapshotOrdered();
+
+    /**
+     * Rollback flag for the by-name column emit to UNION siblings in the SQL optimizer's top-down
+     * column propagation. The optimizer matches UNION columns by position; the legacy by-name emit
+     * could prune one branch inconsistently and crash code generation when branch aliases differed.
+     * When {@code true}, restores the legacy by-name behavior. Defaults to {@code false}.
+     *
+     * @return whether to restore the legacy by-name UNION column propagation
+     */
+    default boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return false;
+    }
 
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.

@@ -38,33 +38,29 @@ public class InStrTest extends AbstractCairoTest {
     public void testAllConst() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
-            assertQueryNoLeakCheck("a\tts\n", "test where a in NULL", false);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in NULL")
+                    .noLeakCheck()
+                    .returns("a\tts\n");
+            assertQuery("test where a in ('16', NULL)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             16\t1970-01-01T00:00:15.000000Z
-                            """,
-                    "test where a in ('16', NULL)",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in '3'")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "test where a in '3'",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in ('3', '22', '79')")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
                             22\t1970-01-01T00:00:21.000000Z
                             79\t1970-01-01T00:01:18.000000Z
-                            """,
-                    "test where a in ('3', '22', '79')",
-                    false
-            );
+                            """);
         });
     }
 
@@ -178,23 +174,20 @@ public class InStrTest extends AbstractCairoTest {
     public void testChar() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in '3'::char")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
-                            """, "test where a in '3'::char",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in ('3'::char, '22', '79')")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
                             22\t1970-01-01T00:00:21.000000Z
                             79\t1970-01-01T00:01:18.000000Z
-                            """,
-                    "test where a in ('3'::char, '22', '79')",
-                    false
-            );
+                            """);
 
             final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
             tuples.add(new BindVariableTestTuple(
@@ -218,12 +211,9 @@ public class InStrTest extends AbstractCairoTest {
 
     @Test
     public void testColumn() throws Exception {
-        assertException(
-                "test where a in ('abcde', '81', b)",
-                "create table test as (select cast(x as string) a, x b, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                32,
-                "constant expected"
-        );
+        assertQuery("test where a in ('abcde', '81', b)")
+                .ddl("create table test as (select cast(x as string) a, x b, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .fails(32, "constant expected");
     }
 
     @Test
@@ -255,40 +245,32 @@ public class InStrTest extends AbstractCairoTest {
     public void testConstConst() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where 'a' in ('a', 'b')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:01.000000Z
                             3\t1970-01-01T00:00:02.000000Z
                             4\t1970-01-01T00:00:03.000000Z
                             5\t1970-01-01T00:00:04.000000Z
-                            """, "test where 'a' in ('a', 'b')",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    "a\tts\n",
-                    "test where NULL::string in ('a', 'b')",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where NULL::string in ('a', 'b')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tts\n");
+            assertQuery("test where NULL::string in ('a', NULL)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:01.000000Z
                             3\t1970-01-01T00:00:02.000000Z
                             4\t1970-01-01T00:00:03.000000Z
                             5\t1970-01-01T00:00:04.000000Z
-                            """,
-                    "test where NULL::string in ('a', NULL)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 }

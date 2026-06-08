@@ -70,8 +70,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
                     true
             );
             this.maxEntryMemBytes = Math.min(
-                    configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages()
-                            + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes() + configuration.getSqlSortLightValueMaxBytes(),
                     MAX_HEAP_SIZE_LIMIT
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();

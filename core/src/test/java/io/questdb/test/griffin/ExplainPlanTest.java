@@ -684,12 +684,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: x
                     """);
 
-            assertSql("""
-                    i\trow_number\tavg\tsum\tfirst_value
-                    1\t1\t50.5\t5050.0\t1
-                    2\t2\t50.5\t5050.0\t1
-                    3\t1\t50.5\t5050.0\t1
-                    """, sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
+                            i\trow_number\tavg\tsum\tfirst_value
+                            1\t1\t50.5\t5050.0\t1
+                            2\t2\t50.5\t5050.0\t1
+                            3\t1\t50.5\t5050.0\t1
+                            """);
         });
     }
 
@@ -794,7 +796,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin0Output() throws Exception {
-        assertQuery("cnt\n9\n", "select count(*) cnt from a cross join a b where length(a.s1) = length(b.s2)", "create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(3))", null, false, true);
+        assertQuery("select count(*) cnt from a cross join a b where length(a.s1) = length(b.s2)")
+                .ddl("create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(3))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n9\n");
     }
 
     @Test
@@ -847,13 +853,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                         """);
 
-                assertQueryNoLeakCheck("""
-                        x\tts\tx1\tts1
-                        1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
-                        2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
-                        2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
-                        """, query, "ts", false, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                x\tts\tx1\tts1
+                                1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                                1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
+                                2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
+                                2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
+                                """);
             }
         });
     }
@@ -1029,8 +1040,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: test
                     """);
 
-            assertSql("avg\n2.0\n", query);
-            assertSql("avg\n2.0\n", "select * from ( " + query + " )");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("avg\n2.0\n");
+            assertQuery("select * from ( " + query + " )")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("avg\n2.0\n");
         });
     }
 
@@ -1399,21 +1418,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainCreateTable() throws Exception {
-        assertSql("""
-                QUERY PLAN
-                Create table: a
-                """, "explain create table a ( l long, d double)");
+        assertQuery("create table a ( l long, d double)")
+                .noLeakCheck()
+                .assertsPlan("""
+                        Create table: a
+                        """);
     }
 
     @Test
     public void testExplainCreateTableAsSelect() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
-                QUERY PLAN
-                Create table: a
-                    VirtualRecord
-                      functions: [x,1]
-                        long_sequence count: 10
-                """, "explain create table a as (select x, 1 from long_sequence(10))"));
+        assertMemoryLeak(() -> assertQuery("create table a as (select x, 1 from long_sequence(10))")
+                .noLeakCheck()
+                .assertsPlan("""
+                        Create table: a
+                            VirtualRecord
+                              functions: [x,1]
+                                long_sequence count: 10
+                        """));
     }
 
     @Test
@@ -1513,10 +1534,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainInsert() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
-                    Insert into table: a
-                    """, "explain insert into a values (1, 2.0)");
+            assertQuery("insert into a values (1, 2.0)")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Insert into table: a
+                            """);
         });
     }
 
@@ -1524,29 +1546,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
-                    Insert into table: a
-                        VirtualRecord
-                          functions: [x,1]
-                            long_sequence count: 10
-                    """, "explain insert into a select x, 1 from long_sequence(10)");
+            assertQuery("insert into a select x, 1 from long_sequence(10)")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Insert into table: a
+                                VirtualRecord
+                                  functions: [x,1]
+                                    long_sequence count: 10
+                            """);
         });
     }
 
     @Test
     public void testExplainPlanNoTrailingQuote() throws Exception {
-        assertQuery("""
-                QUERY PLAN
-                [
-                  {
-                    "Plan": {
-                        "Node Type": "long_sequence",
-                        "count":  1
-                    }
-                  }
-                ]
-                """, "explain (format json) select * from long_sequence(1)", null, null, false, true);
+        assertQuery("explain (format json) select * from long_sequence(1)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        QUERY PLAN
+                        [
+                          {
+                            "Plan": {
+                                "Node Type": "long_sequence",
+                                "count":  1
+                            }
+                          }
+                        ]
+                        """);
     }
 
     @Test
@@ -1564,12 +1591,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                    """, "explain select * from a;");
+            assertQuery("select * from a")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            """);
         });
     }
 
@@ -1611,13 +1639,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainSelectWithCte3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
-                    Limit value: 10 skip-rows: 0 take-rows: 0
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """, "explain with b as (select * from a limit 10) select * from b;");
+            assertQuery("with b as (select * from a limit 10) select * from b")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
         });
     }
 
@@ -1625,15 +1654,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainUpdate1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
-                    Update table: a
-                        VirtualRecord
-                          functions: [1,10.1]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                    """, "explain update a set l = 1, d=10.1;");
+            assertQuery("update a set l = 1, d=10.1")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Update table: a
+                                VirtualRecord
+                                  functions: [1,10.1]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            """);
         });
     }
 
@@ -1642,22 +1672,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( l1 long, d1 double)");
             execute("create table b ( l2 long, d2 double)");
-            assertSql("""
-                    QUERY PLAN
-                    Update table: a
-                        VirtualRecord
-                          functions: [1,d1]
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: l2=l1
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                    """, "explain update a set l1 = 1, d1=d2 from b where l1=l2;");
+            assertQuery("update a set l1 = 1, d1=d2 from b where l1=l2")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Update table: a
+                                VirtualRecord
+                                  functions: [1,d1]
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: l2=l1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                            """);
         });
     }
 
@@ -1731,21 +1762,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithJsonFormat1() throws Exception {
-        assertQuery("""
-                QUERY PLAN
-                [
-                  {
-                    "Plan": {
-                        "Node Type": "Count",
-                        "Plans": [
-                        {
-                            "Node Type": "long_sequence",
-                            "count":  10
-                        } ]
-                    }
-                  }
-                ]
-                """, "explain (format json) select count (*) from long_sequence(10)", null, null, false, true);
+        assertQuery("explain (format json) select count (*) from long_sequence(10)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        QUERY PLAN
+                        [
+                          {
+                            "Plan": {
+                                "Node Type": "Count",
+                                "Plans": [
+                                {
+                                    "Node Type": "long_sequence",
+                                    "count":  10
+                                } ]
+                            }
+                          }
+                        ]
+                        """);
     }
 
     @Test
@@ -1813,53 +1848,63 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 }
 
                 execute("create table a ( l long)");
-                assertQueryNoLeakCheck(compiler, expected, "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ", null, false, sqlExecutionContext, true);
+                assertQuery("explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ")
+                        .noLeakCheck()
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
 
     @Test
     public void testExplainWithJsonFormat3() throws Exception {
-        assertQuery("""
-                QUERY PLAN
-                [
-                  {
-                    "Plan": {
-                        "Node Type": "GroupBy",
-                        "vectorized":  false,
-                        "keys": "[d]",
-                        "values": "[max(i)]",
-                        "Plans": [
-                        {
-                            "Node Type": "Union",
-                            "Plans": [
-                            {
-                                "Node Type": "PageFrame",
+        assertQuery("explain (format json) select d, max(i) from (select * from a union select * from a)")
+                .ddl("create table a ( i int, d double)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        QUERY PLAN
+                        [
+                          {
+                            "Plan": {
+                                "Node Type": "GroupBy",
+                                "vectorized":  false,
+                                "keys": "[d]",
+                                "values": "[max(i)]",
                                 "Plans": [
                                 {
-                                    "Node Type": "Row forward scan"
-                                },
-                                {
-                                    "Node Type": "Frame forward scan",
-                                    "on": "a"
+                                    "Node Type": "Union",
+                                    "Plans": [
+                                    {
+                                        "Node Type": "PageFrame",
+                                        "Plans": [
+                                        {
+                                            "Node Type": "Row forward scan"
+                                        },
+                                        {
+                                            "Node Type": "Frame forward scan",
+                                            "on": "a"
+                                        } ]
+                                    },
+                                    {
+                                        "Node Type": "PageFrame",
+                                        "Plans": [
+                                        {
+                                            "Node Type": "Row forward scan"
+                                        },
+                                        {
+                                            "Node Type": "Frame forward scan",
+                                            "on": "a"
+                                        } ]
+                                    } ]
                                 } ]
-                            },
-                            {
-                                "Node Type": "PageFrame",
-                                "Plans": [
-                                {
-                                    "Node Type": "Row forward scan"
-                                },
-                                {
-                                    "Node Type": "Frame forward scan",
-                                    "on": "a"
-                                } ]
-                            } ]
-                        } ]
-                    }
-                  }
-                ]
-                """, "explain (format json) select d, max(i) from (select * from a union select * from a)", "create table a ( i int, d double)", null, false, true);
+                            }
+                          }
+                        ]
+                        """);
     }
 
     @Test
@@ -1867,44 +1912,49 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
-            assertQueryNoLeakCheck("""
-                    QUERY PLAN
-                    [
-                      {
-                        "Plan": {
-                            "Node Type": "SelectedRecord",
-                            "Plans": [
-                            {
-                                "Node Type": "Nested Loop Left Join",
-                                "filter": "(taba.a1=tabb.b1 or taba.a2=tabb.b2)",
-                                "Plans": [
-                                {
-                                    "Node Type": "PageFrame",
+            assertQuery(" explain (format json) select * from taba left join tabb on a1=b1  or a2=b2")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            QUERY PLAN
+                            [
+                              {
+                                "Plan": {
+                                    "Node Type": "SelectedRecord",
                                     "Plans": [
                                     {
-                                        "Node Type": "Row forward scan"
-                                    },
-                                    {
-                                        "Node Type": "Frame forward scan",
-                                        "on": "taba"
+                                        "Node Type": "Nested Loop Left Join",
+                                        "filter": "(taba.a1=tabb.b1 or taba.a2=tabb.b2)",
+                                        "Plans": [
+                                        {
+                                            "Node Type": "PageFrame",
+                                            "Plans": [
+                                            {
+                                                "Node Type": "Row forward scan"
+                                            },
+                                            {
+                                                "Node Type": "Frame forward scan",
+                                                "on": "taba"
+                                            } ]
+                                        },
+                                        {
+                                            "Node Type": "PageFrame",
+                                            "Plans": [
+                                            {
+                                                "Node Type": "Row forward scan"
+                                            },
+                                            {
+                                                "Node Type": "Frame forward scan",
+                                                "on": "tabb"
+                                            } ]
+                                        } ]
                                     } ]
-                                },
-                                {
-                                    "Node Type": "PageFrame",
-                                    "Plans": [
-                                    {
-                                        "Node Type": "Row forward scan"
-                                    },
-                                    {
-                                        "Node Type": "Frame forward scan",
-                                        "on": "tabb"
-                                    } ]
-                                } ]
-                            } ]
-                        }
-                      }
-                    ]
-                    """, " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2", null, null, false, true);
+                                }
+                              }
+                            ]
+                            """);
         });
     }
 
@@ -2254,7 +2304,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """;
 
             assertPlanNoLeakCheck(query1, expectedPlan);
-            assertSql(expectedResult, query1);
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedResult);
 
             String query2 = """
                     select referencePriceType, count(*)\s
@@ -2263,7 +2316,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     and referencePriceType not in ('TYPE1')""";
 
             assertPlanNoLeakCheck(query2, expectedPlan);
-            assertSql(expectedResult, query2);
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedResult);
         });
     }
 
@@ -2831,7 +2887,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByHourNonTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a (ts timestamp, d double)");
-            assertException("select hour(d), min(d) from a", 12, "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE");
+            assertQuery("select hour(d), min(d) from a")
+                    .fails(12, "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE");
         });
     }
 
@@ -3748,7 +3805,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i1 int)");
             execute("create table b ( i2 int)");
 
-            assertSql("", "select * from a, b where a.i1 = b.i2");
+            assertQuery("select * from a, b where a.i1 = b.i2")
+                    .noLeakCheck()
+                    .returns("");
 
             assertPlanNoLeakCheck("select * from a , b where a.i1 = b.i2", """
                     SelectedRecord
@@ -3963,10 +4022,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: maps
                     """);
 
-            assertSql("""
-                    timestamp\tcluster\talias\tinterval\tbits\tpackets
-                    2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1
-                    """, sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
+                            timestamp\tcluster\talias\tinterval\tbits\tpackets
+                            2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1
+                            """);
         });
     }
 
@@ -3987,10 +4048,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                     """);
 
-            assertSql("""
-                    ts\ts
-                    1970-01-01T02:00:00.000000Z\tc
-                    """, sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            1970-01-01T02:00:00.000000Z\tc
+                            """);
         });
     }
 
@@ -4899,13 +4964,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                         """);
 
-                assertQueryNoLeakCheck("""
-                        x\tts\tx1\tts1
-                        1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
-                        2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
-                        2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
-                        """, query, "ts", false, false);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                x\tts\tx1\tts1
+                                1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                                1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
+                                2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
+                                2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
+                                """);
             }
         });
     }
@@ -5589,7 +5658,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: test
                     """);
 
-            assertSql("count\n1\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -5610,7 +5683,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   functions: [1,3,5]
                                     long_sequence count: 1
                     """);
-            assertSql("a\tb\tc\trownum\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("a\tb\tc\trownum\n");
 
             execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
 
@@ -6415,8 +6490,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     cnt_dst
                     5
                     """;
-            assertSql(expected, "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5");
-            assertSql(expected, "SELECT count(distinct x+1) cnt_dst FROM test where x > 5");
+            assertQuery("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT count(distinct x+1) cnt_dst FROM test where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
 
             // where clause, distinct expression, table alias
             expected = """
@@ -6436,8 +6519,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     count_distinct
                     5
                     """;
-            assertSql(expected, "SELECT count_distinct(x+1) FROM test tab where x > 5");
-            assertSql(expected, "SELECT count(distinct x+1) FROM test tab where x > 5");
+            assertQuery("SELECT count_distinct(x+1) FROM test tab where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT count(distinct x+1) FROM test tab where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -6759,9 +6850,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             // Negative: PREV references an alias that does not exist in the select list.
-            assertExceptionNoLeakCheck("select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(nonexistent)) align to calendar",
-                    75,
-                    "PREV(col): column not found in output: nonexistent");
+            assertQuery("select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(nonexistent)) align to calendar")
+                    .noLeakCheck()
+                    .fails(75, "PREV(col): column not found in output: nonexistent");
         });
     }
 
@@ -6834,9 +6925,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             // Negative: PREV references an alias that does not exist in the select list.
-            assertExceptionNoLeakCheck("select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(missing)) align to calendar",
-                    72,
-                    "PREV(col): column not found in output: missing");
+            assertQuery("select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(missing)) align to calendar")
+                    .noLeakCheck()
+                    .fails(72, "PREV(col): column not found in output: missing");
         });
     }
 
@@ -7055,7 +7146,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                     """);
 
-            assertException("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a", 116, "Ambiguous column [name=a]");
+            assertQuery("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a")
+                    .fails(116, "Ambiguous column [name=a]");
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
                     SelectedRecord
@@ -8189,22 +8281,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """;
 
             assertPlanNoLeakCheck(queryDesc, expectedPlan.replace("#ORDER#", " desc"));
-            assertQueryNoLeakCheck("""
-                    s\tts
-                    S2\t1970-01-01T01:00:00.000003Z
-                    S2\t1970-01-01T00:00:00.000000Z
-                    S1\t1970-01-01T00:00:00.000001Z
-                    """, queryDesc, null, true, true);
+            assertQuery(queryDesc)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tts
+                            S2\t1970-01-01T01:00:00.000003Z
+                            S2\t1970-01-01T00:00:00.000000Z
+                            S1\t1970-01-01T00:00:00.000001Z
+                            """);
 
             // order by asc
             String queryAsc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
             assertPlanNoLeakCheck(queryAsc, expectedPlan.replace("#ORDER#", ""));
-            assertQueryNoLeakCheck("""
-                    s\tts
-                    S1\t1970-01-01T00:00:00.000001Z
-                    S2\t1970-01-01T01:00:00.000003Z
-                    S2\t1970-01-01T00:00:00.000000Z
-                    """, queryAsc, null, true, true);
+            assertQuery(queryAsc)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tts
+                            S1\t1970-01-01T00:00:00.000001Z
+                            S2\t1970-01-01T01:00:00.000003Z
+                            S2\t1970-01-01T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -8381,8 +8479,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Frame forward scan on: a
                     """);
 
-            assertQueryNoLeakCheck("s\n" + "\n" +//null
-                    "b\n" + "w\n", query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("s\n" + "\n" +//null
+                            "b\n" + "w\n");
 
             query = "select * from a where s != 'a' order by s desc";
             assertPlanNoLeakCheck(query, """
@@ -8398,12 +8498,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Frame forward scan on: a
                     """);
 
-            assertQueryNoLeakCheck("""
-                    s
-                    w
-                    b
-                    
-                    """/*null*/, query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            w
+                            b
+                            
+                            """/*null*/);
 
             query = "select * from a where s != null order by s desc";
             assertPlanNoLeakCheck(query, """
@@ -8419,13 +8521,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Frame forward scan on: a
                     """);
 
-            assertQueryNoLeakCheck("""
-                    s
-                    w
-                    b
-                    a
-                    a
-                    """, query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            w
+                            b
+                            a
+                            a
+                            """);
         });
     }
 
@@ -8595,12 +8699,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertQueryNoLeakCheck("""
-                    s1\tts
-                    S5\t1970-01-01T00:20:00.000000Z
-                    S4\t1970-01-01T00:40:00.000000Z
-                    S3\t1970-01-01T01:00:00.000000Z
-                    """, query, "ts", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            s1\tts
+                            S5\t1970-01-01T00:20:00.000000Z
+                            S4\t1970-01-01T00:40:00.000000Z
+                            S3\t1970-01-01T01:00:00.000000Z
+                            """);
         });
     }
 
@@ -10463,14 +10570,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             execute("insert into t select x, x::timestamp from long_sequence(10000)");
 
-            assertQueryNoLeakCheck("""
-                    x\tts
-                    5\t1970-01-01T00:00:00.000005Z
-                    4\t1970-01-01T00:00:00.000004Z
-                    3\t1970-01-01T00:00:00.000003Z
-                    2\t1970-01-01T00:00:00.000002Z
-                    1\t1970-01-01T00:00:00.000001Z
-                    """, query, "ts###DESC", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            x\tts
+                            5\t1970-01-01T00:00:00.000005Z
+                            4\t1970-01-01T00:00:00.000004Z
+                            3\t1970-01-01T00:00:00.000003Z
+                            2\t1970-01-01T00:00:00.000002Z
+                            1\t1970-01-01T00:00:00.000001Z
+                            """);
         });
     }
 
@@ -11054,12 +11165,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: x
                     """);
 
-            assertSql("""
-                    i\trow_number\tavg\tsum\tfirst_value
-                    1\t1\t1.0\t1.0\t1
-                    2\t2\t2.0\t2.0\t2
-                    3\t1\t3.0\t3.0\t3
-                    """, sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            i\trow_number\tavg\tsum\tfirst_value
+                            1\t1\t1.0\t1.0\t1
+                            2\t2\t2.0\t2.0\t2
+                            3\t1\t3.0\t3.0\t3
+                            """);
         });
     }
 
@@ -11184,9 +11299,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws SqlException {
+    private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws Exception {
         assertPlanNoLeakCheck(sql, expectedPlan);
-        assertSql(expectedResult, sql);
+        assertQuery(sql)
+                .noLeakCheck()
+                .returnsOnce(expectedResult);
     }
 
     private void assertWritePermissionDenied(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
@@ -11300,12 +11417,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Frame forward scan on: a
                 """);
 
-        assertQueryNoLeakCheck("""
-                s\tts
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                S1\t1970-01-01T00:00:00.000001Z
-                """, query, null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns("""
+                        s\tts
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        S1\t1970-01-01T00:00:00.000001Z
+                        """);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
@@ -11321,12 +11440,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Frame forward scan on: a
                 """);
 
-        assertQueryNoLeakCheck("""
-                s\tts
-                S1\t1970-01-01T00:00:00.000001Z
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                """, query, null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns("""
+                        s\tts
+                        S1\t1970-01-01T00:00:00.000001Z
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        """);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -11354,12 +11475,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
                 """);
 
-        assertQueryNoLeakCheck("""
-                s\tts
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                S1\t1970-01-01T00:00:00.000001Z
-                """, query, null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns("""
+                        s\tts
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        S1\t1970-01-01T00:00:00.000001Z
+                        """);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
@@ -11376,12 +11499,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
                 """);
 
-        assertQueryNoLeakCheck("""
-                s\tts
-                S1\t1970-01-01T00:00:00.000001Z
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                """, query, null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns("""
+                        s\tts
+                        S1\t1970-01-01T00:00:00.000001Z
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        """);
     }
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
@@ -11404,13 +11529,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               filter: s=:s2::string
                         Frame forward scan on: a
                 """);
-        assertQueryNoLeakCheck("""
-                s\tts
-                S2\t1970-01-01T00:00:00.000001Z
-                S1\t1970-01-01T01:00:00.000003Z
-                S2\t1970-01-01T01:00:00.000004Z
-                S1\t1970-01-01T01:00:00.000005Z
-                """, queryAsc, "ts", true, false);
+        assertQuery(queryAsc)
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
+                        s\tts
+                        S2\t1970-01-01T00:00:00.000001Z
+                        S1\t1970-01-01T01:00:00.000003Z
+                        S2\t1970-01-01T01:00:00.000004Z
+                        S1\t1970-01-01T01:00:00.000005Z
+                        """);
 
         String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
         assertPlanNoLeakCheck(queryDesc, """
@@ -11424,12 +11552,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               filter: s=:s1::string
                         Frame backward scan on: a
                 """);
-        assertQueryNoLeakCheck("""
-                s\tts
-                S1\t1970-01-01T01:00:00.000005Z
-                S2\t1970-01-01T01:00:00.000004Z
-                S1\t1970-01-01T01:00:00.000003Z
-                S2\t1970-01-01T00:00:00.000001Z
-                """, queryDesc, "ts###DESC", true, true);
+        assertQuery(queryDesc)
+                .noLeakCheck()
+                .timestampDesc("ts")
+                .expectSize()
+                .returns("""
+                        s\tts
+                        S1\t1970-01-01T01:00:00.000005Z
+                        S2\t1970-01-01T01:00:00.000004Z
+                        S1\t1970-01-01T01:00:00.000003Z
+                        S2\t1970-01-01T00:00:00.000001Z
+                        """);
     }
 }

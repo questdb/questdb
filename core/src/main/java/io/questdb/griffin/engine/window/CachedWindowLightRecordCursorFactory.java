@@ -89,7 +89,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     narrowChainTypes,
                     null,
                     configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages()
+                    configuration.getSqlWindowCacheMaxPagesResolved(),
+                    configuration.getSqlWindowCacheMaxPagesConfigKey()
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;

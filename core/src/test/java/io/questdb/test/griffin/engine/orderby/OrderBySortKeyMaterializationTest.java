@@ -57,12 +57,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t[1.0,2.0]
-                    15.0\t[3.0,4.0]
-                    20.0\t[5.0,6.0]
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t[1.0,2.0]
+                            15.0\t[3.0,4.0]
+                            20.0\t[5.0,6.0]
+                            """);
         });
     }
 
@@ -87,12 +90,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\ttrue
-                    15.0\tfalse
-                    20.0\ttrue
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\ttrue
+                            15.0\tfalse
+                            20.0\ttrue
+                            """);
         });
     }
 
@@ -117,12 +123,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t10
-                    15.0\t20
-                    20.0\t30
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t10
+                            15.0\t20
+                            20.0\t30
+                            """);
         });
     }
 
@@ -147,12 +156,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\tA
-                    15.0\tB
-                    20.0\tC
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\tA
+                            15.0\tB
+                            20.0\tC
+                            """);
         });
     }
 
@@ -177,12 +189,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t2024-01-01T00:00:00.000Z
-                    15.0\t2024-06-15T00:00:00.000Z
-                    20.0\t2024-12-31T00:00:00.000Z
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t2024-01-01T00:00:00.000Z
+                            15.0\t2024-06-15T00:00:00.000Z
+                            20.0\t2024-12-31T00:00:00.000Z
+                            """);
         });
     }
 
@@ -208,12 +223,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t1.23
-                    15.0\t4.56
-                    20.0\t7.89
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t1.23
+                            15.0\t4.56
+                            20.0\t7.89
+                            """);
         });
     }
 
@@ -239,12 +257,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t12.34
-                    15.0\t56.78
-                    20.0\t90.12
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t12.34
+                            15.0\t56.78
+                            20.0\t90.12
+                            """);
         });
     }
 
@@ -270,12 +291,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t1.23
-                    15.0\t4.56
-                    20.0\t7.89
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t1.23
+                            15.0\t4.56
+                            20.0\t7.89
+                            """);
         });
     }
 
@@ -301,12 +325,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t1234.56
-                    15.0\t7890.12
-                    20.0\t3456.78
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t1234.56
+                            15.0\t7890.12
+                            20.0\t3456.78
+                            """);
         });
     }
 
@@ -332,12 +359,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t1234567890.12
-                    15.0\t9876543210.34
-                    20.0\t5555555555.56
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t1234567890.12
+                            15.0\t9876543210.34
+                            20.0\t5555555555.56
+                            """);
         });
     }
 
@@ -363,12 +393,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t1.2
-                    15.0\t3.4
-                    20.0\t5.6
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t1.2
+                            15.0\t3.4
+                            20.0\t5.6
+                            """);
         });
     }
 
@@ -393,12 +426,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t1.11
-                    15.0\t2.22
-                    20.0\t3.33
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t1.11
+                            15.0\t2.22
+                            20.0\t3.33
+                            """);
         });
     }
 
@@ -423,12 +459,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t1.5
-                    15.0\t2.5
-                    20.0\t3.5
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t1.5
+                            15.0\t2.5
+                            20.0\t3.5
+                            """);
         });
     }
 
@@ -453,12 +492,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\ts
-                    15.0\tu
-                    20.0\tz
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\ts
+                            15.0\tu
+                            20.0\tz
+                            """);
         });
     }
 
@@ -483,12 +525,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\tsp052w
-                    15.0\tu33d8b
-                    20.0\tzzzzzz
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\tsp052w
+                            15.0\tu33d8b
+                            20.0\tzzzzzz
+                            """);
         });
     }
 
@@ -513,12 +558,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\tsp052w92p1p8
-                    15.0\tu33d8b12b5s0
-                    20.0\tzzzzzzzzzzzz
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\tsp052w92p1p8
+                            15.0\tu33d8b12b5s0
+                            20.0\tzzzzzzzzzzzz
+                            """);
         });
     }
 
@@ -543,12 +591,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\tsp0
-                    15.0\tu33
-                    20.0\tzzz
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\tsp0
+                            15.0\tu33
+                            20.0\tzzz
+                            """);
         });
     }
 
@@ -573,12 +624,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t192.168.1.1
-                    15.0\t10.0.0.1
-                    20.0\t172.16.0.1
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t192.168.1.1
+                            15.0\t10.0.0.1
+                            20.0\t172.16.0.1
+                            """);
         });
     }
 
@@ -603,12 +657,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t11111111-1111-1111-1111-111111111111
-                    15.0\t22222222-2222-2222-2222-222222222222
-                    20.0\t33333333-3333-3333-3333-333333333333
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t11111111-1111-1111-1111-111111111111
+                            15.0\t22222222-2222-2222-2222-222222222222
+                            20.0\t33333333-3333-3333-3333-333333333333
+                            """);
         });
     }
 
@@ -633,12 +690,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t0x01
-                    15.0\t0x02
-                    20.0\t0x03
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t0x01
+                            15.0\t0x02
+                            20.0\t0x03
+                            """);
         });
     }
 
@@ -663,12 +723,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t100
-                    15.0\t200
-                    20.0\t300
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t100
+                            15.0\t200
+                            20.0\t300
+                            """);
         });
     }
 
@@ -693,12 +756,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\thello
-                    15.0\tworld
-                    20.0\tfoo
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\thello
+                            15.0\tworld
+                            20.0\tfoo
+                            """);
         });
     }
 
@@ -723,12 +789,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\talpha
-                    15.0\tbeta
-                    20.0\tgamma
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\talpha
+                            15.0\tbeta
+                            20.0\tgamma
+                            """);
         });
     }
 
@@ -753,12 +822,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\t2024-06-01T12:00:00.000000Z
-                    15.0\t2024-07-15T08:30:00.000000Z
-                    20.0\t2024-08-20T16:45:00.000000Z
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\t2024-06-01T12:00:00.000000Z
+                            15.0\t2024-07-15T08:30:00.000000Z
+                            20.0\t2024-08-20T16:45:00.000000Z
+                            """);
         });
     }
 
@@ -784,12 +856,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\tv
-                    10.0\thello
-                    15.0\tworld
-                    20.0\tfoo
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            10.0\thello
+                            15.0\tworld
+                            20.0\tfoo
+                            """);
         });
     }
 
@@ -819,14 +894,17 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // (3+10)*(2+1)=39, (1+20)*(3+2)=105, (2+30)*(1+3)=128, (5+5)*(4+1)=50, (4+15)*(2+3)=95
-            assertQueryNoLeakCheck("""
-                    x\ta
-                    39\t3
-                    50\t5
-                    95\t4
-                    105\t1
-                    128\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta
+                            39\t3
+                            50\t5
+                            95\t4
+                            105\t1
+                            128\t2
+                            """);
         });
     }
 
@@ -852,12 +930,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // (3+10)*(2+1)=39.0, (1+20)*(3+2)=105.0, (2+30)*(1+3)=128.0
-            assertQueryNoLeakCheck("""
-                    x
-                    128.0
-                    105.0
-                    39.0
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            128.0
+                            105.0
+                            39.0
+                            """);
         });
     }
 
@@ -883,12 +964,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // (2+3)*(1+1)=10.0, (1+2)*(4+1)=15.0, (3+1)*(2+3)=20.0
-            assertQueryNoLeakCheck("""
-                    x
-                    10.0
-                    15.0
-                    20.0
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            10.0
+                            15.0
+                            20.0
+                            """);
         });
     }
 
@@ -907,7 +991,10 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("x\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n");
         });
     }
 
@@ -933,12 +1020,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // (2+3)*(1+1)=10.0, (1+2)*(4+1)=15.0, (3+1)*(2+3)=20.0
-            assertQueryNoLeakCheck("""
-                    x
-                    10.0
-                    15.0
-                    20.0
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            10.0
+                            15.0
+                            20.0
+                            """);
         });
     }
 
@@ -965,12 +1055,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // (3+10)*(2+1)=39, (1+20)*(3+2)=105, (2+30)*(1+3)=128
-            assertQueryNoLeakCheck("""
-                    x\ta
-                    39\t3
-                    105\t1
-                    128\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta
+                            39\t3
+                            105\t1
+                            128\t2
+                            """);
         });
     }
 
@@ -998,12 +1091,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // (3+10)*(2+1)=39, (1+12)*(2+1)=39, (2+30)*(1+3)=128
             // Secondary sort by a: 1 before 3
-            assertQueryNoLeakCheck("""
-                    x\ta
-                    39\t1
-                    39\t3
-                    128\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta
+                            39\t1
+                            39\t3
+                            128\t2
+                            """);
         });
     }
 
@@ -1032,13 +1128,16 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // (1+2)*(10+5)=45 y=10+10=20, (1+2)*(3+4)=21 y=3+8=11,
             // (3+4)*(10+5)=105 y=30+20=50, (3+4)*(3+4)=49 y=9+16=25
-            assertQueryNoLeakCheck("""
-                    x\ty
-                    21\t11
-                    45\t20
-                    49\t25
-                    105\t50
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ty
+                            21\t11
+                            45\t20
+                            49\t25
+                            105\t50
+                            """);
         });
     }
 
@@ -1059,10 +1158,13 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // (3+10)*(2+1)=39.0
-            assertQueryNoLeakCheck("""
-                    x
-                    39.0
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            39.0
+                            """);
         });
     }
 
@@ -1089,12 +1191,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // (3+10)*(2+1)=39, (NULL+20)*(3+2)=null, (2+30)*(1+3)=128
-            assertQueryNoLeakCheck("""
-                    x\ta
-                    null\tnull
-                    39\t3
-                    128\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta
+                            null\tnull
+                            39\t3
+                            128\t2
+                            """);
         });
     }
 
@@ -1123,12 +1228,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // (2+3)*(1+1)=10.0, (2+3)*(1+1)=10.0, (1+2)*(4+1)=15.0
             // Secondary sort by s: alpha before beta
-            assertQueryNoLeakCheck("""
-                    x\ts
-                    10.0\talpha
-                    10.0\tbeta
-                    15.0\tgamma
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ts
+                            10.0\talpha
+                            10.0\tbeta
+                            15.0\tgamma
+                            """);
         });
     }
 
@@ -1177,12 +1285,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x
-                    aa
-                    bb
-                    cc
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            aa
+                            bb
+                            cc
+                            """);
         });
     }
 
@@ -1209,12 +1320,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→a=true, e=-1→b=true, e=2→a=false. Sorted: false < true
-            assertQueryNoLeakCheck("""
-                    x\te
-                    false\t2
-                    true\t-1
-                    true\t1
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            false\t2
+                            true\t-1
+                            true\t1
+                            """);
         });
     }
 
@@ -1241,12 +1355,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→a=10, e=-1→b=5, e=2→a=15
-            assertQueryNoLeakCheck("""
-                    x\te
-                    5\t-1
-                    10\t1
-                    15\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            5\t-1
+                            10\t1
+                            15\t2
+                            """);
         });
     }
 
@@ -1273,12 +1390,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→'x', e=-1→'b', e=2→'y'
-            assertQueryNoLeakCheck("""
-                    x\te
-                    b\t-1
-                    x\t1
-                    y\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            b\t-1
+                            x\t1
+                            y\t2
+                            """);
         });
     }
 
@@ -1305,12 +1425,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→d1='01', e=-1→d2='02', e=2→d1='05'
-            assertQueryNoLeakCheck("""
-                    x\te
-                    2024-01-01T00:00:01.000Z\t1
-                    2024-01-01T00:00:02.000Z\t-1
-                    2024-01-01T00:00:05.000Z\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            2024-01-01T00:00:01.000Z\t1
+                            2024-01-01T00:00:02.000Z\t-1
+                            2024-01-01T00:00:05.000Z\t2
+                            """);
         });
     }
 
@@ -1337,12 +1460,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
-            assertQueryNoLeakCheck("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1368,12 +1494,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1400,12 +1529,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
-            assertQueryNoLeakCheck("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1431,12 +1563,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1463,12 +1598,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
-            assertQueryNoLeakCheck("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1494,12 +1632,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: t
                     """);
-            assertQueryNoLeakCheck("""
-                    x\te
-                    0.5\t-1
-                    1.0\t1
-                    1.5\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            0.5\t-1
+                            1.0\t1
+                            1.5\t2
+                            """);
         });
     }
 
@@ -1528,12 +1669,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // Verify geohash values are read through MaterializedRecord
             // lon=a+b, lat=c+d: row1(30,40)→s, row2(-20,-5)→7, row3(110,25)→w; sorted: 7,s,w
-            assertQueryNoLeakCheck("""
-                    x\te
-                    7\t2
-                    s\t1
-                    w\t3
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            7\t2
+                            s\t1
+                            w\t3
+                            """);
         });
     }
 
@@ -1560,12 +1704,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // Read x to force getGeoInt through MaterializedRecord; verify sort order via e
-            assertQueryNoLeakCheck("""
-                    e
-                    2
-                    1
-                    3
-                    """, "SELECT e FROM (" + query + ")");
+            assertQuery("SELECT e FROM (" + query + ")")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            e
+                            2
+                            1
+                            3
+                            """);
         });
     }
 
@@ -1592,12 +1739,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // Read x to force getGeoLong through MaterializedRecord; verify sort order via e
-            assertQueryNoLeakCheck("""
-                    e
-                    2
-                    1
-                    3
-                    """, "SELECT e FROM (" + query + ")");
+            assertQuery("SELECT e FROM (" + query + ")")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            e
+                            2
+                            1
+                            3
+                            """);
         });
     }
 
@@ -1624,12 +1774,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // Read x to force getGeoShort through MaterializedRecord; verify sort order via e
-            assertQueryNoLeakCheck("""
-                    e
-                    2
-                    1
-                    3
-                    """, "SELECT e FROM (" + query + ")");
+            assertQuery("SELECT e FROM (" + query + ")")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            e
+                            2
+                            1
+                            3
+                            """);
         });
     }
 
@@ -1655,12 +1808,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                 Frame forward scan on: t
                     """);
             // e=1→'1.1.1.1', e=-1→'2.2.2.2', e=2→'5.5.5.5'
-            assertQueryNoLeakCheck("""
-                    x\te
-                    1.1.1.1\t1
-                    2.2.2.2\t-1
-                    5.5.5.5\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            1.1.1.1\t1
+                            2.2.2.2\t-1
+                            5.5.5.5\t2
+                            """);
         });
     }
 
@@ -1687,12 +1843,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→a=100, e=-1→b=50, e=2→a=150
-            assertQueryNoLeakCheck("""
-                    x\te
-                    50\t-1
-                    100\t1
-                    150\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            50\t-1
+                            100\t1
+                            150\t2
+                            """);
         });
     }
 
@@ -1718,12 +1877,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                 Frame forward scan on: t
                     """);
             // e=1→'hello', e=-1→'bar', e=2→'abc'
-            assertQueryNoLeakCheck("""
-                    x\te
-                    abc\t2
-                    bar\t-1
-                    hello\t1
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            abc\t2
+                            bar\t-1
+                            hello\t1
+                            """);
         });
     }
 
@@ -1752,17 +1914,16 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
             // e=1→t1='01', e=-1→t2='02', e=2→t1='05'
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
                             x\te
                             2024-01-01T00:00:01.000000Z\t1
                             2024-01-01T00:00:02.000000Z\t-1
                             2024-01-01T00:00:05.000000Z\t2
-                            """,
-                    query,
-                    "x",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1788,12 +1949,97 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                 Frame forward scan on: t
                     """);
             // e=1→u1='111...', e=-1→u2='222...', e=2→u1='555...'
-            assertQueryNoLeakCheck("""
-                    x\te
-                    11111111-1111-1111-1111-111111111111\t1
-                    22222222-2222-2222-2222-222222222222\t-1
-                    55555555-5555-5555-5555-555555555555\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\te
+                            11111111-1111-1111-1111-111111111111\t1
+                            22222222-2222-2222-2222-222222222222\t-1
+                            55555555-5555-5555-5555-555555555555\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testMaterializationCapHonoredForSingleColumn() throws Exception {
+        // The 64 KiB sort.key.max.bytes budget is owned in full by the one materialized buffer
+        // (eight 8 KiB pages = 64 KiB = 8192 DOUBLEs), so 5000 deterministic rows fit. Together
+        // with testMaterializationCapSplitAcrossColumns and testMaterializationCapWeightedByColumnSize
+        // this demonstrates the cap behaves as an operator-wide ceiling, not a per-buffer one.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT x::DOUBLE, (x+1)::DOUBLE, (x+2)::DOUBLE, (x+3)::DOUBLE," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            final String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
+
+            // Plan check confirms the materializing factory is exercised (drops out if LIMIT is
+            // added, since that routes through LimitedSizeSortedLightRecordCursorFactory instead).
+            assertPlanNoLeakCheck(query, """
+                    Sort light
+                      keys: [x]
+                        Materialize sort keys
+                            VirtualRecord
+                              functions: [a+b*c+d]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+
+            // Drain the cursor to actually exercise materialization. The test fails if the cap
+            // fires here.
+            printSql(query);
+        });
+    }
+
+    @Test
+    public void testMaterializationCapSplitAcrossColumns() throws Exception {
+        // Two equal-width materialized sort columns over the same 64 KiB budget: each
+        // DOUBLE buffer's size-weighted share is half (4 pages = 32 KiB = 4096 DOUBLEs).
+        // 5000 rows per buffer exceeds that and the cap fires. Under the previous
+        // per-buffer interpretation the same query would have succeeded because each
+        // buffer would have had the full 64 KiB to itself.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT x::DOUBLE, (x+1)::DOUBLE, (x+2)::DOUBLE, (x+3)::DOUBLE," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT (a + b) * (c + d) AS x, (a + c) * (b + d) AS y FROM t ORDER BY x, y",
+                    0,
+                    "breached in VirtualMemory (raise cairo.sql.sort.key.max.bytes)"
+            );
+        });
+    }
+
+    @Test
+    public void testMaterializationCapWeightedByColumnSize() throws Exception {
+        // Mixed-width materialized sort columns (BYTE=1 + LONG=8, totalWeight=9) over a
+        // 64 KiB budget. The size-weighted split gives the BYTE buffer 1 page (~7 KiB
+        // share, floored to 8 KiB = 8192 rows) and the LONG buffer 7 pages (56 KiB =
+        // 7168 rows). Both can absorb 5000 rows, so the query succeeds. Under an
+        // even per-buffer split each buffer would receive 4 pages (32 KiB): the BYTE
+        // side would still fit (32 768 rows of room) but the LONG side would cap at
+        // 4096 rows and fire before 5000. The test pins the weighted split's higher
+        // operator-wide ceiling for schemas with skewed column widths. The sort tree's
+        // key heap at 5000 rows fits within its initial 128 KiB page so the tree cap
+        // does not pre-empt the materialiser caps that this test is exercising.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BYTE, l LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT (x % 100)::BYTE, x::LONG," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            // Drain the cursor: the LONG-side cap fires here under an even split,
+            // succeeds under the weighted split.
+            printSql("SELECT (b * b + b)::BYTE AS narrow, (l * l + l)::LONG AS wide" +
+                    " FROM t ORDER BY narrow, wide");
         });
     }
 }

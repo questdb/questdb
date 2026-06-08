@@ -481,6 +481,28 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Returns true when rewriteSampleBy moved a non-NONE FILL list onto
+     * baseModel.fillValues. Callers use this to detect SAMPLE BY FILL in the
+     * rewritten-by-rewriteSampleBy form, where groupByModel.sampleByFill is
+     * still empty because moveSampleByFrom has not run.
+     */
+    private static boolean hasNonNoneRewrittenFill(IQueryModel baseModel) {
+        if (baseModel.getFillStride() == null) {
+            return false;
+        }
+        final ObjList<ExpressionNode> fill = baseModel.getFillValues();
+        if (fill == null) {
+            return false;
+        }
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            if (!isNoneKeyword(fill.getQuick(i).token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -6116,9 +6138,21 @@ public class SqlOptimiser implements Mutable {
         final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange()
                 && model.allowsNestedColumnsChange();
 
-        final IQueryModel union = skipNoneTypeModels(model.getUnionModel());
-        if (!topLevel && modelIsFlex(union)) {
-            emitColumnLiteralsTopDown(model.getColumns(), union);
+        // By default, don't emit this model's columns to its UNION sibling by name. In UNION,
+        // columns are matched by position, not name. A branch's column expressions reference its
+        // own source names (e.g. "SELECT close price ..." references "close"), which generally
+        // don't match the sibling's projection aliases (e.g. "price"), so only the
+        // accidentally-equal names resolve. When the outer query selects nothing from the union
+        // (e.g. count()/sum()), this used to prune just the immediate sibling down to those few
+        // matching names while leaving the other branches intact, so the union sides diverged in
+        // column count and code generation hit an assertion. The indexed propagation below (the
+        // loop over unionColumnIndexes) handles cross-branch propagation correctly, by position.
+        // The cairo.sql.legacy.union.column.propagation flag restores the old by-name emit.
+        if (configuration.isCairoSqlLegacyUnionColumnPropagation()) {
+            final IQueryModel union = skipNoneTypeModels(model.getUnionModel());
+            if (!topLevel && modelIsFlex(union)) {
+                emitColumnLiteralsTopDown(model.getColumns(), union);
+            }
         }
 
         // process join models and their join conditions
@@ -6193,17 +6227,14 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns0(jm, false, model, true);
         }
 
-        // If this is group by model we need to add all non-selected keys, only if this is sub-query
-        // For top level models top-down column list will be empty
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
-            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
-            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-                QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                    model.addTopDownColumn(qc, qc.getAlias());
-                }
-            }
-        }
+        // If this is a group by sub-query whose projection will be pruned to its top-down columns,
+        // retain all non-selected grouping keys so pruning cannot collapse the keyed group by into a
+        // scalar aggregate. This early pass preserves the key ordering for the common case where the
+        // parent already contributed top-down columns; it is repeated once more below, after the
+        // model's own WHERE/HAVING and ORDER BY literals have been emitted, to also cover a HAVING-style
+        // filter that references only an aggregate alias (its literals are the sole top-down contributor,
+        // so an empty list here would skip retention). For top level models the list is empty -> no-op.
+        retainGroupByKeysAsTopDownColumns(model);
 
         // latest on
         if (model.getLatestBy().size() > 0) {
@@ -6236,6 +6267,14 @@ public class SqlOptimiser implements Mutable {
         if (!topLevel) {
             emitLiteralsTopDown(model.getOrderBy(), model);
         }
+
+        // Repeat group by key retention now that the model's own WHERE/HAVING and ORDER BY literals
+        // have been emitted into top-down columns. This covers HAVING-style filters on a group by
+        // sub-query whose only top-down contribution is an aggregate alias (e.g. count() > 1); the
+        // early pass above would have observed an empty list and skipped, letting pruning collapse the
+        // keyed group by into a scalar aggregate. addTopDownColumn() dedupes by alias, so re-running is
+        // idempotent and leaves the key ordering from the early pass untouched in the common case.
+        retainGroupByKeysAsTopDownColumns(model);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
@@ -7226,6 +7265,23 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             node = sqlNodeStack.poll();
+        }
+    }
+
+    // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
+    // top-down column pruning cannot drop the keys that define the grouping. Runs only when the model
+    // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
+    // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
+    // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
+    private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                QueryColumn qc = bottomUpColumns.getQuick(i);
+                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                    model.addTopDownColumn(qc, qc.getAlias());
+                }
+            }
         }
     }
 
@@ -9318,10 +9374,16 @@ public class SqlOptimiser implements Mutable {
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
 
-        // pre-detect duplicate aggregates using hash-based detection;
-        // this is only needed when there's no sample by fill
+        // Pre-detect duplicate aggregates using hash-based detection.
+        // Skip when SAMPLE BY FILL is set anywhere on the query, regardless of
+        // whether sampleBy is still on baseModel (moved above) or rewriteSampleBy
+        // already split it into fillStride + fillValues on baseModel. Both forms
+        // require per-column FILL values to land on their own aggregate slot, so
+        // dedup'ing count(x), count(x) into one inner aggregate would silently
+        // drop a per-column FILL value in cases like FILL(NULL, 0). FILL(NONE)
+        // does not propagate per-column values, so dedup stays safe there.
         boolean hasDuplicateAggregates = false;
-        if (groupByModel.getSampleByFill().size() == 0) {
+        if (groupByModel.getSampleByFill().size() == 0 && !hasNonNoneRewrittenFill(baseModel)) {
             hasDuplicateAggregates = detectDuplicateAggregates(columns);
         }
 
@@ -9353,7 +9415,16 @@ public class SqlOptimiser implements Mutable {
                             rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
                         }
 
-                        if (groupByModel.getSampleByFill().size() > 0) { // fill breaks if column is de-duplicated
+                        // Suppress sum(c*K) -> sum(c)*K and sum(c+/-K) -> sum(c) +/- count(*)*K
+                        // under SAMPLE BY FILL. The rewrite is only safe when no FILL value is
+                        // applied to empty buckets: with FILL(VALUE=v), v lands on each of the
+                        // (now split) inner aggregate slots and the outer arithmetic yields v*K
+                        // (multiplicative) or v + v*K (additive) - not the user-visible v. Cover
+                        // both forms of the input: sampleBy still on baseModel (the gate already
+                        // covered that via groupByModel.sampleByFill, moved here by
+                        // moveSampleByFrom) and rewriteSampleBy already converted it to
+                        // fillStride + fillValues on baseModel.
+                        if (groupByModel.getSampleByFill().size() > 0 || hasNonNoneRewrittenFill(baseModel)) {
                             continue;
                         }
 
@@ -9387,6 +9458,21 @@ public class SqlOptimiser implements Mutable {
                     rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                 }
             }
+        }
+
+        // Re-expose baseModel.fillValues on groupByModel.sampleByFill so the later
+        // assembleGroupByFunctions call in generateSelectGroupBy can validate each
+        // aggregate's getSampleByFlags() against the fill mode (the array_agg fix
+        // for "FILL(value) silently returns NULL for unsupported aggregates").
+        // sampleByFill (not fillValues) keeps toSink output stable: with sampleBy
+        // cleared, QueryModel.toSink skips the fill(...) branch entirely.
+        // Skip the re-expose when every token is NONE: validation for NONE is a
+        // no-op (every getSampleByFlags() includes SAMPLE_BY_FILL_NONE).
+        // The dedup and arithmetic-rewrite gates above already consulted
+        // hasNonNoneRewrittenFill(baseModel) directly, so this re-expose does not
+        // double up on those decisions; it is purely a hand-off to GroupByUtils.
+        if (sampleBy == null && hasNonNoneRewrittenFill(baseModel)) {
+            groupByModel.setSampleByFill(baseModel.getFillValues());
         }
 
         // group-by generator can cope with virtual columns, it does not require virtual model to be its base

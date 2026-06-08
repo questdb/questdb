@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.MemoryTag;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * RecordArray is similar to RecordChain, except that it stores the record's startOffset in a separate memory
@@ -51,6 +52,24 @@ public class RecordArray extends RecordChain {
         try {
             this.auxMem = varOffset > 0
                     ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN)
+                    : null;
+        } catch (Throwable th) {
+            super.close();
+            throw th;
+        }
+    }
+
+    public RecordArray(
+            @NotNull ColumnTypes columnTypes,
+            @Nullable RecordSink recordSink,
+            long pageSize,
+            int maxPages,
+            String maxPagesConfigKey
+    ) {
+        super(columnTypes, recordSink, pageSize, maxPages, maxPagesConfigKey);
+        try {
+            this.auxMem = varOffset > 0
+                    ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey)
                     : null;
         } catch (Throwable th) {
             super.close();

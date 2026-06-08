@@ -24,10 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -57,8 +53,10 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                                                 Frame forward scan on: y
                             """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb
                             0\t3
                             0\t2
@@ -70,51 +68,31 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             2\t3
                             2\t2
                             2\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
     @Test
     public void testDropAndRecreateTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (old int)");
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery compile = compiler.compile("select * from pg_catalog.pg_attribute", sqlExecutionContext);
-
-                // we use a single instance of RecordCursorFactory before and after table drop
-                // this mimic behavior of a query cache.
-                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("""
-                                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                                        1\told\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                                        """,
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-
-                    // recreate the same table again, this time with a different column
-                    execute("drop table x");
-                    execute("create table x (new long)");
-                    drainWalQueue();
-
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+        // A single cached pg_attribute factory must reflect table x after it is dropped and
+        // recreated with a different column - the attrelid moves from 1 to 2. The builder's
+        // mutateWith(...) path reuses one factory across the DDL, mimicking a query cache.
+        assertQuery("select * from pg_catalog.pg_attribute")
+                .ddl("create table x (old int)")
+                .mutateWith("drop table x", "create table x (new long)")
+                .noRandomAccess()
+                .expectSize()
+                .sizeMayVary()
+                .returns(
+                        """
+                                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                                1\told\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
+                                """,
                         // note the ID is 2 now!
-                        assertCursor("""
-                                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                                        2\tnew\t1\t20\tfalse\t-1\t8\t\tfalse\ttrue
-                                        """,
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-                }
-            }
-        });
+                        """
+                                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                                2\tnew\t1\t20\tfalse\t-1\t8\t\tfalse\ttrue
+                                """);
     }
 
     @Test
@@ -154,14 +132,10 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     ) result;\s
                 """;
 
-        assertQuery(
-                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n",
-                query,
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
+        assertQuery(query)
+                .ddl("create table x(a int)")
+                .noRandomAccess()
+                .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n");
     }
 
     @Test
@@ -198,13 +172,9 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                 WHERE A_ATTNUM = (result.KEYS).x \s
                 ORDER BY result.table_name, result.PK_NAME, result.KEY_SEQ;""";
 
-        assertQuery(
-                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\n",
-                query,
-                "create table x(a int)",
-                null,
-                true
-        );
+        assertQuery(query)
+                .ddl("create table x(a int)")
+                .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\n");
     }
 
     @Test
@@ -245,14 +215,9 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     WHERE A_ATTNUM = (result.KEYS).x \s
                     ORDER BY result.TABLE_NAME, result.pk_name, result.KEY_SEQ;""";
 
-            assertQuery(
-                    "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n",
-                    query,
-                    "create table x(a int)",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery(query)
+                    .ddl("create table x(a int)")
+                    .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n");
         });
     }
 
@@ -262,8 +227,46 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             execute("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT\s
+                            n.nspname,
+                            c.relname,
+                            a.attname,
+                            a.atttypid,
+                            a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
+                            a.atttypmod,
+                            a.attlen,
+                            t.typtypmod,
+                            row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
+                            nullif(a.attidentity, '') as attidentity,
+                            pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
+                            dsc.description,
+                            t.typbasetype,
+                            t.typtype \s
+                        FROM pg_catalog.pg_namespace n \s
+                            JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
+                            JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
+                            JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
+                            LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
+                            LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
+                            LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
+                            LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
+                        WHERE\s
+                            c.relkind in ('r','p','v','f','m')\s
+                            and a.attnum > 0\s
+                            AND NOT a.attisdropped \s
+                            AND c.relname LIKE E'y'
+                        ) c\s
+                    WHERE true \s
+                    ORDER BY\s
+                        nspname,
+                        c.relname,
+                        attnum""")
+                    .noLeakCheck()
+                    .ddl("create table x(a int)")
+                    .expectSize()
+                    .returns("""
                             nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype
                             public\ty\ta\t23\tfalse\t-1\t4\t0\t1\t\t\t\t0\tb
                             public\ty\tb\t21\tfalse\t-1\t2\t0\t2\t\t\t\t0\tb
@@ -277,48 +280,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             public\ty\tj\t701\tfalse\t-1\t8\t0\t10\t\t\t\t0\tb
                             public\ty\tk\t1114\tfalse\t-1\t8\t0\t11\t\t\t\t0\tb
                             public\ty\tl\t1114\tfalse\t-1\t8\t0\t12\t\t\t\t0\tb
-                            """,
-                    """
-                            SELECT * FROM (
-                                SELECT\s
-                                    n.nspname,
-                                    c.relname,
-                                    a.attname,
-                                    a.atttypid,
-                                    a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
-                                    a.atttypmod,
-                                    a.attlen,
-                                    t.typtypmod,
-                                    row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
-                                    nullif(a.attidentity, '') as attidentity,
-                                    pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
-                                    dsc.description,
-                                    t.typbasetype,
-                                    t.typtype \s
-                                FROM pg_catalog.pg_namespace n \s
-                                    JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
-                                    JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
-                                    JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
-                                    LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
-                                    LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
-                                    LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
-                                    LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
-                                WHERE\s
-                                    c.relkind in ('r','p','v','f','m')\s
-                                    and a.attnum > 0\s
-                                    AND NOT a.attisdropped \s
-                                    AND c.relname LIKE E'y'
-                                ) c\s
-                            WHERE true \s
-                            ORDER BY\s
-                                nspname,
-                                c.relname,
-                                attnum""",
-                    "create table x(a int)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -328,8 +290,43 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             execute("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT\s
+                            n.nspname,
+                            c.relname,
+                            a.attname,
+                            a.atttypid,
+                            a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
+                            a.atttypmod,
+                            a.attlen,
+                            t.typtypmod,
+                            row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
+                            nullif(a.attidentity, '') as attidentity,
+                            pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
+                            dsc.description,
+                            t.typbasetype,
+                            t.typtype \s
+                        FROM pg_catalog.pg_namespace n \s
+                            JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
+                            JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
+                            JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
+                            LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
+                            LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
+                            LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
+                            LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
+                        WHERE\s
+                            c.relkind in ('r','p','v','f','m')\s
+                            and a.attnum > 0\s
+                            AND NOT a.attisdropped \s
+                            AND c.relname LIKE E'y'
+                        order by a.attnum\
+                        ) c\s
+                    """)
+                    .noLeakCheck()
+                    .ddl("create table x(a int)")
+                    .expectSize()
+                    .returns("""
                             nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype
                             public\ty\ta\t23\tfalse\t-1\t4\t0\t1\t\t\t\t0\tb
                             public\ty\tb\t21\tfalse\t-1\t2\t0\t2\t\t\t\t0\tb
@@ -343,111 +340,65 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             public\ty\tj\t701\tfalse\t-1\t8\t0\t10\t\t\t\t0\tb
                             public\ty\tk\t1114\tfalse\t-1\t8\t0\t11\t\t\t\t0\tb
                             public\ty\tl\t1114\tfalse\t-1\t8\t0\t12\t\t\t\t0\tb
-                            """,
-                    """
-                            SELECT * FROM (
-                                SELECT\s
-                                    n.nspname,
-                                    c.relname,
-                                    a.attname,
-                                    a.atttypid,
-                                    a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
-                                    a.atttypmod,
-                                    a.attlen,
-                                    t.typtypmod,
-                                    row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
-                                    nullif(a.attidentity, '') as attidentity,
-                                    pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
-                                    dsc.description,
-                                    t.typbasetype,
-                                    t.typtype \s
-                                FROM pg_catalog.pg_namespace n \s
-                                    JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
-                                    JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
-                                    JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
-                                    LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
-                                    LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
-                                    LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
-                                    LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
-                                WHERE\s
-                                    c.relkind in ('r','p','v','f','m')\s
-                                    and a.attnum > 0\s
-                                    AND NOT a.attisdropped \s
-                                    AND c.relname LIKE E'y'
-                                order by a.attnum\
-                                ) c\s
-                            """,
-                    "create table x(a int)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testPgAttributeFunc() throws Exception {
-        assertQuery(
-                """
+        assertQuery("pg_catalog.pg_attribute;")
+                .ddl("create table x(a int)")
+                .noRandomAccess()
+                .returns("""
                         attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                         1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                        """,
-                "pg_catalog.pg_attribute;",
-                "create table x(a int)",
-                null,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testPgAttributeFuncNoPrefix() throws Exception {
-        assertQuery(
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
-                "pg_attribute;",
-                null,
-                null,
-                false
-        );
+        assertQuery("pg_attribute;")
+                .ddl(null)
+                .noRandomAccess()
+                .returns("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n");
     }
 
     @Test
     public void testPgAttributeFuncNoTables() throws Exception {
-        assertQuery(
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
-                "pg_catalog.pg_attribute;",
-                null,
-                null,
-                false
-        );
+        assertQuery("pg_catalog.pg_attribute;")
+                .ddl(null)
+                .noRandomAccess()
+                .returns("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n");
     }
 
     @Test
     public void testPgAttributeFuncWith2Tables() throws Exception {
-        assertQuery("""
+        assertQuery("pg_catalog.pg_attribute order by 1;")
+                .ddl("create table x(a int)")
+                .mutateWith("create table y(a double, b string)")
+                .returns("""
                         attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                         1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                        """,
-                "pg_catalog.pg_attribute order by 1;",
-                "create table x(a int)",
-                null,
-                "create table y(a double, b string)",
-                """
+                        """, """
                         attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                         1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
                         2\ta\t1\t701\tfalse\t-1\t8\t\tfalse\ttrue
                         2\tb\t2\t1043\tfalse\t-1\t-1\t\tfalse\ttrue
-                        """, true, false, false);
+                        """);
     }
 
     @Test
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
-        assertQuery("""
-                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                """, "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", """
-                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                """, true, false, false);
+        assertQuery("pg_catalog.pg_attribute order by 1 limit 1;")
+                .ddl("create table x(a int)")
+                .mutateWith("create table y(a double, b string)")
+                .returns("""
+                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                        1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
+                        """, """
+                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                        1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
+                        """);
     }
 
     @Test
@@ -486,16 +437,12 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     WHERE true \s
                     ORDER BY nspname,c.relname --,attnum""";
 
-            assertQuery(
-                    """
+            assertQuery(query)
+                    .ddl("create table x(a int)")
+                    .returns("""
                             nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype
                             public\tx\ta\t23\tfalse\t-1\t4\t0\t\t\t\t0\tb
-                            """,
-                    query,
-                    "create table x(a int)",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 }

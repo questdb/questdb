@@ -36,13 +36,15 @@ public class InDoubleTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarConstants() throws SqlException {
-        execute("create table MovementLog(\n" +
-                "ts timestamp,\n" +
-                "initParticipantId long,\n" +
-                "initParticipantIdType symbol,\n" +
-                "movementBusinessDate date,\n" +
-                "slotId double\n" +
-                ") timestamp(ts) partition by day wal\n");
+        execute("""
+                create table MovementLog(
+                ts timestamp,
+                initParticipantId long,
+                initParticipantIdType symbol,
+                movementBusinessDate date,
+                slotId double
+                ) timestamp(ts) partition by day wal
+                """);
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -51,22 +53,25 @@ public class InDoubleTest extends AbstractCairoTest {
                 bindVariableService -> bindVariableService.setDate(0, 1000L)
         ));
 
-        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
-                "FROM 'MovementLog'\n" +
-                "WHERE movementBusinessDate=$1 AND slotId IN (1.1, 2.1, 3.52)\n" +
-                "ORDER BY participantId\n" +
-                "LIMIT 0,6", tuples);
+        assertSql("""
+                SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
+                FROM 'MovementLog'
+                WHERE movementBusinessDate=$1 AND slotId IN (1.1, 2.1, 3.52)
+                ORDER BY participantId
+                LIMIT 0,6""", tuples);
     }
 
     @Test
     public void testBindVarRuntimeConstants() throws SqlException {
-        execute("create table MovementLog(\n" +
-                "ts timestamp,\n" +
-                "initParticipantId long,\n" +
-                "initParticipantIdType symbol,\n" +
-                "movementBusinessDate date,\n" +
-                "slotId double\n" +
-                ") timestamp(ts) partition by day wal\n");
+        execute("""
+                create table MovementLog(
+                ts timestamp,
+                initParticipantId long,
+                initParticipantIdType symbol,
+                movementBusinessDate date,
+                slotId double
+                ) timestamp(ts) partition by day wal
+                """);
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -80,11 +85,12 @@ public class InDoubleTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
-                "FROM 'MovementLog'\n" +
-                "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
-                "ORDER BY participantId\n" +
-                "LIMIT 0,6", tuples);
+        assertSql("""
+                SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
+                FROM 'MovementLog'
+                WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)
+                ORDER BY participantId
+                LIMIT 0,6""", tuples);
     }
 
 
@@ -96,10 +102,12 @@ public class InDoubleTest extends AbstractCairoTest {
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "simple",
-                "x\ta\n" +
-                        "58\t0.6821660861001273\n" +
-                        "89\t0.3045253310626277\n" +
-                        "90\t0.3901731258748704\n",
+                """
+                        x\ta
+                        58\t0.6821660861001273
+                        89\t0.3045253310626277
+                        90\t0.3901731258748704
+                        """,
                 bindVariableService -> {
                     bindVariableService.setStr(0, "0.6821660861001273");
                     bindVariableService.setDouble(1, 0.3901731258748704);
@@ -149,9 +157,11 @@ public class InDoubleTest extends AbstractCairoTest {
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "mix",
-                "x\ta\n" +
-                        "58\t0.6821660861001273\n" +
-                        "90\t0.3901731258748704\n",
+                """
+                        x\ta
+                        58\t0.6821660861001273
+                        90\t0.3901731258748704
+                        """,
                 bindVariableService -> bindVariableService.setStr(0, "0.6821660861001273")
         ));
 
@@ -166,34 +176,36 @@ public class InDoubleTest extends AbstractCairoTest {
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "simple",
-                "x\ta\n" +
-                        "8\tnull\n" +
-                        "17\tnull\n" +
-                        "26\tnull\n" +
-                        "29\tnull\n" +
-                        "30\tnull\n" +
-                        "35\tnull\n" +
-                        "39\t0.6590341607692226\n" +
-                        "41\tnull\n" +
-                        "44\tnull\n" +
-                        "45\t0.45659895188239796\n" +
-                        "49\tnull\n" +
-                        "54\tnull\n" +
-                        "56\tnull\n" +
-                        "57\tnull\n" +
-                        "60\tnull\n" +
-                        "65\tnull\n" +
-                        "67\tnull\n" +
-                        "69\tnull\n" +
-                        "70\tnull\n" +
-                        "73\tnull\n" +
-                        "74\tnull\n" +
-                        "75\tnull\n" +
-                        "80\tnull\n" +
-                        "81\tnull\n" +
-                        "84\tnull\n" +
-                        "96\tnull\n" +
-                        "99\tnull\n",
+                """
+                        x\ta
+                        8\tnull
+                        17\tnull
+                        26\tnull
+                        29\tnull
+                        30\tnull
+                        35\tnull
+                        39\t0.6590341607692226
+                        41\tnull
+                        44\tnull
+                        45\t0.45659895188239796
+                        49\tnull
+                        54\tnull
+                        56\tnull
+                        57\tnull
+                        60\tnull
+                        65\tnull
+                        67\tnull
+                        69\tnull
+                        70\tnull
+                        73\tnull
+                        74\tnull
+                        75\tnull
+                        80\tnull
+                        81\tnull
+                        84\tnull
+                        96\tnull
+                        99\tnull
+                        """,
                 bindVariableService -> {
                     bindVariableService.setStr(0, "0.6590341607692226");
                     bindVariableService.setDouble(1, 0.45659895188239796);
@@ -202,33 +214,35 @@ public class InDoubleTest extends AbstractCairoTest {
 
         tuples.add(new BindVariableTestTuple(
                 "bad type",
-                "x\ta\n" +
-                        "8\tnull\n" +
-                        "17\tnull\n" +
-                        "26\tnull\n" +
-                        "29\tnull\n" +
-                        "30\tnull\n" +
-                        "35\tnull\n" +
-                        "39\t0.6590341607692226\n" +
-                        "41\tnull\n" +
-                        "44\tnull\n" +
-                        "49\tnull\n" +
-                        "54\tnull\n" +
-                        "56\tnull\n" +
-                        "57\tnull\n" +
-                        "60\tnull\n" +
-                        "65\tnull\n" +
-                        "67\tnull\n" +
-                        "69\tnull\n" +
-                        "70\tnull\n" +
-                        "73\tnull\n" +
-                        "74\tnull\n" +
-                        "75\tnull\n" +
-                        "80\tnull\n" +
-                        "81\tnull\n" +
-                        "84\tnull\n" +
-                        "96\tnull\n" +
-                        "99\tnull\n",
+                """
+                        x\ta
+                        8\tnull
+                        17\tnull
+                        26\tnull
+                        29\tnull
+                        30\tnull
+                        35\tnull
+                        39\t0.6590341607692226
+                        41\tnull
+                        44\tnull
+                        49\tnull
+                        54\tnull
+                        56\tnull
+                        57\tnull
+                        60\tnull
+                        65\tnull
+                        67\tnull
+                        69\tnull
+                        70\tnull
+                        73\tnull
+                        74\tnull
+                        75\tnull
+                        80\tnull
+                        81\tnull
+                        84\tnull
+                        96\tnull
+                        99\tnull
+                        """,
                 bindVariableService -> {
                     bindVariableService.setStr(0, null);
                     bindVariableService.setDouble(1, 0.6590341607692226);
@@ -240,10 +254,7 @@ public class InDoubleTest extends AbstractCairoTest {
     @Test
     public void testUnsupportedConstType() throws Exception {
         execute("create table test as (select x, rnd_double(1) a from long_sequence(100))");
-        assertException(
-                "test where a in (0.234, cast ('1CB' as geohash(1b)))",
-                24,
-                "cannot compare DOUBLE with type GEOHASH(1b)"
-        );
+        assertQuery("test where a in (0.234, cast ('1CB' as geohash(1b)))")
+                .fails(24, "cannot compare DOUBLE with type GEOHASH(1b)");
     }
 }

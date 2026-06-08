@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,7 +46,9 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                 "from itest " +
                 "WHERE  ts in '2023-04-05T23:59:00.000000Z;60s;10m;10'";
 
-        assertQuery("""
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("""
                         id\tts
                         id-9\t2023-04-06T00:09:00.000000Z
                         id-19\t2023-04-06T00:19:00.000000Z
@@ -57,14 +59,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-69\t2023-04-06T01:09:00.000000Z
                         id-79\t2023-04-06T01:19:00.000000Z
                         id-89\t2023-04-06T01:29:00.000000Z
-                        """,
-                query,
-                "ts",
-                true,
-                false
-        );
+                        """);
 
-        assertQuery("""
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("""
                         id\tts
                         id-89\t2023-04-06T01:29:00.000000Z
                         id-79\t2023-04-06T01:19:00.000000Z
@@ -75,12 +74,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-29\t2023-04-06T00:29:00.000000Z
                         id-19\t2023-04-06T00:19:00.000000Z
                         id-9\t2023-04-06T00:09:00.000000Z
-                        """,
-                query + ORDER_BY_DESC,
-                "ts###DESC",
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -98,17 +92,19 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
         String query = "select * " +
                 "from itest " +
                 "WHERE  ts in '2023-04-06T01:30:00.000000Z;60s;10m;10'";
-        assertQuery("""
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("""
                         id\tts
                         id-90\t2023-04-06T01:30:00.000000Z
-                        """,
-                query, "ts", true, false);
+                        """);
 
-        assertQuery("""
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("""
                         id\tts
                         id-90\t2023-04-06T01:30:00.000000Z
-                        """,
-                query + ORDER_BY_DESC, "ts###DESC", true, false);
+                        """);
     }
 
     @Test
@@ -127,7 +123,9 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                 "from itest " +
                 "WHERE  ts in '2023-04-05T23:59:00.000000Z;60s;10m;15'";
 
-        assertQuery("""
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("""
                         id\tts
                         id-9\t2023-04-06T00:09:00.000000Z
                         id-19\t2023-04-06T00:19:00.000000Z
@@ -138,10 +136,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-69\t2023-04-06T01:09:00.000000Z
                         id-79\t2023-04-06T01:19:00.000000Z
                         id-89\t2023-04-06T01:29:00.000000Z
-                        """,
-                query, "ts", true, false);
+                        """);
 
-        assertQuery("""
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("""
                         id\tts
                         id-89\t2023-04-06T01:29:00.000000Z
                         id-79\t2023-04-06T01:19:00.000000Z
@@ -152,8 +151,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-29\t2023-04-06T00:29:00.000000Z
                         id-19\t2023-04-06T00:19:00.000000Z
                         id-9\t2023-04-06T00:09:00.000000Z
-                        """,
-                query + ORDER_BY_DESC, "ts###DESC", true, false);
+                        """);
     }
 
     @Test //end value of last interval
@@ -172,7 +170,9 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                 "from itest " +
                 "WHERE  ts in '2023-04-05T23:59:00.000000Z;60s;10m;10'";
 
-        assertQuery("""
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("""
                         id\tts
                         id-9\t2023-04-06T00:09:00.000000Z
                         id-19\t2023-04-06T00:19:00.000000Z
@@ -183,10 +183,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-69\t2023-04-06T01:09:00.000000Z
                         id-79\t2023-04-06T01:19:00.000000Z
                         id-89\t2023-04-06T01:29:00.000000Z
-                        """,
-                query, "ts", true, false);
+                        """);
 
-        assertQuery("""
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("""
                         id\tts
                         id-89\t2023-04-06T01:29:00.000000Z
                         id-79\t2023-04-06T01:19:00.000000Z
@@ -197,8 +198,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-29\t2023-04-06T00:29:00.000000Z
                         id-19\t2023-04-06T00:19:00.000000Z
                         id-9\t2023-04-06T00:09:00.000000Z
-                        """,
-                query + ORDER_BY_DESC, "ts###DESC", true, false);
+                        """);
     }
 
     @Test //start value of last interval
@@ -217,7 +217,9 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                 "from itest " +
                 "WHERE  ts in '2023-04-06T00:00:00.000000Z;60s;10m;10'";
 
-        assertQuery("""
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("""
                         id\tts
                         id-10\t2023-04-06T00:10:00.000000Z
                         id-20\t2023-04-06T00:20:00.000000Z
@@ -228,10 +230,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-70\t2023-04-06T01:10:00.000000Z
                         id-80\t2023-04-06T01:20:00.000000Z
                         id-90\t2023-04-06T01:30:00.000000Z
-                        """,
-                query, "ts", true, false);
+                        """);
 
-        assertQuery("""
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("""
                         id\tts
                         id-90\t2023-04-06T01:30:00.000000Z
                         id-80\t2023-04-06T01:20:00.000000Z
@@ -242,8 +245,7 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                         id-30\t2023-04-06T00:30:00.000000Z
                         id-20\t2023-04-06T00:20:00.000000Z
                         id-10\t2023-04-06T00:10:00.000000Z
-                        """,
-                query + ORDER_BY_DESC, "ts###DESC", true, false);
+                        """);
     }
 
     @Test
@@ -262,8 +264,12 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                 "from itest " +
                 "WHERE  ts in '2023-04-05T23:59:00.000000Z;60s;10m;10'";
 
-        assertQuery("id\tts\n", query, "ts", true, false);
-        assertQuery("id\tts\n", query + ORDER_BY_DESC, "ts###DESC", true, false);
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("id\tts\n");
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("id\tts\n");
     }
 
     @Test
@@ -282,11 +288,13 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                 "from itest " +
                 "WHERE  ts in '2023-04-05T23:59:00.000000Z;60s;10m;10'";
 
-        assertQuery("id\tts\n",
-                query, "ts", true, false);
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("id\tts\n");
 
-        assertQuery("id\tts\n",
-                query + ORDER_BY_DESC, "ts###DESC", true, false);
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("id\tts\n");
     }
 
     @Test
@@ -305,18 +313,20 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
                 "from itest " +
                 "WHERE  ts in '2023-04-05T23:59:00.000000Z;60s;10m;10'";
 
-        assertQuery("""
+        assertQuery(query)
+                .timestamp("ts")
+                .returns("""
                         id\tts
                         id-1\t2023-04-06T01:29:00.000000Z
-                        """,
-                query, "ts", true, false);
+                        """);
 
 
-        assertQuery("""
+        assertQuery(query + ORDER_BY_DESC)
+                .timestampDesc("ts")
+                .returns("""
                         id\tts
                         id-1\t2023-04-06T01:29:00.000000Z
-                        """,
-                query + ORDER_BY_DESC, "ts###DESC", true, false);
+                        """);
     }
 
 
