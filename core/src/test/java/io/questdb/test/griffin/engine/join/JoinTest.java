@@ -2089,6 +2089,43 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInSubQueryWithJoinOnClause() throws Exception {
+        // A JOIN nested in a lambda IN sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)",
+        // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
+        // the IN operand, crashing with an NPE in WhereClauseParser.analyzeIn. The sub-query must
+        // compile and filter correctly regardless of join type or how the ON clause is written.
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into trades values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z'), ('C', '2020-01-03T00:00:00.000000Z')");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\tts\n" +
+                    "A\t2020-01-01T00:00:00.000000Z\n" +
+                    "B\t2020-01-02T00:00:00.000000Z\n";
+
+            // HORIZON JOIN with shorthand ON (col) -- the exact shape from the bug report
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
+
+            // explicit equality ON -- used to fail with "Column name expected"
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on s.symbol = r.symbol range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
+
+            // a second join type with shorthand ON, to cover the shared ON-clause parse path
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
+        });
+    }
+
+    @Test
     public void testJoinAliasBug() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (xid int, a int, b int)");

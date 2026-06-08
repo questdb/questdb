@@ -3500,6 +3500,10 @@ public class SqlParser {
             case IQueryModel.JOIN_FULL_OUTER:
                 expectTok(lexer, tok, "on");
                 onClauseObserved = true;
+                // A join nested in a lambda sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)")
+                // leaves the outer operand on the shared arg stack; raise the floor so draining
+                // join columns below cannot consume it.
+                expressionTreeBuilder.pushArgStackBottom();
                 try {
                     expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
                     ExpressionNode expr;
@@ -3530,6 +3534,8 @@ public class SqlParser {
                 } catch (SqlException e) {
                     expressionTreeBuilder.reset();
                     throw e;
+                } finally {
+                    expressionTreeBuilder.popArgStackBottom();
                 }
                 break;
             default:

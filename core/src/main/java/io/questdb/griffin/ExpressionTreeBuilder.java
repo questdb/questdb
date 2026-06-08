@@ -78,9 +78,20 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
         return argStack.size() > argStackBottom ? argStack.poll() : null;
     }
 
+    void popArgStackBottom() {
+        argStackBottom = argStackBottomStack.notEmpty() ? argStackBottomStack.pop() : 0;
+    }
+
     void popModel() {
         this.model = modelStack.poll();
         this.argStackBottom = argStackBottomStack.notEmpty() ? argStackBottomStack.pop() : 0;
+    }
+
+    // Raises the arg-stack floor so a reentrant parse cannot poll operands of the
+    // enclosing expression. Unlike pushModel(), it leaves the current model in place.
+    void pushArgStackBottom() {
+        argStackBottomStack.push(argStackBottom);
+        argStackBottom = argStack.size();
     }
 
     void pushModel(IQueryModel model) {
