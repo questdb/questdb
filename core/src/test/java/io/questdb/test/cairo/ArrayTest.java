@@ -120,16 +120,15 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("x\n2.0\nnull\nnull\n");
-            assertPlanNoLeakCheck(
-                    "SELECT arr1[arr2[2]::int] x FROM tango",
-                    """
+            assertQuery("SELECT arr1[arr2[2]::int] x FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [arr1[arr2[2]::int]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango
-                            """
-            );
+                            """);
         });
     }
 
@@ -162,16 +161,15 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("x\n8.0\n");
-            assertPlanNoLeakCheck(
-                    "SELECT arr[2][2][2] x FROM tango",
-                    """
+            assertQuery("SELECT arr[2][2][2] x FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [arr[2,2,2]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango
-                            """
-            );
+                            """);
         });
     }
 
@@ -311,16 +309,15 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("x\n10.0\n42.0\nnull\n");
-            assertPlanNoLeakCheck(
-                    "SELECT arr[1] x FROM tango",
-                    """
+            assertQuery("SELECT arr[1] x FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [arr[1]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango
-                            """
-            );
+                            """);
         });
     }
 
@@ -339,16 +336,15 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("x\n1.0\nnull\n");
-            assertPlanNoLeakCheck(
-                    "SELECT arr[1][1] x FROM tango",
-                    """
+            assertQuery("SELECT arr[1][1] x FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [arr[1,1]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango
-                            """
-            );
+                            """);
         });
     }
 
@@ -1037,9 +1033,9 @@ public class ArrayTest extends AbstractCairoTest {
                             2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]
                             """);
 
-            assertPlanNoLeakCheck(
-                    "select ts, x, first(v) as v from test sample by 1s",
-                    """
+            assertQuery("select ts, x, first(v) as v from test sample by 1s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1050,8 +1046,7 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: test
-                            """
-            );
+                            """);
         });
     }
 
@@ -3407,19 +3402,17 @@ public class ArrayTest extends AbstractCairoTest {
                             [[null,0.9856290845874263],[null,0.5093827001617407]]
                             """);
 
-            assertQuery("explain select rnd_double_array(2, 1, 0, 2, 2)")
+            assertQuery("select rnd_double_array(2, 1, 0, 2, 2)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_double_array(2,1,ignored,2,2)]
                                 long_sequence count: 1
                             """);
 
-            assertQuery("explain select rnd_double_array(3, 1, 4)")
+            assertQuery("select rnd_double_array(3, 1, 4)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_double_array(3,1,4)]
                                 long_sequence count: 1
@@ -3940,16 +3933,15 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("x\n[[8.0]]\n");
-            assertPlanNoLeakCheck(
-                    "SELECT arr[2,3-1:,2:] x FROM tango",
-                    """
+            assertQuery("SELECT arr[2,3-1:,2:] x FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [arr[2,2:,2:]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango
-                            """
-            );
+                            """);
         });
     }
 

@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -45,10 +44,9 @@ public class ExceptTest extends AbstractCairoTest {
                     "1\tC\n" +
                     "2\tA\n";  // <--- duplicate here
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("(select i,s from x) except all (select i,s from y)")) {
-                assertCursor(expected, factory, true, false);
-            }
+            assertQuery("(select i,s from x) except all (select i,s from y)")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -66,10 +64,9 @@ public class ExceptTest extends AbstractCairoTest {
                     "1\tC\n" +
                     "2\tA\n";  // <--- duplicate here
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("(select i,s from x) except all (select i,first(s) from y)")) {
-                assertCursor(expected, factory, true, false);
-            }
+            assertQuery("(select i,s from x) except all (select i,first(s) from y)")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -142,10 +139,10 @@ public class ExceptTest extends AbstractCairoTest {
                             " long_sequence(20))"
             );
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -172,10 +169,9 @@ public class ExceptTest extends AbstractCairoTest {
                             " long_sequence(10))"
             );
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("select * from x except all y")) {
-                assertCursor(expected2, factory, true, false);
-            }
+            assertQuery("select * from x except all y")
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -205,10 +201,10 @@ public class ExceptTest extends AbstractCairoTest {
                             " FROM long_sequence(7) x)"
             );
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -226,10 +222,9 @@ public class ExceptTest extends AbstractCairoTest {
                             " FROM long_sequence(13) x)"
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("select distinct t from x except all y except all z")) {
-                assertCursor(expected2, factory, true, false);
-            }
+            assertQuery("select distinct t from x except all y except all z")
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -275,10 +270,9 @@ public class ExceptTest extends AbstractCairoTest {
                     1\tC
                     """;
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("(select i,s from x) except (select i,s from y)")) {
-                assertCursor(expected, factory, true, false);
-            }
+            assertQuery("(select i,s from x) except (select i,s from y)")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -370,10 +364,9 @@ public class ExceptTest extends AbstractCairoTest {
                     5\t2023-01-01T00:00:00.500000000Z
                     """;
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("select * from t1 except select * from t2 except select * from t3")) {
-                assertCursor(expected, factory, true, false);
-            }
+            assertQuery("select * from t1 except select * from t2 except select * from t3")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -391,10 +384,9 @@ public class ExceptTest extends AbstractCairoTest {
                     1\tC
                     """;
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("(select i,s from x) except (select i,first(s) from y)")) {
-                assertCursor(expected, factory, true, false);
-            }
+            assertQuery("(select i,s from x) except (select i,first(s) from y)")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -467,10 +459,10 @@ public class ExceptTest extends AbstractCairoTest {
                             " long_sequence(20))"
             );
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -497,10 +489,9 @@ public class ExceptTest extends AbstractCairoTest {
                             " long_sequence(10))"
             );
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("select * from x except y")) {
-                assertCursor(expected2, factory, true, false);
-            }
+            assertQuery("select * from x except y")
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 

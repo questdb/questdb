@@ -202,6 +202,8 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
             Rnd rnd = sqlExecutionContext.getRandom();
             long s0 = rnd.getSeed0();
             long s1 = rnd.getSeed1();
+            // returnsOnce(): the query (built above) evaluates rnd_*() inline, so its values differ
+            // across the re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery(sqlA)
                     .noLeakCheck()
                     .returnsOnce(expected);
@@ -209,6 +211,8 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
             rnd.reset(s0, s1);
             final String sqlB = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count(distinct s) from x sample by 2s";
+            // returnsOnce(): the query (built above) evaluates rnd_*() inline, so its values differ
+            // across the re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery(sqlB)
                     .noLeakCheck()
                     .returnsOnce(expected);

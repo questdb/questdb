@@ -30,7 +30,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class ConcatFunctionFactoryTest extends AbstractCairoTest {
@@ -46,8 +46,8 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarMixed() throws Exception {
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "mixed",
                 """
                         concat
@@ -60,13 +60,13 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("select concat('hihi', null, $1, 10, $2, $3)", tuples);
+        assertQuery("select concat('hihi', null, $1, 10, $2, $3)").expectSize().assertBinds(cases);
     }
 
     @Test
     public void testBindVarTypeChange() throws Exception {
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "all varchar",
                 """
                         concat
@@ -79,7 +79,7 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "type change",
                 """
                         concat
@@ -92,15 +92,13 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("select concat($1, $2, $3)", tuples);
+        assertQuery("select concat($1, $2, $3)").expectSize().assertBinds(cases);
     }
 
     @Test
     public void testColumn() throws Exception {
-        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "column",
                 """
                         concat
@@ -117,7 +115,10 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("select concat('hihi', a::int + 1, $1, 10, $2, $3) from test", tuples);
+        assertQuery("select concat('hihi', a::int + 1, $1, 10, $2, $3) from test")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))")
+                .expectSize()
+                .assertBinds(cases);
     }
 
     @Test

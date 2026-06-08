@@ -95,7 +95,9 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("""
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     sum
                                     999999999999999999999999999999999999990000000
                                     """),
@@ -139,7 +141,9 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("""
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     sum_dec
                                     900000000000000000000000000000494999595
                                     """),
@@ -182,7 +186,9 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("""
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     sum
                                     999999999999990000000
                                     """),
@@ -211,7 +217,9 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("""
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     sum_dec	sum_d
                                     19000000000494999090	1.9000000000494998E19
                                     """),

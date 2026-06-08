@@ -82,16 +82,15 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "array_sum(bids[2, 1:4]) bid_vol, " +
                     "bid_vol / ask_vol ratio " +
                     "FROM order_book";
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [memoize(array_sum(asks[2,1:4])),memoize(array_sum(bids[2,1:4])),bid_vol/ask_vol]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: order_book
-                            """
-            );
+                            """);
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
@@ -137,16 +136,15 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(asks[1] - mid_price) * asks[2] weighted_ask_pressure, " +
                     "(mid_price - bids[1]) * bids[2] weighted_bid_pressure " +
                     "FROM order_book";
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [memoize(round(asks[1,1]+bids[1,1]/2,2)),asks[1]-mid_price*asks[2],mid_price-bids[1]*bids[2]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: order_book
-                            """
-            );
+                            """);
             assertQuery(sql)
                     .noLeakCheck()
                     .expectSize()
@@ -245,17 +243,16 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "array_avg(asks[2, 3:6]) deep " +
                     "FROM order_book) " +
                     "WHERE top > 3 * deep";
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: 3*deep<top
                                 VirtualRecord
                                   functions: [memoize(array_avg(asks[2,1:3])),memoize(array_avg(asks[2,3:6]))]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: order_book
-                            """
-            );
+                            """);
             assertQuery(sql)
                     .noLeakCheck()
                     .returns("top\tdeep\n22.5\t5.0\n");
