@@ -282,7 +282,7 @@ public class DistinctTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("b0", "Y");
             assertQuery("SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
-                            " FROM long_sequence(3) t0")
+                    " FROM long_sequence(3) t0")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()

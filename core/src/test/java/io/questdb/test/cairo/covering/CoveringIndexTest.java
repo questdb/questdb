@@ -7179,12 +7179,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tprice
-                    2024-01-01T00:00:00.000000Z\tA\t1.0
-                    2024-01-01T01:00:00.000000Z\tB\t2.0
-                    2024-01-03T00:00:00.000000Z\tA\t3.0
-                    2024-01-03T01:00:00.000000Z\tB\t4.0
-                    """);
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-03T00:00:00.000000Z\tA\t3.0
+                            2024-01-03T01:00:00.000000Z\tB\t4.0
+                            """);
 
             // Page-frame path via vectorized count + sum: correct totals
             // prove the middle partition is skipped without producing a
@@ -7230,13 +7230,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tprice
-                    2024-01-01T00:00:00.000000Z\tA\t1.0
-                    2024-01-01T01:00:00.000000Z\tB\t2.0
-                    2024-01-01T02:00:00.000000Z\tA\t3.0
-                    2024-01-01T03:00:00.000000Z\tB\t4.0
-                    2024-01-01T04:00:00.000000Z\tA\t5.0
-                    """);
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            2024-01-01T03:00:00.000000Z\tB\t4.0
+                            2024-01-01T04:00:00.000000Z\tA\t5.0
+                            """);
         });
     }
 
@@ -7273,11 +7273,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tprice
-                    2024-01-01T00:00:00.000000Z\tA\t1.0
-                    2024-01-01T01:00:00.000000Z\tB\t2.0
-                    2024-01-01T02:00:00.000000Z\tA\t3.0
-                    """);
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            """);
         });
     }
 
