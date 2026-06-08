@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -2113,25 +2115,32 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery(
                     "select * from trades where symbol in " +
                             "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
-            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
+            ).noLeakCheck().timestamp("ts").returns(expected);
 
             // explicit equality ON -- used to fail with "Column name expected"
             assertQuery(
                     "select * from trades where symbol in " +
                             "(select s.symbol from src s horizon join ref r on s.symbol = r.symbol range from -30s to 30s step 5s as h)"
-            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
+            ).noLeakCheck().timestamp("ts").returns(expected);
 
             // a second join type with shorthand ON, to cover the shared ON-clause parse path
             // (ASOF and the INNER/LEFT/... family share the same ON-drain code in parseJoin)
             assertQuery(
                     "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
-            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // INNER join is the common real-world shape and enters the ON case via the direct arm
+            // (not the ASOF/HORIZON fall-through). A hash join retains >64 KiB of legitimate map RSS
+            // after cursor close, which trips assertQuery's factory-property check, so assert data
+            // only with assertSql here.
+            assertSql(expected,
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)");
 
             // NOT IN exercises the same parse path with a negated operator -- expect only C
             assertQuery(
                     "select * from trades where symbol not in " +
                             "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
-            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(
+            ).noLeakCheck().timestamp("ts").returns(
                     "symbol\tts\n" +
                             "C\t2020-01-03T00:00:00.000000Z\n"
             );
@@ -2173,6 +2182,26 @@ public class JoinTest extends AbstractCairoTest {
                     "query is not allowed here",
                     sqlExecutionContext
             );
+
+            // A rejected ON-clause sub-query must leave the shared parser state clean: the error
+            // path unwinds through reset() and popArgStackBottom(), so the SAME pooled compiler
+            // compiles the next, valid query without carrying over corrupted arg-stack state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "select * from trades where symbol in " +
+                                    "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("nested ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+                ).withCompiler(compiler).noLeakCheck().timestamp("ts").returns(expected);
+            }
         });
     }
 
