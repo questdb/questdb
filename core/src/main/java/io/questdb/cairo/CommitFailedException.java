@@ -25,18 +25,15 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.StringSink;
 
 public class CommitFailedException extends Exception {
-    private static final CarrierLocal<CommitFailedException> tlException = new CarrierLocal<>(CommitFailedException::new);
     protected final StringSink message = new StringSink();
     private Throwable reason;
     private boolean tableDropped;
 
     public static CommitFailedException instance(Throwable reason, boolean tableDropped) {
-        CommitFailedException ex = tlException.get();
-        assert (ex = new CommitFailedException()) != null;
+        CommitFailedException ex = new CommitFailedException();
         ex.reason = reason;
         ex.message.clear();
         if (!tableDropped) {

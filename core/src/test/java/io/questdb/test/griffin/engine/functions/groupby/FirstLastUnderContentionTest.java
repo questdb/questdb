@@ -97,6 +97,10 @@ public class FirstLastUnderContentionTest extends AbstractCairoTest {
                     final AtomicInteger firstMismatches = new AtomicInteger();
                     final AtomicInteger lastMismatches = new AtomicInteger();
 
+                    // Match the shared-pool worker count so the per-thread contexts still drive parallel
+                    // GROUP BY (it engages only when getSharedQueryWorkerCount() > 0).
+                    final int sharedQueryWorkerCount = sqlExecutionContext.getSharedQueryWorkerCount();
+
                     for (int t = 0; t < NUM_THREADS; t++) {
                         final int threadId = t;
                         new Thread(() -> {
@@ -104,7 +108,7 @@ public class FirstLastUnderContentionTest extends AbstractCairoTest {
                             // reader-pool supervisor slot, among other per-query state), so
                             // every thread compiles and runs against its own context.
                             try (SqlExecutionContext threadCtx =
-                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                         TestUtils.createSqlExecutionCtx(engine, sharedQueryWorkerCount)) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
                                     double[] observed = runFirstLast(engine, threadCtx);

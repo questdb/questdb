@@ -27,11 +27,10 @@ package io.questdb.cairo;
 import io.questdb.std.CarrierLocal;
 
 public class EntryUnavailableException extends CairoException {
-    private static final CarrierLocal<EntryUnavailableException> tlException = new CarrierLocal<>(EntryUnavailableException::new);
     private String reason;
 
     public static EntryUnavailableException instance(String reason) {
-        EntryUnavailableException ex = tlException.get();
+        EntryUnavailableException ex = new EntryUnavailableException();
         ex.message.clear();
         ex.errno = CairoException.NON_CRITICAL;
         ex.put("table busy [reason=").put(reason).put(']');

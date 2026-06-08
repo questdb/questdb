@@ -448,7 +448,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // to cleaned up circuit breaker.
                 registry.unregister(sqlId, executionContext);
                 if (executionContext.getCairoEngine().getConfiguration().freeLeakedReaders()) {
-                    Misc.freeObjListAndClear(readers);
+                    // Each leaked reader still references this QueryProgress as its pool supervisor,
+                    // so closing it re-enters onResourceReturned() -> readers.remove(). A fixed-index
+                    // walk (Misc.freeObjListAndClear) would resize the list mid-iteration and skip
+                    // every other reader. Detach each entry from the list BEFORE freeing it, so the
+                    // re-entrant remove() is a harmless no-op and no leaked reader is missed.
+                    while (readers.size() > 0) {
+                        int last = readers.size() - 1;
+                        TableReader reader = readers.getQuick(last);
+                        readers.remove(last);
+                        Misc.free(reader);
+                    }
                 } else {
                     // just clearing readers should fail leak test
                     readers.clear();
