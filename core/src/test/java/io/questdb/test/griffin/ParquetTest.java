@@ -2114,14 +2114,13 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetCacheCleanStaleSpillFilesPreservesForeignPidFiles() throws Exception {
+    public void testParquetCacheCleanStaleSpillFilesRemovesForeignPidFiles() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             String dir = temp.getRoot().getAbsolutePath();
             try (Path path = new Path()) {
                 final long ownPid = ProcessHandle.current().pid();
                 final long foreignPid = ownPid + 1;
-                // Drop one file owned by us and one owned by a peer process.
                 path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
                         .put(ownPid).put('-').put(1L).put('-').put(0).$();
                 long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
@@ -2139,8 +2138,7 @@ public class ParquetTest extends AbstractCairoTest {
                 Assert.assertFalse("own-PID file should be removed", ff.exists(path.$()));
                 path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
                         .put(foreignPid).put('-').put(1L).put('-').put(0).$();
-                Assert.assertTrue("foreign-PID file must be preserved", ff.exists(path.$()));
-                ff.removeQuiet(path.$());
+                Assert.assertFalse("foreign-PID file should be removed too", ff.exists(path.$()));
             }
         });
     }
@@ -3052,6 +3050,39 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheHotPartitionScatteredHintDoesNotSpill() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        // Default IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST == false; cold gate must
+        // suppress spill even with SCATTERED hint and disk budget configured.
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(5_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v, ts FROM src_native ORDER BY v LIMIT 200",
+                    "SELECT k, v, ts FROM src ORDER BY v LIMIT 200"
+            );
+
+            Assert.assertEquals("hot partition must not spill", 0, metrics.spills());
+            Assert.assertEquals("hot partition must not restore", 0, metrics.restores());
+        });
+    }
+
+    @Test
     public void testParquetCacheLatestBySpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
@@ -3121,6 +3152,40 @@ public class ParquetTest extends AbstractCairoTest {
 
             Assert.assertTrue("spill path never fired [spills=" + metrics.spills() + "]", metrics.spills() > 0);
             Assert.assertTrue("restore path never fired [restores=" + metrics.restores() + "]", metrics.restores() > 0);
+        });
+    }
+
+    @Test
+    public void testParquetCacheMonotonicHintColdPartitionDoesNotSpill() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 30)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(5_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            // A sequential GROUP BY scan defaults to MONOTONIC; spill is SCATTERED-gated
+            // and must stay dormant even with the cold flag forced on.
+            assertSqlCursors(
+                    "SELECT k, sum(v) FROM src_native GROUP BY k ORDER BY k",
+                    "SELECT k, sum(v) FROM src GROUP BY k ORDER BY k"
+            );
+
+            Assert.assertEquals("MONOTONIC scans must not spill", 0, metrics.spills());
+            Assert.assertEquals("MONOTONIC scans must not restore", 0, metrics.restores());
         });
     }
 

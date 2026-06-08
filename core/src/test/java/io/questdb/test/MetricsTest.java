@@ -109,6 +109,17 @@ public class MetricsTest {
     }
 
     @Test
+    public void testMetricNamesContainParquetDecodeMetrics() {
+        SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
+        new Metrics(true, metricsRegistry);
+
+        Assert.assertTrue(metricsRegistry.getMetricNames().contains("parquet_decode_buffer_spills"));
+        Assert.assertTrue(metricsRegistry.getMetricNames().contains("parquet_decode_buffer_spill_failures"));
+        Assert.assertTrue(metricsRegistry.getMetricNames().contains("parquet_decode_buffer_spills_skipped_quota"));
+        Assert.assertTrue(metricsRegistry.getMetricNames().contains("parquet_decode_buffer_restores"));
+    }
+
+    @Test
     public void testMetricNamesContainGCMetrics() {
         final Metrics metrics = Metrics.ENABLED;
 
