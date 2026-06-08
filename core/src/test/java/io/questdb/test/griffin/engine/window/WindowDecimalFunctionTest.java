@@ -2389,7 +2389,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     @Test
     public void testExplainPlanAllFactoriesAllSubTypesCoverage() throws Exception {
         // Covers toPlan for every factory + every sub-type via EXPLAIN. Each call uses
-        // assertPlanNoLeakCheck with the exact expected plan string.
+        // assertQuery(...).assertsPlan(...) with the exact expected plan string.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             // ---- sum ----

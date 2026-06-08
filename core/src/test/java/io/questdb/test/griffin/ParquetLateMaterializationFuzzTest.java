@@ -315,7 +315,9 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce(expected);
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -1076,7 +1078,8 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce(expected1);
+                            .timestamp("ts")
+                            .returns(expected1);
                     assertQuery(query2)
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
@@ -1091,12 +1094,13 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce(expected4);
+                            .returns(expected4);
                     assertQuery(query5)
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce(expected5);
+                            .expectSize()
+                            .returns(expected5);
                 },
                 configuration,
                 LOG
