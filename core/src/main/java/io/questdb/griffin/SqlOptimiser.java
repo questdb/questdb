@@ -6138,9 +6138,21 @@ public class SqlOptimiser implements Mutable {
         final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange()
                 && model.allowsNestedColumnsChange();
 
-        final IQueryModel union = skipNoneTypeModels(model.getUnionModel());
-        if (!topLevel && modelIsFlex(union)) {
-            emitColumnLiteralsTopDown(model.getColumns(), union);
+        // By default, don't emit this model's columns to its UNION sibling by name. In UNION,
+        // columns are matched by position, not name. A branch's column expressions reference its
+        // own source names (e.g. "SELECT close price ..." references "close"), which generally
+        // don't match the sibling's projection aliases (e.g. "price"), so only the
+        // accidentally-equal names resolve. When the outer query selects nothing from the union
+        // (e.g. count()/sum()), this used to prune just the immediate sibling down to those few
+        // matching names while leaving the other branches intact, so the union sides diverged in
+        // column count and code generation hit an assertion. The indexed propagation below (the
+        // loop over unionColumnIndexes) handles cross-branch propagation correctly, by position.
+        // The cairo.sql.legacy.union.column.propagation flag restores the old by-name emit.
+        if (configuration.isCairoSqlLegacyUnionColumnPropagation()) {
+            final IQueryModel union = skipNoneTypeModels(model.getUnionModel());
+            if (!topLevel && modelIsFlex(union)) {
+                emitColumnLiteralsTopDown(model.getColumns(), union);
+            }
         }
 
         // process join models and their join conditions
