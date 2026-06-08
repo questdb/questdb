@@ -24,14 +24,142 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
 
 public class UnionTest extends AbstractCairoTest {
+
+    @Test
+    public void testAggregateOverUnionAllLegacyFlagReintroducesCrash() throws Exception {
+        // The cairo.sql.legacy.union.column.propagation flag restores the pre-fix by-name emit,
+        // which reintroduces the column-count divergence so the otherwise-fixed query fails again
+        // with an AssertionError during code generation. Guards the rollback switch against
+        // silently becoming a no-op. Reset the flag in finally so it cannot leak into other tests
+        // in this class (overrides are otherwise only cleared at @AfterClass).
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "true");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table u1 (a symbol, close double)");
+                execute("create table u2 (a symbol, close double)");
+                execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
+                execute("insert into u2 values ('z', 3.0)");
+
+                final String unionSql = "select a, close price from u1 union all select a, close price from u2";
+                boolean threw = false;
+                try (RecordCursorFactory ignored = select("select count() from (" + unionSql + ")")) {
+                    // unreachable: the legacy by-name emit diverges the branch column counts
+                } catch (AssertionError e) {
+                    threw = true;
+                }
+                Assert.assertTrue("legacy flag should restore the by-name emit and reintroduce the crash", threw);
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "false");
+        }
+    }
+
+    @Test
+    public void testAggregateOverUnionAllOfLatestOn() throws Exception {
+        // Regression test: an aggregate (count/sum) over a UNION ALL of LATEST ON
+        // sub-queries used to crash with an AssertionError in SqlCodeGenerator
+        // (columnCount == metadataB.getColumnCount()). Top-down column pruning over
+        // the union chain pruned one branch down to just the LATEST ON partition key
+        // while leaving the others with all projected columns, so the union sides
+        // diverged in column count. Not specific to count() - any aggregate that
+        // prunes the projection triggers it.
+        assertMemoryLeak(() -> {
+            for (int i = 1; i <= 4; i++) {
+                execute("create table t" + i + " (tvId symbol, close double, timestamp timestamp) timestamp(timestamp) partition by day wal");
+            }
+            // t1: A -> latest close 11, B -> 20  (2 rows after LATEST ON)
+            execute("insert into t1 values " +
+                    "('A', 10.0, '2024-01-01T00:00:01.000000Z'), " +
+                    "('A', 11.0, '2024-01-01T00:00:02.000000Z'), " +
+                    "('B', 20.0, '2024-01-01T00:00:01.000000Z')");
+            // t2: C -> 30  (1 row)
+            execute("insert into t2 values ('C', 30.0, '2024-01-01T00:00:01.000000Z')");
+            // t3: D -> latest close 41  (1 row)
+            execute("insert into t3 values " +
+                    "('D', 40.0, '2024-01-01T00:00:01.000000Z'), " +
+                    "('D', 41.0, '2024-01-01T00:00:02.000000Z')");
+            // t4: E -> 50  (1 row)
+            execute("insert into t4 values ('E', 50.0, '2024-01-01T00:00:01.000000Z')");
+            drainWalQueue();
+
+            final String unionSql =
+                    "SELECT tvId, close price, timestamp mts FROM t1 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t2 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t3 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t4 LATEST ON timestamp PARTITION BY tvId";
+
+            // 2 + 1 + 1 + 1 = 5 rows
+            assertQuery("select count() from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            5
+                            """);
+            // 11 + 20 + 30 + 41 + 50 = 152
+            assertQuery("select sum(price) from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            152.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAggregateOverUnionAllWithAliasMismatch() throws Exception {
+        // Minimal root-cause regression test: the crash is driven by alias divergence between
+        // UNION ALL branches, not by LATEST ON (which only forces the CHOOSE-wrapper structure).
+        // Here one column is aliased (close -> price) and one is not (a). The old by-name emit
+        // matched only the same-named column (a) into the sibling, pruning it to 1 column while
+        // the head kept 2, so the union sides diverged in column count under count()/sum().
+        assertMemoryLeak(() -> {
+            execute("create table u1 (a symbol, close double)");
+            execute("create table u2 (a symbol, close double)");
+            execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
+            execute("insert into u2 values ('z', 3.0)");
+
+            final String unionSql =
+                    "select a, close price from u1 " +
+                            "union all " +
+                            "select a, close price from u2";
+
+            // 2 + 1 = 3 rows
+            assertQuery("select count() from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+            // 1 + 2 + 3 = 6
+            assertQuery("select sum(price) from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            6.0
+                            """);
+        });
+    }
 
     @Test
     public void testExcept() throws Exception {
