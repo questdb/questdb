@@ -146,16 +146,22 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     columnOffset
             );
         } else if (format == PartitionFormat.PARQUET) {
-            // A matching frame index is NOT enough to early-return for parquet: the record may
-            // still be bound to a reduce task's parquet buffers that were already freed, since
-            // PageFrameReduceTask.collected() releases parquet buffers eagerly even while a
-            // query is in flight. The unconditional record.init() below re-binds the record to
-            // this pool's live buffers on every call, so parquet must never take the native
-            // branch's early-return. openParquet() only feeds decode() -- it rebuilds
-            // parquetColumns / parquetIdxToDecodeSlot, which nothing else on this path reads --
-            // so it stays inside the cache-miss branch. A repeated visit to a still-cached frame
-            // then skips both the decode and the column-mapping rebuild and only re-points the
-            // record, keeping per-row sequential iteration cheap.
+            // Fast path: the record already points at THIS pool's live buffers for this frame,
+            // so there is nothing to rebind. A matching frame index ALONE is not sufficient: a
+            // foreign record bound to another pool's frame memory (e.g. a reduce task's, via
+            // record.init(task.getFrameMemory())) can carry a matching frame index while that
+            // pool already freed the buffers in releaseParquetBuffers() -- reading through it
+            // would dereference freed memory. The boundPool identity check distinguishes "still
+            // ours and live" from "bound elsewhere and possibly freed", so it restores the cheap
+            // per-row repeat visit for sequential scans (PageFrameRecordCursorImpl.hasNext())
+            // without reopening the parquet use-after-free on the random-access path.
+            if (record.getFrameIndex() == frameIndex && record.getBoundPool() == this) {
+                return;
+            }
+            // openParquet() only feeds decode() -- it rebuilds parquetColumns /
+            // parquetIdxToDecodeSlot, which nothing else on this path reads -- so it stays inside
+            // the cache-miss branch. A repeated visit to a still-cached frame skips both the
+            // decode and the column-mapping rebuild and only re-points the record.
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);
             if (!parquetBuffers.cacheHit) {
@@ -176,6 +182,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.auxPageSizes,
                     0 // parquet buffers use 0 offset since they're frame-specific
             );
+            record.setBoundPool(this);
         }
     }
 
@@ -496,6 +503,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public DirectLongList getPageSizes() {
             return pageSizes;
+        }
+
+        @Override
+        public PageFrameMemoryPool getPool() {
+            return PageFrameMemoryPool.this;
         }
 
         @Override
