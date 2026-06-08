@@ -2056,6 +2056,48 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheAsyncWindowJoinSpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, true);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO prices
+                    SELECT rnd_symbol('A','B','C'), x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE prices_native AS (SELECT * FROM prices)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE trades (sym SYMBOL, qty INT, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO trades
+                    SELECT rnd_symbol('A','B','C'), rnd_int(1, 10, 0), timestamp_sequence('2024-01-01', 360_000_000)
+                    FROM long_sequence(300)""");
+
+            assertSqlCursors(
+                    "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices_native p ON t.sym = p.sym " +
+                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym",
+                    "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym"
+            );
+
+            Assert.assertTrue("async window join did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
+        });
+    }
+
+    @Test
     public void testParquetCacheCachedWindowSpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
@@ -2114,7 +2156,7 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetCacheCleanStaleSpillFilesRemovesForeignPidFiles() throws Exception {
+    public void testParquetCacheCleanStaleSpillFilesPreservesForeignPidFiles() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             String dir = temp.getRoot().getAbsolutePath();
@@ -2138,7 +2180,8 @@ public class ParquetTest extends AbstractCairoTest {
                 Assert.assertFalse("own-PID file should be removed", ff.exists(path.$()));
                 path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
                         .put(foreignPid).put('-').put(1L).put('-').put(0).$();
-                Assert.assertFalse("foreign-PID file should be removed too", ff.exists(path.$()));
+                Assert.assertTrue("foreign-PID file must be preserved", ff.exists(path.$()));
+                ff.removeQuiet(path.$());
             }
         });
     }
@@ -3549,6 +3592,48 @@ public class ParquetTest extends AbstractCairoTest {
 
             Assert.assertTrue("spill path never fired on varchar workload [spills=" + metrics.spills() + "]", metrics.spills() > 0);
             Assert.assertTrue("restore path never fired on varchar workload [restores=" + metrics.restores() + "]", metrics.restores() > 0);
+        });
+    }
+
+    @Test
+    public void testParquetCacheWindowJoinSpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, false);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO prices
+                    SELECT rnd_symbol('A','B','C'), x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(3_000)""");
+            execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE prices_native AS (SELECT * FROM prices)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE trades (sym SYMBOL, qty INT, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO trades
+                    SELECT rnd_symbol('A','B','C'), rnd_int(1, 10, 0), timestamp_sequence('2024-01-01', 360_000_000)
+                    FROM long_sequence(300)""");
+
+            assertSqlCursors(
+                    "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices_native p ON t.sym = p.sym " +
+                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym",
+                    "SELECT t.sym, t.qty, t.ts, avg(p.price) FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                            "RANGE BETWEEN 3600000000 PRECEDING AND 0 FOLLOWING EXCLUDE PREVAILING ORDER BY t.ts, t.sym"
+            );
+
+            Assert.assertTrue("window join did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
         });
     }
 

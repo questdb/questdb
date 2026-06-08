@@ -102,7 +102,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
     private static final Log LOG = LogFactory.getLog(PageFrameMemoryPool.class);
     private static final long PID = ProcessHandle.current().pid();
-    private static final byte[] PREFIX_BYTES = SPILL_FILE_PREFIX.getBytes();
+    private static final byte[] OWN_PID_PREFIX_BYTES = (SPILL_FILE_PREFIX + PID + '-').getBytes();
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
     private static final int SHELL_POOL_CAP = 256;
@@ -160,14 +160,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         try {
             this.maxCacheBytes = Math.max(maxCacheBytes, 0L);
             this.effectiveBudgetBytes = accessPattern.applyTo(this.maxCacheBytes);
-            byFrameIndex = new IntObjHashMap<>(16);
+            byFrameIndex = new IntObjHashMap<>(ParquetDecodeHint.SCATTERED.maxCachedBuffers);
             columnIdToParquetIdx = new IntIntHashMap(16);
             frameMemory = new PageFrameMemoryImpl();
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             parquetIdxToDecodeSlot = new IntIntHashMap(16);
             parquetMetaDecoder = new ParquetPartitionDecoder();
             legacyDecoder = new ParquetFileDecoder();
-            spillManager = (diskSpillBytes > 0 && diskSpillDir != null && filesFacade != null)
+            spillManager = (this.maxCacheBytes > 0 && diskSpillBytes > 0 && diskSpillDir != null && filesFacade != null)
                     ? new SpillManager(filesFacade, diskSpillDir, diskSpillBytes, CURSOR_ID_GENERATOR.incrementAndGet(), mkDirMode, metrics)
                     : null;
         } catch (Throwable th) {
@@ -540,6 +540,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         lruUnlink(buffers);
         buffers.close();
+        if (freeParquetBufferShells.size() < SHELL_POOL_CAP) {
+            freeParquetBufferShells.add(buffers);
+        }
     }
 
     private ParquetBuffers getBound(byte usageBit) {
@@ -763,12 +766,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
-        // Collects every spill file, including foreign-PID leftovers from a crashed
-        // prior run. Per-cursor IDs prevent collisions with live cursors.
-        private static boolean nameStartsWith(long nameZ) {
-            for (int i = 0, n = PREFIX_BYTES.length; i < n; i++) {
-                byte b = Unsafe.getByte(nameZ + i);
-                if (b != PREFIX_BYTES[i]) {
+        // Foreign-PID files may belong to a sibling QuestDB process that shares
+        // the spill directory; deleting them would race on live cursors.
+        private static boolean nameMatchesOwnPid(long nameZ) {
+            for (int i = 0, n = OWN_PID_PREFIX_BYTES.length; i < n; i++) {
+                if (Unsafe.getByte(nameZ + i) != OWN_PID_PREFIX_BYTES[i]) {
                     return false;
                 }
             }
@@ -865,7 +867,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         private void spill(ParquetBuffers buffers) {
             final int slotCount = buffers.slotCount;
-            if (slotCount <= 0) {
+            if (slotCount <= 0 || slotCount > MAX_SPILL_SLOTS) {
                 return;
             }
             if (findSpilled(buffers.frameIndex) >= 0) {
@@ -1026,7 +1028,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         continue;
                     }
                     final long nameZ = ff.findName(pFind);
-                    if (nameZ == 0 || !nameStartsWith(nameZ)) {
+                    if (nameZ == 0 || !nameMatchesOwnPid(nameZ)) {
                         continue;
                     }
                     dir.trimTo(prefixLen).concat(nameZ).$();
@@ -1118,11 +1120,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     return false;
                 }
                 final int currentSlotCount = (int) (parquetColumns.size() / 2);
-                // The spilled buffer may have more slots than the current cursor needs:
-                // a previous cursor's late-materialised columns sit after its initial set.
-                // Accept any prefix of the spilled slot list that matches the current decode;
-                // bonus slots are kept in the restored buffer and remain unused.
-                if (currentSlotCount > slotCount) {
+                if (currentSlotCount != slotCount) {
                     dropSpilledEntry(idx);
                     return false;
                 }
@@ -1137,9 +1135,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     mPtr += Long.BYTES;
                     final long as = Unsafe.getLong(mPtr);
                     mPtr += Long.BYTES;
-                    if (s < currentSlotCount
-                            && (spilledParquetIdx != parquetColumns.get(2L * s)
-                            || colType != parquetColumns.get(2L * s + 1))) {
+                    if (spilledParquetIdx != parquetColumns.get(2L * s)
+                            || colType != parquetColumns.get(2L * s + 1)) {
                         dropSpilledEntry(idx);
                         return false;
                     }
@@ -1220,7 +1217,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 ff.close(fd);
             }
         }
-
     }
 
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
@@ -1672,6 +1668,5 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
         }
-
     }
 }
