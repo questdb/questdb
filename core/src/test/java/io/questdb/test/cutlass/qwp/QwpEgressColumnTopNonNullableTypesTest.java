@@ -107,7 +107,7 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
                             for (int r = 0; r < n; r++) {
                                 int abs = totalRows[0] + r;
                                 Assert.assertFalse(
-                                        "row " + abs + " must not report null (wire-egress.md sec 11.5)",
+                                        "row " + abs + " must not report null (QWP egress spec)",
                                         batch.isNull(0, r));
                                 if (abs < columnTopRows) {
                                     Assert.assertFalse(
@@ -146,7 +146,7 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
             for (int r = 0; r < n; r++) {
                 int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "BOOLEAN row " + abs + " must not report null (wire-egress.md sec 11.5)",
+                        "BOOLEAN row " + abs + " must not report null (QWP egress spec)",
                         batch.isNull(0, r));
                 Assert.assertFalse(
                         "BOOLEAN row " + abs + " (column-top) must read as false",
@@ -162,7 +162,7 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
             for (int r = 0; r < n; r++) {
                 int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "BYTE row " + abs + " must not report null (wire-egress.md sec 11.5)",
+                        "BYTE row " + abs + " must not report null (QWP egress spec)",
                         batch.isNull(0, r));
                 Assert.assertEquals(
                         "BYTE row " + abs + " (column-top) must read as 0",
@@ -178,7 +178,7 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
             for (int r = 0; r < n; r++) {
                 int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "CHAR row " + abs + " must not report null (wire-egress.md sec 11.5)",
+                        "CHAR row " + abs + " must not report null (QWP egress spec)",
                         batch.isNull(0, r));
                 Assert.assertEquals(
                         "CHAR row " + abs + " (column-top) must read as (char) 0",
@@ -194,7 +194,7 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
             for (int r = 0; r < n; r++) {
                 int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "SHORT row " + abs + " must not report null (wire-egress.md sec 11.5)",
+                        "SHORT row " + abs + " must not report null (QWP egress spec)",
                         batch.isNull(0, r));
                 Assert.assertEquals(
                         "SHORT row " + abs + " (column-top) must read as 0",
