@@ -250,28 +250,30 @@ public class TableUpdateDetails implements Closeable {
             final ReentrantLock lock = engine.getRoleSwitchLock();
             lock.lock();
             try {
+                // Authoritative in-lock re-check. The read-only refusal is thrown from outside
+                // the commit try/catch below so it propagates as-is (ILP-TCP disconnects, ILP-HTTP
+                // returns SECURITY_ERROR) and is never confused with a genuine ACL denial from
+                // authorizeCommit(): a real authorization failure must still roll back the writer
+                // and surface as a wrapped CommitFailedException, exactly as before this gate existed.
                 if (engine.isReadOnlyMode()) {
                     throw CairoException.authorization().put("replica access is read-only");
                 }
-                authorizeCommit();
-                if (withLag) {
-                    writerAPI.ic();
-                } else {
-                    writerAPI.commit();
-                }
-            } catch (CairoException ex) {
-                if (ex.isAuthorizationError()) {
-                    // Read-only refusal -- propagate as-is so ILP-TCP disconnects and
-                    // ILP-HTTP returns SECURITY_ERROR (not a wrapped CommitFailedException).
-                    throw ex;
-                }
-                if (!ex.isTableDropped()) {
+                try {
+                    authorizeCommit();
+                    if (withLag) {
+                        writerAPI.ic();
+                    } else {
+                        writerAPI.commit();
+                    }
+                } catch (CairoException ex) {
+                    if (!ex.isTableDropped()) {
+                        handleCommitException(ex);
+                    }
+                    throw CommitFailedException.instance(ex, ex.isTableDropped());
+                } catch (Throwable ex) {
                     handleCommitException(ex);
+                    throw CommitFailedException.instance(ex, false);
                 }
-                throw CommitFailedException.instance(ex, ex.isTableDropped());
-            } catch (Throwable ex) {
-                handleCommitException(ex);
-                throw CommitFailedException.instance(ex, false);
             } finally {
                 lock.unlock();
             }
