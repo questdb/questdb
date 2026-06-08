@@ -36,8 +36,8 @@ import org.jetbrains.annotations.TestOnly;
  * state performs no native alloc/free per workload start. The pool is unbounded;
  * a tracker's native {@code {used, limit}} block is freed only when the provider
  * closes (engine shutdown), never on the per-workload release path. That keeps
- * cross-thread readers of the block -- the {@code query_activity} view's
- * {@code memory_used} / {@code memory_limit} columns - free of use-after-free:
+ * cross-thread readers of the block (the {@code query_activity} view's
+ * {@code memory_used} / {@code memory_limit} columns) free of use-after-free:
  * a concurrently released tracker's block stays mapped (and may be reused by the
  * next acquisition), so a racing read is at worst stale, never freed underneath
  * the reader. Engine shutdown joins every worker thread before closing the

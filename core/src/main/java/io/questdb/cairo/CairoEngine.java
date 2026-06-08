@@ -226,7 +226,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)
-    // runs -- which is *after* the engine constructor returns.
+    // runs, which is *after* the engine constructor returns.
     private volatile MemoryTrackerProvider memoryTrackerProvider;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;

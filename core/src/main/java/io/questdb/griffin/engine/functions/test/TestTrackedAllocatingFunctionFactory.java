@@ -44,7 +44,7 @@ import io.questdb.std.Unsafe;
  * the per-query {@link MemoryTracker} bound on the execution context, so the
  * allocation charges the active workload's memory limit. The tracker-aware
  * counterpart of {@code alloc(l)}, it lets a test drive a per-workload limit
- * breach from SQL even where no production allocator is reachable -- e.g. inside
+ * breach from SQL even where no production allocator is reachable, e.g. inside
  * an UPDATE applied by a WAL apply batch, where the bound tracker is the
  * WAL_APPLY one. Dev-mode only.
  */

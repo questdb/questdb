@@ -55,7 +55,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     // cursor or init() time. Null when no per-query limit applies; all
     // Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads
     // in that case. The class is lazy by design (the constructor does not
-    // allocate native memory), so a setter is enough -- no openOnInit knob.
+    // allocate native memory), so a setter is enough (no openOnInit knob).
     @Nullable
     private MemoryTracker memoryTracker;
     private long sizeMsb;

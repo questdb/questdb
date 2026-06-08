@@ -244,7 +244,7 @@ public class QueryRegistry {
         // is best-effort: under register/unregister churn the Entry can be
         // recycled to another query between the reader resolving it and reading
         // the column, so a row may briefly report a different query's bytes. The
-        // read is never unsafe -- the tracker's native block outlives release
+        // read is never unsafe: the tracker's native block outlives release
         // (freed only when the provider closes), so a stale read returns a
         // valid-but-wrong number, never a fault.
         private MemoryTracker memoryTracker;

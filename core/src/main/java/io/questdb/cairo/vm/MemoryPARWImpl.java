@@ -75,7 +75,7 @@ public class MemoryPARWImpl implements MemoryARW {
     // cursor or init() time. Null when no per-query limit applies; all
     // Unsafe.{malloc,free} calls degrade to the global-only overloads in that
     // case. The class is lazy by design (the constructor does not allocate
-    // native memory), so a setter is enough -- no openOnInit knob.
+    // native memory), so a setter is enough (no openOnInit knob).
     @Nullable
     protected MemoryTracker memoryTracker;
     private long absolutePointer;

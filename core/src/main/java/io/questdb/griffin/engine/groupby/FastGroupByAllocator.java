@@ -195,8 +195,8 @@ public class FastGroupByAllocator implements GroupByAllocator {
 
     private void _close() {
         // The chunk index is lazy (openOnInit=false). An allocator closed without
-        // ever being reopened -- e.g. a SAMPLE BY subquery factory torn down on a
-        // codegen error path -- has an unallocated index, so guard the raw
+        // ever being reopened (e.g. a SAMPLE BY subquery factory torn down on a
+        // codegen error path) has an unallocated index, so guard the raw
         // iteration that frees the chunks. close() still releases the skeleton.
         if (chunks.isOpen()) {
             for (int i = 0, n = chunks.capacity(); i < n; i++) {

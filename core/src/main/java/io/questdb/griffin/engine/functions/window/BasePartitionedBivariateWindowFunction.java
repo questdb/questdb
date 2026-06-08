@@ -55,7 +55,7 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
         // Start the map closed (lazy), matching the openOnInit=false pattern used
         // elsewhere for tracker-aware state: the owning cursor binds a per-query
         // MemoryTracker via setMemoryTracker() and reopen() then allocates the backing
-        // under it, with reset() freeing it at cursor close -- symmetric on the
+        // under it, with reset() freeing it at cursor close, symmetric on the
         // per-query counter. Direct callers (e.g. unit tests) must reopen() before use.
         if (map != null) {
             map.close();
