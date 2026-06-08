@@ -57,6 +57,13 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             None => (Miniblock::default(), packs_per_miniblock),
         };
 
+        // A zero-value page (empty length buffer or a value_count=0 header) has
+        // no real first length -- `first_value` is a phantom default. Mark it
+        // already consumed so the first value request fails with "not enough
+        // values to iterate" instead of emitting a phantom zero-length string.
+        // All-null pages are unaffected: their definition levels drive only
+        // push_nulls.
+        let consumed_initial = !iterator.has_values;
         Ok(Self {
             data: unsafe { data.as_ptr().add(data_offset) },
             data_len: data.len() - data_offset,
@@ -65,7 +72,7 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             ascii,
             iterator,
             current_value: first_value,
-            consumed_initial: false,
+            consumed_initial,
             first_value,
             values: [0i32; 32],
             value_index: 32,
@@ -1306,39 +1313,39 @@ mod tests {
     fn test_empty_page_value_request_errors() {
         // Companion to `test_empty_page_pushes_nulls`: an all-null varchar page
         // only fills nulls, but if a value is requested anyway (a corrupt page),
-        // the first request returns the phantom zero-length string and the next
-        // fails with "not enough values to iterate".
+        // the FIRST request fails with "not enough values to iterate" and writes
+        // nothing -- no phantom zero-length string is emitted.
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
-        // push(): first call emits the phantom empty string, second errors.
+        // push(): the first value request errors.
         {
             let mut buffers = create_test_buffers(&allocator);
             let err = {
                 let mut decoder =
                     DeltaLAVarcharSliceDecoder::try_new(&[], &mut buffers, true).unwrap();
                 decoder.reserve(2).unwrap();
-                decoder.push().unwrap();
                 decoder.push().unwrap_err()
             };
             assert!(
                 format!("{err}").contains("not enough values to iterate"),
                 "got: {err}"
             );
-            // The first push wrote one (empty, non-null) entry, not a null.
-            let entries = read_aux_entries(&buffers);
-            assert_eq!(entries.len(), 1);
-            assert!(!is_null_entry(entries[0].0, entries[0].1));
+            assert_eq!(
+                read_aux_entries(&buffers).len(),
+                0,
+                "errored push must not write"
+            );
         }
 
-        // push_slice(2): same contract via the batched path.
+        // push_slice(1): same contract via the batched path.
         {
             let mut buffers = create_test_buffers(&allocator);
             let err = {
                 let mut decoder =
                     DeltaLAVarcharSliceDecoder::try_new(&[], &mut buffers, true).unwrap();
                 decoder.reserve(2).unwrap();
-                decoder.push_slice(2).unwrap_err()
+                decoder.push_slice(1).unwrap_err()
             };
             assert!(
                 format!("{err}").contains("not enough values to iterate"),
