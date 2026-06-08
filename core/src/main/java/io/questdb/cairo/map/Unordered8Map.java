@@ -224,7 +224,9 @@ public class Unordered8Map implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         hasZero = false;
-        Vect.memset(memStart, memLimit - memStart + entrySize, 0);
+        if (memStart != 0) {
+            Vect.memset(memStart, memLimit - memStart + entrySize, 0);
+        }
     }
 
     @Override
