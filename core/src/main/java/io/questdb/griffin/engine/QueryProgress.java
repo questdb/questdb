@@ -383,13 +383,16 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public void onResourceReturned(TableReader resource) {
         int index = readers.remove(resource);
-        // do not freak out if reader is not in the list after our cursor has been closed
+        // After our cursor closes, unregisterAndCleanup() has already cleared the list, so a
+        // late return naturally finds nothing -- expected, do not log it.
         if (index < 0 && (cursor.isOpen || pageFrameCursor.isOpen)) {
-            // when this happens, it could be down to a race condition
-            // where readers list is cleared before borrowed resources are returned.
-            // Last time, this occurred when pool entry was released before readers were cleared.
-            // In this scenario, the returned pool entry got used by another query and
-            // readers.clear() came in tangentially to this query.
+            // Still open but the reader is untracked: our leak bookkeeping is inconsistent.
+            // This is NOT pool-entry reuse (a previous hypothesis): R.close() detaches the
+            // supervisor (sets it to null) before returnToPool, so a recycled entry cannot
+            // deliver a stale return into this query. In practice it means a reader was
+            // attributed to this query and then removed out of band -- e.g. unsupported
+            // concurrent use of one SqlExecutionContext across statements, which routes
+            // another query's borrows through this supervisor slot. Log it as a diagnostic.
             LOG.critical().$("returned reader is not in supervisor's list [tableName=")
                     .$(resource.getTableToken()).I$();
         }
