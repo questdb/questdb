@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
@@ -67,6 +69,92 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
+    }
+
+    @Test
+    public void testAsOfJoinDenseOpenFailureReleasesAllocations() throws Exception {
+        // asof_dense + multi-key routes to AsOfJoinDenseRecordCursorFactory, whose of() reopens two
+        // tracker-bound SingleRecordSinks; a tiny limit breaches that reopen. The reuse loop asserts the
+        // open-error path frees each cursor once and leaves the factory reusable (assertMemoryLeak guards leaks).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            // Set the tiny limit only after table creation so the populating SELECT does not breach it.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
+            assertOpenFailureReleasesAllocations(
+                    "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)",
+                    AsOfJoinDenseRecordCursorFactory.class
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinDenseRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // The reuse loop cycles the dense cursor's sinks and scan maps; assertMemoryLeak is the load-bearing
+        // check that their malloc/free stays symmetric on the per-query counter after the of() reorder.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
+            assertUsesFactory(sql, AsOfJoinDenseRecordCursorFactory.class);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(50, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFastOpenFailureReleasesAllocations() throws Exception {
+        // A keyed ASOF join over a time-frame slave routes to AsOfJoinFastRecordCursorFactory, whose of()
+        // reopens two tracker-bound SingleRecordSinks; a tiny limit breaches that reopen. The reuse loop
+        // asserts the open-error path frees each cursor once and leaves the factory reusable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            // Tiny limit set after table creation so the populating SELECT does not breach it.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
+            assertOpenFailureReleasesAllocations(
+                    "SELECT m.k FROM m ASOF JOIN s ON k",
+                    AsOfJoinFastRecordCursorFactory.class
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFastRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // The reuse loop cycles the fast cursor's sinks; assertMemoryLeak is the load-bearing check that
+        // their malloc/free stays symmetric on the per-query counter after the of() reorder.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT m.k FROM m ASOF JOIN s ON k";
+            assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(50, rows);
+                    }
+                }
+            }
+        });
     }
 
     @Test

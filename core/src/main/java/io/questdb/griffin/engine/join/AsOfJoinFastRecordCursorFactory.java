@@ -108,10 +108,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable th) {
-            // close() also frees the SingleRecordSinks under the still-bound per-query tracker
-            cursor.close();
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the sinks before adopting the cursors, so close() here frees only the partial heap.
+            Misc.free(cursor);
             throw th;
         }
     }
@@ -178,10 +178,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            super.of(masterCursor, slaveCursor, circuitBreaker);
-            masterKeyRecord = masterRecord;
+            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            super.of(masterCursor, slaveCursor, circuitBreaker);
+            masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);

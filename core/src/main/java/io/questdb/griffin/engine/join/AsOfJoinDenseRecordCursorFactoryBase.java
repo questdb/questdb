@@ -113,10 +113,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
-            // close() also frees the SingleRecordSinks under the still-bound per-query tracker
-            cursor.close();
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the sinks/maps before adopting the cursors, so close() here frees only the partial heap.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -144,6 +144,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
+        // Scan maps are created eagerly, so free the cursor for the never-opened case (close() is idempotent).
+        Misc.free(cursor);
     }
 
     protected abstract void putFactoryType(PlanSink sink);
@@ -284,11 +286,12 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            // Reopen the scan maps before super.of() adopts the cursors so an open-time breach frees each exactly once.
             fwdScanKeyToRowId.reopen();
             fwdScanKeyToRowId.clear();
             bwdScanKeyToRowId.reopen();
             bwdScanKeyToRowId.clear();
+            super.of(masterCursor, slaveCursor, circuitBreaker);
         }
 
         @Override
