@@ -6,8 +6,9 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 /**
@@ -37,9 +38,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            assertPlanNoLeakCheck(
-                    "SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR",
-                    """
+            assertQuery("SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts]
                                 VirtualRecord
@@ -52,8 +53,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -72,9 +72,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            assertPlanNoLeakCheck(
-                    "SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    """
+            assertQuery("SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               stride: '1h'
                               fill: null
@@ -88,8 +88,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -1298,11 +1297,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // Position 25 points at the AS token of the second alias -- the
             // optimiser raises the duplicate before the alias literal is
             // positioned, so "AS k" is reported rather than the k token itself.
-            assertExceptionNoLeakCheck(
-                    "SELECT ts AS k, count(*) AS k FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    25,
-                    "Duplicate column [name=k]"
-            );
+            assertQuery("SELECT ts AS k, count(*) AS k FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .fails(25, "Duplicate column [name=k]");
         });
     }
 
@@ -1441,9 +1438,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // single-sided plans without the suite catching it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertPlanNoLeakCheck(
-                    "SELECT first(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR",
-                    """
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               range: ('2024-01-01',)
                               stride: '1h'
@@ -1459,8 +1456,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                             Row forward scan
                                             Interval forward scan on: x
                                               intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -1503,9 +1499,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // The key invariant: filter: s='s2' appears inside the inner Async Group By,
             // nested below the outer Sample By Fill. This is the mechanism -- the inner
             // cartesian only sees s2 rows, so no s1-driven buckets enter the fill grid.
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               stride: '1m'
                               fill: null
@@ -1519,8 +1515,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -1776,7 +1771,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             bindVariableService.setStr(0, "Not/AReal_Zone");
             final String sql = "SELECT sum(val) s, ts FROM x " +
                     "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1";
-            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), "invalid timezone: Not/AReal_Zone");
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("$1"), "invalid timezone: Not/AReal_Zone");
         });
     }
 
@@ -1793,53 +1788,57 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // testFillNullTimezoneNegativeOffset covers negative-offset zones
         // separately; this one stays on positive offsets to keep the bind
         // re-evaluation contract isolated.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, '2024-06-15T12:00:00.000000Z')," +
-                    "(2.0, '2024-06-17T12:00:00.000000Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "Europe/Berlin");
-            try (RecordCursorFactory factory = select(
-                    "SELECT sum(val) s, ts FROM x " +
-                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1")) {
-                // Berlin CEST: local midnight = 22:00 UTC (previous day).
-                assertCursor(
-                        """
-                                s\tts
-                                1.0\t2024-06-14T22:00:00.000000Z
-                                null\t2024-06-15T22:00:00.000000Z
-                                2.0\t2024-06-16T22:00:00.000000Z
-                                """,
-                        factory, false, false, false, sqlExecutionContext);
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        // Berlin CEST: local midnight = 22:00 UTC (previous day).
+        cases.add(BindVarTuple.ok(
+                "Europe/Berlin (CEST = UTC+2)",
+                """
+                        s\tts
+                        1.0\t2024-06-14T22:00:00.000000Z
+                        null\t2024-06-15T22:00:00.000000Z
+                        2.0\t2024-06-16T22:00:00.000000Z
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, "Europe/Berlin")
+        ));
+        // Same compiled factory, different bind value. The pre-fix version
+        // reused Berlin's tzRules and emitted Berlin-anchored buckets here;
+        // with tzFunc threaded to of(), the wrap rebinds and the buckets land
+        // on Helsinki local midnight (EEST = UTC+3).
+        cases.add(BindVarTuple.ok(
+                "Europe/Helsinki (EEST = UTC+3)",
+                """
+                        s\tts
+                        1.0\t2024-06-14T21:00:00.000000Z
+                        null\t2024-06-15T21:00:00.000000Z
+                        2.0\t2024-06-16T21:00:00.000000Z
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, "Europe/Helsinki")
+        ));
+        // Re-rebind back to Berlin to confirm there is no sticky-state leak
+        // across the Helsinki execute.
+        cases.add(BindVarTuple.ok(
+                "back to Europe/Berlin",
+                """
+                        s\tts
+                        1.0\t2024-06-14T22:00:00.000000Z
+                        null\t2024-06-15T22:00:00.000000Z
+                        2.0\t2024-06-16T22:00:00.000000Z
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, "Europe/Berlin")
+        ));
 
-                // Same compiled factory, different bind value. The pre-fix
-                // version reused Berlin's tzRules and emitted Berlin-anchored
-                // buckets here; with tzFunc threaded to of(), the wrap rebinds
-                // and the buckets land on Helsinki local midnight (EEST = UTC+3).
-                bindVariableService.setStr(0, "Europe/Helsinki");
-                assertCursor(
-                        """
-                                s\tts
-                                1.0\t2024-06-14T21:00:00.000000Z
-                                null\t2024-06-15T21:00:00.000000Z
-                                2.0\t2024-06-16T21:00:00.000000Z
-                                """,
-                        factory, false, false, false, sqlExecutionContext);
-
-                // And re-rebind back to Berlin to confirm there is no
-                // sticky-state leak across the Helsinki execute.
-                bindVariableService.setStr(0, "Europe/Berlin");
-                assertCursor(
-                        """
-                                s\tts
-                                1.0\t2024-06-14T22:00:00.000000Z
-                                null\t2024-06-15T22:00:00.000000Z
-                                2.0\t2024-06-16T22:00:00.000000Z
-                                """,
-                        factory, false, false, false, sqlExecutionContext);
-            }
-        });
+        assertQuery(
+                "SELECT sum(val) s, ts FROM x " +
+                        "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1")
+                .ddl(
+                        "CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO x VALUES " +
+                                "(1.0, '2024-06-15T12:00:00.000000Z')," +
+                                "(2.0, '2024-06-17T12:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
     }
 
     @Test
@@ -1859,56 +1858,59 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // '+02:00' anchor at the same UTC instants -- so the visible bucket
         // labels happen to match. Helsinki (EEST = UTC+3) shifts by an hour
         // and makes the wrap-vs-base routing observable in the output.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, '2024-06-15T12:00:00.000000Z')," +
-                    "(2.0, '2024-06-17T12:00:00.000000Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "Europe/Helsinki");
-            try (RecordCursorFactory factory = select(
-                    "SELECT sum(val) s, ts FROM x " +
-                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1")) {
-                // Helsinki EEST: local midnight = 21:00 UTC. tzWrap is
-                // allocated on this first of() and routed through.
-                assertCursor(
-                        """
-                                s\tts
-                                1.0\t2024-06-14T21:00:00.000000Z
-                                null\t2024-06-15T21:00:00.000000Z
-                                2.0\t2024-06-16T21:00:00.000000Z
-                                """,
-                        factory, false, false, false, sqlExecutionContext);
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        // Helsinki EEST: local midnight = 21:00 UTC. tzWrap is allocated on
+        // this first of() and routed through.
+        cases.add(BindVarTuple.ok(
+                "Europe/Helsinki (EEST = UTC+3, DST wrap allocated)",
+                """
+                        s\tts
+                        1.0\t2024-06-14T21:00:00.000000Z
+                        null\t2024-06-15T21:00:00.000000Z
+                        2.0\t2024-06-16T21:00:00.000000Z
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, "Europe/Helsinki")
+        ));
+        // Switch to a fixed-offset zone. The cursor must drop the wrap (point
+        // timestampSampler back at baseSampler); otherwise the Helsinki rules
+        // leak and the buckets stay anchored at 21:00 UTC instead of moving to
+        // 22:00 UTC.
+        cases.add(BindVarTuple.ok(
+                "+02:00 (fixed offset, wrap dropped)",
+                """
+                        s\tts
+                        1.0\t2024-06-14T22:00:00.000000Z
+                        null\t2024-06-15T22:00:00.000000Z
+                        2.0\t2024-06-16T22:00:00.000000Z
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, "+02:00")
+        ));
+        // Switch back to a DST zone. The cursor reuses the tzWrap allocated in
+        // the first of() (no fresh allocation) and simply rebinds tzRules.
+        // Output shifts back to the Helsinki grid.
+        cases.add(BindVarTuple.ok(
+                "back to Europe/Helsinki (wrap reused)",
+                """
+                        s\tts
+                        1.0\t2024-06-14T21:00:00.000000Z
+                        null\t2024-06-15T21:00:00.000000Z
+                        2.0\t2024-06-16T21:00:00.000000Z
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, "Europe/Helsinki")
+        ));
 
-                // Switch to a fixed-offset zone. The cursor must drop the
-                // wrap (point timestampSampler back at baseSampler);
-                // otherwise the Helsinki rules leak and the buckets stay
-                // anchored at 21:00 UTC instead of moving to 22:00 UTC.
-                bindVariableService.setStr(0, "+02:00");
-                assertCursor(
-                        """
-                                s\tts
-                                1.0\t2024-06-14T22:00:00.000000Z
-                                null\t2024-06-15T22:00:00.000000Z
-                                2.0\t2024-06-16T22:00:00.000000Z
-                                """,
-                        factory, false, false, false, sqlExecutionContext);
-
-                // Switch back to a DST zone. The cursor reuses the tzWrap
-                // allocated in the first of() (no fresh allocation) and
-                // simply rebinds tzRules. Output shifts back to the
-                // Helsinki grid.
-                bindVariableService.setStr(0, "Europe/Helsinki");
-                assertCursor(
-                        """
-                                s\tts
-                                1.0\t2024-06-14T21:00:00.000000Z
-                                null\t2024-06-15T21:00:00.000000Z
-                                2.0\t2024-06-16T21:00:00.000000Z
-                                """,
-                        factory, false, false, false, sqlExecutionContext);
-            }
-        });
+        assertQuery(
+                "SELECT sum(val) s, ts FROM x " +
+                        "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1")
+                .ddl(
+                        "CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO x VALUES " +
+                                "(1.0, '2024-06-15T12:00:00.000000Z')," +
+                                "(2.0, '2024-06-17T12:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
     }
 
     @Test
@@ -2171,9 +2173,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // "prev", and "mixed" arms are already covered by other plan tests.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertPlanNoLeakCheck(
-                    "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(0.0) ALIGN TO CALENDAR",
-                    """
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL(0.0) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               stride: '1h'
                               fill: value
@@ -2187,8 +2189,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 

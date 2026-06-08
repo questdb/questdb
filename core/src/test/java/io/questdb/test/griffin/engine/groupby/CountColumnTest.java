@@ -38,7 +38,9 @@ public class CountColumnTest extends AbstractCairoTest {
             for (String type : types) {
                 assertQuery("select count(cast(null as " + type + "))")
                         .noLeakCheck()
-                        .returnsOnce("""
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 count
                                 0
                                 """);

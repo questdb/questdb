@@ -872,8 +872,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;", plan);
+            assertQuery("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -892,8 +896,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000001Z","2024-08-22T23:59:59.999999Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01' and timestamp < '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp > @lo and timestamp < @hi;", plan);
+            assertQuery("declare @ts := (timestamp > '2024-01-01' and timestamp < '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp > @lo and timestamp < @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -912,8 +920,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("MIN","2024-08-22T23:59:59.999999Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp < '2024-08-23')  select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp < @hi;", plan);
+            assertQuery("declare @ts := (timestamp < '2024-08-23')  select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp < @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -932,8 +944,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;", plan);
+            assertQuery("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -952,8 +968,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp >= '2024-01-01' and timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp >= @lo and timestamp <= @hi;", plan);
+            assertQuery("declare @ts := (timestamp >= '2024-01-01' and timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp >= @lo and timestamp <= @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -972,8 +992,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("MIN","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp <= @hi;", plan);
+            assertQuery("declare @ts := (timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp <= @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -992,8 +1016,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp >= '2024-01-01') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp >= @lo;", plan);
+            assertQuery("declare @ts := (timestamp >= '2024-01-01') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp >= @lo;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
 
         });
     }
@@ -1013,8 +1041,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp between '2024-01-01' and '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp between @lo and @hi;", plan);
+            assertQuery("declare @ts := (timestamp between '2024-01-01' and '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp between @lo and @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -1033,7 +1065,9 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T00:00:00.000000Z"),("2024-08-23T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);", plan);
+            assertQuery("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
             assertQuery("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts")
                     .fails(44, "bracket lists are not supported");
         });
@@ -1061,8 +1095,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                               from long_sequence(10)
                             ) timestamp(ts) partition by hour;"""
             );
-            assertPlanNoLeakCheck("declare @id := id, @val := 4 select * from x where @id < @val", plan);
-            assertPlanNoLeakCheck("declare @expr := (id < 4) select * from x where @expr", plan);
+            assertQuery("declare @id := id, @val := 4 select * from x where @id < @val")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @expr := (id < 4) select * from x where @expr")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
             assertQuery("x where id < 4")
                     .noLeakCheck()
                     .timestamp("ts")

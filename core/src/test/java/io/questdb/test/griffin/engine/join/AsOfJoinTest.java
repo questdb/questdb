@@ -141,6 +141,76 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinDenseReReadProducesStableResults() throws Exception {
+        // Regression: the Dense ASOF join cursor must reset its forward/backward scan state
+        // both on toTop() and on cursor re-acquisition. A stale backwardScanExhausted flag
+        // used to make the second pass skip the backward scan and miss matches that the first
+        // pass had found.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('B', 'Y', 4.0, '2024-01-01T10:03:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T09:45:00.000000Z'),
+                        ('A', 'X', 11.0, '2024-01-01T10:00:30.000000Z')
+                    """);
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\t20.0
+                    B\tX\t3.0\t30.0
+                    B\tY\t4.0\tnull
+                    """;
+            String query = "SELECT /*+ asof_dense(m s) */ m.sym1, m.sym2, m.val, s.price " +
+                    "FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            StringSink sink = new StringSink();
+            try (RecordCursorFactory factory = select(query)) {
+                RecordMetadata metadata = factory.getMetadata();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+                    // re-read the same cursor: scan state must be reset by toTop()
+                    cursor.toTop();
+                    sink.clear();
+                    TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+                }
+                // re-acquire the cursor from the same factory: scan state must be reset by of()
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinDynamicTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -5866,6 +5936,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Light
+                                  condition: s.sym=m.sym
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: dyn_master
+                                    VirtualRecord
+                                      functions: [ts,sym_str::symbol]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: dyn_slave_src
+                            """)
                     .returns(replaceTimestampSuffix1("""
                                     sym	ts
                                     A	2025-01-01T00:00:00.000000Z
@@ -5878,22 +5961,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     """,
                             rightTableTimestampType.getTypeName()
                     ));
-            assertQuery("explain " + sql)
-                    .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
-                            SelectedRecord
-                                AsOf Join Light
-                                  condition: s.sym=m.sym
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: dyn_master
-                                    VirtualRecord
-                                      functions: [ts,sym_str::symbol]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: dyn_slave_src
-                            """);
         });
     }
 
@@ -5944,17 +6011,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
         } else {
             hintedQuery = "SELECT " + queryBody;
         }
-        printSql("EXPLAIN " + hintedQuery);
-        TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
-        if (hint.contains("asof_driveby_cache(t q)")) {
-            TestUtils.assertContains(sink, "driveByCache: true");
-        }
-        if (expectSymbolKeyJoin) {
-            TestUtils.assertContains(sink, "symbolKeyJoin: true");
-        }
         assertQuery(hintedQuery)
                 .noLeakCheck()
-                .returnsOnce(expectedResult);
+                .noRandomAccess()
+                .inferTimestamp()
+                .sizeMayVary()
+                .withPlanContaining(
+                        "AsOf Join " + expectedAlgo,
+                        hint.contains("asof_driveby_cache(t q)") ? "driveByCache: true" : null,
+                        expectSymbolKeyJoin ? "symbolKeyJoin: true" : null
+                )
+                .returns(expectedResult);
     }
 
     private void assertAsOfJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2) throws Exception {

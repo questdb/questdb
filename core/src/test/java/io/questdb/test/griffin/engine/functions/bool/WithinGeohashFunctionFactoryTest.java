@@ -248,8 +248,9 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
             String query = "trips WHERE pickup_geohash WITHIN (#dr5) LATEST ON pickup_datetime PARTITION BY sym;";
 
             // without index
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             LatestByDeferredListValuesFiltered
                               filter: pickup_geohash in ["011001011100101"]
                                 Frame backward scan on: trips
@@ -268,8 +269,9 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
             drainWalQueue();
 
             // with index
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             LatestByDeferredListValuesFiltered
                               filter: pickup_geohash in ["011001011100101"]
                                 Frame backward scan on: trips
@@ -287,8 +289,9 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
             // now override
             configOverrideUseWithinLatestByOptimisation();
 
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             LatestByAllIndexed
                                 Async index backward scan on: sym workers: 2
                                   filter: pickup_geohash within("011001011100101000000000000000000000000000000000000000000000")
@@ -313,8 +316,9 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
             String query = "trips WHERE pickup_geohash WITHIN (#dr5) LATEST ON pickup_datetime PARTITION BY sym;";
 
             // without index
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             LatestByDeferredListValuesFiltered
                               filter: pickup_geohash in ["011001011100101"]
                                 Frame backward scan on: trips
@@ -333,8 +337,9 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
             drainWalQueue();
 
             // with index, it won't be used by default, since latest by optimisation is disabled
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             LatestByDeferredListValuesFiltered
                               filter: pickup_geohash in ["011001011100101"]
                                 Frame backward scan on: trips
@@ -352,8 +357,9 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
             // now override
             configOverrideUseWithinLatestByOptimisation();
 
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             LatestByAllIndexed
                                 Async index backward scan on: sym workers: 2
                                   filter: pickup_geohash within("011001011100101000000000000000000000000000000000000000000000")

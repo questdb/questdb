@@ -31,12 +31,16 @@ public class AvgBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
+        // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+        // re-reads returns() performs; the single cursor pass keeps the result stable.
         assertQuery("select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)")
                 .returnsOnce("""
                         avg\tmax\tmin
                         0.7\t1.0\t0.0
                         """);
 
+        // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+        // re-reads returns() performs; the single cursor pass keeps the result stable.
         assertQuery("select avg(rnd_double() >= 0.5) from long_sequence(10)")
                 .returnsOnce("""
                         avg

@@ -53,14 +53,26 @@ standard resizable list and integrates with `Misc.freeObjList()` /
 - resource leaks are a pain point in QuestDB. Always think carefully about all
   possible code paths, especially error paths, and write tests that ensure
   correct resource cleanup on each path.
-- use assertQueryNoLeakCheck() to assert the results of queries. This method
-  asserts factory properties (supportsRandomAccess, expectSize, expectedTimestamp)
-  in addition to data correctness. When a parameter combination does not match
-  a direct overload, adjust the call (pass explicit nulls, booleans, or use a
-  different overload) rather than falling back to assertSql(). Only use
-  assertSql() in storage tests (typically in the cairo test package) that
-  purely verify data persistence, where factory property assertions are
-  irrelevant and can cause false failures.
+- assert query results with the fluent `assertQuery(query)` builder
+  (`AbstractCairoTest.assertQuery(...)`): `assertQuery(sql).returns(expected)`.
+  Chain factory-property assertions as the query warrants — `.timestamp(...)`,
+  `.expectSize()`, `.noRandomAccess()`, `.sizeMayVary()`, `.ddl(...)`,
+  `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)`. For execution
+  plans use `.assertsPlan(...)` / `.assertsPlanContaining(...)` or fold the plan
+  into a data assertion with `.withPlan(...)` / `.withPlanContaining(...)`.
+- the old `assertSql(...)` / `TestUtils.assertSql(...)` query-result helpers have
+  been REMOVED — `.returns(...)` runs a strictly stronger battery (a second
+  cursor pass, a `calculateSize()` cross-check, a variable-column check, and the
+  factory-property assertions) that catches bugs the old single-pass print/compare
+  silently missed. (`TestServerMain.assertSql(sql, expected)` is a separate
+  live-`ServerMain` convenience wrapper and is unrelated.)
+- **never use `.returnsOnce(...)` unless the query's projection is genuinely
+  non-deterministic across a re-read** — an unseeded `rnd_*` function, or
+  time-varying output such as `now()`/`sysdate()`/`systimestamp()`. `returnsOnce`
+  deliberately skips the second cursor pass and every check listed above, so for
+  any deterministic query it leaves real bugs untested. Default to `.returns(...)`;
+  reach for `.returnsOnce(...)` only with a stated reason that the output cannot be
+  stable across two reads.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive

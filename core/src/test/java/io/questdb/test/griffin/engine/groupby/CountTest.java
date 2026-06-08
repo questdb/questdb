@@ -169,8 +169,9 @@ public class CountTest extends AbstractCairoTest {
             drainWalQueue();
 
             // the keyed group by must survive in the plan (not collapse into a bare Count)
-            assertPlanNoLeakCheck(
-                    "SELECT count() dups FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1", """
+            assertQuery("SELECT count() dups FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Count
                                 Filter filter: 1<c
                                     Async Group By workers: 1
@@ -180,8 +181,7 @@ public class CountTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             // all 12 (ts,s) pairs are unique, so no group has count > 1
             assertQuery("SELECT count() dups FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1")
