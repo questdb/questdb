@@ -379,6 +379,9 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testSampleFillNone() throws Exception {
+        // returnsOnce(): the query projects rnd_ipv4() inline in a CTE, so the random IPv4s - and thus
+        // the approx_count_distinct results - differ across the re-reads returns() performs. The sibling
+        // fill tests materialize the random data into a table first, so they use the full returns().
         assertQuery("with x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
                 "select ts, approx_count_distinct(s) from x sample by 2s align to first observation")
                 .returnsOnce("""

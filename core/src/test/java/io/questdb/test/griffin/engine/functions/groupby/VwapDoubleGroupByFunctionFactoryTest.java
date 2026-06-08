@@ -31,6 +31,8 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
+        // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+        // re-reads returns() performs; the single cursor pass keeps the result stable.
         assertQuery("select vwap(rnd_double(), rnd_double()) from long_sequence(10)")
                 .returnsOnce("""
                         vwap

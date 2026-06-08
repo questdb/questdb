@@ -340,21 +340,20 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         where workspace = 'a' and method_id = 'd'
                         order by address""";
 
-            assertPlanNoLeakCheck(query, """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [address]
-                            VirtualRecord
-                              functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: (workspace='a' and method_id='d')
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                    """);
-
             assertQuery(query)
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [address]
+                                    VirtualRecord
+                                      functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]
+                                        SelectedRecord
+                                            Async JIT Filter workers: 1
+                                              filter: (workspace='a' and method_id='d')
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                            """)
                     .returns("""
                             month\tuid
                             1970-01-01T00:05:00.000000Z\tA5a
@@ -388,20 +387,19 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         where workspace = 'a' and method_id = 'd'
                         order by ts, month, method_id""";
 
-            assertPlanNoLeakCheck(query, """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [ts, month, method_id]
-                            VirtualRecord
-                              functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]
-                                Async JIT Filter workers: 1
-                                  filter: (workspace='a' and method_id='d')
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                    """);
-
             assertQuery(query)
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [ts, month, method_id]
+                                    VirtualRecord
+                                      functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]
+                                        Async JIT Filter workers: 1
+                                          filter: (workspace='a' and method_id='d')
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                            """)
                     .returns("""
                             month\tuid
                             1970-01-01T00:03:00.000000Z\tA3a
@@ -436,29 +434,28 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         where t1.workspace = 'a' and t1.method_id = 'd'
                         order by t2.ts desc""";
 
-            assertPlanNoLeakCheck(query, """
-                    SelectedRecord
-                        Encode sort
-                          keys: [ts desc]
-                            VirtualRecord
-                              functions: [timestamp_floor('minute',ts),ts1,concat([address,workspace]),ts]
-                                SelectedRecord
-                                    Hash Join Light
-                                      condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace
-                                        Async JIT Filter workers: 1
-                                          filter: (workspace='a' and method_id='d')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                                        Hash
-                                            Async JIT Filter workers: 1
-                                              filter: (method_id='d' and workspace='a')
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
-                    """);
-
             assertQuery(query)
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort
+                                  keys: [ts desc]
+                                    VirtualRecord
+                                      functions: [timestamp_floor('minute',ts),ts1,concat([address,workspace]),ts]
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace
+                                                Async JIT Filter workers: 1
+                                                  filter: (workspace='a' and method_id='d')
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tab
+                                                Hash
+                                                    Async JIT Filter workers: 1
+                                                      filter: (method_id='d' and workspace='a')
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tab
+                            """)
                     .returns("""
                             month\tts1\tuid
                             1970-01-01T00:05:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a
@@ -494,20 +491,19 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "and vendor_id in ('A1', 'A2') " +
                     "order by a.mta_tax;";
 
-            assertPlanNoLeakCheck(query, """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [mta_tax]
-                            SelectedRecord
-                                Async JIT Filter workers: 1
-                                  filter: vendor_id in [A1,A2]
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: trips
-                                          intervals: [("2019-06-30T00:00:00.000000Z","MAX")]
-                    """);
-
             assertQuery(query)
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [mta_tax]
+                                    SelectedRecord
+                                        Async JIT Filter workers: 1
+                                          filter: vendor_id in [A1,A2]
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: trips
+                                                  intervals: [("2019-06-30T00:00:00.000000Z","MAX")]
+                            """)
                     .returns("""
                             vendor_id
                             A1
@@ -545,27 +541,26 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "and b.vendor_id in ('A1', 'A2') " +
                     "order by b.mta_tax;";
 
-            assertPlanNoLeakCheck(query, """
-                    SelectedRecord
-                        Encode sort
-                          keys: [mta_tax]
+            assertQuery(query)
+                    .withPlan("""
                             SelectedRecord
-                                Hash Join Light
-                                  condition: b.vendor_id=a.vendor_id
-                                  symbolKeyJoin: true
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: t1
-                                          intervals: [("2019-06-30T00:00:00.000000Z","MAX")]
-                                    Hash
-                                        Async JIT Filter workers: 1
-                                          filter: vendor_id in [A1,A2]
+                                Encode sort
+                                  keys: [mta_tax]
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: b.vendor_id=a.vendor_id
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: t2
-                    """);
-
-            assertQuery(query)
+                                                Interval forward scan on: t1
+                                                  intervals: [("2019-06-30T00:00:00.000000Z","MAX")]
+                                            Hash
+                                                Async JIT Filter workers: 1
+                                                  filter: vendor_id in [A1,A2]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """)
                     .returns("""
                             vendor_id
                             A2
@@ -584,12 +579,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     ") timestamp (ts) PARTITION BY DAY");
             execute("insert into tab values (0, 'c', 1), (0, 'b', 2), (0, 'a', 3), (1, 'd', 4), (2, 'e', 5)");
 
-            assertPlanNoLeakCheck("SELECT key " +
-                            "FROM tab " +
-                            "WHERE key IS NOT NULL " +
-                            "ORDER BY ts, key " +
-                            "LIMIT 10",
-                    """
+            assertQuery("SELECT key " +
+                    "FROM tab " +
+                    "WHERE key IS NOT NULL " +
+                    "ORDER BY ts, key " +
+                    "LIMIT 10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Sort light lo: 10 partiallySorted: true
                                   keys: [ts, key]
@@ -613,7 +609,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts, key " +
-                        "LIMIT ", "ts");
+                        "LIMIT ", "ts", false);
 
         assertLimitQueries("""
                         ts\tkey\tvalue
@@ -627,7 +623,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts, key DESC " +
-                        "LIMIT ", "ts");
+                        "LIMIT ", "ts", false);
 
         assertLimitQueries("""
                         ts\tkey\tvalue
@@ -641,7 +637,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts desc, key " +
-                        "LIMIT ", "ts###DESC");
+                        "LIMIT ", "ts", true);
 
         assertLimitQueries("""
                         ts\tkey\tvalue
@@ -655,7 +651,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts desc, key desc " +
-                        "LIMIT ", "ts###DESC");
+                        "LIMIT ", "ts", true);
     }
 
     @Test
@@ -938,7 +934,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         });
     }
 
-    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws Exception {
+    private void assertLimitQueries(String result, String query, String timestampColumn, boolean descending) throws Exception {
         int firstLineStart = result.indexOf('\n') + 1;
         String header = result.substring(0, firstLineStart);
 
@@ -960,9 +956,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
                 String expected = header + result.substring(loIdx, hiIdx);
 
-                assertQuery(query + " " + lo + ", " + hi)
-                        .timestamp(expectedTimestamp)
-                        .expectSize()
+                var qa = assertQuery(query + " " + lo + ", " + hi);
+                if (descending) {
+                    qa.timestampDesc(timestampColumn);
+                } else {
+                    qa.timestampAsc(timestampColumn);
+                }
+                qa.expectSize()
                         .returns(expected);
             }
         }

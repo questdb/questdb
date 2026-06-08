@@ -103,6 +103,19 @@ public class ViewsFunctionTest extends AbstractViewTest {
     }
 
     @Test
+    public void testShowCreateViewFailMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createMatView("test_mv", "select ts, k, avg(v) from " + TABLE1 + " sample by 30s");
+            assertExceptionNoLeakCheck(
+                    "show create view test_mv",
+                    17,
+                    "view name expected, got materialized view name"
+            );
+        });
+    }
+
+    @Test
     public void testViewsConsistentWithMatViewsAndTablesCommands() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1750345200000000L);

@@ -47,19 +47,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, ARRAY[5.0, 6.0], '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t[1.0,2.0]
@@ -80,19 +80,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, true, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\ttrue
@@ -113,19 +113,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 30, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t10
@@ -146,19 +146,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 'C', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\tA
@@ -179,19 +179,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '2024-12-31T00:00:00.000Z', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t2024-01-01T00:00:00.000Z
@@ -213,19 +213,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '7.89', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t1.23
@@ -247,19 +247,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '90.12', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t12.34
@@ -281,19 +281,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '7.89', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t1.23
@@ -315,19 +315,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '3456.78', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t1234.56
@@ -349,19 +349,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '5555555555.56', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t1234567890.12
@@ -383,19 +383,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '5.6', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t1.2
@@ -416,19 +416,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 3.33, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t1.11
@@ -449,19 +449,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 3.5, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t1.5
@@ -482,19 +482,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 'z', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\ts
@@ -515,19 +515,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 'zzzzzz', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\tsp052w
@@ -548,19 +548,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 'zzzzzzzzzzzz', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\tsp052w92p1p8
@@ -581,19 +581,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 'zzz', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\tsp0
@@ -614,19 +614,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '172.16.0.1', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t192.168.1.1
@@ -647,19 +647,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '33333333-3333-3333-3333-333333333333', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t11111111-1111-1111-1111-111111111111
@@ -680,19 +680,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '0x03', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t0x01
@@ -713,19 +713,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 300, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t100
@@ -746,19 +746,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 'foo', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\thello
@@ -779,19 +779,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, 'gamma', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\talpha
@@ -812,19 +812,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '2024-08-20T16:45:00.000000Z', '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\t2024-06-01T12:00:00.000000Z
@@ -846,19 +846,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // v is VARCHAR → delegated to baseRecord (getVarcharA/getVarcharB)
             String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,v]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\tv
                             10.0\thello
@@ -883,20 +883,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
             // (a+b)*(c+d) has high complexity (above threshold 3)
             // Two sort keys to avoid radix sort path (single INT key triggers radix sort)
             String query = "SELECT (a + b) * (c + d) AS x, a FROM t ORDER BY x, a";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, a]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,a]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (3+10)*(2+1)=39, (1+20)*(3+2)=105, (2+30)*(1+3)=128, (5+5)*(4+1)=50, (4+15)*(2+3)=95
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, a]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,a]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\ta
                             39\t3
@@ -919,20 +919,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (2.0, 30.0, 1.0, 3.0, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x DESC";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x desc]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (3+10)*(2+1)=39.0, (1+20)*(3+2)=105.0, (2+30)*(1+3)=128.0
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x desc]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x
                             128.0
@@ -953,20 +953,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (2+3)*(1+1)=10.0, (1+2)*(4+1)=15.0, (3+1)*(2+3)=20.0
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x
                             10.0
@@ -981,19 +981,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("x\n");
         });
     }
@@ -1009,20 +1009,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3.0, 1.0, 2.0, 3.0, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (2+3)*(1+1)=10.0, (1+2)*(4+1)=15.0, (3+1)*(2+3)=20.0
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x
                             10.0
@@ -1044,20 +1044,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // Two sort keys to avoid radix sort path (single LONG key triggers radix sort)
             String query = "SELECT (a + b) * (c + d) AS x, a FROM t ORDER BY x, a";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, a]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,a]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (3+10)*(2+1)=39, (1+20)*(3+2)=105, (2+30)*(1+3)=128
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, a]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,a]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\ta
                             39\t3
@@ -1079,21 +1079,21 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // x = (a+b)*(c+d) has high complexity → materialized; a has complexity 1 → not materialized
             String query = "SELECT (a + b) * (c + d) AS x, a FROM t ORDER BY x, a";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, a]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,a]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (3+10)*(2+1)=39, (1+12)*(2+1)=39, (2+30)*(1+3)=128
             // Secondary sort by a: 1 before 3
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, a]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,a]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\ta
                             39\t1
@@ -1116,21 +1116,21 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // Both (a+b)*(c+d) and a*c+b*d have high complexity → both materialized
             String query = "SELECT (a + b) * (c + d) AS x, a * c + b * d AS y FROM t ORDER BY x, y";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, y]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,a*c+b*d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (1+2)*(10+5)=45 y=10+10=20, (1+2)*(3+4)=21 y=3+8=11,
             // (3+4)*(10+5)=105 y=30+20=50, (3+4)*(3+4)=49 y=9+16=25
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, y]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,a*c+b*d]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\ty
                             21\t11
@@ -1147,20 +1147,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (3.0, 10.0, 2.0, 1.0, '2024-01-01T00:00:00.000000Z')");
             String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (3+10)*(2+1)=39.0
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x
                             39.0
@@ -1180,20 +1180,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // Two sort keys to avoid radix sort path
             String query = "SELECT (a + b) * (c + d) AS x, a FROM t ORDER BY x, a";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, a]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,a]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (3+10)*(2+1)=39, (NULL+20)*(3+2)=null, (2+30)*(1+3)=128
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, a]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,a]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\ta
                             null\tnull
@@ -1216,21 +1216,21 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
             // x = (a+b)*(c+d) has high complexity → materialized
             // s is SYMBOL (not fixed-size) → not materialized, sorted lexicographically via getSym()
             String query = "SELECT (a + b) * (c + d) AS x, s FROM t ORDER BY x, s";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, s]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d,s]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // (2+3)*(1+1)=10.0, (2+3)*(1+1)=10.0, (1+2)*(4+1)=15.0
             // Secondary sort by s: alpha before beta
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, s]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d,s]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\ts
                             10.0\talpha
@@ -1248,9 +1248,9 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             // a + 1 has complexity ARITHMETIC(2) + COLUMN(1) + NONE(0) = 3,
             // at the default threshold (3) but not above → no materialization
-            assertPlanNoLeakCheck(
-                    "SELECT a + 1 AS x FROM t ORDER BY x",
-                    """
+            assertQuery("SELECT a + 1 AS x FROM t ORDER BY x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sort light
                               keys: [x]
                                 VirtualRecord
@@ -1258,8 +1258,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -1276,18 +1275,18 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
             // concat returns VARCHAR (variable-length) → not eligible for materialization
             // Plan should NOT contain "Materialize sort keys"
             String query = "SELECT concat(a, b) AS x FROM t ORDER BY x";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        VirtualRecord
-                          functions: [concat([a,b])]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x]
+                                VirtualRecord
+                                  functions: [concat([a,b])]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
                     .returns("""
                             x
                             aa
@@ -1309,20 +1308,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // CASE has self-complexity 5 → exceeds threshold (3). BOOLEAN is fixed 1 byte → materialized
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→a=true, e=-1→b=true, e=2→a=false. Sorted: false < true
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             false\t2
@@ -1344,20 +1343,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // BYTE is fixed 1 byte → materialized
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→a=10, e=-1→b=5, e=2→a=15
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             5\t-1
@@ -1379,20 +1378,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // CHAR is fixed 2 bytes → materialized
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→'x', e=-1→'b', e=2→'y'
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             b\t-1
@@ -1414,20 +1413,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // DATE is fixed 8 bytes → materialized
             String query = "SELECT CASE WHEN e > 0 THEN d1 ELSE d2 END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,d1,d2]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→d1='01', e=-1→d2='02', e=2→d1='05'
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,d1,d2]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             2024-01-01T00:00:01.000Z\t1
@@ -1449,20 +1448,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             5.00\t-1
@@ -1484,19 +1483,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             5.00\t-1
@@ -1518,20 +1517,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             5.00\t-1
@@ -1553,19 +1552,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             5.00\t-1
@@ -1587,20 +1586,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             5.00\t-1
@@ -1622,19 +1621,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('1.5', '2.5', 2, '2024-01-01T00:00:02.000000Z')
                     """);
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             0.5\t-1
@@ -1657,21 +1656,21 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
             // make_geohash(lon, lat, 5) returns GEOHASH(1c) = GEOBYTE (1 byte, fixed)
             // args include computed expressions (a+b, c+d) → high complexity, above threshold → materialized
             String query = "SELECT make_geohash(a + b, c + d, 5) AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [make_geohash(a+b,c+d,5),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // Verify geohash values are read through MaterializedRecord
             // lon=a+b, lat=c+d: row1(30,40)→s, row2(-20,-5)→7, row3(110,25)→w; sorted: 7,s,w
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [make_geohash(a+b,c+d,5),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             7\t2
@@ -1693,16 +1692,18 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // make_geohash(lon, lat, 30) returns GEOHASH(6c) = GEOINT (4 bytes, fixed)
             String query = "SELECT make_geohash(a + b, c + d, 30) AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [make_geohash(a+b,c+d,30),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [make_geohash(a+b,c+d,30),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
             // Read x to force getGeoInt through MaterializedRecord; verify sort order via e
             assertQuery("SELECT e FROM (" + query + ")")
                     .noLeakCheck()
@@ -1728,16 +1729,18 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // make_geohash(lon, lat, 60) returns GEOHASH(12c) = GEOLONG (8 bytes, fixed)
             String query = "SELECT make_geohash(a + b, c + d, 60) AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [make_geohash(a+b,c+d,60),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [make_geohash(a+b,c+d,60),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
             // Read x to force getGeoLong through MaterializedRecord; verify sort order via e
             assertQuery("SELECT e FROM (" + query + ")")
                     .noLeakCheck()
@@ -1763,16 +1766,18 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // make_geohash(lon, lat, 15) returns GEOHASH(3c) = GEOSHORT (2 bytes, fixed)
             String query = "SELECT make_geohash(a + b, c + d, 15) AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [make_geohash(a+b,c+d,15),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [make_geohash(a+b,c+d,15),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
             // Read x to force getGeoShort through MaterializedRecord; verify sort order via e
             assertQuery("SELECT e FROM (" + query + ")")
                     .noLeakCheck()
@@ -1798,19 +1803,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // IPv4 is excluded from materialization (no arithmetic on this type)
             String query = "SELECT CASE WHEN e > 0 THEN ip1 ELSE ip2 END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        VirtualRecord
-                          functions: [case([0<e,ip1,ip2]),e]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: t
-                    """);
             // e=1→'1.1.1.1', e=-1→'2.2.2.2', e=2→'5.5.5.5'
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                VirtualRecord
+                                  functions: [case([0<e,ip1,ip2]),e]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             1.1.1.1\t1
@@ -1832,20 +1837,20 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // SHORT is fixed 2 bytes → materialized
             String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,a,b]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→a=100, e=-1→b=50, e=2→a=150
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,a,b]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             50\t-1
@@ -1867,19 +1872,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // STRING is variable-length → NOT materialized
             String query = "SELECT CASE WHEN e > 0 THEN s1 ELSE s2 END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        VirtualRecord
-                          functions: [case([0<e,s1,s2]),e]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: t
-                    """);
             // e=1→'hello', e=-1→'bar', e=2→'abc'
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                VirtualRecord
+                                  functions: [case([0<e,s1,s2]),e]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             abc\t2
@@ -1903,21 +1908,21 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // TIMESTAMP is fixed 8 bytes → materialized
             String query = "SELECT CASE WHEN e > 0 THEN t1 ELSE t2 END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,t1,t2]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
             // e=1→t1='01', e=-1→t2='02', e=2→t1='05'
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("x")
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [case([0<e,t1,t2]),e]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             2024-01-01T00:00:01.000000Z\t1
@@ -1939,19 +1944,19 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """);
             // UUID is 16 bytes (> Long.BYTES) → NOT materialized
             String query = "SELECT CASE WHEN e > 0 THEN u1 ELSE u2 END AS x, e FROM t ORDER BY x, e";
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x, e]
-                        VirtualRecord
-                          functions: [case([0<e,u1,u2]),e]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: t
-                    """);
             // e=1→u1='111...', e=-1→u2='222...', e=2→u1='555...'
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Sort light
+                              keys: [x, e]
+                                VirtualRecord
+                                  functions: [case([0<e,u1,u2]),e]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
                     .returns("""
                             x\te
                             11111111-1111-1111-1111-111111111111\t1
@@ -1978,16 +1983,18 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
 
             // Plan check confirms the materializing factory is exercised (drops out if LIMIT is
             // added, since that routes through LimitedSizeSortedLightRecordCursorFactory instead).
-            assertPlanNoLeakCheck(query, """
-                    Sort light
-                      keys: [x]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [a+b*c+d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a+b*c+d]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
 
             // Drain the cursor to actually exercise materialization. The test fails if the cap
             // fires here.
