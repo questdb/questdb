@@ -6378,12 +6378,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("SELECT v, LAG(v, 1) OVER (ORDER BY ts DESC) lg FROM tab")
                     .expectSize()
                     .noLeakCheck()
-                    .returns("v\tlg\n" +
-                            "10\t22\n" +
-                            "20\t30\n" +
-                            "21\t20\n" +
-                            "22\t21\n" +
-                            "30\tnull\n");
+                    .returns("""
+                            v\tlg
+                            10\t22
+                            20\t30
+                            21\t20
+                            22\t21
+                            30\tnull
+                            """);
         });
     }
 

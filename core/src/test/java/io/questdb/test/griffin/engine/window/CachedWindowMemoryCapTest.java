@@ -89,10 +89,12 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
             assertQuery("SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab LIMIT 3")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("sym\tts\tlag\n" +
-                            "s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z\n" +
-                            "s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z\n" +
-                            "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n");
+                    .returns("""
+                            sym\tts\tlag
+                            s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z
+                            s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z
+                            s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z
+                            """);
         });
     }
 
@@ -112,19 +114,21 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("sym\tts\tv\tprev_v\n" +
-                            "s1\t1970-01-01T00:00:00.000000Z\t1\tnull\n" +
-                            "s2\t1970-01-01T00:00:01.000000Z\t2\tnull\n" +
-                            "s3\t1970-01-01T00:00:02.000000Z\t3\tnull\n" +
-                            "s0\t1970-01-01T00:00:03.000000Z\t4\tnull\n" +
-                            "s1\t1970-01-01T00:00:04.000000Z\t5\t1\n" +
-                            "s2\t1970-01-01T00:00:05.000000Z\t6\t2\n" +
-                            "s3\t1970-01-01T00:00:06.000000Z\t7\t3\n" +
-                            "s0\t1970-01-01T00:00:07.000000Z\t8\t4\n" +
-                            "s1\t1970-01-01T00:00:08.000000Z\t9\t5\n" +
-                            "s2\t1970-01-01T00:00:09.000000Z\t10\t6\n" +
-                            "s3\t1970-01-01T00:00:10.000000Z\t11\t7\n" +
-                            "s0\t1970-01-01T00:00:11.000000Z\t12\t8\n");
+                    .returns("""
+                            sym\tts\tv\tprev_v
+                            s1\t1970-01-01T00:00:00.000000Z\t1\tnull
+                            s2\t1970-01-01T00:00:01.000000Z\t2\tnull
+                            s3\t1970-01-01T00:00:02.000000Z\t3\tnull
+                            s0\t1970-01-01T00:00:03.000000Z\t4\tnull
+                            s1\t1970-01-01T00:00:04.000000Z\t5\t1
+                            s2\t1970-01-01T00:00:05.000000Z\t6\t2
+                            s3\t1970-01-01T00:00:06.000000Z\t7\t3
+                            s0\t1970-01-01T00:00:07.000000Z\t8\t4
+                            s1\t1970-01-01T00:00:08.000000Z\t9\t5
+                            s2\t1970-01-01T00:00:09.000000Z\t10\t6
+                            s3\t1970-01-01T00:00:10.000000Z\t11\t7
+                            s0\t1970-01-01T00:00:11.000000Z\t12\t8
+                            """);
         });
     }
 
@@ -146,10 +150,12 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     " FROM long_sequence(5_000)) TIMESTAMP(ts)");
 
             final String query = "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab LIMIT 3";
-            final String expected = "sym\tts\tlag\n" +
-                    "s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z\n" +
-                    "s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z\n" +
-                    "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n";
+            final String expected = """
+                    sym\tts\tlag
+                    s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z
+                    s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z
+                    s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z
+                    """;
 
             assertQuery(query)
                     .noLeakCheck()
