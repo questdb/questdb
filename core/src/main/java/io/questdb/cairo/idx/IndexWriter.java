@@ -294,6 +294,9 @@ public interface IndexWriter extends Closeable, Mutable {
     default void sealIfMultiGen(int threshold) {
     }
 
+    default void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+    }
+
     default void setCoveredColumnNameTxns(LongList txns) {
     }
 
@@ -346,6 +349,15 @@ public interface IndexWriter extends Closeable, Mutable {
      * that follows in {@link #openFromO3Context}.
      */
     default void setO3PathContext(Path path, CharSequence name, long columnNameTxn, long upcomingTxn) {
+    }
+
+    /**
+     * Records the partition timestamp and name-txn on the writer so a deferred
+     * seal-purge task can reconstruct the value-file directory after the writer
+     * is freed. The path-based of(...) overloads used by the parquet rebuild do
+     * not carry these. No-op for writers without a seal-purge outbox (e.g. BITMAP).
+     */
+    default void setPartitionContext(long partitionTimestamp, long partitionNameTxn) {
     }
 
     /**
