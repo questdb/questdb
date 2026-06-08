@@ -38,24 +38,30 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testAggregateOverUnionAllLegacyFlagReintroducesCrash() throws Exception {
         // The cairo.sql.legacy.union.column.propagation flag restores the pre-fix by-name emit,
-        // which reintroduces the column-count divergence so the otherwise-fixed query fails again.
-        // Guards the rollback switch against silently becoming a no-op.
+        // which reintroduces the column-count divergence so the otherwise-fixed query fails again
+        // with an AssertionError during code generation. Guards the rollback switch against
+        // silently becoming a no-op. Reset the flag in finally so it cannot leak into other tests
+        // in this class (overrides are otherwise only cleared at @AfterClass).
         setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "true");
-        assertMemoryLeak(() -> {
-            execute("create table u1 (a symbol, close double)");
-            execute("create table u2 (a symbol, close double)");
-            execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
-            execute("insert into u2 values ('z', 3.0)");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table u1 (a symbol, close double)");
+                execute("create table u2 (a symbol, close double)");
+                execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
+                execute("insert into u2 values ('z', 3.0)");
 
-            final String unionSql = "select a, close price from u1 union all select a, close price from u2";
-            boolean threw = false;
-            try (RecordCursorFactory ignored = select("select count() from (" + unionSql + ")")) {
-                // unreachable: the legacy by-name emit diverges the branch column counts
-            } catch (AssertionError | Exception e) {
-                threw = true;
-            }
-            Assert.assertTrue("legacy flag should restore the by-name emit and reintroduce the crash", threw);
-        });
+                final String unionSql = "select a, close price from u1 union all select a, close price from u2";
+                boolean threw = false;
+                try (RecordCursorFactory ignored = select("select count() from (" + unionSql + ")")) {
+                    // unreachable: the legacy by-name emit diverges the branch column counts
+                } catch (AssertionError e) {
+                    threw = true;
+                }
+                Assert.assertTrue("legacy flag should restore the by-name emit and reintroduce the crash", threw);
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "false");
+        }
     }
 
     @Test
