@@ -6215,17 +6215,14 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns0(jm, false, model, true);
         }
 
-        // If this is group by model we need to add all non-selected keys, only if this is sub-query
-        // For top level models top-down column list will be empty
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
-            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
-            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-                QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                    model.addTopDownColumn(qc, qc.getAlias());
-                }
-            }
-        }
+        // If this is a group by sub-query whose projection will be pruned to its top-down columns,
+        // retain all non-selected grouping keys so pruning cannot collapse the keyed group by into a
+        // scalar aggregate. This early pass preserves the key ordering for the common case where the
+        // parent already contributed top-down columns; it is repeated once more below, after the
+        // model's own WHERE/HAVING and ORDER BY literals have been emitted, to also cover a HAVING-style
+        // filter that references only an aggregate alias (its literals are the sole top-down contributor,
+        // so an empty list here would skip retention). For top level models the list is empty -> no-op.
+        retainGroupByKeysAsTopDownColumns(model);
 
         // latest on
         if (model.getLatestBy().size() > 0) {
@@ -6258,6 +6255,14 @@ public class SqlOptimiser implements Mutable {
         if (!topLevel) {
             emitLiteralsTopDown(model.getOrderBy(), model);
         }
+
+        // Repeat group by key retention now that the model's own WHERE/HAVING and ORDER BY literals
+        // have been emitted into top-down columns. This covers HAVING-style filters on a group by
+        // sub-query whose only top-down contribution is an aggregate alias (e.g. count() > 1); the
+        // early pass above would have observed an empty list and skipped, letting pruning collapse the
+        // keyed group by into a scalar aggregate. addTopDownColumn() dedupes by alias, so re-running is
+        // idempotent and leaves the key ordering from the early pass untouched in the common case.
+        retainGroupByKeysAsTopDownColumns(model);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
@@ -7248,6 +7253,23 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             node = sqlNodeStack.poll();
+        }
+    }
+
+    // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
+    // top-down column pruning cannot drop the keys that define the grouping. Runs only when the model
+    // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
+    // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
+    // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
+    private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                QueryColumn qc = bottomUpColumns.getQuick(i);
+                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                    model.addTopDownColumn(qc, qc.getAlias());
+                }
+            }
         }
     }
 
