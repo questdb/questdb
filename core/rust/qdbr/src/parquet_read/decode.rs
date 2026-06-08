@@ -3875,16 +3875,15 @@ mod tests {
         assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
     }
 
-    #[test]
-    fn decode_page_empty_delta_buffer_decodes_all_null() {
-        // Backward-compat coverage through the real decode.rs path: a
-        // DELTA_BINARY_PACKED page with an EMPTY values buffer (no header) -- as
-        // written by pre-fix QuestDB and some foreign encoders -- must decode as
-        // all-null. Every all-null integration test goes through the current,
-        // header-emitting writer, so this is the only test that drives
-        // MiniblockIterator::try_new's empty-buffer branch through decode_page.
-        // Reverting just the reader fix makes this fail (try_new rejects the
-        // empty buffer) while the integration round-trips still pass.
+    // Decode an all-null V1 page whose DELTA_BINARY_PACKED values buffer is EMPTY
+    // (no header) -- the shape pre-fix QuestDB and some foreign encoders produce
+    // -- through the real decode_page path, asserting every row is the given
+    // Int64-width null sentinel. Every all-null integration test goes through the
+    // current header-emitting writer, so this is the only coverage of
+    // MiniblockIterator::try_new's empty-buffer branch via decode_page. Reverting
+    // just the reader fix makes this fail (try_new rejects the empty buffer)
+    // while the integration round-trips still pass.
+    fn assert_empty_delta_int64_page_all_null(column_type: ColumnType, null_sentinel: i64) {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
         let n = 10usize;
@@ -3910,7 +3909,7 @@ mod tests {
             descriptor: Descriptor {
                 primitive_type: PrimitiveType {
                     field_info: FieldInfo {
-                        name: "long_col".to_string(),
+                        name: "col".to_string(),
                         repetition: Repetition::Optional,
                         id: None,
                     },
@@ -3927,7 +3926,7 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            column_type: ColumnTypeTag::Long.into_type(),
+            column_type,
             column_top: 0,
             format: None,
             ascii: None,
@@ -3935,10 +3934,24 @@ mod tests {
 
         decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
 
-        // Every row decodes as the LONG null sentinel.
         assert_eq!(bufs.data_vec.len(), n * size_of::<i64>());
         let out: &[i64] = unsafe { std::slice::from_raw_parts(bufs.data_vec.as_ptr().cast(), n) };
-        assert_eq!(out, &[i64::MIN; 10]);
+        assert_eq!(out, &[null_sentinel; 10]);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_buffer_decodes_all_null() {
+        // LONG: the common all-null delta column type.
+        assert_empty_delta_int64_page_all_null(ColumnTypeTag::Long.into_type(), i64::MIN);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_buffer_decimal64_all_null() {
+        // Decimal64 (Int64 physical type) also dispatches DELTA pages, with its
+        // own null sentinel. QuestDB's writer never emits DELTA for decimals, so
+        // this reader-side path is only reachable from foreign files; covers the
+        // distinct decode.rs dispatch arm.
+        assert_empty_delta_int64_page_all_null(ColumnTypeTag::Decimal64.into_type(), i64::MIN);
     }
 
     #[test]

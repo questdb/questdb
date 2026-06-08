@@ -447,16 +447,17 @@ fn test_encode_uuid() {
 // zero", suspending the table during WAL apply. These tests drive an all-null
 // page through QuestDB's own writer and reader, for both DELTA and PLAIN.
 
-fn round_trip_all_null_long(encoding: Encoding) {
+// Drive an all-null page (every value the column's null sentinel) through
+// QuestDB's own writer and reader for one primitive type. Generic over the
+// nullable, delta-capable types so each distinct null sentinel and width is
+// exercised end-to-end, not just LONG/INT.
+fn round_trip_all_null<T: PrimitiveType>(encoding: Encoding) {
     let row_count = 1_000usize;
-    // i64::MIN is the LONG null sentinel: a fully-null (column-top) partition.
-    let data: Vec<i64> = vec![i64::MIN; row_count];
-    let bytes = unsafe {
-        std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(&data[..]))
-    };
+    let data: Vec<T::T> = vec![T::NULL; row_count];
+    let bytes = as_bytes(&data);
     let column = make_primitive_column(
-        "str_top",
-        ColumnType::new(col_type::ColumnTypeTag::Long, 0).code(),
+        "null_top",
+        ColumnType::new(T::TAG, 0).code(),
         bytes.as_ptr(),
         bytes.len(),
         row_count,
@@ -470,51 +471,58 @@ fn round_trip_all_null_long(encoding: Encoding) {
 
     let (data_out, aux_out) = common::decode_file(&parquet);
     assert!(aux_out.is_empty());
-    assert_eq!(data_out.len(), row_count * std::mem::size_of::<i64>());
-    let out = data_out.as_ptr().cast::<i64>();
+    assert_eq!(data_out.len(), row_count * std::mem::size_of::<T::T>());
+    let out = data_out.as_ptr().cast::<T::T>();
     for i in 0..row_count {
         let v = unsafe { std::ptr::read_unaligned(out.add(i)) };
-        assert_eq!(v, i64::MIN, "row {i} should decode as LONG null");
+        assert_eq!(
+            v,
+            T::NULL,
+            "row {i} should decode as null for {}",
+            std::any::type_name::<T>()
+        );
     }
 }
 
 #[test]
 fn all_null_long_delta_round_trips_through_qdb_reader() {
-    round_trip_all_null_long(Encoding::DeltaBinaryPacked);
+    round_trip_all_null::<Long>(Encoding::DeltaBinaryPacked);
 }
 
 #[test]
 fn all_null_long_plain_round_trips_through_qdb_reader() {
-    round_trip_all_null_long(Encoding::Plain);
+    round_trip_all_null::<Long>(Encoding::Plain);
 }
 
 #[test]
 fn all_null_int_delta_round_trips_through_qdb_reader() {
-    let row_count = 1_000usize;
-    let data: Vec<i32> = vec![i32::MIN; row_count];
-    let bytes = unsafe {
-        std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(&data[..]))
-    };
-    let column = make_primitive_column(
-        "int_top",
-        ColumnType::new(col_type::ColumnTypeTag::Int, 0).code(),
-        bytes.as_ptr(),
-        bytes.len(),
-        row_count,
-        Encoding::DeltaBinaryPacked.config(),
-    );
-    let partition = Partition {
-        table: "repro".to_string(),
-        columns: vec![column],
-    };
-    let parquet = write_parquet(partition);
+    round_trip_all_null::<Int>(Encoding::DeltaBinaryPacked);
+}
 
-    let (data_out, aux_out) = common::decode_file(&parquet);
-    assert!(aux_out.is_empty());
-    assert_eq!(data_out.len(), row_count * std::mem::size_of::<i32>());
-    let out = data_out.as_ptr().cast::<i32>();
-    for i in 0..row_count {
-        let v = unsafe { std::ptr::read_unaligned(out.add(i)) };
-        assert_eq!(v, i32::MIN, "row {i} should decode as INT null");
-    }
+// Other nullable types that also dispatch DELTA pages, each with a distinct
+// null sentinel and/or width. (Boolean/Byte/Short/Char are always Required, so
+// they have no all-null page.)
+#[test]
+fn all_null_ipv4_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<IPv4>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_byte_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoByte>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_short_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoShort>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_int_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoInt>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_long_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoLong>(Encoding::DeltaBinaryPacked);
 }
