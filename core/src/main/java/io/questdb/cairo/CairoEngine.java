@@ -152,6 +152,7 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -183,6 +184,11 @@ public class CairoEngine implements Closeable, WriterSource {
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final RecentWriteTracker recentWriteTracker;
+    // Held by TableUpdateDetails.commit/closeNoLock/releaseWriter while re-checking read-only
+    // mode and calling writerAPI.commit(). The role-flip path in EntCairoEngine acquires this
+    // lock around the REPLICA flag publish so no client commit can slip through the gate-read
+    // and land on the replica. The lock is never held across drainWriterPool.
+    private final ReentrantLock roleSwitchLock = new ReentrantLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
@@ -1043,6 +1049,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public RecentWriteTracker getRecentWriteTracker() {
         return recentWriteTracker;
+    }
+
+    public ReentrantLock getRoleSwitchLock() {
+        return roleSwitchLock;
     }
 
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {

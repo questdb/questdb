@@ -66,6 +66,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -202,8 +203,16 @@ public class TableUpdateDetails implements Closeable {
             if (writerAPI != null) {
                 try {
                     if (commitOnClose) {
-                        authorizeCommit();
-                        writerAPI.commit();
+                        final ReentrantLock lock = engine.getRoleSwitchLock();
+                        lock.lock();
+                        try {
+                            if (!engine.isReadOnlyMode()) {
+                                authorizeCommit();
+                                writerAPI.commit();
+                            }
+                        } finally {
+                            lock.unlock();
+                        }
                     }
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
@@ -223,19 +232,27 @@ public class TableUpdateDetails implements Closeable {
 
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
-            // Read-only boundary gate (mirrors QwpIngressProcessorState and the pg-wire gate):
-            // refuse ILP-TCP and ILP-HTTP client writes the instant the node is read-only. The
-            // dynamic read-only-replica flag flips FIRST in the PRIMARY->REPLICA switch cascade,
-            // so a TableUpdateDetails whose writer was cached while the node was still PRIMARY would
-            // otherwise commit a batch onto a node that is already demoting and lose it on the
-            // replica. Both ILP protocols commit through here; the replica WAL-apply path uses
-            // getWriterUnsafe() (not a TableUpdateDetails) and is unaffected. Thrown before the
-            // try so it propagates as an authorization error (ILP-TCP disconnects the connection,
-            // ILP-HTTP returns SECURITY_ERROR), not as a wrapped CommitFailedException.
+            // Cheap early-out: if the node is already read-only before we attempt to
+            // acquire the lock, skip the lock acquire entirely. This is NOT the
+            // authoritative refusal -- the in-lock re-check below is.
             if (engine.isReadOnlyMode()) {
                 throw CairoException.authorization().put("replica access is read-only");
             }
+            // Hold the role-switch lock across the authoritative re-check and the
+            // actual commit. The role-flip path in EntCairoEngine acquires the same
+            // lock around the REPLICA flag publish, so either:
+            //   (a) the flip runs first: we see REPLICA on the in-lock re-check and
+            //       refuse without committing; or
+            //   (b) we run first: we commit as PRIMARY and the flip waits; when the
+            //       flip publishes REPLICA afterwards the row is already safely committed
+            //       on the (still-PRIMARY-at-that-moment) node.
+            // This closes the TOCTOU window between the gate-read and writerAPI.commit().
+            final ReentrantLock lock = engine.getRoleSwitchLock();
+            lock.lock();
             try {
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.authorization().put("replica access is read-only");
+                }
                 authorizeCommit();
                 if (withLag) {
                     writerAPI.ic();
@@ -243,6 +260,11 @@ public class TableUpdateDetails implements Closeable {
                     writerAPI.commit();
                 }
             } catch (CairoException ex) {
+                if (ex.isAuthorizationError()) {
+                    // Read-only refusal -- propagate as-is so ILP-TCP disconnects and
+                    // ILP-HTTP returns SECURITY_ERROR (not a wrapped CommitFailedException).
+                    throw ex;
+                }
                 if (!ex.isTableDropped()) {
                     handleCommitException(ex);
                 }
@@ -250,6 +272,8 @@ public class TableUpdateDetails implements Closeable {
             } catch (Throwable ex) {
                 handleCommitException(ex);
                 throw CommitFailedException.instance(ex, false);
+            } finally {
+                lock.unlock();
             }
         }
         if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
@@ -471,8 +495,16 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    authorizeCommit();
-                    writerAPI.commit();
+                    final ReentrantLock lock = engine.getRoleSwitchLock();
+                    lock.lock();
+                    try {
+                        if (!engine.isReadOnlyMode()) {
+                            authorizeCommit();
+                            writerAPI.commit();
+                        }
+                    } finally {
+                        lock.unlock();
+                    }
                 }
             } catch (Throwable ex) {
                 LOG.error().$("writer commit failed, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
