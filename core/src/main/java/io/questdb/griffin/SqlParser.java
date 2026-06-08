@@ -2552,8 +2552,10 @@ public class SqlParser {
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_VIEW;
+                    } else if (tok != null && isDatabaseKeyword(tok)) {
+                        showKind = IQueryModel.SHOW_CREATE_DATABASE;
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
