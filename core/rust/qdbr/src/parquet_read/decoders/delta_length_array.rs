@@ -1251,10 +1251,11 @@ mod tests {
 
     #[test]
     fn test_empty_page_pushes_nulls() {
-        // An all-null varchar page (e.g. a column-top `var_top` column whose
-        // partition is entirely null) carries an empty length buffer. The
-        // decoder must construct and emit nulls rather than rejecting it.
-        // Regression for the suspended-table replication fuzz failure.
+        // Path 1 (backward compat): an *empty* length buffer, as emitted by the
+        // pre-fix integer writer and tolerated here so the varchar decoder shares
+        // the same empty-buffer handling. QuestDB's varchar writer never produces
+        // this shape (see `test_value_count_zero_header_pushes_nulls` for the real
+        // production page); this only proves the empty branch fills nulls.
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
         let mut buffers = create_test_buffers(&allocator);
@@ -1267,6 +1268,82 @@ mod tests {
         assert_eq!(entries.len(), 4);
         for e in &entries {
             assert!(is_null_entry(e.0, e.1));
+        }
+    }
+
+    #[test]
+    fn test_value_count_zero_header_pushes_nulls() {
+        // Path 2 (production): an all-null varchar partition is written by
+        // `encode_varchar_delta` as a *self-describing* DELTA_BINARY_PACKED
+        // lengths header with value_count=0 (block_size=128, miniblocks=1,
+        // first_value=0) -- NOT an empty buffer. Decoding it exercises the
+        // normal (non-empty) `MiniblockIterator::try_new` path plus
+        // `get_end_pointer` for a zero-value header, then fills nulls.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+
+        // The exact bytes QuestDB's varlen writer emits for zero lengths.
+        let mut header = Vec::new();
+        parquet2::encoding::delta_bitpacked::encode(std::iter::empty::<i64>(), &mut header);
+        assert!(
+            !header.is_empty(),
+            "a value_count=0 delta header must carry bytes"
+        );
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&header, &mut buffers, true).unwrap();
+        decoder.reserve(4).unwrap();
+        decoder.push_nulls(4).unwrap();
+
+        let entries = read_aux_entries(&buffers);
+        assert_eq!(entries.len(), 4);
+        for e in &entries {
+            assert!(is_null_entry(e.0, e.1));
+        }
+    }
+
+    #[test]
+    fn test_empty_page_value_request_errors() {
+        // Companion to `test_empty_page_pushes_nulls`: an all-null varchar page
+        // only fills nulls, but if a value is requested anyway (a corrupt page),
+        // the first request returns the phantom zero-length string and the next
+        // fails with "not enough values to iterate".
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // push(): first call emits the phantom empty string, second errors.
+        {
+            let mut buffers = create_test_buffers(&allocator);
+            let err = {
+                let mut decoder =
+                    DeltaLAVarcharSliceDecoder::try_new(&[], &mut buffers, true).unwrap();
+                decoder.reserve(2).unwrap();
+                decoder.push().unwrap();
+                decoder.push().unwrap_err()
+            };
+            assert!(
+                format!("{err}").contains("not enough values to iterate"),
+                "got: {err}"
+            );
+            // The first push wrote one (empty, non-null) entry, not a null.
+            let entries = read_aux_entries(&buffers);
+            assert_eq!(entries.len(), 1);
+            assert!(!is_null_entry(entries[0].0, entries[0].1));
+        }
+
+        // push_slice(2): same contract via the batched path.
+        {
+            let mut buffers = create_test_buffers(&allocator);
+            let err = {
+                let mut decoder =
+                    DeltaLAVarcharSliceDecoder::try_new(&[], &mut buffers, true).unwrap();
+                decoder.reserve(2).unwrap();
+                decoder.push_slice(2).unwrap_err()
+            };
+            assert!(
+                format!("{err}").contains("not enough values to iterate"),
+                "got: {err}"
+            );
         }
     }
 }

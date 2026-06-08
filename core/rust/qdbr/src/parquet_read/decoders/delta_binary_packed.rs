@@ -45,14 +45,17 @@ where
 {
     pub fn try_new(page_data: &'a [u8]) -> ParquetResult<(Self, U)> {
         if page_data.is_empty() {
-            // An all-null data page carries no encoded values, so some encoders
-            // (including QuestDB's own writer for column-top integer columns)
-            // emit an empty values buffer with no DELTA_BINARY_PACKED header.
-            // The page's definition levels drive null filling, so the value
-            // decoder is never asked to produce a value. Return a degenerate
-            // iterator that yields no miniblocks. If a value is ever requested
-            // (e.g. a genuinely corrupt/truncated page), decoding fails later
-            // with "not enough values to iterate".
+            // An all-null data page carries no encoded values. Before the
+            // all-null fix QuestDB's own writer emitted an empty values buffer
+            // (no DELTA_BINARY_PACKED header) for column-top integer columns;
+            // this branch keeps those older Parquet files readable. The page's
+            // definition levels drive null filling, so the value decoder is only
+            // asked for nulls and never reads this iterator -- behaving exactly
+            // like a well-formed value_count=0 header. If a value is requested
+            // anyway (a corrupt/truncated page), the first request still returns
+            // the phantom first value of 0, as it would for any value_count<=1
+            // page, and only the next request fails with "not enough values to
+            // iterate".
             let iterator = Self {
                 page_data,
                 miniblocks_per_block: 0,
@@ -1063,6 +1066,47 @@ mod tests {
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
         assert_eq!(out, &[null_val; 10]);
+    }
+
+    #[test]
+    fn empty_page_value_request_errors() {
+        // Companion to `all_null_page_pushes_nulls`: an all-null page only ever
+        // fills nulls, but if a value is requested anyway (a corrupt page that
+        // claims a non-null value), the first request returns the phantom first
+        // value of 0 and the *next* request fails with "not enough values to
+        // iterate". Pins the contract documented on `MiniblockIterator::try_new`.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // push(): first call emits the phantom 0, second call errors.
+        let mut buffers = create_buffers(&allocator);
+        let err = {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&[], &mut buffers, i64::MIN).unwrap();
+            decoder.reserve(2).unwrap();
+            decoder.push().unwrap();
+            decoder.push().unwrap_err()
+        };
+        assert!(
+            format!("{err}").contains("not enough values to iterate"),
+            "got: {err}"
+        );
+        // The first push emitted the phantom first value (0), not the null sentinel.
+        let first: i64 = unsafe { *buffers.data_vec.as_ptr().cast() };
+        assert_eq!(first, 0);
+
+        // push_slice(2): same contract via the batched path.
+        let mut buffers = create_buffers(&allocator);
+        let err = {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&[], &mut buffers, i64::MIN).unwrap();
+            decoder.reserve(2).unwrap();
+            decoder.push_slice(2).unwrap_err()
+        };
+        assert!(
+            format!("{err}").contains("not enough values to iterate"),
+            "got: {err}"
+        );
     }
 
     #[test]
