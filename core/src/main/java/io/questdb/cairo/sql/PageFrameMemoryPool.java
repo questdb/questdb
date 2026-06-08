@@ -149,13 +149,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // A matching frame index is NOT enough to early-return for parquet: the record may
             // still be bound to a reduce task's parquet buffers that were already freed, since
             // PageFrameReduceTask.collected() releases parquet buffers eagerly even while a
-            // query is in flight. Always re-navigate so the record points to this pool's live
-            // buffers. nextFreeBuffers() returns the cached buffer without re-decoding, so a
-            // repeated visit to the same frame stays cheap.
-            openParquet(frameIndex);
+            // query is in flight. The unconditional record.init() below re-binds the record to
+            // this pool's live buffers on every call, so parquet must never take the native
+            // branch's early-return. openParquet() only feeds decode() -- it rebuilds
+            // parquetColumns / parquetIdxToDecodeSlot, which nothing else on this path reads --
+            // so it stays inside the cache-miss branch. A repeated visit to a still-cached frame
+            // then skips both the decode and the column-mapping rebuild and only re-points the
+            // record, keeping per-row sequential iteration cheap.
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);
             if (!parquetBuffers.cacheHit) {
+                openParquet(frameIndex);
                 final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
                 final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
                 final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
