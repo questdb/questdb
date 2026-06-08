@@ -311,10 +311,14 @@ impl QdbAllocator {
 }
 
 impl QdbAllocator {
-    fn aligned_layout(layout: Layout) -> Layout {
+    fn aligned_layout(layout: Layout) -> Result<Layout, AllocError> {
         let alignment = layout.align().max(MIN_ALLOC_ALIGNMENT);
+        // Raising the alignment lowers the size ceiling Layout permits, so a
+        // request within MIN_ALLOC_ALIGNMENT bytes of isize::MAX is rejected
+        // here. Report it as an allocation failure instead of panicking; a
+        // panic in JNI-called Rust aborts the JVM.
         Layout::from_size_align(layout.size(), alignment)
-            .expect("minimum allocator alignment must remain valid")
+            .map_err(|_| save_oom_err(AllocError, layout.size()))
     }
 
     fn check_alloc_limit(&self, requested_size: usize) -> Result<(), AllocError> {
@@ -411,7 +415,7 @@ unsafe impl Allocator for QdbAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.check_alloc_limit(layout.size())?;
         let allocated = Global
-            .allocate(Self::aligned_layout(layout))
+            .allocate(Self::aligned_layout(layout)?)
             .map_err(|error| save_oom_err(error, layout.size()))?;
         self.track_allocate(allocated.len());
         Ok(allocated)
@@ -420,15 +424,20 @@ unsafe impl Allocator for QdbAllocator {
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.check_alloc_limit(layout.size())?;
         let allocated = Global
-            .allocate_zeroed(Self::aligned_layout(layout))
+            .allocate_zeroed(Self::aligned_layout(layout)?)
             .map_err(|error| save_oom_err(error, layout.size()))?;
         self.track_allocate(allocated.len());
         Ok(allocated)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        Global.deallocate(ptr, Self::aligned_layout(layout));
-        self.track_deallocate(layout.size());
+        // A live block was accepted by allocate(), so aligned_layout cannot fail
+        // here. Gate on Ok regardless so an impossible failure leaks the block
+        // rather than desyncing the counters or aborting the JVM.
+        if let Ok(aligned) = Self::aligned_layout(layout) {
+            Global.deallocate(ptr, aligned);
+            self.track_deallocate(layout.size());
+        }
     }
 
     unsafe fn grow(
@@ -443,8 +452,8 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .grow(
                 ptr,
-                Self::aligned_layout(old_layout),
-                Self::aligned_layout(new_layout),
+                Self::aligned_layout(old_layout)?,
+                Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
         let true_delta = allocated.len() - old_layout.size();
@@ -464,8 +473,8 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .grow_zeroed(
                 ptr,
-                Self::aligned_layout(old_layout),
-                Self::aligned_layout(new_layout),
+                Self::aligned_layout(old_layout)?,
+                Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
         let true_delta = allocated.len() - old_layout.size();
@@ -484,8 +493,8 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .shrink(
                 ptr,
-                Self::aligned_layout(old_layout),
-                Self::aligned_layout(new_layout),
+                Self::aligned_layout(old_layout)?,
+                Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
         let true_delta = old_layout.size() - allocated.len();
@@ -645,6 +654,57 @@ mod tests {
             last_err,
             AllocFailure::OutOfMemory { requested_size } if requested_size == TOO_LARGE
         ));
+    }
+
+    #[test]
+    fn test_alloc_rejects_layout_that_overflows_min_alignment() {
+        // A layout valid at align 1 whose size, raised to the 16-byte minimum
+        // alignment, would exceed isize::MAX. aligned_layout must surface this
+        // as an allocation failure instead of panicking (which would abort the
+        // JVM under JNI). The request is rejected before any real allocation.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        take_last_alloc_error();
+
+        let layout = std::alloc::Layout::from_size_align(isize::MAX as usize, 1).unwrap();
+        let result = allocator.allocate(layout);
+        assert!(result.is_err());
+
+        let last_err = take_last_alloc_error().unwrap();
+        assert!(matches!(
+            last_err,
+            AllocFailure::OutOfMemory { requested_size } if requested_size == isize::MAX as usize
+        ));
+        assert_eq!(tas.malloc_count(), 0);
+        assert_eq!(tas.rss_mem_used(), 0);
+    }
+
+    #[test]
+    fn test_grow_rejects_layout_that_overflows_min_alignment() {
+        // The same overflow as the allocate case, but on the grow path: a
+        // failed grow must reject gracefully and leave the original block
+        // intact for the caller to keep using or free.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let layout = std::alloc::Layout::from_size_align(64, 1).unwrap();
+        let allocation = allocator.allocate(layout).unwrap();
+        let ptr = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+        assert_eq!(tas.tagged_used(), 64);
+        take_last_alloc_error();
+
+        let new_layout = std::alloc::Layout::from_size_align(isize::MAX as usize, 1).unwrap();
+        let result = unsafe { allocator.grow(ptr, layout, new_layout) };
+        assert!(result.is_err());
+        assert!(matches!(
+            take_last_alloc_error().unwrap(),
+            AllocFailure::OutOfMemory { .. }
+        ));
+
+        // The original block is untouched and still ours to free.
+        assert_eq!(tas.tagged_used(), 64);
+        unsafe { allocator.deallocate(ptr, layout) };
+        assert_eq!(tas.tagged_used(), 0);
     }
 
     #[test]
@@ -890,7 +950,10 @@ mod tests {
 
     #[test]
     fn test_parallel() {
-        let tas = TestAllocatorState::new();
+        // Attach a per-query tracker so the concurrent run also exercises the
+        // tracker_used counter (its fetch_add/fetch_sub on every alloc and free).
+        // The limit stays 0 (unlimited), so no allocation is rejected.
+        let tas = TestAllocatorState::new().with_memory_tracker();
         let allocator = tas.allocator();
 
         #[cfg(miri)]
@@ -1049,6 +1112,7 @@ mod tests {
 
         assert_eq!(tas.rss_mem_used(), 0);
         assert_eq!(tas.tagged_used(), 0);
+        assert_eq!(tas.tracker_used(), 0);
         assert_eq!(tas.malloc_count(), total_allocs);
         assert_eq!(tas.realloc_count(), total_reallocs);
         assert_eq!(tas.free_count(), total_allocs);
