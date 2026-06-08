@@ -647,7 +647,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                                 rnd_int() ask,\s
                                 timestamp_sequence(172800000000, 360000000) ts\s
                             from long_sequence(10)) timestamp (ts)""")
-                .timestamp("ts###desc")
+                .timestampDesc("ts")
                 .expectSize()
                 .returns("sym\tbid\task\tts\n", expected);
     }

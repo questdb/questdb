@@ -24,9 +24,14 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -44,26 +49,40 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.TableUtils.setPathForNativePartition;
+import static io.questdb.cairo.TableUtils.*;
 
 /**
  * Red tests for the critical findings raised in the PR review of #6861.
@@ -72,6 +91,18 @@ import static io.questdb.cairo.TableUtils.setPathForNativePartition;
  * conditions are marked with comments describing what they need.
  */
 public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        // Every test must start with an empty shared posting-seal-purge ring. Many
+        // tests here run a WorkerPool + O3, which publish purge tasks into the
+        // engine-wide MessageBus ring; with no PostingSealPurgeJob draining it in the
+        // harness the residue can saturate the ring and starve a later test's purge --
+        // e.g. leaving a superseded .pv unreclaimed, or making a saturation assertion
+        // see no room. Draining here makes each test independent of the prior one.
+        drainPostingSealPurgeQueue();
+    }
 
     /**
      * Review C2: the full-partition SELECT DISTINCT path calls
@@ -118,6 +149,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     );
                 }
             }
+        });
+    }
+
+    @Test
+    public void testConvertPartitionToParquetLinksReaderVisibleSealWhenHeadIsFutureTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_parquet_future_head (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_future_head VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_parquet_future_head");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            appendFuturePostingHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_parquet_future_head CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            assertQuery("SELECT ts, sym, price FROM t_parquet_future_head WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            """);
         });
     }
 
@@ -410,6 +483,1016 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Field report reproduction: a covering POSTING index on a single
+     * actively-growing partition fed by sequential (in-order) WAL/ILP commits.
+     * Covered reads return wrong values (or SIGSEGV) once enough rows of a hot
+     * key accumulate. No O3, squash, or parquet conversion is involved -- plain
+     * append is enough.
+     * <p>
+     * Mechanism: the WAL fast-lag commit indexes the new rows in
+     * {@code updateIndexesParallel} (the add() phase) and only afterwards, in
+     * {@code publishPostingIndexesForLastPartitionFastLag}, calls
+     * {@code configureCovering} + {@code commit()}. When a hot key's spill arena
+     * crosses the budget mid-add, {@code compactIfOverBudget -> flushAllPending}
+     * drains a sparse generation right there -- but covering is not configured
+     * yet, so {@code writeSidecarGenData} short-circuits and the generation gets
+     * a gen-dir entry and .pv rows with no .pc covered block (its .pc header slot
+     * stays 0). A later covered read walks that generation with a 0 sidecar
+     * offset and reads past the .pc mapping: count() (served from the index row
+     * addresses) stays correct while sum(value) (served from the covering
+     * sidecar) is wrong. The fix defers the mid-add spill flush so the whole
+     * batch flushes once, after covering is configured, with .pc written.
+     * <p>
+     * A small spill budget reproduces at ~4M rows what the field report hit at
+     * ~45M rows under the default 256 MiB budget.
+     */
+    @Test
+    public void testWalFastLagCoveringSpillWritesCoveredSidecar() throws Exception {
+        setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE flt (
+                        ts TIMESTAMP,
+                        ParameterID SYMBOL INDEX TYPE POSTING INCLUDE (value),
+                        value DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            final int batches = 40;
+            final int rowsPerBatch = 100_000; // per-commit hot-key spill (~hundreds of KiB) exceeds the 256 KiB budget
+            // arbitrary instant; all rows stay in one day
+            long start = 1_700_000_000_000_000L;
+            for (int b = 0; b < batches; b++) {
+                execute("INSERT INTO flt " +
+                        "SELECT timestamp_sequence(cast(" + start + " as timestamp), 1), 'KCAS', 1.0 " +
+                        "FROM long_sequence(" + rowsPerBatch + ")");
+                start += rowsPerBatch; // keep the next batch strictly after the previous -> in-order append
+                drainWalQueue();
+            }
+
+            final long total = (long) batches * rowsPerBatch;
+            // count() is served by the index row addresses, sum(value) by the
+            // covering sidecar. A healthy covering index keeps them consistent;
+            // the orphaned-sidecar bug leaves count() right but sum(value) wrong
+            // (and over-reads the .pc -- a bare SIGSEGV without assertions).
+            assertQuery("SELECT count(), sum(value) FROM flt WHERE ParameterID = 'KCAS'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + total + "\t" + (double) total + "\n");
+        });
+    }
+
+    /**
+     * Plan-fallback reproduction: a symbol-capacity change must not drop the
+     * covering-index schema. When the symbol capacity grows (automatically as new
+     * symbols arrive, or via ALTER), changeSymbolCapacity -> updateColumnSymbolCapacity
+     * rebuilds the symbol column's metadata; that rebuild used to forget the
+     * covering column indices, so the next metadata rewrite persisted a _meta with
+     * no covering flag/section and the planner stopped choosing the covering scan.
+     */
+    @Test
+    public void testCoveringSurvivesSymbolCapacityChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (val), val DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, 'a', 1.0)");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN sym SYMBOL CAPACITY 8192");
+            drainWalQueue();
+            // Fresh compile after the capacity change: the covering posting index
+            // must still be chosen.
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'b'")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                CoveringIndex on: sym with: ts, val
+                                  filter: sym='b'
+                            """);
+        });
+    }
+
+    /**
+     * WAL-apply auto-scale reproduction, mirroring the field scenario more
+     * closely than the explicit-ALTER test: a covering posting index on a WAL
+     * table, ingested with high, growing symbol cardinality so the WAL apply job
+     * fires scaleSymbolCapacities() -> changeSymbolCapacity() repeatedly (the
+     * field 256 -> 2048 -> 4096 growth). Asserts both that the planner keeps
+     * choosing the covering scan (covering mapping is read from the reader _meta,
+     * which updateColumnSymbolCapacity must preserve) and that the covered
+     * sidecar still serves correct data afterwards.
+     */
+    @Test
+    public void testWalCoveringPlanSurvivesAutoScaleHeavyIngest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL CAPACITY 16 INDEX TYPE POSTING INCLUDE (val), val DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String coveringPlan =
+                    """
+                            SelectedRecord
+                                CoveringIndex on: sym with: ts, val
+                                  filter: sym='zzz'
+                            """;
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .assertsPlan(coveringPlan);
+
+            final long dayMicros = 86_400_000_000L;
+            for (int day = 0; day < 6; day++) {
+                execute("INSERT INTO x " +
+                        "SELECT (" + (day * dayMicros) + " + x)::timestamp, rnd_symbol(4000,4,10,0), x::double " +
+                        "FROM long_sequence(30000)");
+                drainWalQueue();
+            }
+            // One known covered row to verify the covered read after all the auto-scaling.
+            execute("INSERT INTO x VALUES (" + (9 * dayMicros) + ", 'zzz', 7.0)");
+            drainWalQueue();
+
+            // The planner must still choose the covering posting index after auto-scale.
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .assertsPlan(coveringPlan);
+            // The covered sidecar read must still return correct data.
+            assertQuery("SELECT count(), sum(val) FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n1\t7.0\n");
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long oldSealTxn = oldFiles.sealTxn;
+            assertPostingSealFilesExist(oldFiles, true);
+
+            // Successful O3 commit: sealPostingIndexForPartition() defers the
+            // purge while the superseding chain entry is tagged with the future
+            // txn, then commitTxWriterAndPublishPendingPostingSealPurges()
+            // should republish that task after _txn advances.
+            execute(insertPostingRowsSql(35, 92));
+            final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long liveSealTxn = liveFiles.sealTxn;
+            Assert.assertTrue("successful O3 commit must advance posting sealTxn", liveSealTxn > oldSealTxn);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            assertPostingSealFilesExist(oldFiles, false);
+            assertPostingSealFilesExist(liveFiles, true);
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgePersistsOnCloseWhenJobHoldsLogWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+
+            // Earlier covering-index tests in this class leave purge tasks in the
+            // shared MessageBus ring (no PostingSealPurgeJob drains it in the test
+            // harness), so it can arrive already saturated. Sibling tests clear it
+            // by running a purge job first; this test must instead keep the ring
+            // full via the liveJob below, so drain the residue directly so its own
+            // fillPostingSealPurgeQueue saturation starts from an empty ring.
+            drainPostingSealPurgeQueue();
+
+            // A live PostingSealPurgeJob owns the sys.posting_seal_purge_log
+            // writer for the entire close, exactly as in a running server. It is
+            // not draining concurrently (CPU-starved or in error backoff), so the
+            // ring stays saturated and the close-time direct-persist fallback
+            // cannot acquire the log writer.
+            try (PostingSealPurgeJob liveJob = new PostingSealPurgeJob(engine)) {
+                Assert.assertTrue("live job must own the log writer", liveJob.isJobAliveForTesting());
+                fillPostingSealPurgeQueue(tableToken);
+
+                // The O3 commit advances _txn so the deferred purge is ready, but
+                // the ring is full so it remains in the TableWriter until close.
+                execute(insertPostingRowsSql(35, 92));
+
+                // Close while liveJob still holds the log writer. The ready purge
+                // intent must survive instead of being dropped and orphaning the
+                // superseded .pv/.pc files for the process lifetime.
+                engine.releaseAllWriters();
+                assertPostingSealFilesExist(oldFiles, true);
+            }
+
+            // Clear the saturating dummy tasks so a recovering job can drain the
+            // real, deferred purge work.
+            drainPostingSealPurgeQueue();
+
+            // Reopen the data table so writer-open recovery can replay the intent
+            // recorded at close, then let a job complete the promised purge.
+            try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge recovery test")) {
+                Assert.assertNotNull(ignore);
+            }
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            // The superseded seal files must be purged, not orphaned.
+            assertPostingSealFilesExist(oldFiles, false);
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgePersistsOnCloseWhenQueueIsFull() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long oldSealTxn = oldFiles.sealTxn;
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            fillPostingSealPurgeQueue(tableToken);
+
+            // The O3 commit advances _txn while the ring is full, so the now
+            // ready deferred purge remains in TableWriter until close. Close
+            // must persist it to sys.posting_seal_purge_log instead of dropping
+            // the task.
+            try {
+                execute(insertPostingRowsSql(35, 92));
+                engine.releaseAllWriters();
+                assertPostingSealFilesExist(oldFiles, true);
+                assertOpenDeferredPostingSealPurgeLogRow(
+                        tableToken,
+                        indexColumnName,
+                        oldSealTxn
+                );
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            assertPostingSealFilesExist(oldFiles, false);
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgePersistsMultipleReadyEntriesOnCloseWhenQueueIsFull() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_multi_recovery";
+            final String indexColumnName1 = "new_col_11";
+            final String indexColumnName2 = "new_col_12";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym3 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, true));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName1);
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym3 TO " + indexColumnName2);
+            execute(insertPostingRowsSql(tableName, 0, 10, true));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, true));
+            final PostingSealFileNames oldFiles1 = resolvePostingSealFileNames(tableName, indexColumnName1, coveredColumnName, targetPartitionTimestamp, -1L);
+            final PostingSealFileNames oldFiles2 = resolvePostingSealFileNames(tableName, indexColumnName2, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles1, true);
+            assertPostingSealFilesExist(oldFiles2, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            fillPostingSealPurgeQueue(tableToken);
+
+            try {
+                execute(insertPostingRowsSql(tableName, 35, 92, true));
+                engine.releaseAllWriters();
+                assertPostingSealFilesExist(oldFiles1, true);
+                assertPostingSealFilesExist(oldFiles2, true);
+                assertOpenDeferredPostingSealPurgeLogRow(tableToken, indexColumnName1, oldFiles1.sealTxn);
+                assertOpenDeferredPostingSealPurgeLogRow(tableToken, indexColumnName2, oldFiles2.sealTxn);
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            assertPostingSealFilesExist(oldFiles1, false);
+            assertPostingSealFilesExist(oldFiles2, false);
+        });
+    }
+
+    @Test
+    public void testDirectPersistReadyDeferredPostingSealPurgeRetainsFutureEntryWhenQueueIsFull() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            drainPostingSealPurgeQueue();
+            final String tableName = "posting_mixed_deferred";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, false));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, false));
+            final PostingSealFileNames readyFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(readyFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            fillPostingSealPurgeQueue(tableToken);
+            try {
+                execute(insertPostingRowsSql(tableName, 35, 92, false));
+                final PostingSealFileNames futureFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+                Assert.assertNotEquals("test setup: first O3 commit must publish a new seal", readyFiles.sealTxn, futureFiles.sealTxn);
+                assertPostingSealFilesExist(readyFiles, true);
+                assertPostingSealFilesExist(futureFiles, true);
+
+                try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                    TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-25T01:32:00.000000Z"));
+                    row.putSym(1, "XPHI");
+                    row.putSym(2, "S");
+                    row.putLong(3, 1999);
+                    row.append();
+
+                    row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-26T00:00:00.000000Z"));
+                    row.putSym(1, "D");
+                    row.putSym(2, "S");
+                    row.putLong(3, 2000);
+                    row.append();
+
+                    writer.publishDeferredPostingSealPurgesOnFullQueueForTesting();
+                    assertOpenDeferredPostingSealPurgeLogRow(tableToken, indexColumnName, readyFiles.sealTxn);
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, futureFiles.sealTxn, 0);
+
+                    drainPostingSealPurgeQueue();
+                    writer.commit();
+                }
+
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                assertPostingSealFilesExist(readyFiles, false);
+                assertPostingSealFilesExist(futureFiles, false);
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitSeqTxnPublishesReadyDeferredPostingSealPurgeRetainedByFullQueue() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            drainPostingSealPurgeQueue();
+            final String tableName = "posting_commit_seq_deferred";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, false));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, false));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            fillPostingSealPurgeQueue(tableToken);
+            try {
+                execute(insertPostingRowsSql(tableName, 35, 92, false));
+                assertPostingSealFilesExist(oldFiles, true);
+
+                drainPostingSealPurgeQueue();
+                try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                    writer.commitSeqTxn(12345);
+                }
+
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                assertPostingSealFilesExist(oldFiles, false);
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+        });
+    }
+
+    /**
+     * A live PostingSealPurgeJob owns the purge-log writer and the ring is
+     * full, so the close-time handoff in closeDeferredPostingSealPurges()
+     * reaches neither the ring nor the shared log. Rather than dropping the
+     * ready intent, the close spills it to the table-local pending file
+     * (spilled == true), so nothing reaches the shared log yet the intent
+     * survives on disk for the next open to replay. This covers the spill
+     * fallback; the spill-write-failure drop path is covered by
+     * {@link #testCloseDropsReadyDeferredPostingSealPurgeWhenSpillFileWriteFails()}.
+     */
+    @Test
+    public void testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            drainPostingSealPurgeQueue();
+            final String tableName = "posting_close_live_job_deferred";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, false));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, false));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
+                fillPostingSealPurgeQueue(tableToken);
+                try {
+                    // The O3 commit advances _txn so the deferred purge is
+                    // ready, but the ring is full so it stays in the
+                    // TableWriter until close.
+                    execute(insertPostingRowsSql(tableName, 35, 92, false));
+                    engine.releaseAllWriters();
+
+                    // The handoff reached neither the ring nor the shared log,
+                    // but the ready intent was spilled to the table-local
+                    // pending file instead of being dropped.
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, oldFiles.sealTxn, 0);
+                    assertPostingSealPurgePendingFileExists(tableToken, true);
+                    assertPostingSealFilesExist(oldFiles, true);
+                } finally {
+                    drainPostingSealPurgeQueue();
+                }
+            }
+        });
+    }
+
+    /**
+     * The multi-record spill+replay round trip. A live PostingSealPurgeJob
+     * owns the purge-log writer and the ring is full, so closing a table with
+     * TWO superseded posting indexes spills BOTH ready intents into a single
+     * two-record pending file - the only path that writes a record count >= 2.
+     * The next writer open then walks that file, exercising the variable
+     * inter-record stride (each record advances by 56 fixed bytes plus the
+     * stored index column name), and republishes both intents so a later purge
+     * job reclaims the superseded .pv/.pc sidecars for both columns.
+     * <p>
+     * The two index columns use DISTINCT name lengths on purpose: a record
+     * stride that ignored the variable-length name would still land correctly
+     * on the second record when both names share a length, hiding the bug. This
+     * complements the single-record file-existence check in
+     * {@link #testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull()}
+     * and the single-record replay in
+     * {@link #testO3DeferredPostingSealPurgePersistsOnCloseWhenJobHoldsLogWriter()}.
+     */
+    @Test
+    public void testCloseWithLivePurgeJobSpillsMultipleReadyDeferredPostingSealPurgesAndReplaysOnReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            drainPostingSealPurgeQueue();
+            final String tableName = "posting_close_live_job_multi_deferred";
+            // Distinct lengths so the on-disk record stride genuinely depends
+            // on the stored name length between records, not a constant.
+            final String indexColumnName1 = "new_col_11";
+            final String indexColumnName2 = "ix2";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym3 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, true));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName1);
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym3 TO " + indexColumnName2);
+            execute(insertPostingRowsSql(tableName, 0, 10, true));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, true));
+            final PostingSealFileNames oldFiles1 = resolvePostingSealFileNames(tableName, indexColumnName1, coveredColumnName, targetPartitionTimestamp, -1L);
+            final PostingSealFileNames oldFiles2 = resolvePostingSealFileNames(tableName, indexColumnName2, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles1, true);
+            assertPostingSealFilesExist(oldFiles2, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
+                fillPostingSealPurgeQueue(tableToken);
+                try {
+                    // The O3 commit advances _txn so both deferred purges are
+                    // ready, but the ring is full so they stay in the
+                    // TableWriter until close.
+                    execute(insertPostingRowsSql(tableName, 35, 92, true));
+                    engine.releaseAllWriters();
+
+                    // The handoff reached neither the ring nor the shared log,
+                    // so both ready intents were spilled into one two-record
+                    // pending file rather than the log table.
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName1, oldFiles1.sealTxn, 0);
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName2, oldFiles2.sealTxn, 0);
+                    assertPostingSealPurgePendingFileExists(tableToken, true);
+                    assertPostingSealFilesExist(oldFiles1, true);
+                    assertPostingSealFilesExist(oldFiles2, true);
+                } finally {
+                    drainPostingSealPurgeQueue();
+                }
+            }
+
+            // Reopen so writer-open recovery walks the two-record pending file
+            // (the inter-record stride path) and republishes both intents. The
+            // file is removed once recovered.
+            try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge multi-record recovery test")) {
+                Assert.assertNotNull(ignore);
+            }
+            assertPostingSealPurgePendingFileExists(tableToken, false);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            // Both superseded seal-file pairs must be purged, proving the
+            // second record parsed at the correct offset.
+            assertPostingSealFilesExist(oldFiles1, false);
+            assertPostingSealFilesExist(oldFiles2, false);
+        });
+    }
+
+    /**
+     * The genuine data-losing branch of closeDeferredPostingSealPurges(): a
+     * live PostingSealPurgeJob owns the purge-log writer and the ring is full
+     * (so the handoff fails), AND the close-time spill to the table-local
+     * pending file also fails. With spilled == false the ready intent is
+     * dropped with a LOG.critical and the superseded .pv/.pc sidecar files are
+     * orphaned for the process lifetime - the next open finds no spill file to
+     * replay, so a later purge job cannot reclaim them. Contrast with
+     * {@link #testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull()},
+     * where the spill succeeds and the intent survives.
+     */
+    @Test
+    public void testCloseDropsReadyDeferredPostingSealPurgeWhenSpillFileWriteFails() throws Exception {
+        final AtomicBoolean failSpillWrite = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failSpillWrite.get() && Utf8s.endsWithAscii(name, "_posting_seal_purge_pending.d")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            drainPostingSealPurgeQueue();
+            final String tableName = "posting_close_spill_fail_deferred";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, false));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, false));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
+                fillPostingSealPurgeQueue(tableToken);
+                try {
+                    // The O3 commit advances _txn so the deferred purge is
+                    // ready, but the ring is full so it stays in the
+                    // TableWriter until close.
+                    execute(insertPostingRowsSql(tableName, 35, 92, false));
+
+                    // Close while the live job holds the purge-log writer and
+                    // the spill write fails. The ready intent reaches neither
+                    // the ring, nor the shared log, nor the spill file, so the
+                    // drop branch fires.
+                    failSpillWrite.set(true);
+                    engine.releaseAllWriters();
+                    failSpillWrite.set(false);
+
+                    // No record of the intent anywhere: the shared log is
+                    // untouched and the spill file was never created.
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, oldFiles.sealTxn, 0);
+                    assertPostingSealPurgePendingFileExists(tableToken, false);
+                    // The superseded files are orphaned by the drop.
+                    assertPostingSealFilesExist(oldFiles, true);
+                } finally {
+                    drainPostingSealPurgeQueue();
+                }
+            }
+
+            // Reopen and run a purge job. With no spill file to replay and the
+            // intent dropped, the orphaned files cannot be reclaimed - the data
+            // loss the LOG.critical warns about.
+            try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge drop test")) {
+                Assert.assertNotNull(ignore);
+            }
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            assertPostingSealFilesExist(oldFiles, true);
+        });
+    }
+
+    @Test
+    public void testSquashPartitionsKeepsRetainedDeferredPostingSealPurgeAcrossSuccessfulCommit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_squash_deferred";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, false));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, false));
+            execute("INSERT INTO " + tableName + " VALUES "
+                    + "('2022-02-26T00:00:00.000000Z', 'A', 'S', 1000),"
+                    + "('2022-02-26T01:00:00.000000Z', 'A', 'S', 1001),"
+                    + "('2022-02-26T02:00:00.000000Z', 'B', 'S', 1002),"
+                    + "('2022-02-26T20:00:00.000000Z', 'B', 'S', 1003)");
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-26T19:00:00.000000Z', 'C', 'S', 1004)");
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            fillPostingSealPurgeQueue(tableToken);
+            try {
+                execute(insertPostingRowsSql(tableName, 35, 92, false));
+                final long splitPartitionCount = selectLong("SELECT count() FROM table_partitions('" + tableName + "')");
+                Assert.assertTrue(
+                        "test setup: O3 insert must create split partitions before squashPartitions(), count=" + splitPartitionCount,
+                        splitPartitionCount > 2
+                );
+                try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                    writer.squashPartitions();
+                    drainPostingSealPurgeQueue();
+                    writer.commitSeqTxn(12345);
+                }
+                final long squashedPartitionCount = selectLong("SELECT count() FROM table_partitions('" + tableName + "')");
+                Assert.assertTrue(
+                        "squashPartitions() must reduce the split partition count [before=" + splitPartitionCount + ", after=" + squashedPartitionCount + ']',
+                        squashedPartitionCount < splitPartitionCount
+                );
+
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                assertPostingSealFilesExist(oldFiles, false);
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testAttachDetachForceRemoveKeepRetainedDeferredPostingSealPurgeAcrossCommits() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, DETACHED_DIR_MARKER);
+
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_partition_ops_deferred";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, false));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, false));
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-26T00:00:00.000000Z', 'A', 'S', 999)");
+            assertQuery("SELECT count() FROM " + tableName + " WHERE ts = '2022-02-26T00:00:00.000000Z'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            final long dayBeforeTarget = MicrosFormatUtils.parseTimestamp("2022-02-24T00:00:00.000000Z");
+            final long dayAfterTarget = MicrosFormatUtils.parseTimestamp("2022-02-26T00:00:00.000000Z");
+            fillPostingSealPurgeQueue(tableToken);
+            try {
+                execute(insertPostingRowsSql(tableName, 35, 92, false));
+                try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition(dayBeforeTarget));
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(dayBeforeTarget));
+
+                    LongList partitions = new LongList();
+                    partitions.add(dayAfterTarget);
+                    writer.forceRemovePartitions(partitions);
+
+                    drainPostingSealPurgeQueue();
+                    writer.commitSeqTxn(12345);
+                }
+                assertQuery("SELECT count() FROM " + tableName + " WHERE ts = '2022-02-26T00:00:00.000000Z'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                count
+                                0
+                                """);
+
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                assertPostingSealFilesExist(oldFiles, false);
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgeRecoveryHandlesCorruptPendingFile() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+            execute(insertPostingRowsSql(0, 35));
+
+            // A live, un-superseded seal: no garbage parsed from a corrupt
+            // pending file may cause its .pv/.pc files to be purged.
+            final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(liveFiles, true);
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+
+            // Each corrupt pending-file shape must be discarded on the next open
+            // without crashing the writer, without replaying garbage purge tasks,
+            // and the file must be removed so it cannot accumulate:
+            //   0 - unknown format marker
+            //   1 - valid header but body truncated mid fixed-part
+            //   2 - valid header + full fixed part but out-of-range name length
+            //   3 - file shorter than the 8-byte header
+            for (int variant = 0; variant < 4; variant++) {
+                engine.releaseAllWriters();
+                writeCorruptPostingSealPurgePendingFile(tableToken, variant);
+                assertPostingSealPurgePendingFileExists(tableToken, true);
+
+                try (TableWriter writer = engine.getWriter(tableToken, "corrupt posting purge recovery test")) {
+                    Assert.assertNotNull("writer must open despite a corrupt pending file [variant=" + variant + ']', writer);
+                }
+
+                assertPostingSealPurgePendingFileExists(tableToken, false);
+                assertPostingSealFilesExist(liveFiles, true);
+            }
+
+            // A purge job run finds no garbage work that touches the live seal.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            assertPostingSealFilesExist(liveFiles, true);
+        });
+    }
+
+    @Test
+    public void testO3PostingIndexRecoveryAfterPurgedCommittedSeal() throws Exception {
+        FailAppendPositionLengthFacade ff = new FailAppendPositionLengthFacade();
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "posting_o3_recovery";
+
+            // Set up the shape produced by the fuzz failure: a non-WAL table
+            // with a POSTING symbol index, a renamed indexed column, and a
+            // symbol-capacity change before the O3/replace-style insert.
+            // sym2 carries an explicit INCLUDE (ts) so the index is covering --
+            // the test asserts a CoveringIndex plan below. A bare INDEX TYPE
+            // POSTING is non-covering and would not produce that plan.
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (ts), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO new_col_11");
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            // This first committed seal contains the boundary XPHI row at
+            // rowid 34. It must remain readable if a later in-flight seal is
+            // rolled back during recovery.
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(
+                    tableName,
+                    "new_col_11",
+                    null,
+                    MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z"),
+                    -1L
+            );
+            assertPostingSealFilesExist(oldFiles, true);
+
+            // The next O3 batch publishes a newer posting seal before the
+            // table _txn is durable. Fail later, in setAppendPosition(), so
+            // the table data is on disk but the commit is not completed.
+            final String retryBatch = insertPostingRowsSql(35, 92);
+            ff.arm();
+            try {
+                execute(retryBatch);
+                Assert.fail("expected append-position failure");
+            } catch (CairoException | CairoError e) {
+                Assert.assertEquals(1, ff.getFailureCount());
+            }
+
+            // Exercise the race explicitly: the unfixed code already queued a
+            // purge for the previous committed seal, even though the replacing
+            // seal belongs to the failed future transaction.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            assertPostingSealFilesExist(oldFiles, true);
+
+            // Reopen after the distressed writer. Recovery drops/trims the
+            // failed future posting chain entry and should fall back to the
+            // prior committed seal that still contains rowid 34.
+            engine.releaseAllWriters();
+            execute(retryBatch);
+            execute(insertPostingRowsSql(92, 139));
+            engine.releaseAllWriters();
+
+            // Full scan is the source of truth: all XPHI rows are present in
+            // the column data after the failed batch is retried.
+            assertQuery("SELECT /*+ no_index */ count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            105
+                            """);
+            // Indexed scan must agree. The bug loses the boundary row from the
+            // recovered posting index when the committed seal file was purged.
+            assertQuery("SELECT count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Count", "CoveringIndex on: new_col_11");
+            assertQuery("SELECT count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            105
+                            """);
+        });
+    }
+
     @Test
     public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
         assertMemoryLeak(() -> {
@@ -449,10 +1532,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testParquetIndexWriteUsesCommitDense() throws Exception {
-        // O3PartitionJob.updateParquetIndexes goes through commitDense for POSTING.
-        // That path runs when O3 mutates an already-parquet partition. Convert the
-        // first partition to parquet, then O3-insert into it to trigger the rewrite.
-        // After that, the chain head must hold a single dense gen.
+        // O3PartitionJob.updateParquetIndexes goes through commitDense for a
+        // NON-covering POSTING index. That path runs when O3 mutates an
+        // already-parquet partition. A bare INDEX TYPE POSTING (no INCLUDE) is
+        // non-covering, so this exercises commitDense: a covering parquet
+        // partition is instead resealed (resealParquetCoveringForPartition
+        // rebuilds .pv + .pci/.pc), which intentionally rotates the value file.
+        // Convert the first partition to parquet, then O3-insert into it to
+        // trigger the rewrite. After that the chain head must hold a single
+        // dense gen with no rotated .pv.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_parquet_posting (
@@ -649,57 +1737,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Review C1: once readers clamp iteration to the chain entry's MAX_VALUE,
-     * RowCursor.size() must not keep advertising the unclamped encoded count.
-     * Returning -1 is acceptable because the SQL count fast path will then
-     * fall back to hasNext()/next() iteration.
-     */
-    @Test
-    public void testReaderSizeDoesNotOutrunEntryMaxValueClamp() throws Exception {
-        assertMemoryLeak(() -> {
-            final String name = "posting_size_max_value_clamp";
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (long rowId = 0; rowId < 100; rowId++) {
-                        writer.add((int) (rowId % 5), rowId);
-                    }
-                    writer.setMaxValue(99);
-                    writer.commit();
-                    writer.setMaxValue(49);
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name,
-                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
-                    long advertisedSize;
-                    long iterated = 0;
-                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
-                        advertisedSize = cursor.size();
-                        while (cursor.hasNext()) {
-                            cursor.next();
-                            iterated++;
-                        }
-                    }
-
-                    Assert.assertEquals(
-                            "test setup gap: key 0 has rowids 0,5,...,45 at or below MAX_VALUE=49",
-                            10,
-                            iterated
-                    );
-                    Assert.assertTrue(
-                            "RowCursor.size() must either decline the fast path or match clamped iteration "
-                                    + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
-                            advertisedSize < 0 || advertisedSize == iterated
-                    );
-                }
-            }
-        });
-    }
-
     @Test
     public void testReaderHidesHeadEntryTailGensAbovePin() throws Exception {
         assertMemoryLeak(() -> {
@@ -818,6 +1855,57 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Review C1: once readers clamp iteration to the chain entry's MAX_VALUE,
+     * RowCursor.size() must not keep advertising the unclamped encoded count.
+     * Returning -1 is acceptable because the SQL count fast path will then
+     * fall back to hasNext()/next() iteration.
+     */
+    @Test
+    public void testReaderSizeDoesNotOutrunEntryMaxValueClamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long advertisedSize;
+                    long iterated = 0;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertisedSize = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+
+                    Assert.assertEquals(
+                            "test setup gap: key 0 has rowids 0,5,...,45 at or below MAX_VALUE=49",
+                            10,
+                            iterated
+                    );
+                    Assert.assertTrue(
+                            "RowCursor.size() must either decline the fast path or match clamped iteration "
+                                    + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
+                            advertisedSize < 0 || advertisedSize == iterated
+                    );
+                }
+            }
+        });
+    }
+
     @Test
     public void testRecoveryHidesFailedExtendHeadFromReader() throws Exception {
         assertMemoryLeak(() -> {
@@ -910,6 +1998,225 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             1, writer.getGenCount());
                 }
             }
+        });
+    }
+
+    /**
+     * Review M1: link-time chain recovery in
+     * {@code TableWriter.dropFuturePostingIndexChainEntriesBeforeLink} must not
+     * SHRINK the source {@code .pk} below its on-disk size. The source is
+     * hard-linked, not copied, and RENAME COLUMN does not quiesce readers, so a
+     * pre-link reader may still mmap the inode. Posting readers map grow-only
+     * ("File can only have grown" in {@code AbstractPostingIndexReader}) and
+     * bound entry reads against their stale mmap size, dereferencing the head
+     * entry before the {@code stillStable} seqlock re-check; truncating the tail
+     * away under such a reader faults past EOF (SIGBUS).
+     * <p>
+     * The test plants a committed-visible base head plus a page-spanning head
+     * whose entry-level {@code txnAtSeal} is in the future. Link recovery drops
+     * the future head WHOLE, rewinding {@code regionLimit} more than one OS page
+     * below the file size. The fix floors the CMARW append offset at the original
+     * {@code keyFileSize}, so the close must not truncate the linked {@code .pk}
+     * below its pre-link size. The assertion only stats the file length, never
+     * maps the dropped head, so a regressed build fails cleanly instead of
+     * crashing the JVM.
+     */
+    @Test
+    public void testRenameColumnLinkRecoveryFullDropKeepsKeyFileSize() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_link_fulldrop (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_link_fulldrop VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_link_fulldrop");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Plant a committed-visible base head plus a page-spanning fully
+            // future head on the historic first partition.
+            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            // Source .pk size right before the rename links (and recovers) it.
+            final long srcColumnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                int colIndex = reader.getMetadata().getColumnIndex("sym");
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                srcColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(firstPartitionTimestamp, writerIndex);
+            }
+            final long srcKeyFileSize = postingKeyFileSize(
+                    token, firstPartitionTimestamp, firstPartitionNameTxn, "sym", srcColumnNameTxn);
+            Assert.assertTrue(
+                    "test setup: planted .pk must span more than one OS page, was " + srcKeyFileSize,
+                    srcKeyFileSize > io.questdb.std.Files.PAGE_SIZE
+            );
+
+            execute("ALTER TABLE t_link_fulldrop RENAME COLUMN sym TO new_sym");
+
+            final long newColumnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                int colIndex = reader.getMetadata().getColumnIndex("new_sym");
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                newColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(firstPartitionTimestamp, writerIndex);
+            }
+            final long dstKeyFileSize = postingKeyFileSize(
+                    token, firstPartitionTimestamp, firstPartitionNameTxn, "new_sym", newColumnNameTxn);
+
+            Assert.assertTrue(
+                    "link recovery shrank the renamed column's .pk below its pre-link size -- a pre-link"
+                            + " reader mapping the hard-linked inode would fault past EOF (SIGBUS):"
+                            + " dstKeyFileSize=" + dstKeyFileSize + " srcKeyFileSize=" + srcKeyFileSize,
+                    dstKeyFileSize >= srcKeyFileSize
+            );
+        });
+    }
+
+    /**
+     * Review C1: link-time chain recovery in
+     * {@code TableWriter.dropFuturePostingIndexChainEntriesBeforeLink} must trim
+     * the {@code .pk} to {@code chain.getRegionLimit()} before the CMARW closes,
+     * exactly like {@code PostingIndexWriter.close()} does.
+     * <p>
+     * When recovery takes the head-trim branch it relocates the trimmed head
+     * entry to the original {@code regionLimit} via positional writes. Those
+     * grow the file mapping but NOT the CMARW append offset, so the close
+     * truncates the file back to {@code ceilPageSize(keyFileSize)}. When the
+     * relocated head spans past that page boundary the on-disk header points
+     * {@code headEntryOffset} past EOF, and a reader of the renamed column's
+     * posting index maps past the mapping -- SIGBUS or corruption.
+     * <p>
+     * The test plants a committed-visible head carrying one in-flight (future
+     * {@code txnAtSeal}) tail gen on a historic partition, sized so the trimmed
+     * head spans at least one OS page. With {@code newLen >= PAGE_SIZE} the
+     * relocation crosses the page boundary regardless of where
+     * {@code regionLimit} lands, so the trigger is deterministic and not
+     * alignment-dependent. RENAME COLUMN runs the link recovery. The assertion
+     * reads only the on-disk header and file length -- it never maps the
+     * dangling head entry -- so a buggy build fails the assertion cleanly
+     * instead of crashing the test JVM with SIGBUS.
+     */
+    @Test
+    public void testRenameColumnLinkRecoveryHeadTrimKeepsRelocatedHeadOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_link_headtrim (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_link_headtrim VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_link_headtrim");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Plant a committed-visible head with a single in-flight tail gen on
+            // the historic first partition, large enough that the trimmed head
+            // spans >= one OS page.
+            appendVisibleHeadWithFutureTailGen(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_link_headtrim RENAME COLUMN sym TO new_sym");
+
+            final long newColumnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                int colIndex = reader.getMetadata().getColumnIndex("new_sym");
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                newColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(firstPartitionTimestamp, writerIndex);
+            }
+
+            assertPostingKeyFileCoversHeaderRegion(
+                    token,
+                    firstPartitionTimestamp,
+                    firstPartitionNameTxn,
+                    "new_sym",
+                    newColumnNameTxn,
+                    "link recovery truncated the renamed column's .pk below its header regionLimit"
+            );
+        });
+    }
+
+    @Test
+    public void testConvertPartitionToParquetLinkRecoveryHeadTrimKeepsRelocatedHeadOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_parquet_link_headtrim (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_link_headtrim VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_parquet_link_headtrim");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            appendVisibleHeadWithFutureTailGen(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_parquet_link_headtrim CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            final long parquetPartitionNameTxn;
+            final long columnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                parquetPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                int colIndex = reader.getMetadata().getColumnIndex("sym");
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(firstPartitionTimestamp, writerIndex);
+            }
+            Assert.assertTrue(
+                    "test setup: CONVERT PARTITION TO PARQUET should move the partition to a new txn directory",
+                    parquetPartitionNameTxn > firstPartitionNameTxn
+            );
+
+            assertPostingKeyFileCoversHeaderRegion(
+                    token,
+                    firstPartitionTimestamp,
+                    parquetPartitionNameTxn,
+                    "sym",
+                    columnNameTxn,
+                    "link recovery truncated the parquet-converted column's .pk below its header regionLimit"
+            );
         });
     }
 
@@ -1037,6 +2344,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             ts\tnew_sym\tprice
                             2024-01-01T00:00:00.000000Z\tA\t1.0
                             2024-01-01T01:00:00.000000Z\tB\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testRenameColumnLinksReaderVisibleSealWhenHeadIsFutureTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_future_head (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename_future_head VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_rename_future_head");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            appendFuturePostingHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_rename_future_head RENAME COLUMN sym TO new_sym");
+
+            assertQuery("SELECT ts, new_sym, price FROM t_rename_future_head WHERE new_sym = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tnew_sym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
                             """);
         });
     }
@@ -1716,10 +3065,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
+            // sym carries an explicit INCLUDE (ts) so the index is covering:
+            // the test arms a fault on the second seal-time .pv rotation, which
+            // only happens for a covering seal. A bare INDEX TYPE POSTING is
+            // non-covering and never rotates .pv at seal time.
             execute("""
                     CREATE TABLE t_c1_chain_head (
                         ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (ts)
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
@@ -2355,24 +3708,63 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
-    // conservative purge interval) and #7 (seal-loop partial failure
-    // recovery) were RED placeholders during the v1 era. They are now
-    // addressed structurally by the v2 chain redesign:
-    //   #2 — chain.updateHeadMaxValue publishes via the chain header
-    //        seqlock, so any reader of MAX_VALUE goes through the same
-    //        consistency protocol as keyCount/genCount.
-    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
-    //        chain entries themselves; the residual [0, MAX) branch only
-    //        fires for the empty-chain edge case, which the
-    //        writer-open recovery walk picks up on the next reopen.
-    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
-    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
-    //        was published before the encompassing txWriter.commit
-    //        landed.
-    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
-    // orthogonal to the posting-index chain rewrite and remains tracked
-    // separately.
+    @Test
+    public void testRollbackDiscardsFutureDeferredPostingSealPurge() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
+                final long currentTxn = writer.getTxn();
+                for (int i = 35; i < 40; i++) {
+                    TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp(timestampAtMinute(i)));
+                    row.putSym(1, "XPHI");
+                    row.putSym(2, "S");
+                    row.putLong(3, i);
+                    row.append();
+                }
+                // switchPartition() seals the previous partition before _txn
+                // is durable, so the purge for oldFiles is future-tagged and
+                // must be abandoned by rollback().
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-26T00:00:00.000000Z"));
+                row.putSym(1, "next_partition_before_rollback");
+                row.putSym(2, "S");
+                row.putLong(3, 200);
+                row.append();
+                writer.rollback();
+
+                // Advance _txn without touching the 2022-02-25 seal. If
+                // rollback left the future purge behind, this commit publishes
+                // it and the purge job below deletes oldFiles.
+                row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-26T00:01:00.000000Z"));
+                row.putSym(1, "after_rollback");
+                row.putSym(2, "S");
+                row.putLong(3, 201);
+                row.append();
+                writer.commit();
+                Assert.assertEquals("post-rollback commit must reach deferred toTxn", currentTxn + 1, writer.getTxn());
+            }
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            assertPostingSealFilesExist(oldFiles, true);
+        });
+    }
 
     /**
      * Locks in the multi-gen short-circuit semantics: when a CLEAN gen
@@ -2430,6 +3822,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
+    // conservative purge interval) and #7 (seal-loop partial failure
+    // recovery) were RED placeholders during the v1 era. They are now
+    // addressed structurally by the v2 chain redesign:
+    //   #2 — chain.updateHeadMaxValue publishes via the chain header
+    //        seqlock, so any reader of MAX_VALUE goes through the same
+    //        consistency protocol as keyCount/genCount.
+    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
+    //        chain entries themselves; the residual [0, MAX) branch only
+    //        fires for the empty-chain edge case, which the
+    //        writer-open recovery walk picks up on the next reopen.
+    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
+    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
+    //        was published before the encompassing txWriter.commit
+    //        landed.
+    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
+    // orthogonal to the posting-index chain rewrite and remains tracked
+    // separately.
+
     /**
      * The {@code Cursor.size()} fast path must bail to iteration when a single
      * gen straddles {@code entryMaxValue}, because the per-gen count includes
@@ -2478,25 +3889,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         });
     }
-
-    // =========================================================================
-    // Red tests for the v2 review of PR #6861 (current pass).
-    //
-    // Each test below maps to a finding from the review report. Tests that
-    // require fault injection use TestFilesFacadeImpl; tests that require
-    // concurrency simulate the race by mutating ff.length() between mmap
-    // setup and chain access. Findings that can only manifest from sources
-    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
-    // are documented in trailing comments.
-    // =========================================================================
-
-    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
-    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
-    // map0 (line 417) both close the fd on mmap/mremap failure inside
-    // jumpTo(). The "orphan mem" identified in the review never holds an
-    // open fd by the time the outer catch fires — it is already closed
-    // internally by the memory-mapping helper.
-    // Documented for traceability; no JUnit red test.
 
     /**
      * The DELTA-mode upper bound from {@code peekDeltaKeyMaxValueUpperBound}
@@ -2564,6 +3956,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         });
     }
+
+    // =========================================================================
+    // Red tests for the v2 review of PR #6861 (current pass).
+    //
+    // Each test below maps to a finding from the review report. Tests that
+    // require fault injection use TestFilesFacadeImpl; tests that require
+    // concurrency simulate the race by mutating ff.length() between mmap
+    // setup and chain access. Findings that can only manifest from sources
+    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
+    // are documented in trailing comments.
+    // =========================================================================
+
+    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
+    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
+    // map0 (line 417) both close the fd on mmap/mremap failure inside
+    // jumpTo(). The "orphan mem" identified in the review never holds an
+    // open fd by the time the outer catch fires — it is already closed
+    // internally by the memory-mapping helper.
+    // Documented for traceability; no JUnit red test.
 
     /**
      * When the head entry's MAX_VALUE sits below every encoded row id for the
@@ -2962,35 +4373,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
 
         final AtomicBoolean failArmed = new AtomicBoolean(false);
-        // squashSplitPartitions opens columns through FrameAlgebra twice
-        // per merge step (source RO + target RW) and the reseal then
-        // opens the target's covering column RO via
-        // mapCoveringColumnsForSeal. The first openRO of price.d after
-        // armed corresponds to the FrameAlgebra source frame; subsequent
-        // openRO calls (>=2) are the seal. Track only the latter and
-        // fail their mmap so FrameAlgebra completes successfully and
-        // the throw is localised to the reseal call.
-        final AtomicInteger priceDopenROCount = new AtomicInteger(0);
-        final AtomicLong sealFd = new AtomicLong(-1);
+        // Fail the first mmap reached from the posting-index reseal, after
+        // FrameAlgebra has completed the partition squash.
         ff = new TestFilesFacadeImpl() {
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (failArmed.get() && fd == sealFd.get()) {
+                if (failArmed.get() && isPostingIndexResealCall()) {
+                    failArmed.set(false);
                     return FilesFacade.MAP_FAILED;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
-                if (failArmed.get() && fd != -1 && name != null
-                        && Utf8s.endsWithAscii(name, "price.d")) {
-                    if (priceDopenROCount.incrementAndGet() >= 2) {
-                        sealFd.set(fd);
-                    }
-                }
-                return fd;
             }
         };
 
@@ -3050,6 +4442,2627 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 "txWriter/columnVersionWriter were mutated in memory but their " +
                                 "commit() never ran, so the in-memory state diverged from on-disk _txn",
                         w.isDistressed());
+            }
+        });
+    }
+
+    /**
+     * Reproduces the SIGSEGV in PostingIndexWriter.decodeDenseGenStride when
+     * squashing partitions over a COVERING posting index whose reseal index()
+     * loop trips the spill budget (compactIfOverBudget -> mid-stream
+     * flushAllPending). The mid-stream sparse flush lands a gen at file
+     * offset 0; commitDense then appends the dense gen-0 at a NON-ZERO offset
+     * and publishes a single-gen chain entry that points there. rebuildSidecars
+     * takes the genCount==1 by-copy path: accumulateDenseGen0Counts reads the
+     * gen via its real FILE_OFFSET (correct), but writeSidecarForColumn decodes
+     * from valueMem.addressOf(0) (the orphaned sparse gen) -- a stride-index
+     * mismatch that over-reads native memory and SIGSEGVs (no AssertionError,
+     * just a JVM crash). The fix makes commitDense consolidate via seal() when
+     * prior gens exist, so gen-0 lands back at offset 0 with every row intact;
+     * the covering query then returns the same rows as the non-covering
+     * fallback.
+     */
+    @Test
+    public void testSquashCoveringPostingWithMidStreamSpillFlush() throws Exception {
+        // Force a mid-stream flushAllPending during the squash reseal index()
+        // loop: a tiny spill budget means a few dozen rowids for a hot key push
+        // totalSpillBytes over the threshold, so compactIfOverBudget fires
+        // before commitDense writes the final dense gen.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        // Allow the split sub-partitions to form and persist until the explicit
+        // squashPartitions() call (see testSquashPartitionsResealFailureMarks...).
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_squash_spill (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Seed a hot key 'A' with enough rowids in 2024-01-01 that the
+            // reseal index() loop spills well past the 256-byte budget.
+            execute("""
+                    INSERT INTO t_squash_spill
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            // Extend the day's max timestamp to 20:00 so there is a late tail
+            // for the O3 insert below to split off (mirrors the split recipe in
+            // testSquashPartitionsResealFailureMarksWriterDistressed).
+            execute("""
+                    INSERT INTO t_squash_spill VALUES
+                    ('2024-01-01T20:00:00.000000Z', 'A', 1000000.0)
+                    """);
+            // O3 into a late prefix (19:00 < 20:00) splits the last partition.
+            execute("""
+                    INSERT INTO t_squash_spill VALUES
+                    ('2024-01-01T19:00:00.000000Z', 'B', -1.0)
+                    """);
+
+            assertQuery("SELECT count() FROM table_partitions('t_squash_spill')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            2
+                            """);
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_squash_spill")) {
+                // Squash reseals the covering posting index for the target
+                // partition: discardForRebuild -> index() (mid-stream flush) ->
+                // commitDense -> rebuildSidecars (by-copy). The buggy decode
+                // SIGSEGVs here.
+                w.squashPartitions();
+            }
+
+            assertQuery("SELECT count() FROM table_partitions('t_squash_spill')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+
+            // The covering path must return every 'A' row: 400 (sum 1..400 =
+            // 80200) plus the 20:00 sentinel (1000000) = 401 rows, sum 1080200.
+            // Assert the covering plan alongside the result so a future optimizer
+            // change that silently falls back to a base-table scan (sym.d/price.d
+            // intact, only the covering sidecar corrupt) fails here instead of
+            // masking the bug.
+            assertQuery("SELECT count(), sum(price) FROM t_squash_spill WHERE sym = 'A'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n401\t1080200.0\n");
+        });
+    }
+
+    /**
+     * Squashes MULTIPLE split sub-partitions in one squashSplitPartitions call,
+     * matching the reported failure shape more closely than the 2-sub-partition
+     * testSquashCoveringPostingWithMidStreamSpillFlush. The reported crash fired
+     * from squashSplitPartitions (the IIIZ overload) -> sealPostingIndexForPartition
+     * during WAL housekeep; squashPartitions() reaches the same overload via
+     * squashPartitionForce, so this drives that exact reseal deterministically.
+     * Four O3 prefixes build four split sub-partitions of one day over the hot
+     * key 'A'; squashPartitions() merges them, and with the 256-byte spill budget
+     * the merge's reseal index() loop flushes mid-stream -- the path that
+     * SIGSEGVd before the commitDense consolidation fix.
+     */
+    @Test
+    public void testSquashSplitPartitionsCoveringPostingMultiSplitSpill() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_multisplit (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Hot key 'A' across the early day.
+            execute("""
+                    INSERT INTO t_multisplit
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            // Late sentinel keeps the day's max at 23:00 so each O3 prefix below
+            // lands inside the range and splits rather than appends.
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T23:00:00.000000Z', 'A', 1000000.0)");
+            // Four O3 prefixes at distinct late minutes build several split
+            // sub-partitions of 2024-01-01.
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:10:00.000000Z', 'B', -1.0)");
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:20:00.000000Z', 'B', -2.0)");
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:30:00.000000Z', 'B', -3.0)");
+            execute("INSERT INTO t_multisplit VALUES ('2024-01-01T22:40:00.000000Z', 'B', -4.0)");
+
+            final long splitCount = selectLong("SELECT count() FROM table_partitions('t_multisplit')");
+            Assert.assertTrue(
+                    "test setup must produce more than two split sub-partitions for "
+                            + "squashSplitPartitions to merge, got " + splitCount,
+                    splitCount > 2);
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_multisplit")) {
+                // squashPartitions() -> squashPartitionForce -> squashSplitPartitions
+                // -> sealPostingIndexForPartition (the reported reseal path).
+                w.squashPartitions();
+            }
+
+            assertQuery("SELECT count() FROM table_partitions('t_multisplit')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+
+            // 400 'A' rows (sum 1..400 = 80200) plus the 23:00 sentinel
+            // (1000000) = 401 rows, sum 1080200. The withPlan pin keeps the read
+            // on the CoveringIndex so a base-scan fallback cannot mask the bug.
+            assertQuery("SELECT count(), sum(price) FROM t_multisplit WHERE sym = 'A'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n401\t1080200.0\n");
+        });
+    }
+
+    /**
+     * The original bug's trigger at scale: fragment one day into many split
+     * sub-partitions, then squash them all in a single squashSplitPartitions
+     * pass. The merged partition holds the full hot key, so its covering reseal
+     * (discardForRebuild -> index() -> commitDense) trips the spill budget and
+     * commitDense must consolidate -- the path that SIGSEGVd before the fix.
+     * Twenty separate O3 commits into the late tail build twenty+ splits (kept
+     * from auto-squashing by the high MAX_SPLITS), then squashPartitions()
+     * collapses them to one and the covering result must match the truth.
+     */
+    @Test
+    public void testSquashManySplitPartitionsCoveringPostingSpill() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        // High ceilings so housekeep does not auto-squash before the explicit call.
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_manysplit (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2000 hot 'A' rows early in the day so the squash reseal spills.
+            execute("""
+                    INSERT INTO t_manysplit
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(2000)
+                    """);
+            // Late sentinel keeps the day's max at 23:00 so the O3 prefixes split.
+            execute("INSERT INTO t_manysplit VALUES ('2024-01-01T23:00:00.000000Z', 'A', 1000000.0)");
+            // Twenty separate O3 commits into distinct late-tail minutes; each
+            // splits the trailing sub-partition, accumulating many splits.
+            final int splitInserts = 20;
+            for (int i = 0; i < splitInserts; i++) {
+                execute("INSERT INTO t_manysplit VALUES ('2024-01-01T22:"
+                        + String.format("%02d", i) + ":00.000000Z', 'B', " + (-1 - i) + ".0)");
+            }
+
+            final long splitCount = selectLong("SELECT count() FROM table_partitions('t_manysplit')");
+            Assert.assertTrue(
+                    "test setup must fragment the day into many split sub-partitions, got " + splitCount,
+                    splitCount > 10);
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_manysplit")) {
+                // squashPartitions() -> squashPartitionForce -> squashSplitPartitions
+                // -> sealPostingIndexForPartition: the reported reseal path, now over
+                // a partition merged from 20+ splits.
+                w.squashPartitions();
+            }
+
+            assertQuery("SELECT count() FROM table_partitions('t_manysplit')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+
+            // 2000 'A' rows (sum 1..2000 = 2001000) plus the 23:00 sentinel
+            // (1000000) = 2001 rows, sum 3001000. The withPlan pin keeps the read
+            // on the CoveringIndex so a base-scan fallback cannot mask the bug.
+            assertQuery("SELECT count(), sum(price) FROM t_manysplit WHERE sym = 'A'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n2001\t3001000.0\n");
+        });
+    }
+
+    /**
+     * Non-covering twin of testSquashCoveringPostingWithMidStreamSpillFlush.
+     * The non-covering squash reseal also runs discardForRebuild -> index() ->
+     * commitDense; the same mid-stream flushAllPending orphans the early sparse
+     * gen. Without a sidecar rebuild there is no SIGSEGV, but commitDense's
+     * extendHead(newGenCount=1) silently drops the pre-flush rows, so an indexed
+     * predicate returns short counts. Asserting full counts proves the
+     * commitDense consolidation fix restores completeness on this path too.
+     */
+    @Test
+    public void testSquashNonCoveringPostingWithMidStreamSpillFlush() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        // POSTING auto-includes the designated timestamp by default, which would
+        // make this a covering index (and crash, like the covering test).
+        // Disable it so the reseal genuinely takes the non-covering branch.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_squash_spill_nc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_squash_spill_nc
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            execute("""
+                    INSERT INTO t_squash_spill_nc VALUES
+                    ('2024-01-01T20:00:00.000000Z', 'A', 1000000.0)
+                    """);
+            execute("""
+                    INSERT INTO t_squash_spill_nc VALUES
+                    ('2024-01-01T19:00:00.000000Z', 'B', -1.0)
+                    """);
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_squash_spill_nc")) {
+                w.squashPartitions();
+            }
+
+            // Index-driven count must still see every 'A' rowid after the reseal:
+            // 400 rows plus the 20:00 sentinel = 401. Without the fix the orphaned
+            // gen drops the pre-flush rowids and this comes back short.
+            assertQuery("SELECT count() FROM t_squash_spill_nc WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n401\n");
+        });
+    }
+
+    /**
+     * Drives the reported crash through its original entry point: WAL apply.
+     * housekeep() auto-squashes split sub-partitions inside
+     * commitWalInsertTransactions, and with a covering posting index over a hot
+     * key plus a tiny spill budget the squash reseal mid-stream flushes -- the
+     * exact wal-apply_N -> squashSplitPartitions -> sealPostingIndexForPartition
+     * -> rebuildSidecars -> decodeDenseGenStride path from the hs_err report.
+     * The crash happens inside drainWalQueue; with the fix the drained table
+     * returns the same rows as the non-covering fallback.
+     */
+    @Test
+    public void testWalApplyAutoSquashCoveringPostingWithMidStreamSpillFlush() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        // Low split ceiling so housekeep squashes the accumulated splits during
+        // a later drain rather than letting them persist.
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 2);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wal_squash_spill (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Hot key 'A' seeded across the day; the 23:00 sentinel keeps the
+            // partition's max late so the O3 prefixes below split rather than
+            // append.
+            execute("""
+                    INSERT INTO t_wal_squash_spill
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            execute("INSERT INTO t_wal_squash_spill VALUES ('2024-01-01T23:00:00.000000Z', 'A', 1000000.0)");
+            drainWalQueue();
+
+            // Several O3 prefixes into the late tail create split sub-partitions;
+            // once they exceed MAX_SPLITS, a subsequent drain's housekeep squashes
+            // them and reseals the covering posting index over all 400+ 'A' rows.
+            for (int i = 0; i < 6; i++) {
+                execute("INSERT INTO t_wal_squash_spill VALUES " +
+                        "('2024-01-01T22:" + i + "0:00.000000Z', 'B', " + (-1 - i) + ".0)");
+                drainWalQueue();
+            }
+
+            // 400 'A' rows (sum 1..400 = 80200) plus the 23:00 sentinel (1000000)
+            // = 401 rows, sum 1080200. The withPlan pin keeps the read on the
+            // CoveringIndex so a base-scan fallback cannot mask the bug.
+            assertQuery("SELECT count(), sum(price) FROM t_wal_squash_spill WHERE sym = 'A'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n401\t1080200.0\n");
+        });
+    }
+
+    /**
+     * Exercises the commitDense consolidation fix through the plain O3 commit
+     * reseal -- sealPostingIndexesForO3Partitions ->
+     * sealPostingIndexForPartition(..., canSkipRebuild=false) -> discardForRebuild
+     * -> index() -> commitDense() -- with no squashPartitions() involved. This is
+     * the most common production trigger of the reseal: an O3 insert whose
+     * timestamps land inside the existing partition range makes
+     * partitionMutates=true, so the covering posting index rebuilds the whole
+     * partition from sym.d. With the tiny spill budget the rebuild's index() loop
+     * trips compactIfOverBudget mid-stream, so commitDense must consolidate the
+     * orphaned sparse gen instead of dropping it. SIGSEGVs without the fix; with
+     * it, both the hot key and the O3-inserted rows resolve through the index.
+     */
+    @Test
+    public void testO3CommitCoveringPostingResealWithMidStreamSpillFlush() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_reseal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Hot key 'A', 400 in-order rows across 2024-01-01 [00:00:01, 00:06:40].
+            execute("""
+                    INSERT INTO t_o3_reseal
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            // O3 insert: timestamps inside the existing range -> partitionMutates
+            // -> canSkipRebuild=false reseal of the whole partition (no squash).
+            execute("""
+                    INSERT INTO t_o3_reseal VALUES
+                    ('2024-01-01T00:03:00.000000Z', 'B', -1.0),
+                    ('2024-01-01T00:03:30.000000Z', 'B', -2.0),
+                    ('2024-01-01T00:04:00.000000Z', 'B', -3.0)
+                    """);
+
+            // The hot key (which drove the mid-stream spill) and the O3-inserted
+            // rows must both come back intact through the covering index. The
+            // aggregates are deterministic: 'A' = 400 rows, sum(1..400) = 80200;
+            // 'B' = 3 rows, sum(-1,-2,-3) = -6. Assert the covering plan alongside
+            // the result so a future fallback to a base-table scan (sym.d/price.d
+            // intact, only the covering sidecar corrupt) fails here instead of
+            // masking the bug.
+            assertQuery("SELECT count(), sum(price) FROM t_o3_reseal WHERE sym = 'A'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n400\t80200.0\n");
+            assertQuery("SELECT count(), sum(price) FROM t_o3_reseal WHERE sym = 'B'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price)]
+                              filter: null
+                                CoveringIndex on: sym with: price
+                                  filter: sym='B'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n3\t-6.0\n");
+        });
+    }
+
+    /**
+     * C4 (deterministic counterpart of the covering-parquet fuzz tests): an O3 write
+     * that rewrites an already-parquet partition carrying a COVERING posting index must
+     * rebuild that new parquet version's covering sidecars (.pci/.pc). The O3 worker
+     * builds only the non-covering .pv; resealParquetCoveringForPartition (reached via
+     * sealPostingIndexForPartition's parquet branch in finishO3Commit) re-materialises
+     * the covering from the rewritten parquet. Without it a reader opens the new version,
+     * walks the chain (count correct) but finds coverCount=0 and resolves covered values
+     * as NULL. A withPlan() check forces the covering cursor (expectSize()/
+     * noRandomAccess() describe only the outer aggregation and would also pass a base-scan
+     * fallback); the sum(price)/first(tag) assertions would read NULL covered values
+     * without the fix.
+     */
+    @Test
+    public void testO3CoveringPostingParquetResealKeepsCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_cov_reseal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, tag),
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // 200 'A' rows in 2024-01-01 (price 1..200, sum 20100, tag 'TA').
+            execute("""
+                    INSERT INTO t_pq_cov_reseal
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE, 'TA'
+                    FROM long_sequence(200)
+                    """);
+            // 10 more 'A' rows in 2024-01-02 (price 1001..1010, sum 10055) so 'A'
+            // spans a native partition too, and the converted one is not the tail.
+            execute("""
+                    INSERT INTO t_pq_cov_reseal
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP),
+                           'A', (1000 + x)::DOUBLE, 'TA'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_cov_reseal CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // O3 merge into the already-parquet partition rewrites it; the covering
+            // sidecars for the new parquet version must be rebuilt for the new 'B' rows
+            // (and the existing 'A' rows) to resolve their covered price/tag.
+            execute("""
+                    INSERT INTO t_pq_cov_reseal VALUES
+                    ('2024-01-01T00:01:00.500000Z', 'B', -1.0, 'TB'),
+                    ('2024-01-01T00:02:00.500000Z', 'B', -2.0, 'TB')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            // Assert the covering plan alongside the result: sum(price)/first(tag)
+            // must be served by the CoveringIndex, not a base-table scan.
+            // expectSize()/noRandomAccess() describe only the outer aggregation and
+            // pass either way, so without this plan check a future optimizer
+            // fallback to a forward scan (intact base columns, NULL-ed covering
+            // sidecars) would mask the bug.
+            assertQuery("SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_pq_cov_reseal WHERE sym = 'A'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price),first(tag)]
+                              filter: null
+                                CoveringIndex on: sym with: price, tag
+                                  filter: sym='A'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("rows\tsum_price\tfirst_tag\n210\t30155.0\tTA\n");
+            // The O3-inserted 'B' rows live in the rewritten parquet partition; their
+            // covered values must be non-NULL after the reseal.
+            assertQuery("SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_pq_cov_reseal WHERE sym = 'B'")
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),sum(price),first(tag)]
+                              filter: null
+                                CoveringIndex on: sym with: price, tag
+                                  filter: sym='B'
+                            """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("rows\tsum_price\tfirst_tag\n2\t-3.0\tTB\n");
+        });
+    }
+
+    /**
+     * The parquet index-rebuild path (O3PartitionJob.updateParquetIndexes ->
+     * commitDense) is the third commitDense caller. When its index() loop trips
+     * the spill budget, commitDense routes through seal(), which rotates the .pv
+     * to a new sealTxn. Unlike the native reseal, the pooled parquet writer is
+     * freed (close() -> releasePendingPurges) without ever draining its pending
+     * seal-purge, so the superseded intermediate .pv would leak on disk
+     * permanently (no directory sweep, no recovery-walk reclaim). The fix hands
+     * the purge to the TableWriter's deferred queue; after the commit, the
+     * scoreboard-gated PostingSealPurgeJob reclaims the superseded .pv. After a
+     * spill-driven CONVERT + O3 rewrite and a purge-job pass, exactly one .pv
+     * must remain.
+     */
+    @Test
+    public void testConvertToParquetPostingResealSpillDoesNotLeakValueFile() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_leak (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Hot key 'A' so the parquet rebuild's index() loop spills past the
+            // 256-byte budget mid-stream (genCount > 0 -> commitDense seals).
+            execute("""
+                    INSERT INTO t_pq_leak
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(2000)
+                    """);
+            // A second partition so the converted one is not the active tail.
+            execute("""
+                    INSERT INTO t_pq_leak
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_leak CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // O3 into the already-parquet partition rewrites it; updateParquetIndexes
+            // rebuilds the posting index over all 2000+ 'A' rows, tripping the spill
+            // budget -> commitDense seals -> the rotated intermediate .pv would leak.
+            execute("""
+                    INSERT INTO t_pq_leak VALUES
+                    ('2024-01-01T00:10:00.500000Z', 'A'),
+                    ('2024-01-01T00:20:00.500000Z', 'A')
+                    """);
+            drainWalQueue();
+
+            // Drain any queued posting-seal purges; the leaked intermediate is
+            // never queued, so this would not reclaim it.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            // Index still returns every 'A' rowid after the parquet reseal
+            // (2000 + 2 O3 rows in the converted partition + 10 in the next).
+            assertQuery("SELECT count() FROM t_pq_leak WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2012\n");
+
+            final TableToken token = engine.getTableTokenIfExists("t_pq_leak");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final java.io.File dir = new java.io.File(path.toString());
+                final String[] names = dir.list();
+                Assert.assertNotNull("partition dir must exist: " + dir, names);
+                int pvCount = 0;
+                for (String n : names) {
+                    if (n.startsWith("sym.pv.")) {
+                        pvCount++;
+                    }
+                }
+                Assert.assertEquals(
+                        "exactly one active value file must remain; a superseded intermediate "
+                                + ".pv from the spill-driven parquet reseal leaked: "
+                                + java.util.Arrays.toString(names),
+                        1, pvCount);
+            }
+        });
+    }
+
+    /**
+     * Update-in-place twin of testConvertToParquetPostingResealSpillDoesNotLeakValueFile.
+     * Forcing many small row groups plus disabled rewrite thresholds makes the O3
+     * insert update the parquet file in place (isRewrite=false), so the posting
+     * index rebuilds into the LIVE committed directory. The spill-driven reseal's
+     * superseded .pv cannot be unlinked inline there (a reader pinned at the
+     * pre-commit txn could still map it), so it is routed to the scoreboard-gated
+     * deferred purge instead. After the commit and a purge-job run, exactly one
+     * value file must remain -- the case that leaked before the deferred purge.
+     */
+    @Test
+    public void testInPlaceParquetPostingResealSpillReclaimsValueFile() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        // Multi-row-group + rewrite triggers off -> O3 updates the parquet file
+        // in place (isRewrite=false) rather than rewriting to a new directory.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_inplace (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pq_inplace
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(2000)
+                    """);
+            execute("""
+                    INSERT INTO t_pq_inplace
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_inplace CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // O3 into the parquet partition; with the config above this updates in
+            // place (isRewrite=false) and rebuilds the index over all 2000+ 'A'
+            // rows, tripping the spill budget -> commitDense seals -> deferred purge.
+            execute("""
+                    INSERT INTO t_pq_inplace VALUES
+                    ('2024-01-01T00:10:00.500000Z', 'A'),
+                    ('2024-01-01T00:20:00.500000Z', 'A')
+                    """);
+            drainWalQueue();
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT count() FROM t_pq_inplace WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2012\n");
+
+            final TableToken token = engine.getTableTokenIfExists("t_pq_inplace");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final java.io.File dir = new java.io.File(path.toString());
+                final String[] names = dir.list();
+                Assert.assertNotNull("partition dir must exist: " + dir, names);
+                int pvCount = 0;
+                for (String n : names) {
+                    if (n.startsWith("sym.pv.")) {
+                        pvCount++;
+                    }
+                }
+                Assert.assertEquals(
+                        "exactly one value file must remain after the in-place reseal; the "
+                                + "superseded intermediate must be reclaimed by the deferred purge: "
+                                + java.util.Arrays.toString(names),
+                        1, pvCount);
+            }
+        });
+    }
+
+    /**
+     * Exercises the concurrent deposit into deferParquetPostingSealPurges: a real
+     * WorkerPool runs O3PartitionJob on multiple threads, and one O3 insert that
+     * touches every parquet partition dispatches a partition task per day, so
+     * several workers run updateParquetIndexes -> commitDense -> seal -> the
+     * deferred purge at once, contending on parquetSealPurgeLock. The single-
+     * threaded tests never hit this path. After a purge-job pass, every
+     * partition must keep exactly one value file (no purge lost or double-freed
+     * under contention) and the indexed count must be exact.
+     */
+    @Test
+    public void testMultiThreadedO3ParquetPostingSpillReclaimsAcrossPartitions() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 6;
+            execute("""
+                    CREATE TABLE t_mt (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2000 hot 'A' rows per day so every partition's reseal spills.
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_mt SELECT dateadd('s', x::INT, '2024-01-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A' FROM long_sequence(2000)");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_mt CONVERT PARTITION TO PARQUET LIST '2024-01-0" + d + "'");
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            try {
+                // One O3 insert with a row inside every parquet day's range -> one
+                // commit, one partition task per day, run across the pool workers.
+                final StringBuilder sql = new StringBuilder("INSERT INTO t_mt VALUES ");
+                for (int d = 1; d <= dayCount; d++) {
+                    if (d > 1) {
+                        sql.append(',');
+                    }
+                    sql.append("('2024-01-0").append(d).append("T00:10:00.500000Z', 'A')");
+                }
+                execute(sql.toString());
+            } finally {
+                pool.halt();
+            }
+
+            // Pool halted: drain the deferred purges with nothing pinned.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            // 6 days * 2000 + 6 O3 rows.
+            assertQuery("SELECT count() FROM t_mt WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + (dayCount * 2000 + dayCount) + "\n");
+
+            // Every parquet partition must keep exactly one value file.
+            final TableToken token = engine.getTableTokenIfExists("t_mt");
+            Assert.assertNotNull("table must exist", token);
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("all days must remain", dayCount, reader.getTxFile().getPartitionCount());
+                for (int i = 0; i < dayCount; i++) {
+                    final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(i);
+                    try (Path path = new Path()) {
+                        path.of(configuration.getDbRoot()).concat(token);
+                        setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                        final String[] names = new java.io.File(path.toString()).list();
+                        Assert.assertNotNull("partition dir must exist: " + path, names);
+                        int pvCount = 0;
+                        for (String n : names) {
+                            if (n.startsWith("sym.pv.")) {
+                                pvCount++;
+                            }
+                        }
+                        Assert.assertEquals(
+                                "partition " + i + " must keep exactly one value file (no purge lost or "
+                                        + "double-freed under concurrent deposit): " + java.util.Arrays.toString(names),
+                                1, pvCount);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Concurrent-read integration test for the parquet reseal value-file reclaim
+     * (deferParquetPostingSealPurges -> scoreboard-gated PostingSealPurgeJob).
+     * Background threads continuously query the posting index on a parquet
+     * partition while the main thread repeatedly O3-rewrites it under a tiny
+     * spill budget, so every rewrite drives commitDense -> seal -> a deferred
+     * purge. The 'A' count (rows are only added) must stay monotonic, never below
+     * the initial 2010, with no reader crash -- the reclaim is scoreboard-gated,
+     * so it must never delete a .pv a reader still resolves. The trailing
+     * single-.pv assertion (after a purge-job pass with nothing pinned) guards
+     * against the reclaim regressing into a leak across many rewrites; the
+     * deterministic counterpart is
+     * testConvertToParquetPostingResealSpillDoesNotLeakValueFile.
+     */
+    @Test
+    public void testParquetPostingSpillConcurrentReadFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE xq (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // 2000 hot 'A' rows in one row group (so the O3 inserts below take the
+            // isRewrite=true rebuild) plus a second partition so the converted one
+            // is not the active tail.
+            execute("""
+                    INSERT INTO xq
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(2000)
+                    """);
+            execute("""
+                    INSERT INTO xq
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), 'A'
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE xq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        long prev = 0;
+                        while (!stop.get() && bgError.get() == null) {
+                            final long a;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count() FROM xq WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                a = cur.hasNext() ? cur.getRecord().getLong(0) : -1;
+                            }
+                            if (a < 2010) {
+                                throw new AssertionError("'A' count fell below the initial 2010: " + a);
+                            }
+                            if (a < prev) {
+                                throw new AssertionError("'A' count went backwards: " + prev + " -> " + a);
+                            }
+                            prev = a;
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "parquet-posting-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            long expectedA = 2010;
+            try {
+                final int batches = 8 + rnd.nextInt(8);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final int n = 1 + rnd.nextInt(4);
+                    final StringBuilder sql = new StringBuilder("INSERT INTO xq VALUES ");
+                    for (int i = 0; i < n; i++) {
+                        if (i > 0) {
+                            sql.append(',');
+                        }
+                        // O3 timestamp inside the converted partition's [1s, 1999s] range.
+                        sql.append("(dateadd('s', ").append(1 + rnd.nextInt(1999))
+                                .append(", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), 'A')");
+                    }
+                    execute(sql.toString());
+                    drainWalQueue();
+                    expectedA += n;
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+            }
+
+            Assert.assertNull("concurrent reader threw: " + bgError.get(), bgError.get());
+            assertQuery("SELECT count() FROM xq WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + expectedA + "\n");
+
+            // The reclaim must also have kept the partition free of leaked
+            // intermediates across every rewrite: exactly one value file remains.
+            // The rewrite purges are deferred and scoreboard-gated, so with the
+            // readers stopped and writers released (nothing pinned) a purge-job
+            // pass reclaims every superseded .pv.
+            engine.releaseAllWriters();
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            final TableToken token = engine.getTableTokenIfExists("xq");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                final java.io.File dir = new java.io.File(path.toString());
+                final String[] names = dir.list();
+                Assert.assertNotNull("partition dir must exist: " + dir, names);
+                int pvCount = 0;
+                for (String nm : names) {
+                    if (nm.startsWith("sym.pv.")) {
+                        pvCount++;
+                    }
+                }
+                Assert.assertEquals(
+                        "exactly one value file must remain after the rewrites; a leaked "
+                                + "intermediate from the spill-driven reseal survived: "
+                                + java.util.Arrays.toString(names),
+                        1, pvCount);
+            }
+        });
+    }
+
+    /**
+     * Writer release/reopen under covering reads. Mid-fuzz the writer is released
+     * (engine.releaseAllWriters()) so the next O3 insert reopens it through the
+     * posting-index recovery path (chain head trim / superseded-gen drop) while
+     * reader threads keep serving count()/sum(price) from the covering sidecars.
+     * Rows are only added, so the covered total stays monotonic; a recovery reopen
+     * that loses a committed gen or trims a live chain head would drop the total.
+     * All-parquet, so the recovery reseal takes the safe path.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringWriterReopenConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov_reopen (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_reopen SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_reopen CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov_reopen WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: " + count + " < " + floor);
+                            }
+                            if (sum < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(price) dropped below the initial total " + initialSum + ": " + sum);
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("covered sum(price)=" + sum + " < count=" + count + " -- a covered value resolved as < 1");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-reopen-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_reopen VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                    // Periodically release the writer so the next insert reopens it
+                    // through the posting-index recovery path under the live readers.
+                    if (rnd.nextInt(3) == 0) {
+                        engine.releaseAllWriters();
+                    }
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent writer-reopen covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov_reopen WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+            }
+        });
+    }
+
+    /**
+     * DROP PARTITION concurrent with covering reads. A covering read for 'A'
+     * iterates the posting index across ALL partitions, so while it runs the writer
+     * drops random EARLIER parquet partitions (their index files are removed,
+     * scoreboard-gated) and O3-inserts into a PROTECTED last partition (never
+     * dropped). Readers project only the protected partition (ts >= last day), whose
+     * covered count/sum is therefore monotonic; a DROP that corrupts the shared
+     * index iteration or frees a partition under the reader would drop the protected
+     * total or crash. The all-parquet protected partition reseals on the safe path.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringDropPartitionConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 5 + rnd.nextInt(3); // 5..7 days; >=4 droppable + 1 protected
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final String protectedDay = "2024-02-0" + dayCount;
+
+            execute("""
+                    CREATE TABLE t_cov_drop (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_drop SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_drop CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong protectedFloor = new AtomicLong(hotPerDay);
+            final String protectedPred = "sym = 'A' AND ts >= '" + protectedDay + "T00:00:00.000000Z'";
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = protectedFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov_drop WHERE " + protectedPred, ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("protected-partition covered count fell below floor: " + count + " < " + floor);
+                            }
+                            if (sum < (double) perDaySum - 0.5) {
+                                throw new AssertionError("protected-partition covered sum dropped below its initial total "
+                                        + perDaySum + ": " + sum);
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("protected covered sum=" + sum + " < count=" + count + " -- a covered value resolved as < 1");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-drop-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long protectedExpected = hotPerDay;
+            int nextDropDay = 1;
+            try {
+                final int batches = 6 + rnd.nextInt(8);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    // Always O3-insert into the protected last partition (forces its reseal).
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_drop VALUES ");
+                    final int n = 1 + rnd.nextInt(3);
+                    for (int i = 0; i < n; i++) {
+                        if (i > 0) {
+                            sql.append(',');
+                        }
+                        sql.append("('").append(protectedDay).append("T00:")
+                                .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                .append(":00.500000Z', 'A', 1.0)");
+                    }
+                    execute(sql.toString());
+                    protectedExpected += n;
+                    protectedFloor.set(protectedExpected);
+
+                    // Drop the next earlier partition (1..dayCount-1) roughly every other batch.
+                    if (nextDropDay < dayCount && rnd.nextBoolean()) {
+                        execute("ALTER TABLE t_cov_drop DROP PARTITION LIST '2024-02-0" + nextDropDay + "'");
+                        nextDropDay++;
+                    }
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent drop-partition covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = perDaySum + (protectedExpected - hotPerDay);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov_drop WHERE " + protectedPred, ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final protected query returned no row", cur.hasNext());
+                Assert.assertEquals("final protected covered count", protectedExpected, cur.getRecord().getLong(0));
+                Assert.assertEquals("final protected covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+            }
+        });
+    }
+
+    /**
+     * Two-covering-indexes hardening test: one table carries TWO covering posting
+     * indexes (sym1 INCLUDE price, sym2 INCLUDE price), so every O3 commit reseals
+     * BOTH covering indexes of each rewritten partition in the same seal sweep.
+     * Each row sets sym1='A' and sym2='B', so a covered read through either index
+     * sees the same monotonically-growing total; a reseal of one index that
+     * corrupts or drops the other's covered values fails the per-index oracle.
+     */
+    @Test
+    public void testMultiThreadedO3TwoCoveringIndexesConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov_two (
+                        ts TIMESTAMP,
+                        sym1 SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        sym2 SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_two SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', 'B', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_two CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 4;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                // Even readers probe sym1, odd readers probe sym2.
+                final String pred = (r % 2 == 0) ? "sym1 = 'A'" : "sym2 = 'B'";
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov_two WHERE " + pred, ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("[" + pred + "] covered count fell below the floor: " + count + " < " + floor);
+                            }
+                            if (sum < (double) initialSum - 0.5) {
+                                throw new AssertionError("[" + pred + "] covered sum(price) dropped below the initial total "
+                                        + initialSum + ": " + sum);
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("[" + pred + "] covered sum(price)=" + sum + " < count=" + count
+                                        + " -- a covered value resolved as < 1");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-two-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_two VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 'B', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent two-index covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                for (String pred : new String[]{"sym1 = 'A'", "sym2 = 'B'"}) {
+                    try (RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov_two WHERE " + pred, ctx).getRecordCursorFactory();
+                         RecordCursor cur = f.getCursor(ctx)) {
+                        Assert.assertTrue("final covered query returned no row for " + pred, cur.hasNext());
+                        Assert.assertEquals("final covered count [" + pred + ']', expectedRows, cur.getRecord().getLong(0));
+                        Assert.assertEquals("final covered sum(price) [" + pred + ']', (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Covered VARCHAR (variable-size) hardening test. The reproducer covers a
+     * fixed-size DOUBLE; this covers a VARCHAR, exercising the variable-size .pc
+     * sidecar path (per-row offset+len into a var data block) under concurrent O3
+     * rewrite. Every 'A' row carries a non-null label, so count(label) must always
+     * equal count() -- a covered varchar that resolves to NULL/empty mid-reseal
+     * drops count(label) below count() and fails the oracle.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringVarcharConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long initialRows = (long) dayCount * hotPerDay;
+
+            execute("""
+                    CREATE TABLE t_cov_vc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_vc SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', ('lbl' || x)::VARCHAR FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_vc CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final long labelCount;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), count(label) FROM t_cov_vc WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    labelCount = cur.getRecord().getLong(1);
+                                } else {
+                                    count = -1;
+                                    labelCount = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (labelCount != count) {
+                                throw new AssertionError("covered VARCHAR resolved to NULL for "
+                                        + (count - labelCount) + " of " + count
+                                        + " rows -- a covered var value was lost/corrupted mid-reseal");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-varchar-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_vc VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 'z')");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent covered varchar reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), count(label) FROM t_cov_vc WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered non-null label count", expectedRows, cur.getRecord().getLong(1));
+            }
+        });
+    }
+
+    /**
+     * Covered-read hardening across row-id encodings. Same all-parquet O3 churn as
+     * the reproducer, but each run pins a random posting row-id encoding (adaptive /
+     * Elias-Fano / delta), so the covering reader decodes .pv chains under a
+     * different codec while partitions are rewritten out of order. The covered
+     * count/sum oracle is encoding-independent; a decode bug under one codec surfaces
+     * as a dropped/garbage covered value.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringEncodingConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int enc = rnd.nextInt(3);
+        if (enc == 1) {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "ef");
+        } else if (enc == 2) {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");
+        } // enc == 0 -> adaptive (default)
+        assertMemoryLeak(() -> runConcurrentCoveredSumCountFuzz("t_cov_enc", true, rnd));
+    }
+
+    /**
+     * Native-only regression for the fixed native-partition covered-read race (the
+     * cleanest form; see testMultiThreadedO3CoveringMixedNativeParquetReaderFuzz for
+     * the diagnosis). Identical to the parquet reproducer but the partitions are
+     * NEVER converted to parquet, so every O3 commit reseals a NATIVE partition in
+     * place. Before the fix this failed ~5 in 8 (one partition's covered values
+     * transiently read 0 because the in-place reseal republished the chain head with
+     * the cover footer dropped while the writer's coverCount field was transiently
+     * 0); after the fix it passes (validated 0/75). The fix preserves the head's
+     * cover footer across the transient coverCount=0 window.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringNativeOnlyConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runConcurrentCoveredSumCountFuzz("t_cov_native", false, rnd));
+    }
+
+    /**
+     * Use-after-free probe: a COVERING cursor held open across a full O3 rewrite +
+     * seal-purge must keep returning its pinned snapshot and never read a reclaimed
+     * value file. Opens a covered SELECT over several parquet partitions, reads
+     * about half (pinning those partition versions through the txn scoreboard), then
+     * runs several O3 commits across the 4-worker pool plus a PostingSealPurgeJob
+     * that rotates and reclaims superseded .pv/.pc, then drains the SAME cursor to
+     * the end. The pinned snapshot is the table at open time: every covered price
+     * must be a real seeded value (>= 1, never 0/NaN) and the row count must equal
+     * the rows present at open. A scoreboard gap that reclaims a pinned value file
+     * SIGSEGVs or returns garbage here.
+     */
+    @Test
+    public void testCoveringCursorHeldAcrossO3ReclaimNoCrash() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(3); // 4..6 days
+            final int hotPerDay = 1000;
+            final long initialRows = (long) dayCount * hotPerDay;
+
+            execute("""
+                    CREATE TABLE t_cov_hold (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_hold SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_hold CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                long pinnedCount = 0;
+                try (RecordCursorFactory f = compiler.compile(
+                        "SELECT price FROM t_cov_hold WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                     RecordCursor cur = f.getCursor(ctx)) {
+                    final io.questdb.cairo.sql.Record rec = cur.getRecord();
+                    final long half = initialRows / 2;
+                    // Read about half, pinning the snapshot via the txn scoreboard.
+                    while (pinnedCount < half && cur.hasNext()) {
+                        final double p = rec.getDouble(0);
+                        if (Double.isNaN(p) || p < 1.0) {
+                            throw new AssertionError("held cursor read a NULL/garbage covered value before O3: " + p);
+                        }
+                        pinnedCount++;
+                    }
+                    // Rotate + reclaim superseded value files under the held cursor.
+                    for (int b = 0; b < 8; b++) {
+                        final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_hold VALUES ");
+                        int added = 0;
+                        for (int d = 1; d <= dayCount; d++) {
+                            if (rnd.nextBoolean()) {
+                                continue;
+                            }
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0)");
+                            added++;
+                        }
+                        if (added > 0) {
+                            execute(sql.toString());
+                        }
+                    }
+                    // The pool's own PostingSealPurgeJob reclaims the superseded .pv/.pc
+                    // concurrently (scoreboard-gated); it owns the log writer, so we must
+                    // not construct a competing one here. Give it a moment to attempt the
+                    // reclaim against the still-pinned cursor.
+                    Os.sleep(50);
+                    // Drain the SAME pinned cursor -- must not crash or read garbage.
+                    while (cur.hasNext()) {
+                        final double p = rec.getDouble(0);
+                        if (Double.isNaN(p) || p < 1.0) {
+                            throw new AssertionError("held cursor read a NULL/garbage covered value after O3+purge "
+                                    + "(reclaimed a pinned value file?): " + p);
+                        }
+                        pinnedCount++;
+                    }
+                }
+                Assert.assertEquals("held cursor must return exactly its pinned snapshot rows",
+                        initialRows, pinnedCount);
+            } finally {
+                pool.halt();
+            }
+        });
+    }
+
+    /**
+     * Wide covering hardening test: the index covers TWO data columns
+     * (INCLUDE price, qty), so each partition reseal materialises two
+     * sealTxn-versioned .pc data files alongside the .pci, and a covered read
+     * walks two per-cover sidecars per row. Same all-parquet O3 churn + reader
+     * threads as the reproducer, with the covered count, sum(price) AND sum(qty)
+     * all held monotonic; a mismatched per-cover sidecar offset or a dropped .pc
+     * for one of the two covered columns fails the oracle.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringWideConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov_wide (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_wide SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE, x::LONG FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_wide CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sumPrice;
+                            final double sumQty;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price), sum(qty) FROM t_cov_wide WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sumPrice = cur.getRecord().getDouble(1);
+                                    sumQty = cur.getRecord().getDouble(2);
+                                } else {
+                                    count = -1;
+                                    sumPrice = -1;
+                                    sumQty = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (sumPrice < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(price) dropped below the initial total "
+                                        + initialSum + ": " + sumPrice);
+                            }
+                            if (sumQty < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(qty) dropped below the initial total "
+                                        + initialSum + ": " + sumQty);
+                            }
+                            if (sumPrice < (double) count - 0.5 || sumQty < (double) count - 0.5) {
+                                throw new AssertionError("a covered column resolved as < 1: count=" + count
+                                        + " sum(price)=" + sumPrice + " sum(qty)=" + sumQty);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-wide-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_wide VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0, 1)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent wide covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price), sum(qty) FROM t_cov_wide WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+                Assert.assertEquals("final covered sum(qty)", (double) expectedSum, cur.getRecord().getDouble(2), 0.5);
+            }
+        });
+    }
+
+    /**
+     * Concurrent LATEST ON covered-read hardening test. Stresses the covering
+     * BACKWARD reader (PostingIndexBwdReader / findLatestRow + symbol-rank), a
+     * code path the sum/count reproducer never touches. A COVERING posting index
+     * (sym INCLUDE price) over several parquet partitions is rewritten out of
+     * order across the real 4-worker O3 pool under a tiny spill budget while
+     * reader threads continuously resolve the latest covered price per sym via
+     * {@code SELECT price ... WHERE sym='A' LATEST ON ts PARTITION BY sym}.
+     * <p>
+     * A single sentinel 'A' row is seeded at the global max timestamp with a
+     * unique price; every background O3 insert lands at an EARLIER timestamp, so
+     * the latest 'A' row never changes and its covered price must always read
+     * back as the sentinel. O3 also rewrites the sentinel's (last) partition, so
+     * the backward reader scans a partition mid-reseal: if the new version is
+     * exposed before its covering .pci/.pc is materialised, or the reseal rotates
+     * the sidecar under the reader, the latest covered price comes back wrong
+     * (NULL / stale / garbage) and the assertion fires. The -ea audit asserts and
+     * any reader SIGSEGV are the other oracles.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringLatestByConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final double sentinelPrice = 777_777.0;
+            // Sentinel 'A' row at the global max ts (last day, end of day). Every
+            // hot row and every later O3 insert is strictly earlier, so the latest
+            // 'A' is always this row and its covered price must read back exactly.
+            final String sentinelTs = "2024-02-0" + dayCount + "T23:59:59.000000Z";
+            final long initialRows = (long) dayCount * hotPerDay + 1; // +1 sentinel
+
+            execute("""
+                    CREATE TABLE t_cov_latest (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_latest SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            execute("INSERT INTO t_cov_latest VALUES ('" + sentinelTs + "', 'A', " + sentinelPrice + ")");
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_latest CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            // Confirm the read path under test is the covering backward reader.
+            final String latestSql = "SELECT price FROM t_cov_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym";
+            final String plan;
+            try (RecordCursorFactory pf = select(latestSql)) {
+                planSink.clear();
+                pf.toPlan(planSink);
+                plan = planSink.getSink().toString();
+            }
+            Assert.assertTrue("LATEST ON must use the covering index:\n" + plan, plan.contains("CoveringIndex"));
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final double latest;
+                            try (RecordCursorFactory f = compiler.compile(latestSql, ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                latest = cur.hasNext() ? cur.getRecord().getDouble(0) : Double.NaN;
+                            }
+                            if (Double.isNaN(latest)) {
+                                throw new AssertionError("latest covered 'A' price resolved to NULL/NaN -- "
+                                        + "covering sidecar missing or not yet materialised under reseal");
+                            }
+                            if (Math.abs(latest - sentinelPrice) > 0.5) {
+                                throw new AssertionError("latest covered 'A' price changed from the sentinel "
+                                        + sentinelPrice + " to " + latest
+                                        + " -- the backward reader read a stale/garbage covered value mid-reseal");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-latest-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    // O3-insert 'A' rows strictly earlier than the sentinel into a random
+                    // subset of the parquet days (including the sentinel's last day, which
+                    // forces that partition to reseal under the backward reader).
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_latest VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent latest-by covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                try (RecordCursorFactory f = compiler.compile(latestSql, ctx).getRecordCursorFactory();
+                     RecordCursor cur = f.getCursor(ctx)) {
+                    Assert.assertTrue("final latest query returned no row", cur.hasNext());
+                    Assert.assertEquals("final latest covered 'A' price", sentinelPrice, cur.getRecord().getDouble(0), 0.5);
+                }
+                try (RecordCursorFactory f = compiler.compile(
+                        "SELECT count() FROM t_cov_latest WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                     RecordCursor cur = f.getCursor(ctx)) {
+                    Assert.assertTrue(cur.hasNext());
+                    Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                }
+            }
+        });
+    }
+
+    /**
+     * Mixed native + parquet covered-read hardening test. The parquet reproducer
+     * rewrites an all-parquet table; this one leaves a random proper subset of the
+     * partitions native and converts the rest to parquet, then O3-inserts across
+     * BOTH so a single commit can reseal a native partition in place AND a parquet
+     * partition via resealParquetCoveringForPartition in the same seal sweep, while
+     * reader threads aggregate {@code count(), sum(price) WHERE sym='A'} across the
+     * mix. A defect in either reseal path -- or in how the two share the deferred
+     * seal-purge state -- drops a covered partition and the monotonic oracle fires.
+     * <p>
+     * Regression for a fixed native-partition covered-read race (distinct from the
+     * parquet expose-before-.pci bug). Before the fix this failed ~1 in 4: a native
+     * in-place reseal republished the chain head while the writer's transient
+     * coverCount field was 0 (clearCovering had reset it), so extendHead sized the
+     * entry LEN without the cover footer; a concurrent covered read derived
+     * coverCount=0, could not map the still-present .pc, and getCoveredDouble
+     * returned NaN for a whole partition. Fixed by preserving the head's cover
+     * footer across the transient coverCount=0 window (PostingIndexWriter
+     * captureCoverEndOffsets falls back to a cache seeded from the head entry by
+     * publishToChain/PostingIndexChainWriter.readHeadCoverEndOffsets). See also the
+     * unit test testWriterEntryPreservesCoverFooterAfterClearCoveringCommit.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringMixedNativeParquetReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov_mix (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov_mix SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            // Convert a random proper subset to parquet: keep >=1 parquet and >=1 native
+            // so both reseal paths stay live in the same run.
+            final boolean[] isParquet = new boolean[dayCount + 1];
+            int parquetDays = 0;
+            for (int d = 1; d <= dayCount; d++) {
+                if (rnd.nextBoolean()) {
+                    isParquet[d] = true;
+                    parquetDays++;
+                }
+            }
+            if (parquetDays == 0) {
+                isParquet[1] = true;
+            } else if (parquetDays == dayCount) {
+                isParquet[dayCount] = false;
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                if (isParquet[d]) {
+                    execute("ALTER TABLE t_cov_mix CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+                }
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        long prevCount = 0;
+                        while (!stop.get() && bgError.get() == null) {
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov_mix WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (count < prevCount) {
+                                throw new AssertionError("covered 'A' count went backwards: " + prevCount + " -> " + count);
+                            }
+                            if (sum < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(price) dropped below the initial total "
+                                        + initialSum + ": " + sum);
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("covered sum(price)=" + sum + " < count=" + count
+                                        + " -- a covered value resolved as < 1 (stale/garbage sidecar)");
+                            }
+                            prevCount = count;
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-mix-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_mix VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent mixed covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows);
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov_mix WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+            }
+        });
+    }
+
+    /**
+     * Multi-key covered-read hardening test. The single-key reproducer keeps one
+     * posting chain hot; this one drives K symbols, each with its own covering
+     * chain and per-key covered totals, over parquet partitions rewritten out of
+     * order across the pool. Readers pick a random key and aggregate
+     * {@code count(), sum(price) WHERE sym = ?}, so a reader navigates one key's
+     * chain/sidecars while O3 reseals the others -- stressing the per-key chain
+     * navigation and the symbol-rank maps the covering cursor builds. Each key's
+     * count and sum are independently monotonic; a cross-key sidecar mix-up or a
+     * dropped key partition trips that key's floor.
+     */
+    @Test
+    public void testMultiThreadedO3CoveringMultiKeyConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final String[] syms = {"A", "B", "C", "D", "E"};
+            final int K = syms.length;
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+            final long initialRowsPerSym = (long) dayCount * hotPerDay;
+            final long initialSumPerSym = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov_mk (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            for (int d = 1; d <= dayCount; d++) {
+                for (int k = 0; k < K; k++) {
+                    execute("INSERT INTO t_cov_mk SELECT dateadd('s', x::INT, '2024-02-0" + d
+                            + "T00:00:00.000000Z'::TIMESTAMP), '" + syms[k] + "', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+                }
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov_mk CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong[] floors = new AtomicLong[K];
+            for (int k = 0; k < K; k++) {
+                floors[k] = new AtomicLong(initialRowsPerSym);
+            }
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                final int seed = r;
+                readers[r] = new Thread(() -> {
+                    final Rnd rRnd = new Rnd(seed + 1, seed + 100);
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        while (!stop.get() && bgError.get() == null) {
+                            final int k = rRnd.nextInt(K);
+                            final long floor = floors[k].get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov_mk WHERE sym = '" + syms[k] + "'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered '" + syms[k] + "' count fell below its floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (sum < (double) initialSumPerSym - 0.5) {
+                                throw new AssertionError("covered '" + syms[k] + "' sum dropped below its initial total "
+                                        + initialSumPerSym + ": " + sum);
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("covered '" + syms[k] + "' sum=" + sum + " < count=" + count
+                                        + " -- a covered value resolved as < 1 (cross-key or stale sidecar)");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-mk-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            final long[] expectedRows = new long[K];
+            Arrays.fill(expectedRows, initialRowsPerSym);
+            try {
+                final int batches = 8 + rnd.nextInt(12);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    // One commit O3-inserts a random key into a random subset of days.
+                    final int k = rnd.nextInt(K);
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov_mk VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', '").append(syms[k]).append("', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows[k] += added;
+                    floors[k].set(expectedRows[k]);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent multi-key covered reader threw: " + bgError.get(), bgError.get());
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                for (int k = 0; k < K; k++) {
+                    final long expSum = initialSumPerSym + (expectedRows[k] - initialRowsPerSym);
+                    try (RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov_mk WHERE sym = '" + syms[k] + "'", ctx).getRecordCursorFactory();
+                         RecordCursor cur = f.getCursor(ctx)) {
+                        Assert.assertTrue("final covered query returned no row for " + syms[k], cur.hasNext());
+                        Assert.assertEquals("final covered '" + syms[k] + "' count", expectedRows[k], cur.getRecord().getLong(0));
+                        Assert.assertEquals("final covered '" + syms[k] + "' sum", (double) expSum, cur.getRecord().getDouble(1), 0.5);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Concurrent covered-read integration test: a COVERING posting index
+     * (sym INCLUDE price) over several parquet partitions, rewritten out-of-order
+     * across the real 4-worker O3 pool under a tiny spill budget, while background
+     * threads continuously serve {@code count(), sum(price) WHERE sym='A'} from the
+     * covering sidecars. This is the multi-threaded covering analogue of
+     * testParquetPostingSpillConcurrentReadFuzz; it exercises the interaction the
+     * single-threaded covering tests never do:
+     * <ul>
+     *   <li>multiple O3 workers running updateParquetIndexes -> commitDense ->
+     *       configureCovering -> rebuildSidecars and depositing .pv/.pc purges into
+     *       the shared deferredPostingSealPurges list/pool under parquetSealPurgeLock;</li>
+     *   <li>the scoreboard-gated PostingSealPurgeJob (on the pool) reclaiming
+     *       superseded .pv/.pc while readers hold real txn pins;</li>
+     *   <li>readers resolving covered values (the addr-based covered read) against a
+     *       sidecar a concurrent reseal/purge is rotating.</li>
+     * </ul>
+     * Oracles (all under -ea, so the audit's holdsLock / no-O3-in-flight /
+     * covered-bounds asserts also fire on the worker threads): rows are only added,
+     * so the covered 'A' count must be monotonic and never below the committed
+     * floor; sum(price) must never drop below the initial covered total and must
+     * stay &gt;= count (every price &gt;= 1); no reader may crash; and after a final
+     * purge pass with nothing pinned, each partition keeps exactly one .pv (no purge
+     * lost or double-freed). The floor is read BEFORE the count so a commit landing
+     * mid-read can never make a valid snapshot look short.
+     * <p>
+     * Regression for a fixed PARQUET-specific covered-read race. Before the fix, an
+     * O3/squash rewrite of a parquet partition exposed the new version with only the
+     * .pv (so count() was correct) but never materialised its covering .pci/.pc:
+     * sealPostingIndexForPartition skipped parquet, and the O3 worker builds only the
+     * non-covering .pv. A concurrent covered read then opened the new version, found
+     * the .pci missing, reported coverCount=0 and returned NULL covered values (count
+     * right, sum(price) short by whole partitions). Native partitions reseal in place
+     * (the .pci is always present), hence they passed. Fixed by
+     * resealParquetCoveringForPartition, which rebuilds covering for parquet partitions
+     * with a covering index in the seal sweep / squash, before the commit exposes the
+     * version (with discardForRebuild to avoid double-counting and a deferred
+     * seal-purge publish so superseded value files are reclaimed).
+     */
+    @Test
+    public void testMultiThreadedO3CoveringPostingConcurrentReaderFuzz() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        assertMemoryLeak(() -> {
+            final int dayCount = 4 + rnd.nextInt(4); // 4..7 days; keeps sum < 1e7 (no sci-notation)
+            final int hotPerDay = 1000;
+            final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2; // sum(1..hotPerDay)
+            final long initialRows = (long) dayCount * hotPerDay;
+            final long initialSum = (long) dayCount * perDaySum;
+
+            execute("""
+                    CREATE TABLE t_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // hotPerDay 'A' rows/day with price = row index, so the covered total is
+            // deterministic and every partition's reseal spills (tiny budget).
+            for (int d = 1; d <= dayCount; d++) {
+                execute("INSERT INTO t_cov SELECT dateadd('s', x::INT, '2024-02-0" + d
+                        + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+            }
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE t_cov CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicLong rowFloor = new AtomicLong(initialRows);
+            final int readerCount = 3;
+            final Thread[] readers = new Thread[readerCount];
+            for (int r = 0; r < readerCount; r++) {
+                readers[r] = new Thread(() -> {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                    .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                            null, null, -1, null);
+                            SqlCompiler compiler = engine.getSqlCompiler()
+                    ) {
+                        long prevCount = 0;
+                        while (!stop.get() && bgError.get() == null) {
+                            // Read the floor BEFORE the snapshot: the floor was committed
+                            // at an earlier time, and rows only ever get added, so a valid
+                            // snapshot taken later cannot be below it.
+                            final long floor = rowFloor.get();
+                            final long count;
+                            final double sum;
+                            try (RecordCursorFactory f = compiler.compile(
+                                    "SELECT count(), sum(price) FROM t_cov WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                                 RecordCursor cur = f.getCursor(ctx)) {
+                                if (cur.hasNext()) {
+                                    count = cur.getRecord().getLong(0);
+                                    sum = cur.getRecord().getDouble(1);
+                                } else {
+                                    count = -1;
+                                    sum = -1;
+                                }
+                            }
+                            if (count < floor) {
+                                throw new AssertionError("covered 'A' count fell below the committed floor: "
+                                        + count + " < " + floor);
+                            }
+                            if (count < prevCount) {
+                                throw new AssertionError("covered 'A' count went backwards: " + prevCount + " -> " + count);
+                            }
+                            if (sum < (double) initialSum - 0.5) {
+                                throw new AssertionError("covered sum(price) dropped below the initial total "
+                                        + initialSum + ": " + sum + " (a covered value was lost/corrupted)");
+                            }
+                            if (sum < (double) count - 0.5) {
+                                throw new AssertionError("covered sum(price)=" + sum + " < count=" + count
+                                        + " -- a covered value resolved as < 1 (stale/garbage sidecar)");
+                            }
+                            prevCount = count;
+                        }
+                    } catch (Throwable e) {
+                        bgError.set(e);
+                    }
+                }, "covering-posting-reader-" + r);
+                readers[r].setDaemon(true);
+                readers[r].start();
+            }
+
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            long expectedRows = initialRows;
+            try {
+                final int batches = 6 + rnd.nextInt(10);
+                for (int b = 0; b < batches && bgError.get() == null; b++) {
+                    // O3-insert 'A' rows (price 1.0) into a random subset of the parquet
+                    // days: one commit -> a partition task per touched day, run across the
+                    // pool, each calling deferParquetPostingSealPurges (covering: .pv + .pc).
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t_cov VALUES ");
+                    int added = 0;
+                    for (int d = 1; d <= dayCount; d++) {
+                        if (rnd.nextBoolean()) {
+                            continue;
+                        }
+                        final int n = 1 + rnd.nextInt(3);
+                        for (int i = 0; i < n; i++) {
+                            if (added > 0) {
+                                sql.append(',');
+                            }
+                            sql.append("('2024-02-0").append(d).append("T00:")
+                                    .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                    .append(":00.500000Z', 'A', 1.0)");
+                            added++;
+                        }
+                    }
+                    if (added == 0) {
+                        continue;
+                    }
+                    execute(sql.toString());
+                    expectedRows += added;
+                    // Publish the new floor only AFTER the commit is visible.
+                    rowFloor.set(expectedRows);
+                }
+            } finally {
+                stop.set(true);
+                for (Thread t : readers) {
+                    t.join(30_000);
+                    Assert.assertFalse("reader thread did not terminate", t.isAlive());
+                }
+                pool.halt();
+            }
+
+            Assert.assertNull("concurrent covered reader threw: " + bgError.get(), bgError.get());
+
+            // Drain deferred purges with nothing pinned, then verify the exact final
+            // covered totals (count exact; sum within epsilon to dodge double formatting).
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            engine.releaseAllWriters();
+
+            final long expectedSum = initialSum + (expectedRows - initialRows); // each O3 row adds price 1.0
+            try (
+                    SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                            .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                    null, null, -1, null);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory f = compiler.compile(
+                            "SELECT count(), sum(price) FROM t_cov WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                    RecordCursor cur = f.getCursor(ctx)
+            ) {
+                Assert.assertTrue("final covered query returned no row", cur.hasNext());
+                Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+                Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+            }
+
+            // Each parquet partition must keep exactly one value file (no purge lost
+            // or double-freed under concurrent covering deposit).
+            final TableToken token = engine.getTableTokenIfExists("t_cov");
+            Assert.assertNotNull("table must exist", token);
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals("all days must remain", dayCount, reader.getTxFile().getPartitionCount());
+                for (int i = 0; i < dayCount; i++) {
+                    final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(i);
+                    try (Path path = new Path()) {
+                        path.of(configuration.getDbRoot()).concat(token);
+                        setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                        final String[] names = new java.io.File(path.toString()).list();
+                        Assert.assertNotNull("partition dir must exist: " + path, names);
+                        int pvCount = 0;
+                        for (String n : names) {
+                            if (n.startsWith("sym.pv.")) {
+                                pvCount++;
+                            }
+                        }
+                        Assert.assertEquals(
+                                "partition " + i + " must keep exactly one value file: "
+                                        + java.util.Arrays.toString(names),
+                                1, pvCount);
+                    }
+                }
             }
         });
     }
@@ -3138,6 +7151,51 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWalO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            drainWalQueue();
+            execute(insertPostingRowsSql(0, 10));
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+            drainWalQueue();
+
+            execute(insertPostingRowsSql(0, 35));
+            drainWalQueue();
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long oldSealTxn = oldFiles.sealTxn;
+            assertPostingSealFilesExist(oldFiles, true);
+
+            execute(insertPostingRowsSql(35, 92));
+            drainWalQueue();
+            final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long liveSealTxn = liveFiles.sealTxn;
+            Assert.assertTrue("successful WAL O3 apply must advance posting sealTxn", liveSealTxn > oldSealTxn);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            assertPostingSealFilesExist(oldFiles, false);
+            assertPostingSealFilesExist(liveFiles, true);
+        });
+    }
+
     /**
      * Validates the Fix B writer-side change: after a seal, the
      * post-seal finally block now calls
@@ -3146,9 +7204,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * the writer's covering schema (coverCount, sidecarMems) so a
      * subsequent commit() between seals still publishes a chain entry
      * with a correctly-sized cover footer. This is the symmetric
-     * counterpart to {@link #testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit},
-     * which documents that the old clearCovering()-then-commit() flow
-     * shrinks the footer.
+     * counterpart to {@link #testWriterEntryPreservesCoverFooterAfterClearCoveringCommit},
+     * which covers the clearCovering()-then-commit() flow, where the
+     * footer instead survives via publishToChain's head-footer snapshot.
      */
     @Test
     public void testWriterEntrysCoverFooterPersistsAfterReleaseReadMappingsCommit() throws Exception {
@@ -3228,34 +7286,27 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Reproduces the writer-side root cause of the GraalVM SIGSEGV in
-     * hs_err_pid19555 (PostingIndexBenchmarkSuite.walFastLagInsertAndQuery
-     * on bench/posting-wal-fastlag): a covering posting index whose chain
-     * head had LEN=104 (= entrySize(genCount=1, coverCount=0)) while .pci
-     * advertised coverCount=1. This test drives PostingIndexWriter through
-     * the same lifecycle the WAL fast-lag path follows in production:
-     * <ol>
-     * <li> configureCovering(...) -> coverCount=1 on the writer.
-     * <li> add() rows, seal() -> publishes a chain entry with cover footer.
-     * <li> clearCovering() -> writer's coverCount field is reset to 0
-     *     (this is what TableWriter does in the finally block of
-     *     sealPostingIndexesForLastPartitionFastLag, line 11367).
-     * <li> add() more rows, commit() -> flushAllPending() publishes via
-     *     extendHead, which rewrites the head entry's LEN using
-     *     entrySize(genCount, coverCount=0), DROPPING the cover footer.
-     * </ol>
-     * After step 4, the chain head's LEN no longer accommodates a cover
-     * footer slot, even though the table's covering schema (mirrored in
-     * .pci) still says one cover. A reader sourcing coverCount=1 from the
-     * .pci sidecar and walking the chain steps past the entry's LEN to
-     * read the (non-existent) footer - in production this surfaces as a
-     * SIGSEGV when the entry hugs the end of the .pk mmap. With the
-     * picker/read clamp fix in place the read self-bounds against the
-     * entry's LEN and zero-fills the missing cover slot, so the reader
-     * recovers gracefully.
+     * Regression for the native-partition covered-read race root cause: a covering
+     * posting index whose writer-side coverCount field is transiently reset to 0 by
+     * clearCovering() must NOT drop the chain head's cover footer on the next
+     * commit()/extendHead. clearCovering happens in TableWriter's WAL fast-lag seal
+     * finally block, and between an in-place reseal's clearCovering and the next
+     * configureCovering. Before the fix, extendHead sized the head entry with
+     * entrySize(genCount, coverCount=0) -- DROPPING the cover footer -- so a
+     * concurrent covered read saw sidecarFileEndOffsets==0, failed to map the
+     * still-present .pc and returned NULL for the whole partition.
+     * <p>
+     * publishToChain now snapshots the head's existing footer
+     * (PostingIndexChainWriter.readHeadCoverEndOffsets) before the new gen-dir
+     * overwrites it and republishes those extents, so the footer survives the
+     * transient coverCount=0 window. Drives the same lifecycle: configureCovering
+     * -> add -> seal (footer written); clearCovering (coverCount field -> 0); add ->
+     * commit (extendHead). After the commit the head LEN must still accommodate the
+     * cover footer, and the picker must read the preserved, non-zero cover end
+     * offset (not 0, not a stale/garbage slot).
      */
     @Test
-    public void testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit() throws Exception {
+    public void testWriterEntryPreservesCoverFooterAfterClearCoveringCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 String name = "writer_clear_covering_then_commit";
@@ -3359,49 +7410,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             }
                         }
                         Assert.assertEquals(
-                                "RED: with the writer-side bug, the head's LEN no "
-                                        + "longer includes the cover footer because "
-                                        + "extendHead used coverCount=0 for the size "
-                                        + "calculation. Expected coverCount=1 sized "
-                                        + "entry, observed coverCount=0 sized entry.",
-                                PostingIndexChainEntry.entrySize(genCountAfterCommit, 0),
-                                lenAfterCommit
-                        );
-                        Assert.assertNotEquals(
-                                "RED: the schema-correct LEN would include cover footer "
-                                        + "bytes, but the writer dropped them",
+                                "FIXED: publishToChain preserves the cover footer across the "
+                                        + "clearCovering()/commit() window, so the head LEN stays "
+                                        + "sized for coverCount=1 (entrySize(genCount, 1)) instead "
+                                        + "of shrinking to entrySize(genCount, 0)",
                                 PostingIndexChainEntry.entrySize(genCountAfterCommit, coverCount),
                                 lenAfterCommit
                         );
 
-                        // Final: prove Fix A keeps the reader from
-                        // dereferencing past the entry on this corrupted-footer
-                        // entry. Plant a sentinel byte pattern into the bytes
-                        // immediately past the entry's LEN - the (mis-computed)
-                        // cover footer offset for coverCount=1 lands on these
-                        // bytes. Without the picker/read clamp, getLong reads
-                        // the sentinel and assigns it as the cover end offset.
-                        // With the clamp, the read self-bounds against the
-                        // entry's LEN and zero-fills the missing slot.
+                        // The picker reads coverCount=1 with the PRESERVED, non-zero
+                        // cover end offset (the .pc extent written at seal), not 0.
+                        // Before the fix this slot would be dropped/zero and a covered
+                        // read would see the partition as having no covered data.
                         LPSZ keyFile = PostingIndexUtils.keyFileName(
                                 path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
                         long fileSize = ff.length(keyFile);
                         try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
                                 ff, keyFile, ff.getPageSize(), fileSize,
                                 MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
-                            PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                            chain.openExisting(mem);
-                            PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                            chain.loadHeadEntry(mem, head);
-                            // The unfixed cover loop would read at offset
-                            // (header + genCount * GEN_DIR_ENTRY_SIZE) for
-                            // each cover slot. Plant a sentinel there so a
-                            // failing clamp surfaces as a non-zero value.
-                            long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(
-                                    head.offset, head.genCount);
-                            final long sentinel = 0xDEAD_BEEF_CAFE_BABEL;
-                            mem.putLong(footerOffset, sentinel);
-
                             PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
                             PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
                             int rc = PostingIndexChainPicker.pick(
@@ -3410,17 +7436,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             Assert.assertEquals(
                                     PostingIndexChainPicker.RESULT_OK, rc);
                             Assert.assertEquals(
-                                    "Fix A: missing cover slot is zero-filled instead "
-                                            + "of dereferencing past the entry",
+                                    "the preserved cover footer still carries coverCount slots",
                                     coverCount, entry.coverFileEndOffsets.size());
-                            Assert.assertEquals(
-                                    "RED without Fix A: the picker would read the planted "
-                                            + "sentinel " + Long.toHexString(sentinel)
-                                            + "L as the cover end offset because the cover "
-                                            + "footer loop is not clamped against the entry's "
-                                            + "own LEN field. With Fix A, the clamp returns 0 "
-                                            + "instead.",
-                                    0L, entry.coverFileEndOffsets.getQuick(0));
+                            Assert.assertTrue(
+                                    "the preserved cover end offset must be the non-zero .pc "
+                                            + "extent written at seal, not 0 (0 would make a "
+                                            + "covered read see the partition as having no covered "
+                                            + "data): " + entry.coverFileEndOffsets.getQuick(0),
+                                    entry.coverFileEndOffsets.getQuick(0) > 0);
                         }
                     }
                 } finally {
@@ -3428,5 +7451,704 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static String insertPostingRowsSql(int lo, int hi) {
+        return insertPostingRowsSql("posting_o3_recovery", lo, hi, false);
+    }
+
+    private static String insertPostingRowsSql(CharSequence tableName, int lo, int hi, boolean includeSecondPostingSymbol) {
+        StringBuilder sql = new StringBuilder();
+        sql.append("INSERT INTO ").append(tableName).append(" VALUES ");
+        for (int row = hi - 1; row >= lo; row--) {
+            if (row < hi - 1) {
+                sql.append(',');
+            }
+            CharSequence indexedSymbol = row >= 34 ? "XPHI" : "A";
+            sql.append("('").append(timestampAtMinute(row)).append("', '")
+                    .append(indexedSymbol)
+                    .append("', '");
+            if (includeSecondPostingSymbol) {
+                sql.append(indexedSymbol).append("', '");
+            }
+            sql.append("S', ")
+                    .append(row)
+                    .append(')');
+        }
+        return sql.toString();
+    }
+
+    private static void runPostingSealPurgeJob(PostingSealPurgeJob purgeJob) {
+        for (int i = 0; i < 32; i++) {
+            if (!purgeJob.run(0)) {
+                break;
+            }
+        }
+    }
+
+    private long selectLong(CharSequence sql) throws Exception {
+        try (RecordCursorFactory factory = select(sql);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("query must return one row [sql=" + sql + ']', cursor.hasNext());
+            long value = cursor.getRecord().getLong(0);
+            Assert.assertFalse("query must return exactly one row [sql=" + sql + ']', cursor.hasNext());
+            return value;
+        }
+    }
+
+    private void assertOpenDeferredPostingSealPurgeLogRow(
+            TableToken tableToken,
+            String indexColumnName,
+            long sealTxn
+    ) throws Exception {
+        assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, sealTxn, 1);
+    }
+
+    private void assertOpenDeferredPostingSealPurgeLogRowCount(
+            TableToken tableToken,
+            String indexColumnName,
+            long sealTxn,
+            int expectedCount
+    ) throws Exception {
+        assertQuery("SELECT count() FROM \"" + configuration.getSystemTableNamePrefix()
+                + "posting_seal_purge_log\" WHERE table_name = '" + tableToken.getDirName()
+                + "' AND table_id = " + tableToken.getTableId()
+                + " AND column_name = '" + indexColumnName
+                + "' AND seal_txn = " + sealTxn
+                + " AND completed = null")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n"
+                        + expectedCount
+                        + "\n");
+    }
+
+    // Shared single-key covered sum/count concurrent-reader workload. Seeds
+    // dayCount days of 'A' rows (price = row index), optionally converts them all to
+    // parquet, then runs reader threads asserting the covered count/sum stay
+    // monotonic (rows are only ADDED, so a valid snapshot can never drop below the
+    // committed floor) while a 4-worker pool rewrites partitions out of order under a
+    // tiny spill budget. Verifies the exact final totals. Callers set the spill /
+    // auto-include / row-id-encoding properties before invoking. Pass toParquet=false
+    // to exercise the native in-place reseal path.
+    private void runConcurrentCoveredSumCountFuzz(String tableName, boolean toParquet, Rnd rnd) throws Exception {
+        final int dayCount = 4 + rnd.nextInt(4); // 4..7 days; keeps sum < 1e7
+        final int hotPerDay = 1000;
+        final long perDaySum = (long) hotPerDay * (hotPerDay + 1) / 2;
+        final long initialRows = (long) dayCount * hotPerDay;
+        final long initialSum = (long) dayCount * perDaySum;
+
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE) "
+                + "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        for (int d = 1; d <= dayCount; d++) {
+            execute("INSERT INTO " + tableName + " SELECT dateadd('s', x::INT, '2024-02-0" + d
+                    + "T00:00:00.000000Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(" + hotPerDay + ")");
+        }
+        if (toParquet) {
+            for (int d = 1; d <= dayCount; d++) {
+                execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-02-0" + d + "'");
+            }
+        }
+
+        final AtomicReference<Throwable> bgError = new AtomicReference<>();
+        final AtomicBoolean stop = new AtomicBoolean();
+        final AtomicLong rowFloor = new AtomicLong(initialRows);
+        final int readerCount = 3;
+        final Thread[] readers = new Thread[readerCount];
+        for (int r = 0; r < readerCount; r++) {
+            readers[r] = new Thread(() -> {
+                try (
+                        SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                                .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                        null, null, -1, null);
+                        SqlCompiler compiler = engine.getSqlCompiler()
+                ) {
+                    long prevCount = 0;
+                    while (!stop.get() && bgError.get() == null) {
+                        final long floor = rowFloor.get();
+                        final long count;
+                        final double sum;
+                        try (RecordCursorFactory f = compiler.compile(
+                                "SELECT count(), sum(price) FROM " + tableName + " WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                             RecordCursor cur = f.getCursor(ctx)) {
+                            if (cur.hasNext()) {
+                                count = cur.getRecord().getLong(0);
+                                sum = cur.getRecord().getDouble(1);
+                            } else {
+                                count = -1;
+                                sum = -1;
+                            }
+                        }
+                        if (count < floor) {
+                            throw new AssertionError("covered 'A' count fell below the committed floor: " + count + " < " + floor);
+                        }
+                        if (count < prevCount) {
+                            throw new AssertionError("covered 'A' count went backwards: " + prevCount + " -> " + count);
+                        }
+                        if (sum < (double) initialSum - 0.5) {
+                            throw new AssertionError("covered sum(price) dropped below the initial total " + initialSum + ": " + sum);
+                        }
+                        if (sum < (double) count - 0.5) {
+                            throw new AssertionError("covered sum(price)=" + sum + " < count=" + count
+                                    + " -- a covered value resolved as < 1 (stale/garbage sidecar)");
+                        }
+                        prevCount = count;
+                    }
+                } catch (Throwable e) {
+                    bgError.set(e);
+                }
+            }, "covering-reader-" + r);
+            readers[r].setDaemon(true);
+            readers[r].start();
+        }
+
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.setupWorkerPool(pool, engine);
+        pool.start(LOG);
+        long expectedRows = initialRows;
+        try {
+            final int batches = 6 + rnd.nextInt(10);
+            for (int b = 0; b < batches && bgError.get() == null; b++) {
+                final StringBuilder sql = new StringBuilder("INSERT INTO " + tableName + " VALUES ");
+                int added = 0;
+                for (int d = 1; d <= dayCount; d++) {
+                    if (rnd.nextBoolean()) {
+                        continue;
+                    }
+                    final int n = 1 + rnd.nextInt(3);
+                    for (int i = 0; i < n; i++) {
+                        if (added > 0) {
+                            sql.append(',');
+                        }
+                        sql.append("('2024-02-0").append(d).append("T00:")
+                                .append(String.format("%02d", 1 + rnd.nextInt(58)))
+                                .append(":00.500000Z', 'A', 1.0)");
+                        added++;
+                    }
+                }
+                if (added == 0) {
+                    continue;
+                }
+                execute(sql.toString());
+                expectedRows += added;
+                rowFloor.set(expectedRows);
+            }
+        } finally {
+            stop.set(true);
+            for (Thread t : readers) {
+                t.join(30_000);
+                Assert.assertFalse("reader thread did not terminate", t.isAlive());
+            }
+            pool.halt();
+        }
+
+        Assert.assertNull("concurrent covered reader threw: " + bgError.get(), bgError.get());
+
+        try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+            runPostingSealPurgeJob(purgeJob);
+        }
+        engine.releaseAllWriters();
+
+        final long expectedSum = initialSum + (expectedRows - initialRows);
+        try (
+                SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)
+                        .with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                                null, null, -1, null);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory f = compiler.compile(
+                        "SELECT count(), sum(price) FROM " + tableName + " WHERE sym = 'A'", ctx).getRecordCursorFactory();
+                RecordCursor cur = f.getCursor(ctx)
+        ) {
+            Assert.assertTrue("final covered query returned no row", cur.hasNext());
+            Assert.assertEquals("final covered 'A' count", expectedRows, cur.getRecord().getLong(0));
+            Assert.assertEquals("final covered sum(price)", (double) expectedSum, cur.getRecord().getDouble(1), 0.5);
+        }
+    }
+
+    private void fillPostingSealPurgeQueue(TableToken liveToken) {
+        MessageBus bus = engine.getMessageBus();
+        MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
+        RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+        TableToken missingToken = new TableToken(
+                "__missing_posting_seal_purge_queue_fill",
+                "__missing_posting_seal_purge_queue_fill",
+                null,
+                liveToken.getTableId() + 1_000_000,
+                false,
+                false,
+                false
+        );
+        int published = 0;
+        while (true) {
+            long cursor = pubSeq.next();
+            if (cursor == -2) {
+                Os.pause();
+                continue;
+            }
+            if (cursor < 0) {
+                break;
+            }
+            try {
+                queue.get(cursor).of(
+                        missingToken,
+                        "missing_col",
+                        COLUMN_NAME_TXN_NONE,
+                        published,
+                        0L,
+                        -1L,
+                        PartitionBy.NONE,
+                        ColumnType.TIMESTAMP_MICRO,
+                        0L,
+                        0L
+                );
+            } finally {
+                pubSeq.done(cursor);
+            }
+            published++;
+        }
+        Assert.assertTrue("posting seal purge queue must be saturated by the test", published > 0);
+    }
+
+    private void drainPostingSealPurgeQueue() {
+        MessageBus bus = engine.getMessageBus();
+        SCSequence subSeq = bus.getPostingSealPurgeSubSeq();
+        RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+        while (true) {
+            long cursor = subSeq.next();
+            if (cursor == -2) {
+                Os.pause();
+                continue;
+            }
+            if (cursor < 0) {
+                break;
+            }
+            try {
+                queue.get(cursor).clear();
+            } finally {
+                subSeq.done(cursor);
+            }
+        }
+    }
+
+    private void assertPostingKeyFileCoversHeaderRegion(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            CharSequence columnName,
+            long columnNameTxn,
+            CharSequence failurePrefix
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            int plen = path.size();
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+            long fileSize = ff.length(keyFile);
+            Assert.assertTrue("dst .pk must exist after link recovery, path=" + keyFile, fileSize > 0);
+            // Read the header only (readUnderSeqlock never touches the head
+            // entry), so a header that points past EOF does not SIGBUS here.
+            try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                    ff, keyFile, ff.getPageSize(), fileSize, MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+                Assert.assertTrue("dst .pk header unreadable, path=" + keyFile,
+                        PostingIndexChainHeader.readUnderSeqlock(mem, header));
+                Assert.assertTrue(
+                        failurePrefix
+                                + ": fileSize=" + fileSize + " regionLimit=" + header.regionLimit
+                                + " headEntryOffset=" + header.headEntryOffset
+                                + " -- a reader of the linked posting index would map past EOF (SIGBUS).",
+                        fileSize >= header.regionLimit
+                );
+            }
+        }
+    }
+
+    /**
+     * Returns the on-disk byte length of the posting {@code .pk} key file for the
+     * given column in the given partition. Only stats the file (never maps it),
+     * so it is safe to call on a regressed build whose header points its head
+     * entry past EOF.
+     */
+    private long postingKeyFileSize(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            CharSequence columnName,
+            long columnNameTxn
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            int plen = path.size();
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+            long size = ff.length(keyFile);
+            Assert.assertTrue(".pk must exist, path=" + keyFile, size > 0);
+            return size;
+        }
+    }
+
+    private static boolean isPostingIndexResealCall() {
+        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+            if (TableWriter.class.getName().equals(frame.getClassName())
+                    && "sealPostingIndexForPartition".equals(frame.getMethodName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String timestampAtMinute(int minuteOfDay) {
+        StringBuilder timestamp = new StringBuilder("2022-02-25T");
+        if (minuteOfDay < 0) {
+            timestamp = new StringBuilder("2022-02-24T");
+            minuteOfDay += 24 * 60;
+        }
+        int hour = minuteOfDay / 60;
+        int minute = minuteOfDay % 60;
+        if (hour < 10) {
+            timestamp.append('0');
+        }
+        timestamp.append(hour).append(':');
+        if (minute < 10) {
+            timestamp.append('0');
+        }
+        timestamp.append(minute).append(":00.000000Z");
+        return timestamp.toString();
+    }
+
+    private void appendFuturePostingHead(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTxn
+    ) {
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
+             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+
+            writer.setCurrentTableTxn(currentTxn);
+            writer.of(path.trimTo(plen), "sym", io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE, false);
+
+            // Manufacture the state left by a partially-published posting
+            // index update: .pk has a new head tagged with a future table txn,
+            // while committed readers pinned at currentTxn must skip it and
+            // use the previous seal.
+            writer.setNextTxnAtSeal(currentTxn + 2);
+            writer.discardForRebuild();
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
+            writer.setMaxValue(0);
+            writer.commit();
+        }
+    }
+
+    /**
+     * Plant a committed-visible base head, then a page-spanning head entry whose
+     * own entry-level {@code txnAtSeal} is in the future, chained on top. Unlike
+     * {@link #appendVisibleHeadWithFutureTailGen} -- which keeps the entry
+     * visible and only trims a future tail gen (the head-trim/grow recovery
+     * branch) -- this future entry is dropped WHOLE by
+     * {@code recoveryDropAbandoned} (the full-drop branch), so link-time recovery
+     * rewinds {@code regionLimit} more than one OS page below the on-disk size.
+     * <p>
+     * Uses the real {@link PostingIndexWriter} so the dropped head's
+     * {@code .pv.{sealTxn}} and the surviving base head's files exist on disk and
+     * the subsequent hard-link does not fail for an unrelated reason.
+     */
+    private void appendPageSpanningFutureHead(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTxn
+    ) {
+        // gens sized so the future head's entry region spans at least one OS
+        // page; dropping it rewinds regionLimit across a page boundary, the
+        // granularity the CMARW close truncates to.
+        final int gens = (int) ((io.questdb.std.Files.PAGE_SIZE - PostingIndexUtils.V2_ENTRY_HEADER_SIZE)
+                / PostingIndexUtils.GEN_DIR_ENTRY_SIZE) + 2;
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
+             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            // No setCurrentTableTxn: recovery must not run on this open, or it
+            // would drop the future head we are about to plant.
+            writer.of(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, false);
+
+            // Committed-visible base head. discardForRebuild rotates sealTxn so
+            // this commit takes the appendNewEntry branch (a fresh entry chained
+            // onto the existing INSERT head). recoveryDropAbandoned stops here
+            // and keeps it as the surviving head after dropping the future entry.
+            writer.discardForRebuild();
+            writer.setNextTxnAtSeal(currentTxn);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
+            writer.setMaxValue(0);
+            writer.commit();
+
+            // Fresh entry whose entry-level txnAtSeal is in the future. The base
+            // commit (after discardForRebuild) sets the entry-level txnAtSeal;
+            // the loop extends the SAME entry with enough gens to span a page.
+            // Because the entry itself is future, recovery takes the full-drop
+            // branch rather than the head-trim branch.
+            writer.discardForRebuild();
+            writer.setNextTxnAtSeal(currentTxn + 1);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 1);
+            writer.setMaxValue(1);
+            writer.commit();
+            for (int g = 2; g <= gens; g++) {
+                writer.setNextTxnAtSeal(currentTxn + 1);
+                writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), g);
+                writer.setMaxValue(g);
+                writer.commit();
+            }
+        }
+    }
+
+    /**
+     * Plant a committed-visible head entry carrying a single in-flight (future
+     * {@code txnAtSeal}) tail gen on the given partition's {@code sym} posting
+     * index. The head is grown via {@code extendHead} to enough visible gens
+     * that the recovery head-trim's relocated entry spans at least one OS page,
+     * so the link-time truncation drops it regardless of page alignment.
+     * <p>
+     * Uses the real {@link PostingIndexWriter} so the corresponding
+     * {@code .pv.{sealTxn}} exists on disk and the subsequent hard-link does not
+     * fail for an unrelated reason.
+     */
+    private void appendVisibleHeadWithFutureTailGen(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTxn
+    ) {
+        // entrySize(visibleGens, 0) must exceed PAGE_SIZE so the trimmed head
+        // cannot fit in the slack between regionLimit and the next page
+        // boundary. PAGE_SIZE is the granularity the CMARW close truncates to.
+        final int visibleGens = (int) ((io.questdb.std.Files.PAGE_SIZE - PostingIndexUtils.V2_ENTRY_HEADER_SIZE)
+                / PostingIndexUtils.GEN_DIR_ENTRY_SIZE) + 2;
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
+             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            // No setCurrentTableTxn: recovery must not run on this open, or it
+            // would drop the future tail gen we are about to plant.
+            writer.of(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, false);
+
+            // Fresh head whose entry-level txnAtSeal is committed/visible.
+            // discardForRebuild rotates sealTxn so the first commit takes the
+            // appendNewEntry branch instead of extending the INSERT head.
+            writer.discardForRebuild();
+            writer.setNextTxnAtSeal(currentTxn);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
+            writer.setMaxValue(0);
+            writer.commit();
+
+            // Extend the same head with visible gens (extendHead keeps the same
+            // sealTxn) until the trimmed head will span a full page.
+            for (int g = 1; g < visibleGens; g++) {
+                writer.setNextTxnAtSeal(currentTxn);
+                writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), g);
+                writer.setMaxValue(g);
+                writer.commit();
+            }
+
+            // One in-flight tail gen tagged with a future txnAtSeal. Recovery at
+            // link time trims this (and only this) slot, taking the head-trim
+            // branch while the entry itself stays visible.
+            writer.setNextTxnAtSeal(currentTxn + 1);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), visibleGens);
+            writer.setMaxValue(visibleGens);
+            writer.commit();
+        }
+    }
+
+    private void assertPostingSealFilesExist(PostingSealFileNames files, boolean expected) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            if (expected) {
+                Assert.assertTrue(".pv must exist [path=" + files.valueFile + ']', ff.exists(path.of(files.valueFile).$()));
+            } else {
+                Assert.assertFalse(".pv must be purged [path=" + files.valueFile + ']', ff.exists(path.of(files.valueFile).$()));
+            }
+            if (files.coverFile == null) {
+                return;
+            }
+            if (expected) {
+                Assert.assertTrue(".pc must exist [path=" + files.coverFile + ']', ff.exists(path.of(files.coverFile).$()));
+            } else {
+                Assert.assertFalse(".pc must be purged [path=" + files.coverFile + ']', ff.exists(path.of(files.coverFile).$()));
+            }
+        }
+    }
+
+    // Mirrors TableWriter.POSTING_SEAL_PURGE_PENDING_FILE_NAME.
+    private void assertPostingSealPurgePendingFileExists(TableToken token, boolean expected) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat("_posting_seal_purge_pending.d");
+            Assert.assertEquals("posting seal-purge pending file existence [path=" + path + ']', expected, ff.exists(path.$()));
+        }
+    }
+
+    private PostingSealFileNames resolvePostingSealFileNames(
+            Path path,
+            String tableName,
+            String indexColumnName,
+            String coveredColumnName,
+            long partitionTimestamp,
+            long sealTxn
+    ) {
+        TableToken token = engine.getTableTokenIfExists(tableName);
+        Assert.assertNotNull("table must exist", token);
+        try (TableReader reader = engine.getReader(token)) {
+            int partitionIndex = -1;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                    partitionIndex = i;
+                    break;
+                }
+            }
+            Assert.assertTrue("target partition must exist", partitionIndex >= 0);
+            long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+
+            int indexColumnIndex = reader.getMetadata().getColumnIndex(indexColumnName);
+            int indexWriterIndex = reader.getMetadata().getWriterIndex(indexColumnIndex);
+            long postingColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, indexWriterIndex);
+
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(
+                    path,
+                    ColumnType.TIMESTAMP,
+                    io.questdb.cairo.PartitionBy.DAY,
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+            int plen = path.size();
+            long resolvedSealTxn = sealTxn >= 0 ? sealTxn : PostingIndexUtils.readSealTxnFromKeyFile(
+                    configuration.getFilesFacade(),
+                    PostingIndexUtils.keyFileName(path.trimTo(plen), indexColumnName, postingColumnNameTxn)
+            );
+            PostingIndexUtils.valueFileName(path.trimTo(plen), indexColumnName, postingColumnNameTxn, resolvedSealTxn);
+            String valueFilePath = path.toString();
+            String coverFilePath = null;
+            if (coveredColumnName != null) {
+                int coveredColumnIndex = reader.getMetadata().getColumnIndex(coveredColumnName);
+                int coveredWriterIndex = reader.getMetadata().getWriterIndex(coveredColumnIndex);
+                long coveredColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, coveredWriterIndex);
+
+                IntList coveringColumnIndices = reader.getMetadata().getColumnMetadata(indexColumnIndex).getCoveringColumnIndices();
+                Assert.assertNotNull("posting index must have covering columns", coveringColumnIndices);
+                int includeIdx = -1;
+                for (int i = 0, n = coveringColumnIndices.size(); i < n; i++) {
+                    if (coveringColumnIndices.getQuick(i) == coveredWriterIndex) {
+                        includeIdx = i;
+                        break;
+                    }
+                }
+                Assert.assertTrue("covered column must be present in INCLUDE list", includeIdx >= 0);
+                PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, resolvedSealTxn);
+                coverFilePath = path.toString();
+            }
+            return new PostingSealFileNames(resolvedSealTxn, valueFilePath, coverFilePath);
+        }
+    }
+
+    private PostingSealFileNames resolvePostingSealFileNames(
+            String tableName,
+            String indexColumnName,
+            String coveredColumnName,
+            long partitionTimestamp,
+            long sealTxn
+    ) {
+        try (Path path = new Path()) {
+            return resolvePostingSealFileNames(path, tableName, indexColumnName, coveredColumnName, partitionTimestamp, sealTxn);
+        }
+    }
+
+    // Writes a deliberately corrupt posting seal-purge pending file, truncated to
+    // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
+    // intended short/overrunning layout rather than a page-padded file.
+    private void writeCorruptPostingSealPurgePendingFile(TableToken token, int variant) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat("_posting_seal_purge_pending.d");
+            MemoryMARW mem = Vm.getCMARWInstance();
+            try {
+                mem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                mem.jumpTo(0);
+                switch (variant) {
+                    case 0: // unknown format marker
+                        mem.putInt(999);
+                        mem.putInt(0);
+                        break;
+                    case 1: // valid header claiming 2 records, body truncated
+                        mem.putInt(1); // POSTING_SEAL_PURGE_PENDING_FORMAT
+                        mem.putInt(2);
+                        mem.putLong(123L); // only 8 bytes, far short of a record
+                        break;
+                    case 2: // valid header + full 56-byte fixed part, bad name length
+                        mem.putInt(1);
+                        mem.putInt(1);
+                        mem.putLong(0L); // postingColumnNameTxn
+                        mem.putLong(0L); // sealTxn
+                        mem.putLong(0L); // partitionTimestamp
+                        mem.putLong(0L); // partitionNameTxn
+                        mem.putInt(0);   // partitionBy
+                        mem.putInt(0);   // timestampType
+                        mem.putLong(0L); // fromTableTxn
+                        mem.putLong(0L); // toTableTxn
+                        mem.putInt(1_000_000); // name length far past EOF
+                        break;
+                    default: // shorter than the 8-byte header
+                        mem.putInt(1);
+                        break;
+                }
+            } finally {
+                mem.close(true, Vm.TRUNCATE_TO_POINTER);
+            }
+        }
+    }
+
+    private static class FailAppendPositionLengthFacade extends TestFilesFacadeImpl {
+        private boolean armed;
+        private int failureCount;
+        private int setColumnLengthCalls;
+
+        @Override
+        public long length(long fd) {
+            if (armed && failureCount == 0 && isSetColumnAppendPositionCall()) {
+                setColumnLengthCalls++;
+                if (setColumnLengthCalls == 2) {
+                    armed = false;
+                    failureCount++;
+                    throw CairoException.critical(0).put("[test] checking file size failed");
+                }
+            }
+            return super.length(fd);
+        }
+
+        private static boolean isSetColumnAppendPositionCall() {
+            for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+                if (TableWriter.class.getName().equals(frame.getClassName())
+                        && "setColumnAppendPosition".equals(frame.getMethodName())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void arm() {
+            armed = true;
+            setColumnLengthCalls = 0;
+        }
+
+        int getFailureCount() {
+            return failureCount;
+        }
+    }
+
+    private record PostingSealFileNames(long sealTxn, String valueFile, String coverFile) {
     }
 }

@@ -9757,17 +9757,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPGCastToDate() throws SqlException {
-        TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                "select '2021-01-26'::date",
-                sink,
-                """
+    public void testPGCastToDate() throws Exception {
+        assertQuery("select '2021-01-26'::date")
+                .expectSize()
+                .returns("""
                         cast
                         2021-01-26T00:00:00.000Z
-                        """
-        );
+                        """);
     }
 
     @Test

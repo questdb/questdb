@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class InIPv4Test extends AbstractCairoTest {
@@ -72,12 +72,9 @@ public class InIPv4Test extends AbstractCairoTest {
 
     @Test
     public void testBadType() throws Exception {
-        assertException(
-                "test where ip in (12345)",
-                "create table test (ip ipv4)",
-                18,
-                "cannot compare IPv4 with type INT"
-        );
+        assertQuery("test where ip in (12345)")
+                .ddl("create table test (ip ipv4)")
+                .fails(18, "cannot compare IPv4 with type INT");
     }
 
     @Test
@@ -91,8 +88,8 @@ public class InIPv4Test extends AbstractCairoTest {
                             "('10.0.0.5', 2000000)"
             );
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-            tuples.add(new BindVariableTestTuple(
+            final ObjList<BindVarTuple> tuples = new ObjList<>();
+            tuples.add(BindVarTuple.ok(
                     "string bind vars",
                     """
                             ip\tts
@@ -104,7 +101,7 @@ public class InIPv4Test extends AbstractCairoTest {
                         bindVariableService.setStr(1, "192.168.0.1");
                     }
             ));
-            tuples.add(new BindVariableTestTuple(
+            tuples.add(BindVarTuple.ok(
                     "varchar bind vars",
                     """
                             ip\tts
@@ -115,7 +112,7 @@ public class InIPv4Test extends AbstractCairoTest {
                         bindVariableService.setVarchar(1, new Utf8String("8.8.8.8"));
                     }
             ));
-            tuples.add(new BindVariableTestTuple(
+            tuples.add(BindVarTuple.ok(
                     "ipv4 bind vars",
                     """
                             ip\tts
@@ -127,7 +124,7 @@ public class InIPv4Test extends AbstractCairoTest {
                     }
             ));
 
-            assertSql("test where ip in ($1, $2) order by ts", tuples);
+            assertQuery("test where ip in ($1, $2) order by ts").timestamp("ts").noLeakCheck().assertBinds(tuples);
         });
     }
 
@@ -137,15 +134,15 @@ public class InIPv4Test extends AbstractCairoTest {
             execute("create table test (ip ipv4)");
             execute("insert into test values ('127.0.0.1')");
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-            tuples.add(new BindVariableTestTuple(
+            final ObjList<BindVarTuple> tuples = new ObjList<>();
+            tuples.add(BindVarTuple.fails(
                     "bad ip",
+                    18,
                     "invalid IPv4 format: not.an.ip",
-                    bindVariableService -> bindVariableService.setStr(0, "not.an.ip"),
-                    18
+                    bindVariableService -> bindVariableService.setStr(0, "not.an.ip")
             ));
 
-            assertSql("test where ip in ($1)", tuples);
+            assertQuery("test where ip in ($1)").noLeakCheck().assertBinds(tuples);
         });
     }
 
@@ -153,12 +150,9 @@ public class InIPv4Test extends AbstractCairoTest {
     public void testColumnInList() throws Exception {
         // Non-constant args in the variadic tail are rejected by FunctionParser
         // before reaching the factory, so the message comes from there.
-        assertException(
-                "test where ip in (other)",
-                "create table test (ip ipv4, other ipv4)",
-                18,
-                "constant expected"
-        );
+        assertQuery("test where ip in (other)")
+                .ddl("create table test (ip ipv4, other ipv4)")
+                .fails(18, "constant expected");
     }
 
     @Test
@@ -196,13 +190,13 @@ public class InIPv4Test extends AbstractCairoTest {
                             "('10.0.0.5', 2000000)"
             );
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+            final ObjList<BindVarTuple> tuples = new ObjList<>();
             // Constant LHS with a bind var in the list keeps constCount < argCount,
             // so the const-fold is skipped and InIPv4RuntimeConstFunction is built.
             // The constant key is then evaluated per row via keyFunc.getIPv4(rec).
             // Bind var resolves to the LHS value, so the constant key is in the set
             // and every row matches.
-            tuples.add(new BindVariableTestTuple(
+            tuples.add(BindVarTuple.ok(
                     "bind var matches constant lhs",
                     """
                             ip\tts
@@ -214,24 +208,21 @@ public class InIPv4Test extends AbstractCairoTest {
             ));
             // Bind var resolves to a value other than the constant key, and the
             // remaining literal element does not match it either, so no row matches.
-            tuples.add(new BindVariableTestTuple(
+            tuples.add(BindVarTuple.ok(
                     "bind var misses constant lhs",
                     "ip\tts\n",
                     bindVariableService -> bindVariableService.setStr(0, "1.1.1.1")
             ));
 
-            assertSql("test where '127.0.0.1'::ipv4 in ($1, '8.8.8.8') order by ts", tuples);
+            assertQuery("test where '127.0.0.1'::ipv4 in ($1, '8.8.8.8') order by ts").timestamp("ts").noLeakCheck().assertBinds(tuples);
         });
     }
 
     @Test
     public void testInvalidIPv4StringConstant() throws Exception {
-        assertException(
-                "test where ip in ('not.an.ip')",
-                "create table test (ip ipv4)",
-                18,
-                "invalid IPv4 format: not.an.ip"
-        );
+        assertQuery("test where ip in ('not.an.ip')")
+                .ddl("create table test (ip ipv4)")
+                .fails(18, "invalid IPv4 format: not.an.ip");
     }
 
     @Test
@@ -369,10 +360,10 @@ public class InIPv4Test extends AbstractCairoTest {
                             "('10.0.0.5', 2000000)"
             );
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+            final ObjList<BindVarTuple> tuples = new ObjList<>();
             // The runtime-constant bind var keeps the list un-folded, so the SYMBOL
             // element is resolved in InIPv4RuntimeConstFunction.init() via addIPv4ToSet.
-            tuples.add(new BindVariableTestTuple(
+            tuples.add(BindVarTuple.ok(
                     "bind var plus symbol element",
                     """
                             ip\tts
@@ -382,7 +373,7 @@ public class InIPv4Test extends AbstractCairoTest {
                     bindVariableService -> bindVariableService.setStr(0, "127.0.0.1")
             ));
 
-            assertSql("test where ip in ($1, '192.168.0.1'::symbol) order by ts", tuples);
+            assertQuery("test where ip in ($1, '192.168.0.1'::symbol) order by ts").timestamp("ts").noLeakCheck().assertBinds(tuples);
         });
     }
 }

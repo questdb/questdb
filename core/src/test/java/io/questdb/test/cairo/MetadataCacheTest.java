@@ -171,7 +171,10 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from bah")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -186,7 +189,10 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from foo")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -280,8 +286,14 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
-                        assertExceptionNoLeakCheck("show columns from foo", 18, "table does not exist", false, sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from foo")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .fails(18, "table does not exist");
+                        assertQuery("show columns from bah")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -296,8 +308,14 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
-                        assertException("show columns from bah", 18, "table does not exist", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                        assertQuery("show columns from bah")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .fails(18, "table does not exist");
+                        assertQuery("show columns from foo")
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\tindexType\tindexInclude\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -822,7 +840,9 @@ public class MetadataCacheTest extends AbstractCairoTest {
             execute("DROP TABLE y");
             drainWalQueue();
 
-            assertException("table_columns('y')", 14, "table does not exist");
+            assertQuery("table_columns('y')")
+                    .noLeakCheck()
+                    .fails(14, "table does not exist");
         });
     }
 

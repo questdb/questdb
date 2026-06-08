@@ -6287,20 +6287,17 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('0.0.0.5')");
             execute("alter table test add col2 string");
             update("update test set col2 = col1");
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "test",
-                    sink,
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col1\tcol2
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.2
                             0.0.0.3\t0.0.0.3
                             0.0.0.4\t0.0.0.4
                             0.0.0.5\t0.0.0.5
-                            """
-            );
+                            """);
         });
     }
 
@@ -6345,20 +6342,17 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('0.0.0.5')");
             execute("alter table test add col2 ipv4");
             update("update test set col2 = col1");
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "test",
-                    sink,
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col1\tcol2
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.2
                             0.0.0.3\t0.0.0.3
                             0.0.0.4\t0.0.0.4
                             0.0.0.5\t0.0.0.5
-                            """
-            );
+                            """);
         });
     }
 

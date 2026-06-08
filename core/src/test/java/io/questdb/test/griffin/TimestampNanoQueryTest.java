@@ -718,7 +718,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     1\t2021-01-01T00:00:00.000000100Z
                     """;
             assertQuery("SELECT id, time FROM tango ORDER BY time desc")
-                    .timestamp("time###desc")
+                    .timestampDesc("time")
                     .expectSize()
                     .returns(expectedDesc);
         });
