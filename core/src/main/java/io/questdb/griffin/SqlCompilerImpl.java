@@ -1210,18 +1210,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (tsIndex >= 0 && tsIndex != columnIndex) {
                 CharSequence tsName = metadata.getColumnName(tsIndex);
                 boolean isTimestampAlreadyIncluded = false;
-                if (coveringColumnNames != null) {
-                    for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
-                        if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
-                            isTimestampAlreadyIncluded = true;
-                            break;
-                        }
+                for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                        isTimestampAlreadyIncluded = true;
+                        break;
                     }
                 }
                 if (!isTimestampAlreadyIncluded) {
-                    if (coveringColumnNames == null) {
-                        coveringColumnNames = new ObjList<>(1);
-                    }
                     coveringColumnNames.add(tsName);
                 }
             }
