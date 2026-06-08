@@ -2094,6 +2094,9 @@ public class JoinTest extends AbstractCairoTest {
         // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
         // the IN operand, crashing with an NPE in WhereClauseParser.analyzeIn. The sub-query must
         // compile and filter correctly regardless of join type or how the ON clause is written.
+        // ON-clause sub-queries are unsupported and must reject with "query is not allowed here"
+        // at every nesting depth: top level already did, the nested case used to slip through and
+        // either compile with wrong (cross-join) semantics or crash with a second NPE.
         assertMemoryLeak(() -> {
             execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
             execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
@@ -2119,9 +2122,37 @@ public class JoinTest extends AbstractCairoTest {
             ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
 
             // a second join type with shorthand ON, to cover the shared ON-clause parse path
+            // (ASOF and the INNER/LEFT/... family share the same ON-drain code in parseJoin)
             assertQuery(
                     "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
             ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(expected);
+
+            // NOT IN exercises the same parse path with a negated operator -- expect only C
+            assertQuery(
+                    "select * from trades where symbol not in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().ddl(null).timestamp("ts").sizeMayVary().returns(
+                    "symbol\tts\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
+
+            // ON-clause sub-queries stay unsupported when nested, just like at top level:
+            // an IN sub-query in ON used to compile with wrong cross-join semantics ...
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                    92,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // ... and a bare sub-query as the ON criteria used to crash with a second NPE.
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on (select symbol from trades))",
+                    80,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
         });
     }
 

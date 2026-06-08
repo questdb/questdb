@@ -3501,8 +3501,8 @@ public class SqlParser {
                 expectTok(lexer, tok, "on");
                 onClauseObserved = true;
                 // A join nested in a lambda sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)")
-                // leaves the outer operand on the shared arg stack; raise the floor so draining
-                // join columns below cannot consume it.
+                // leaves the outer operand on the shared arg stack; raise the floor so the drain
+                // cannot consume it, and reject unsupported ON-clause sub-queries at any depth.
                 expressionTreeBuilder.pushArgStackBottom();
                 try {
                     expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
