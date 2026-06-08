@@ -38,10 +38,9 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (0.0, 0.0)");
 
             // Constant negative radius should be optimized to constant false
-            assertQuery("explain select * from points where within_radius(x, y, 0.0, 0.0, -5.0)")
+            assertQuery("select * from points where within_radius(x, y, 0.0, 0.0, -5.0)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Empty table
                             """);
         });
@@ -54,10 +53,9 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (0.0, 0.0)");
 
             // Constant NaN radius should be optimized to constant false
-            assertQuery("explain select * from points where within_radius(x, y, 0.0, 0.0, NaN)")
+            assertQuery("select * from points where within_radius(x, y, 0.0, 0.0, NaN)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Empty table
                             """);
         });
@@ -69,10 +67,9 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (x double, y double)");
 
             // Plan should show constant center and radius values
-            assertQuery("explain select * from points where within_radius(x, y, 0.0, 0.0, 10.0)")
+            assertQuery("select * from points where within_radius(x, y, 0.0, 0.0, 10.0)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: within_radius(x,y,0.0,0.0,10.0)
                                 PageFrame

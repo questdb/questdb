@@ -135,7 +135,8 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce(
+                                .expectSize()
+                                .returns(
                                         """
                                                 sym\targ_max
                                                 A\t
@@ -396,7 +397,8 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                         .withEngine(engine)
                         .withContext(sqlExecutionContext)
                         .noLeakCheck()
-                        .returnsOnce(
+                        .expectSize()
+                        .returns(
                                 """
                                         sym\tt\tval
                                         A\tTIMESTAMP_NS\t1970-01-01T00:00:00.000100000Z

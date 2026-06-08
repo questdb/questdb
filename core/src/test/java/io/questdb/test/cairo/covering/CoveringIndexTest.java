@@ -69,6 +69,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -1596,19 +1597,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
             execute("ALTER TABLE t_ct ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
             engine.releaseAllWriters();
 
-            // Confirm the covering factory is actually on the plan.
-            String plan = getPlan("SELECT sym, qty, price FROM t_ct WHERE sym = 'A' ORDER BY ts");
-            assertTrue("covering index must be used for this regression: " + plan,
-                    plan.contains("CoveringIndex"));
-
             // 'A' rows land at rowIds 0, 2, 4.
             //   rowId 0 — below colTop=2, price must be NULL.
             //   rowId 2 — price = 100.5.
             //   rowId 4 — price = 300.5.
+            // Confirm the covering factory is actually on the plan.
             assertQuery("SELECT sym, qty, price FROM t_ct WHERE sym = 'A' ORDER BY ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tqty\tprice
                             A\t10\tnull
@@ -2414,9 +2412,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String plan = getPlan("SELECT ts FROM t_ts_alter_noinc WHERE sym = 'A'");
-            assertFalse("bare ALTER POSTING (no INCLUDE) must not use a CoveringIndex plan:\n" + plan,
-                    plan.contains("CoveringIndex"));
+            // bare ALTER POSTING (no INCLUDE) must not use a CoveringIndex plan.
+            assertQuery("SELECT ts FROM t_ts_alter_noinc WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
         });
     }
 
@@ -2443,14 +2442,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Timestamp should be auto-included via ALTER TABLE path
-            String plan = getPlan("SELECT ts, price FROM t_ts_alter WHERE sym = 'A'");
-            assertTrue("Expected CoveringIndex plan:\n" + plan, plan.contains("CoveringIndex"));
-
             assertQuery("SELECT ts, price FROM t_ts_alter WHERE sym = 'A'")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
                     .returns("""
                             ts\tprice
                             2024-01-01T00:00:00.000000Z\t10.0
@@ -2491,14 +2488,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Projecting the auto-included ts through LATEST ON must stay covering.
-            String plan = getPlan("SELECT ts FROM t_ts_cov_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
-            assertTrue("Expected CoveringIndex latest-on plan for auto-included ts:\n" + plan,
-                    plan.contains("CoveringIndex"));
-
             assertQuery("SELECT ts FROM t_ts_cov_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
                     .returns("""
                             ts
                             2024-01-03T00:00:00.000000Z
@@ -2543,15 +2537,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Projecting only the auto-included ts must use CoveringIndex.
-            String plan = getPlan("SELECT ts FROM t_ts_cov_where WHERE sym = 'A'");
-            assertTrue("Expected CoveringIndex plan for auto-included ts projection:\n" + plan,
-                    plan.contains("CoveringIndex"));
-
             assertQuery("SELECT ts FROM t_ts_cov_where WHERE sym = 'A'")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
                     .returns("""
                             ts
                             2024-01-01T00:00:00.000000Z
@@ -2590,14 +2581,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Query selecting ts should use CoveringIndex because ts was auto-included
-            String plan = getPlan("SELECT ts, price FROM t_ts_auto WHERE sym = 'A'");
-            assertTrue("Expected CoveringIndex plan:\n" + plan, plan.contains("CoveringIndex"));
-
             assertQuery("SELECT ts, price FROM t_ts_auto WHERE sym = 'A'")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
                     .returns("""
                             ts\tprice
                             2024-01-01T00:00:00.000000Z\t10.0
@@ -2656,14 +2645,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            String plan = getPlan("SELECT ts, price FROM t_ts_wal WHERE sym = 'A'");
-            assertTrue("Expected CoveringIndex plan:\n" + plan, plan.contains("CoveringIndex"));
-
             assertQuery("SELECT ts, price FROM t_ts_wal WHERE sym = 'A'")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
                     .returns("""
                             ts\tprice
                             2024-01-01T00:00:00.000000Z\t10.0
@@ -2688,8 +2675,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // price-only query should still use CoveringIndex
-            String plan = getPlan("SELECT price FROM t_ts_none WHERE sym = 'A'");
-            assertTrue("Expected CoveringIndex:\n" + plan, plan.contains("CoveringIndex"));
+            assertQuery("SELECT price FROM t_ts_none WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("CoveringIndex");
         });
     }
 
@@ -2723,9 +2711,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // No INCLUDE at all -- CoveringIndex must not be used.
-            String plan = getPlan("SELECT ts, price FROM t_ts_noinc WHERE sym = 'A'");
-            assertFalse("Should not use CoveringIndex without INCLUDE:\n" + plan,
-                    plan.contains("CoveringIndex"));
+            assertQuery("SELECT ts, price FROM t_ts_noinc WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
         });
     }
 
@@ -2998,21 +2986,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // Plan: Count wrapping CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT COUNT(*) FROM t_count WHERE sym = 'A'",
-                    """
-                            Count
-                                CoveringIndex on: sym
-                                  filter: sym='A'
-                            """
-            );
-
             // COUNT(*) correctness: single partition
             assertQuery("SELECT COUNT(*) FROM t_count WHERE sym = 'A'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            Count
+                                CoveringIndex on: sym
+                                  filter: sym='A'
+                            """)
                     .returns("""
                             count
                             329
@@ -3977,19 +3960,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Count optimization uses CoveringIndex as base — count() doesn't select
             // any covered columns so "with" is absent
-            assertPlanNoLeakCheck(
-                    "SELECT count() FROM t_cnt WHERE sym = 'A'",
-                    """
-                            Count
-                                CoveringIndex on: sym
-                                  filter: sym='A'
-                            """
-            );
-
             assertQuery("SELECT count() FROM t_cnt WHERE sym = 'A'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            Count
+                                CoveringIndex on: sym
+                                  filter: sym='A'
+                            """)
                     .returns("""
                             count
                             3
@@ -4016,19 +3995,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT DISTINCT sym FROM t_dist",
-                    """
-                            PostingIndex op: distinct on: sym
-                                Frame forward scan on: t_dist
-                            """
-            );
-
             // Verify data correctness without ORDER BY — PostingIndexDistinct doesn't
             // support static symbol tables needed for ORDER BY
             assertQuery("SELECT DISTINCT sym FROM t_dist")
                     .noRandomAccess()
                     .noLeakCheck()
+                    .withPlan("""
+                            PostingIndex op: distinct on: sym
+                                Frame forward scan on: t_dist
+                            """)
                     .returns("""
                             sym
                             A
@@ -4180,14 +4155,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Covering plan + correct per-key results: proves multi-gen reads
             // resolve covering values from the right gen.
-            assertPlanNoLeakCheck(
-                    "SELECT price, qty FROM t_fastlag_acc WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT price, qty FROM t_fastlag_acc WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: price, qty
                                   filter: sym='A'
-                            """
-            );
+                            """);
 
             // 'A' is at even indices (0, 2, 4, ..., 28): 15 rows.
             // 'B' is at odd indices (1, 3, 5, ..., 29): 15 rows.
@@ -4379,16 +4353,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Plan: GroupBy vectorized on top of CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT sym, sum(price), avg(qty) FROM t_grp WHERE sym IN ('A', 'B') GROUP BY sym",
-                    """
+            assertQuery("SELECT sym, sum(price), avg(qty) FROM t_grp WHERE sym IN ('A', 'B') GROUP BY sym")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             GroupBy vectorized: true workers: 1
                               keys: [sym]
                               values: [sum(price),avg(qty)]
                                 CoveringIndex on: sym with: price, qty
                                   filter: sym IN ['A','B']
-                            """
-            );
+                            """);
 
             // Single-key GROUP BY — covering and non-covering paths must agree
             String expected = """
@@ -4441,17 +4414,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym",
-                    """
-                            GroupBy vectorized: true workers: 1
-                              keys: [sym]
-                              values: [min(price),max(price)]
-                                CoveringIndex on: sym with: price
-                                  filter: sym='A'
-                            """
-            );
-
             String expected = """
                     sym\tmin\tmax
                     A\t10.0\t50.0
@@ -4459,6 +4421,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym")
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            GroupBy vectorized: true workers: 1
+                              keys: [sym]
+                              values: [min(price),max(price)]
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """)
                     .returns(expected);
             assertQuery("SELECT /*+ no_covering */ sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym")
                     .expectSize()
@@ -4524,18 +4493,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_lat WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
-                    """
-                            SelectedRecord
-                                CoveringIndex op: latest on: sym with: price
-                                  filter: sym='A'
-                            """
-            );
-
             assertQuery("SELECT price FROM t_lat WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                CoveringIndex op: latest on: sym with: price
+                                  filter: sym='A'
+                            """)
                     .returns("""
                             price
                             40.0
@@ -4967,20 +4932,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_ord WHERE sym = 'A' ORDER BY price",
-                    """
+            assertQuery("SELECT price FROM t_ord WHERE sym = 'A' ORDER BY price")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlan("""
                             Encode sort
                               keys: [price]
                                 SelectedRecord
                                     CoveringIndex on: sym with: price
                                       filter: sym='A'
-                            """
-            );
-
-            assertQuery("SELECT price FROM t_ord WHERE sym = 'A' ORDER BY price")
-                    .expectSize()
-                    .noLeakCheck()
+                            """)
                     .returns("""
                             price
                             10.0
@@ -5099,16 +5060,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
 
                 // Confirm the plan really is async-filter-over-covering.
-                String plan = getPlan("SELECT name, price FROM t_cov_ra WHERE sym = 'A' AND price > 25");
-                Assert.assertTrue(
-                        "expected Async Filter over CoveringIndex, got:\n" + plan,
-                        plan.contains("Async Filter") && plan.contains("CoveringIndex on: sym")
-                );
-
                 // Random access enabled (no .noRandomAccess()): the builder re-reads
                 // every matching row via recordAt() across the 6 covering frames.
                 assertQuery("SELECT name, price FROM t_cov_ra WHERE sym = 'A' AND price > 25")
                         .noLeakCheck()
+                        .withPlanContaining("Async Filter", "CoveringIndex on: sym")
                         .returns("""
                                 name\tprice
                                 a3\t30.0
@@ -5144,14 +5100,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // Filter on uncovered column 'extra' — can't use covering index
-            assertPlanDoesNotContain(
-                    "SELECT price FROM t_resid_uncov WHERE sym = 'A' AND extra > 150"
-            );
-
-            // Data must still be correct
+            // Filter on uncovered column 'extra' — can't use covering index; data must still be correct.
             assertQuery("SELECT price FROM t_resid_uncov WHERE sym = 'A' AND extra > 150")
                     .noLeakCheck()
+                    .withPlanNotContaining("CoveringIndex")
                     .returns("""
                             price
                             30.0
@@ -5392,20 +5344,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Plan: Async Filter wrapping CoveringIndex (parallel filter enabled in tests)
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_resid WHERE sym = 'A' AND price > 15",
-                    """
+            // Data correctness: only A rows with price > 15
+            assertQuery("SELECT price FROM t_resid WHERE sym = 'A' AND price > 15")
+                    .noLeakCheck()
+                    .withPlan("""
                             SelectedRecord
                                 Async Filter workers: 1
                                   filter: 15<price
                                     CoveringIndex on: sym with: price
                                       filter: sym='A'
-                            """
-            );
-
-            // Data correctness: only A rows with price > 15
-            assertQuery("SELECT price FROM t_resid WHERE sym = 'A' AND price > 15")
-                    .noLeakCheck()
+                            """)
                     .returns("""
                             price
                             30.0
@@ -5518,14 +5466,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_latest_plan WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
-                    """
+            assertQuery("SELECT price FROM t_latest_plan WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex op: latest on: sym with: price
                                   filter: sym='A'
-                            """
-            );
+                            """);
         });
     }
 
@@ -6578,21 +6525,28 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            bindVariableService.clear();
-            bindVariableService.setStr("sym", "A");
-            try (var factory = select("SELECT count() FROM t_bind_pf WHERE sym = :sym")) {
-                assertCursor("""
-                        count
-                        2
-                        """, factory, false, true);
-
-                bindVariableService.clear();
-                bindVariableService.setStr("sym", "B");
-                assertCursor("""
-                        count
-                        3
-                        """, factory, false, true);
-            }
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "sym=A",
+                    """
+                            count
+                            2
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "A")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "sym=B",
+                    """
+                            count
+                            3
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "B")
+            ));
+            assertQuery("SELECT count() FROM t_bind_pf WHERE sym = :sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 
@@ -6619,32 +6573,40 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            bindVariableService.clear();
-            bindVariableService.setStr("sym", "A");
-            try (var factory = select("SELECT price FROM t_bind_rebind WHERE sym = :sym")) {
-                assertCursor("""
-                        price
-                        10.5
-                        11.5
-                        """, factory, false, true);
-
-                bindVariableService.clear();
-                bindVariableService.setStr("sym", "B");
-                assertCursor("""
-                        price
-                        20.5
-                        21.5
-                        """, factory, false, true);
-
-                // And back to A to cover both directions of the transition.
-                bindVariableService.clear();
-                bindVariableService.setStr("sym", "A");
-                assertCursor("""
-                        price
-                        10.5
-                        11.5
-                        """, factory, false, true);
-            }
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "sym=A",
+                    """
+                            price
+                            10.5
+                            11.5
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "A")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "sym=B",
+                    """
+                            price
+                            20.5
+                            21.5
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "B")
+            ));
+            // And back to A to cover both directions of the transition.
+            cases.add(BindVarTuple.ok(
+                    "sym=A again",
+                    """
+                            price
+                            10.5
+                            11.5
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "A")
+            ));
+            assertQuery("SELECT price FROM t_bind_rebind WHERE sym = :sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 
@@ -6998,14 +6960,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Query plan should show CoveringIndex when all selected columns are covered
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_plan WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT price FROM t_plan WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
-                            """
-            );
+                            """);
         });
     }
 
@@ -7063,22 +7024,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_in WHERE sym IN ('A', 'B')")
                     .noRandomAccess()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                CoveringIndex on: sym with: price
+                                  filter: sym IN ['A','B']
+                            """)
                     .returns("""
                             price
                             10.5
                             20.5
                             11.5
                             """);
-
-            // Verify plan shows CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_in WHERE sym IN ('A', 'B')",
-                    """
-                            SelectedRecord
-                                CoveringIndex on: sym with: price
-                                  filter: sym IN ['A','B']
-                            """
-            );
         });
     }
 
@@ -8670,14 +8626,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT label FROM t_fsst_string WHERE sym = 'X'",
-                    """
+            assertQuery("SELECT label FROM t_fsst_string WHERE sym = 'X'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: label
                                   filter: sym='X'
-                            """
-            );
+                            """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_string WHERE sym = 'X'")
                     .noRandomAccess()
@@ -8721,6 +8676,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                CoveringIndex on: sym with: event_ts, extra
+                                  filter: sym='A'
+                            """)
                     .returns("""
                             event_ts\textra
                             2024-06-15T12:00:01.000000Z\t1
@@ -8729,16 +8689,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             \t6
                             2024-06-15T12:00:07.000000Z\t7
                             """);
-
-            // Verify covering plan is used
-            assertPlanNoLeakCheck(
-                    "SELECT event_ts, extra FROM t_ts_cover WHERE sym = 'A'",
-                    """
-                            SelectedRecord
-                                CoveringIndex on: sym with: event_ts, extra
-                                  filter: sym='A'
-                            """
-            );
         });
     }
 
@@ -8846,14 +8796,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Plan: CoveringIndex for varchar column
-            assertPlanNoLeakCheck(
-                    "SELECT name FROM t_fsst_varchar WHERE sym = 'K0'",
-                    """
+            assertQuery("SELECT name FROM t_fsst_varchar WHERE sym = 'K0'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: name
                                   filter: sym='K0'
-                            """
-            );
+                            """);
 
             // Data correctness: covering vs non-covering
             assertQuery("SELECT COUNT(*) FROM t_fsst_varchar WHERE sym = 'K0'")
@@ -8911,14 +8860,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT name FROM t_fsst_in WHERE sym IN ('A', 'B')",
-                    """
+            assertQuery("SELECT name FROM t_fsst_in WHERE sym IN ('A', 'B')")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: name
                                   filter: sym IN ['A','B']
-                            """
-            );
+                            """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_in WHERE sym IN ('A', 'B')")
                     .noRandomAccess()
@@ -8950,14 +8898,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT name, price FROM t_fsst_mixed WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT name, price FROM t_fsst_mixed WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: name, price
                                   filter: sym='A'
-                            """
-            );
+                            """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_mixed WHERE sym = 'A'")
                     .noRandomAccess()
@@ -8986,14 +8933,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT name FROM t_fsst_null WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT name FROM t_fsst_null WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: name
                                   filter: sym='A'
-                            """
-            );
+                            """);
 
             assertQuery("SELECT COUNT(*) FROM t_fsst_null WHERE sym = 'A'")
                     .noRandomAccess()
@@ -9153,20 +9099,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            CoveringIndex on: sym with: ts
+                              filter: sym='GOLD'
+                            """)
                     .returns("""
                             ts\tsym
                             2024-01-01T00:00:00.000000Z\tGOLD
                             2024-01-01T00:02:00.000000Z\tGOLD
                             """);
-
-            // Check that the plan uses CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sym FROM t_cover_ts WHERE sym = 'GOLD'",
-                    """
-                            CoveringIndex on: sym with: ts
-                              filter: sym='GOLD'
-                            """
-            );
         });
     }
 
@@ -9195,20 +9136,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            CoveringIndex on: sym with: ts
+                              filter: sym='GOLD'
+                            """)
                     .returns("""
                             ts\tsym
                             2024-01-01T00:00:00.000000Z\tGOLD
                             2024-01-01T00:02:00.000000Z\tGOLD
                             """);
-
-            // Plan should use CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sym FROM t_cover_ts_wal WHERE sym = 'GOLD'",
-                    """
-                            CoveringIndex on: sym with: ts
-                              filter: sym='GOLD'
-                            """
-            );
         });
     }
 
@@ -9254,20 +9190,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            CoveringIndex on: sym with: ts
+                              filter: sym='GOLD'
+                            """)
                     .returns("""
                             ts\tsym
                             2024-01-01T00:00:00.000000000Z\tGOLD
                             2024-01-01T00:02:00.000000000Z\tGOLD
                             """);
-
-            // Plan check for ts + sym
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sym FROM t_cover_tsns WHERE sym = 'GOLD'",
-                    """
-                            CoveringIndex on: sym with: ts
-                              filter: sym='GOLD'
-                            """
-            );
         });
     }
 
@@ -9294,19 +9225,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Plan should use CoveringIndex for covered columns on WAL table
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sym FROM t_cover_tsns_wal WHERE sym = 'GOLD'",
-                    """
-                            CoveringIndex on: sym with: ts
-                              filter: sym='GOLD'
-                            """
-            );
-
             assertQuery("SELECT ts, sym FROM t_cover_tsns_wal WHERE sym = 'GOLD'")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            CoveringIndex on: sym with: ts
+                              filter: sym='GOLD'
+                            """)
                     .returns("""
                             ts\tsym
                             2024-01-01T00:00:00.000000000Z\tGOLD
@@ -9529,17 +9456,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT DISTINCT sym FROM t_dist_nofilter",
-                    """
-                            PostingIndex op: distinct on: sym
-                                Frame forward scan on: t_dist_nofilter
-                            """
-            );
-
             assertQuery("SELECT DISTINCT sym FROM t_dist_nofilter")
                     .noRandomAccess()
                     .noLeakCheck()
+                    .withPlan("""
+                            PostingIndex op: distinct on: sym
+                                Frame forward scan on: t_dist_nofilter
+                            """)
                     .returns("""
                             sym
                             A
@@ -9610,17 +9533,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """);
 
             // Plan should NOT show PostingIndex distinct
-            assertPlanNoLeakCheck(
-                    "SELECT DISTINCT sym FROM t_distinct_bmp",
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_distinct_bmp")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             GroupBy vectorized: true workers: 1
                               keys: [sym]
                               values: [count(*)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t_distinct_bmp
-                            """
-            );
+                            """);
         });
     }
 
@@ -9662,13 +9584,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Optimizer rewrites DISTINCT → GROUP BY + count(*), but we intercept in
             // generateSelectGroupBy and replace the entire chain with PostingIndex distinct
-            assertPlanNoLeakCheck(
-                    "SELECT DISTINCT sym FROM t_distinct_plan",
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_distinct_plan")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PostingIndex op: distinct on: sym
                                 Frame forward scan on: t_distinct_plan
-                            """
-            );
+                            """);
         });
     }
 
@@ -9997,9 +9918,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // no_index: falls back to standard GroupBy, NOT PostingIndex
-            String plan = getPlan("SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx");
-            assertFalse("no_index should prevent PostingIndex:\n" + plan,
-                    plan.contains("PostingIndex"));
+            assertQuery("SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("PostingIndex");
 
             // Data correctness — compare sorted results
             assertQuery("SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx ORDER BY sym")
@@ -10031,14 +9952,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Non-interval filter: falls back to standard GroupBy, NOT PostingIndex
-            String plan = getPlan("SELECT DISTINCT sym FROM t_dist_filt WHERE price > 15");
-            assertFalse("Non-interval filter should not use PostingIndex:\n" + plan,
-                    plan.contains("PostingIndex"));
-
-            // Data correctness
+            // Data correctness; a non-interval filter must not use PostingIndex.
             assertQuery("SELECT DISTINCT sym FROM t_dist_filt WHERE price > 15")
                     .expectSize()
                     .noLeakCheck()
+                    .withPlanNotContaining("PostingIndex")
                     .returns("""
                             sym
                             B
@@ -10080,13 +9998,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """);
 
             // Verify plan uses PostingIndex distinct
-            assertPlanNoLeakCheck(
-                    "SELECT DISTINCT sym FROM t_dist",
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_dist")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PostingIndex op: distinct on: sym
                                 Frame forward scan on: t_dist
-                            """
-            );
+                            """);
         });
     }
 
@@ -10117,14 +10034,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Plan: PostingIndex distinct with interval partition frame
-            assertPlanNoLeakCheck(
-                    "SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02'",
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PostingIndex op: distinct on: sym
                                 Interval forward scan on: t_dist_where
                                   intervals: [("2024-01-02T00:00:00.000000Z","MAX")]
-                            """
-            );
+                            """);
 
             // Data correctness: should only see A, B, C from the second day
             assertQuery("SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02' ORDER BY sym")
@@ -10407,25 +10323,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             K0
                             """);
 
-            String singleKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 5");
-            assertTrue("Expected CoveringIndex plan for single-key filter:\n" + singleKeyPlan,
-                    singleKeyPlan.contains("CoveringIndex on: sym"));
-
             // Empty result through the same LIMIT + ORDER BY chain.
             assertQuery("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 5")
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex on: sym")
                     .returns("sym\n");
 
             assertQuery("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1")
                     .noLeakCheck()
                     .returns("sym\n");
 
-            String multiKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym IN ('qrsw', 'zzz') ORDER BY 1");
-            assertTrue("Expected CoveringIndex plan for multi-key filter:\n" + multiKeyPlan,
-                    multiKeyPlan.contains("CoveringIndex on: sym"));
-
             assertQuery("SELECT sym FROM t_unknown_sym WHERE sym IN ('qrsw', 'zzz') ORDER BY 1")
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex on: sym")
                     .returns("sym\n");
 
             // Mixed list: one known value, one unknown. Result must contain only
@@ -10471,13 +10381,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // its own VALUE_NOT_FOUND guard. Combine with an outer ORDER BY on
             // the SYMBOL column so the upstream sort still probes the empty
             // cursor's getSymbolTable() before iteration.
-            String latestPlan = getPlan(
-                    "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' LATEST ON ts PARTITION BY sym ORDER BY 1");
-            assertTrue("Expected CoveringIndex latest plan:\n" + latestPlan,
-                    latestPlan.contains("CoveringIndex op: latest on: sym"));
-
             assertQuery("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' LATEST ON ts PARTITION BY sym ORDER BY 1")
                     .noLeakCheck()
+                    .withPlanContaining("CoveringIndex op: latest on: sym")
                     .returns("sym\n");
 
             // LATEST ON multi-key, all unknown. MultiKeyCoveringCursor.hasNextLatestBy()
@@ -11774,20 +11680,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price, qty FROM t_latest_filter WHERE sym = 'A' AND price > 10 LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                CoveringIndex op: latest on: sym with: price, qty
+                                  filter: sym='A'
+                            """)
                     .returns("""
                             price\tqty
                             20.0\t300
                             """);
-
-            // Verify covering plan is used for LATEST BY with filter
-            assertPlanNoLeakCheck(
-                    "SELECT price, qty FROM t_latest_filter WHERE sym = 'A' AND price > 10 LATEST ON ts PARTITION BY sym",
-                    """
-                            SelectedRecord
-                                CoveringIndex op: latest on: sym with: price, qty
-                                  filter: sym='A'
-                            """
-            );
 
             // LATEST ON + IN-list + filter: A→price=20@03:00, B→price=25@02:00
             assertQuery("SELECT sym, price, qty FROM t_latest_filter WHERE sym IN ('A', 'B') AND price > 10 LATEST ON ts PARTITION BY sym")
@@ -12440,14 +12341,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT name, info FROM t_multi_vc WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT name, info FROM t_multi_vc WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: name, info
                                   filter: sym='A'
-                            """
-            );
+                            """);
 
             assertQuery("SELECT COUNT(*) FROM t_multi_vc WHERE sym = 'A'")
                     .noRandomAccess()
@@ -12511,19 +12411,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Without hint: CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_hint WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT price FROM t_hint WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
-                            """
-            );
+                            """);
 
             // With no_covering hint: no CoveringIndex
-            assertPlanDoesNotContain(
-                    "SELECT /*+ no_covering */ price FROM t_hint WHERE sym = 'A'"
-            );
+            assertQuery("SELECT /*+ no_covering */ price FROM t_hint WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
         });
     }
 
@@ -12545,9 +12444,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanDoesNotContain(
-                    "SELECT /*+ no_covering */ price FROM t_hint_in WHERE sym IN ('A', 'B')"
-            );
+            assertQuery("SELECT /*+ no_covering */ price FROM t_hint_in WHERE sym IN ('A', 'B')")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
         });
     }
 
@@ -12569,10 +12468,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanDoesNotContain(
-                    "SELECT /*+ no_covering */ price FROM t_hint_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym"
-            );
-
             // Data correctness
             String expected = """
                     price
@@ -12584,6 +12479,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns(expected);
             assertQuery("SELECT /*+ no_covering */ price FROM t_hint_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
                     .noLeakCheck()
+                    .withPlanNotContaining("CoveringIndex")
                     .returns(expected);
         });
     }
@@ -12642,19 +12538,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Without hint: CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT price FROM t_noidx WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT price FROM t_noidx WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
-                            """
-            );
+                            """);
 
             // With no_index hint: full table scan, no index at all
-            String planWith = getPlan("SELECT /*+ no_index */ price FROM t_noidx WHERE sym = 'A'");
-            assertFalse("Plan should not contain any Index:\n" + planWith,
-                    planWith.contains("Index"));
+            assertQuery("SELECT /*+ no_index */ price FROM t_noidx WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index");
         });
     }
 
@@ -12675,11 +12570,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // no_index implies no_covering — neither CoveringIndex nor SymbolIndex should appear
-            String plan = getPlan("SELECT /*+ no_index */ price FROM t_noidx_impl WHERE sym = 'A'");
-            assertFalse("no_index should imply no_covering:\n" + plan,
-                    plan.contains("CoveringIndex"));
-            assertFalse("no_index should disable all index usage:\n" + plan,
-                    plan.contains("Index"));
+            assertQuery("SELECT /*+ no_index */ price FROM t_noidx_impl WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex", "Index");
         });
     }
 
@@ -12701,10 +12594,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // no_index disables both covering and bitmap index
-            String plan = getPlan("SELECT /*+ no_index */ price FROM t_noidx_in WHERE sym IN ('A', 'B')");
-            assertFalse("Plan should not contain Index:\n" + plan, plan.contains("Index"));
-
             String expected = """
                     price
                     10.5
@@ -12714,8 +12603,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns(expected);
+            // no_index disables both covering and bitmap index
             assertQuery("SELECT /*+ no_index */ price FROM t_noidx_in WHERE sym IN ('A', 'B')")
                     .noLeakCheck()
+                    .withPlanNotContaining("Index")
                     .returns(expected);
         });
     }
@@ -12739,10 +12630,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // no_index disables index-based LATEST BY
-            String plan = getPlan(
-                    "SELECT /*+ no_index */ * FROM t_noidx_latest LATEST ON ts PARTITION BY sym");
-            assertFalse("Plan should not contain 'Indexed':\n" + plan,
-                    plan.contains("Indexed"));
+            assertQuery("SELECT /*+ no_index */ * FROM t_noidx_latest LATEST ON ts PARTITION BY sym")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Indexed");
 
             // Data correctness for single-key LATEST ON
             String expected = """
@@ -15363,14 +15253,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            assertPlanNoLeakCheck(
-                    "SELECT name, price FROM t_vw_plan WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT name, price FROM t_vw_plan WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: name, price
                                   filter: sym='A'
-                            """
-            );
+                            """);
         });
     }
 
@@ -15397,22 +15286,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Vectorized aggregate uses page frame cursor
-            assertPlanNoLeakCheck(
-                    "SELECT count(*), min(price), max(price) FROM t_vw_agg WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT count(*), min(price), max(price) FROM t_vw_agg WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlan("""
                             Async Group By workers: 1
                               vectorized: true
                               values: [count(*),min(price),max(price)]
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
-                            """
-            );
-
-            assertQuery("SELECT count(*), min(price), max(price) FROM t_vw_agg WHERE sym = 'A'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .noLeakCheck()
+                            """)
                     .returns("""
                             count\tmin\tmax
                             3\t10.0\t50.0
@@ -15544,14 +15429,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """);
 
             // Plan should use CoveringIndex (SelectedRecord wraps subset)
-            assertPlanNoLeakCheck(
-                    "SELECT c0, c9 FROM t_wide10 WHERE sym = 'A'",
-                    """
+            assertQuery("SELECT c0, c9 FROM t_wide10 WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: c0, c9
                                   filter: sym='A'
-                            """
-            );
+                            """);
         });
     }
 
@@ -16215,18 +16099,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Covered query should use CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT price, qty FROM t_30col WHERE sym = 'A'",
-                    """
-                            SelectedRecord
-                                CoveringIndex on: sym with: price, qty
-                                  filter: sym='A'
-                            """
-            );
             assertQuery("SELECT price, qty FROM t_30col WHERE sym = 'A'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                CoveringIndex on: sym with: price, qty
+                                  filter: sym='A'
+                            """)
                     .returns("""
                             price\tqty
                             10.5\t100
@@ -16269,18 +16150,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Covered columns only — should use CoveringIndex
-            assertPlanNoLeakCheck(
-                    "SELECT price, qty FROM t_partial WHERE sym = 'A'",
-                    """
-                            SelectedRecord
-                                CoveringIndex on: sym with: price, qty
-                                  filter: sym='A'
-                            """
-            );
             assertQuery("SELECT price, qty FROM t_partial WHERE sym = 'A'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                CoveringIndex on: sym with: price, qty
+                                  filter: sym='A'
+                            """)
                     .returns("""
                             price\tqty
                             10.5\t100
@@ -16357,16 +16235,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertPlanDoesNotContain(String query) throws SqlException {
-        try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
-            planSink.clear();
-            factory.toPlan(planSink);
-            String planText = planSink.getSink().toString();
-            assertFalse("Plan should not contain '" + "CoveringIndex" + "':\n" + planText,
-                    planText.contains("CoveringIndex"));
-        }
-    }
-
     /**
      * Regression for the LIMIT -N over a covering index with a residual
      * filter. The covering factory used to ignore the requested scan order in
@@ -16388,23 +16256,44 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // The residual price > 0 routes the query through the parallel
             // filter wrapper, which absorbs the limit (no separate Limit node).
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3"
-            );
             // The parallel path stays in effect for single-key queries.
-            assertTrue(getPlan("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3").contains("Async Filter"));
-
+            assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Async Filter")
+                    .returns("""
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """);
             // A filter that eliminates the low rows still returns the true tail.
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 5 LIMIT -3"
-            );
+            assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 5 LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """);
             // Larger negative limit spanning all partitions.
-            assertSql(
-                    "price\n1.0\n2.0\n3.0\n4.0\n5.0\n6.0\n7.0\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -20"
-            );
+            assertQuery("SELECT price FROM t_neg WHERE sym = 'A' AND price > 0 LIMIT -20")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            4.0
+                            5.0
+                            6.0
+                            7.0
+                            8.0
+                            9.0
+                            10.0
+                            """);
         });
     }
 
@@ -16431,19 +16320,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         """);
                 execute("ALTER TABLE t_neg_mf ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
 
-                assertSql(
-                        "price\n8.0\n9.0\n10.0\n",
-                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -3"
-                );
+                assertQuery("SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                price
+                                8.0
+                                9.0
+                                10.0
+                                """);
                 // A sub-frame boundary-aligned limit (-4) and an odd one (-5).
-                assertSql(
-                        "price\n7.0\n8.0\n9.0\n10.0\n",
-                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -4"
-                );
-                assertSql(
-                        "price\n6.0\n7.0\n8.0\n9.0\n10.0\n",
-                        "SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -5"
-                );
+                assertQuery("SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -4")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                price
+                                7.0
+                                8.0
+                                9.0
+                                10.0
+                                """);
+                assertQuery("SELECT price FROM t_neg_mf WHERE sym = 'A' AND price > 0 LIMIT -5")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                price
+                                6.0
+                                7.0
+                                8.0
+                                9.0
+                                10.0
+                                """);
             });
         } finally {
             CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
@@ -16466,18 +16373,35 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE t_neg_bv ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
 
-            bindVariableService.clear();
-            bindVariableService.setLong("lim", -3);
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim"
-            );
-            // The same compiled query with a positive value returns the head.
-            bindVariableService.setLong("lim", 3);
-            assertSql(
-                    "price\n1.0\n2.0\n3.0\n",
-                    "SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim"
-            );
+            // assertBinds compiles the query once and rebinds per case, so the
+            // runtime-resolved limit sign must steer the same factory between the
+            // tail (negative) and the head (positive). The negative limit buffers
+            // the tail, so its size is known; the positive limit streams, so its
+            // size stays undetermined - hence the per-case expectSize below.
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "lim=-3 returns the last 3 rows",
+                    """
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """,
+                    bindVariableService -> bindVariableService.setLong("lim", -3)
+            ).expectSize(true));
+            cases.add(BindVarTuple.ok(
+                    "lim=3 returns the first 3 rows",
+                    """
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    bindVariableService -> bindVariableService.setLong("lim", 3)
+            ).expectSize(false));
+            assertQuery("SELECT price FROM t_neg_bv WHERE sym = 'A' AND price > 0 LIMIT :lim")
+                    .noLeakCheck()
+                    .assertBinds(cases);
         });
     }
 
@@ -16503,24 +16427,24 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE t_neg_mk ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
 
-            String plan = getPlan("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3");
-            assertFalse("multi-key negative limit must not use the parallel path:\n" + plan, plan.contains("Async Filter"));
-            assertTrue("multi-key negative limit must still read the covering index:\n" + plan, plan.contains("CoveringIndex"));
-
-            assertSql(
-                    "price\n8.0\n9.0\n10.0\n",
-                    "SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3"
-            );
+            // Multi-key negative limit must not use the parallel path, but must
+            // still read the covering index.
+            assertQuery("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT -3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .withPlanNotContaining("Async Filter")
+                    .returns("""
+                            price
+                            8.0
+                            9.0
+                            10.0
+                            """);
             // Positive limit over multi-key still uses the parallel path.
-            assertTrue(getPlan("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3").contains("Async Filter"));
+            assertQuery("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Filter");
         });
-    }
-
-    private String getPlan(String query) throws SqlException {
-        try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
-            planSink.clear();
-            factory.toPlan(planSink);
-            return planSink.getSink().toString();
-        }
     }
 }

@@ -40,8 +40,9 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     " from y b " +
                     "order by b.b";
 
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [b1]

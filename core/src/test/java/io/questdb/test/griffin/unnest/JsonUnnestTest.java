@@ -1391,19 +1391,18 @@ public class JsonUnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.5]')");
-            assertPlanNoLeakCheck(
-                    "SELECT u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val DOUBLE)"
-                            + ") u",
-                    """
+            assertQuery("SELECT u.val FROM t, UNNEST("
+                    + "t.payload COLUMNS(val DOUBLE)"
+                    + ") u")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Unnest
                                   columns: [val]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -1413,11 +1412,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.5]')");
-            assertPlanNoLeakCheck(
-                    "SELECT u.val, u.pos FROM t, UNNEST("
-                            + "t.payload COLUMNS(val DOUBLE)"
-                            + ") WITH ORDINALITY u(val, pos)",
-                    """
+            assertQuery("SELECT u.val, u.pos FROM t, UNNEST("
+                    + "t.payload COLUMNS(val DOUBLE)"
+                    + ") WITH ORDINALITY u(val, pos)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Unnest
                                   columns: [val,pos]
@@ -1425,8 +1424,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -1548,6 +1546,9 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     ) u
                     WHERE u.id = 'item_1'
                     """)
+                    // returnsOnce(): json_extract() lazily allocates ~2MB of internal buffers during
+                    // cursor execution that outlive the cursor, so the full returns() battery's
+                    // factory-memory check fails. The single-pass returnsOnce() closes the factory at once.
                     .noLeakCheck()
                     .returnsOnce("""
                             id\tvalue\tscore
@@ -2595,12 +2596,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
         // Verify COLUMNS syntax survives parser round-trip
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
-            assertQuery("EXPLAIN SELECT u.val FROM t, UNNEST("
+            assertQuery("SELECT u.val FROM t, UNNEST("
                     + "t.payload COLUMNS(val DOUBLE)"
                     + ") u")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             SelectedRecord
                                 Unnest
                                   columns: [val]
@@ -3796,7 +3796,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     + "t.payload COLUMNS(s VARCHAR)"
                     + ") u")
                     .noLeakCheck()
-                    .returnsOnce("s\n"
+                    .noRandomAccess()
+                    .returns("s\n"
                             + exactVal + "\n");
         });
     }

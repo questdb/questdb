@@ -222,123 +222,87 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testEmaExceptionAlphaMustBeBetween0And1() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', 1.5) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                34,
-                "alpha must be between 0 (exclusive) and 1 (inclusive)"
-        );
+        assertQuery("select ts, val, avg(val, 'alpha', 1.5) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(34, "alpha must be between 0 (exclusive) and 1 (inclusive)");
     }
 
     @Test
     public void testEmaExceptionFramingNotSupported() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', 0.5) over (order by ts rows between 1 preceding and current row) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                16,
-                "avg() does not support framing; remove ROWS/RANGE clause"
-        );
+        assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts rows between 1 preceding and current row) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(16, "avg() does not support framing; remove ROWS/RANGE clause");
     }
 
     @Test
     public void testEmaExceptionInfinityParameterValue() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', 1.0/0.0) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                37,
-                "parameter value must be a positive number"
-        );
+        assertQuery("select ts, val, avg(val, 'alpha', 1.0/0.0) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(37, "parameter value must be a positive number");
     }
 
     @Test
     public void testEmaExceptionInvalidKind() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'invalid', 0.5) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                25,
-                "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)"
-        );
+        assertQuery("select ts, val, avg(val, 'invalid', 0.5) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(25, "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)");
     }
 
     @Test
     public void testEmaExceptionKindCannotBeNull() throws Exception {
-        assertException(
-                "select ts, val, avg(val, cast(null as string), 0.5) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                25,
-                "kind parameter cannot be null"
-        );
+        assertQuery("select ts, val, avg(val, cast(null as string), 0.5) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(25, "kind parameter cannot be null");
     }
 
     @Test
     public void testEmaExceptionKindMustBeConstant() throws Exception {
-        assertException(
-                "select ts, kind, val, avg(val, kind, 0.5) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", kind string, val double) timestamp(ts)",
-                31,
-                "kind parameter must be a constant"
-        );
+        assertQuery("select ts, kind, val, avg(val, kind, 0.5) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", kind string, val double) timestamp(ts)")
+                .fails(31, "kind parameter must be a constant");
     }
 
     @Test
     public void testEmaExceptionNaNParameterValue() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', 0.0/0.0) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                37,
-                "parameter value must be a positive number"
-        );
+        assertQuery("select ts, val, avg(val, 'alpha', 0.0/0.0) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(37, "parameter value must be a positive number");
     }
 
     @Test
     public void testEmaExceptionNegativeParameterValue() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'period', -1) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                35,
-                "parameter value must be a positive number"
-        );
+        assertQuery("select ts, val, avg(val, 'period', -1) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(35, "parameter value must be a positive number");
     }
 
     @Test
     public void testEmaExceptionOrderByRequired() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', 0.5) over () from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                16,
-                "avg() requires ORDER BY"
-        );
+        assertQuery("select ts, val, avg(val, 'alpha', 0.5) over () from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(16, "avg() requires ORDER BY");
     }
 
     @Test
     public void testEmaExceptionParameterMustBeConstant() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', val) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                34,
-                "parameter value must be a constant"
-        );
+        assertQuery("select ts, val, avg(val, 'alpha', val) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(34, "parameter value must be a constant");
     }
 
     @Test
     public void testEmaExceptionTauTooSmall() throws Exception {
         // When value < 1, casting to long produces 0, which would make tau = 0
-        assertException(
-                "select ts, val, avg(val, 'microsecond', 0.5) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                25,
-                "time constant must be at least 1 unit in native timestamp precision"
-        );
+        assertQuery("select ts, val, avg(val, 'microsecond', 0.5) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(25, "time constant must be at least 1 unit in native timestamp precision");
     }
 
     @Test
     public void testEmaExceptionZeroParameterValue() throws Exception {
-        assertException(
-                "select ts, val, avg(val, 'alpha', 0) over (order by ts) from tab",
-                "create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)",
-                34,
-                "parameter value must be a positive number"
-        );
+        assertQuery("select ts, val, avg(val, 'alpha', 0) over (order by ts) from tab")
+                .ddl("create table tab (ts " + timestampType.getTypeName() + ", val double) timestamp(ts)")
+                .fails(34, "parameter value must be a positive number");
     }
 
     @Test
@@ -348,10 +312,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
             // Non-partitioned alpha mode
-            assertQuery("explain select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+            assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [avg(val, 'alpha', 0.5) over (rows between unbounded preceding and current row)]
                                 PageFrame
@@ -360,10 +323,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // Partitioned period mode
-            assertQuery("explain select ts, i, val, avg(val, 'period', 10) over (partition by i order by ts) from tab")
+            assertQuery("select ts, i, val, avg(val, 'period', 10) over (partition by i order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [avg(val, 'period', 10.0) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame
@@ -372,10 +334,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // Non-partitioned time-weighted mode
-            assertQuery("explain select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
+            assertQuery("select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [avg(val, 'second', 1.0) over (rows between unbounded preceding and current row)]
                                 PageFrame
@@ -384,10 +345,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                             """);
 
             // Partitioned time-weighted mode
-            assertQuery("explain select ts, i, val, avg(val, 'minute', 5) over (partition by i order by ts) from tab")
+            assertQuery("select ts, i, val, avg(val, 'minute', 5) over (partition by i order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [avg(val, 'minute', 5.0) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame
@@ -415,7 +375,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Just verify it runs without error and returns expected row count
             assertQuery("select count(*) from (select ts, i, val, avg(val, 'alpha', 0.1) over (partition by i order by ts) from tab)")
                     .noLeakCheck()
-                    .returnsOnce("count\n1000\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1000\n");
         });
     }
 
@@ -1167,7 +1129,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Verify it runs and returns expected row count
             assertQuery("select count(*) from (select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab)")
                     .noLeakCheck()
-                    .returnsOnce("count\n100\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n100\n");
         });
     }
 
