@@ -467,7 +467,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (from == to || isIPv4Cast(from, to)) {
             return true;
         }
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
+
+        // allow casts to VARCHAR
+        if (to == ColumnType.VARCHAR) {
+            return true;
+        }
+
+        return castGroups.getQuick(ColumnType.tagOf(from))
+                == castGroups.getQuick(ColumnType.tagOf(to));
     }
 
     static {
