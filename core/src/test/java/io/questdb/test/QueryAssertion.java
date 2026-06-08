@@ -89,6 +89,7 @@ public class QueryAssertion {
     private boolean isTimestampInferred;
     private boolean leakCheck = true;
     private long memoryUsage = -1;
+    private boolean memoryUsageCheck = true;
     private boolean overridden;
     private ObjList<CharSequence> planFragments;
     private ObjList<CharSequence> planFragmentsAbsent;
@@ -440,6 +441,17 @@ public class QueryAssertion {
     }
 
     /**
+     * Skip the post-close factory memory-usage check (the assertion that a cursor releases all but
+     * up to 64 KiB of native memory after it is closed). Use for queries whose factory legitimately
+     * retains more than that bound, where the check would be a false positive. The check runs by
+     * default.
+     */
+    public QueryAssertion noMemoryUsageCheck() {
+        this.memoryUsageCheck = false;
+        return this;
+    }
+
+    /**
      * Declare that the factory does not support random access, skipping the random-access record
      * checks. Random access is exercised by default.
      */
@@ -536,6 +548,9 @@ public class QueryAssertion {
     }
 
     public void snapshotMemoryUsage() {
+        if (!memoryUsageCheck) {
+            return;
+        }
         memoryUsage = getMemUsedByFactories();
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
