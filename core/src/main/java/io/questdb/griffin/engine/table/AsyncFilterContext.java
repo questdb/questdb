@@ -258,7 +258,7 @@ public class AsyncFilterContext implements Closeable {
     public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, ParquetDecodeHint ownerHint) {
         ownerMemoryPool.of(pageFrameAddressCache, ownerHint);
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
-            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache, ownerHint);
+            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
     }
 

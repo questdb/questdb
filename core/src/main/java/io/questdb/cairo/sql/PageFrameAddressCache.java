@@ -58,7 +58,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
     private final DirectLongList auxPageSizes;
-    private final BoolList coldParquetPartition = new BoolList();
+    private final BoolList coldParquetPartitions = new BoolList();
     private final ColumnMapping columnMapping = new ColumnMapping();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
@@ -122,7 +122,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
-        coldParquetPartition.add(isCold);
+        coldParquetPartitions.add(isCold);
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
@@ -134,7 +134,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
-        coldParquetPartition.clear();
+        coldParquetPartitions.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
@@ -285,6 +285,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     boolean isColdParquetPartition(int frameIndex) {
-        return coldParquetPartition.get(frameIndex);
+        return coldParquetPartitions.get(frameIndex);
     }
 }

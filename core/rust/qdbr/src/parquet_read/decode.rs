@@ -56,24 +56,23 @@ impl ColumnChunkBuffers {
         }
     }
 
+    // Unconditional re-read so a hypothetical second call between resets cannot keep
+    // a stale ptr after a Vec reallocation.
     pub fn refresh_ptrs(&mut self) {
-        if self.data_ptr.is_null() {
-            self.data_size = self.data_vec.len();
-            self.data_ptr = self.data_vec.as_mut_ptr();
-        }
+        self.data_size = self.data_vec.len();
+        self.data_ptr = self.data_vec.as_mut_ptr();
 
-        if self.aux_ptr.is_null() {
-            self.aux_size = self.aux_vec.len();
-            self.aux_ptr = self.aux_vec.as_mut_ptr();
-        }
+        self.aux_size = self.aux_vec.len();
+        self.aux_ptr = self.aux_vec.as_mut_ptr();
 
-        // Total bytes retained in page_buffers (decompressed page/dict buffers that
-        // VarcharSlice aux pointers reference). O(number of pages) - a handful per
-        // column chunk. page_buffers is fully populated before every refresh_ptrs
-        // call, and reset() zeroes this for the next decode.
+        // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
         self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
     }
 
+    // Callers drain `page_buffers` (into a reuse pool) before invoking; this only clears
+    // the outer Vec and the inner data/aux vectors. The inner Vecs keep their capacity
+    // so the next decode can grow into them via realloc only when the new chunk exceeds
+    // the buffer's historical peak.
     pub fn reset(&mut self) {
         self.data_vec.clear();
         self.data_size = 0;

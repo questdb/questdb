@@ -32,13 +32,15 @@ package io.questdb.cairo.sql;
  * and warrant the full configured budget.
  */
 public enum ParquetDecodeHint {
-    MONOTONIC(2),
-    SCATTERED(0);
+    MONOTONIC(2, 4),
+    SCATTERED(0, 256);
 
+    final int maxCachedBuffers;
     private final int rightShift;
 
-    ParquetDecodeHint(int rightShift) {
+    ParquetDecodeHint(int rightShift, int maxCachedBuffers) {
         this.rightShift = rightShift;
+        this.maxCachedBuffers = maxCachedBuffers;
     }
 
     public long applyTo(long configuredBytes) {

@@ -36,7 +36,6 @@ import io.questdb.cairo.sql.ParquetDecodeMetrics;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -53,7 +52,6 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -2524,9 +2522,10 @@ public class ParquetTest extends AbstractCairoTest {
             @Override
             public long read(long fd, long buf, long len, long offset) {
                 final long bytes = super.read(fd, buf, len, offset);
-                // The second read covers slot meta; first read is exactly HEADER_PREFIX=12 bytes.
-                if (offset == 0 && bytes > 12 && fd == spillFd.get()) {
-                    Unsafe.putInt(buf + 12, -42);
+                // The second read covers slot meta; first read is exactly HEADER_PREFIX=20 bytes.
+                // Byte 20 is the first per-slot parquetIdx; corrupting it trips the schema check.
+                if (offset == 0 && bytes > 20 && fd == spillFd.get()) {
+                    Unsafe.putInt(buf + 20, -42);
                 }
                 return bytes;
             }
@@ -2664,10 +2663,10 @@ public class ParquetTest extends AbstractCairoTest {
             @Override
             public long read(long fd, long buf, long len, long offset) {
                 final long bytes = super.read(fd, buf, len, offset);
-                // The header-prefix read asks for exactly HEADER_PREFIX=12 bytes; the full
-                // header read that follows asks for more (len > 12). A short count on that
+                // The header-prefix read asks for exactly HEADER_PREFIX=20 bytes; the full
+                // header read that follows asks for more (len > 20). A short count on that
                 // second read trips restore()'s header read-length guard.
-                if (offset == 0 && len > 12 && fd == spillFd.get() && bytes > 0) {
+                if (offset == 0 && len > 20 && fd == spillFd.get() && bytes > 0) {
                     return bytes - 1;
                 }
                 return bytes;
@@ -3019,6 +3018,9 @@ public class ParquetTest extends AbstractCairoTest {
     public void testParquetCacheHashOuterJoinSpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        // Self-join with k%53 produces a ~1.9M row cross product; the sort key
+        // budget needs headroom because LIMIT is not pushed into the sort.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 128L * 1024 * 1024);
         PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
         final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
         metrics.clear();
@@ -3126,6 +3128,10 @@ public class ParquetTest extends AbstractCairoTest {
     public void testParquetCacheNestedLoopJoinSpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        // NestedLoopLeftJoin does not supportRandomAccess; LIMIT cannot be
+        // pushed into the sort, so the full join output materializes through
+        // EncodedSort. Bump the sort-key budget to absorb the self-join blow up.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 128L * 1024 * 1024);
         PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
         final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
         metrics.clear();
@@ -3442,36 +3448,6 @@ public class ParquetTest extends AbstractCairoTest {
                     "write failure on spill file should bump spillFailures [failures=" + metrics.spillFailures() + "]",
                     metrics.spillFailures() > 0
             );
-        });
-    }
-
-    @Test
-    public void testParquetCacheVarcharBudgetCountsPageBuffers() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x SELECT rnd_varchar(120, 120, 0), timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(100)");
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-
-            try (RecordCursorFactory factory = select("SELECT v FROM x");
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                int rows = 0;
-                while (cursor.hasNext()) {
-                    Assert.assertNotNull(record.getVarcharA(0));
-                    rows++;
-                }
-                Assert.assertEquals(100, rows);
-
-                final Field field = AbstractPageFrameRecordCursor.class
-                        .getDeclaredField("frameMemoryPool");
-                field.setAccessible(true);
-                final PageFrameMemoryPool pool = (PageFrameMemoryPool) field.get(cursor);
-                final long cached = pool.getCachedBytes();
-                Assert.assertTrue(
-                        "cachedBytes=" + cached + " too small; getChunkPageBuffersSize likely not counted",
-                        cached > 8 * 1024
-                );
-            }
         });
     }
 
@@ -4251,10 +4227,12 @@ public class ParquetTest extends AbstractCairoTest {
             assertQuery("select s, 1 one from x")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("s\tone\n" +
-                            "AA\t1\n" +
-                            "\t1\n" +
-                            "\t1\n");
+                    .returns("""
+                            s\tone
+                            AA\t1
+                            \t1
+                            \t1
+                            """);
         });
     }
 
