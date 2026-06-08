@@ -154,6 +154,78 @@ public class CountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOverKeyedGroupBySubqueryWithHavingFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7201
+        // count()/size over a keyed GROUP BY subquery, filtered on the aggregate alias
+        // (a HAVING-style predicate), must keep the grouping keys. The top-down column
+        // pruning used to drop the unreferenced keys, collapsing the keyed group by into
+        // a scalar count() and producing phantom "duplicate" groups.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, s SYMBOL INDEX) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+            execute("INSERT INTO tab " +
+                    "SELECT '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                    "FROM long_sequence(12)");
+            drainWalQueue();
+
+            // the keyed group by must survive in the plan (not collapse into a bare Count)
+            assertPlanNoLeakCheck(
+                    "SELECT count() dups FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1", """
+                            Count
+                                Filter filter: 1<c
+                                    Async Group By workers: 1
+                                      keys: [ts,s]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """
+            );
+
+            // all 12 (ts,s) pairs are unique, so no group has count > 1
+            assertQuery("SELECT count() dups FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("dups\n0\n");
+            // the materialized projection over the same subquery agrees: it is empty
+            assertQuery("SELECT ts, s, c FROM (SELECT ts, s, count() c FROM tab) WHERE c > 1")
+                    .noLeakCheck()
+                    .returns("ts\ts\tc\n");
+            // without the predicate, count() over the subquery counts the 12 groups
+            assertQuery("SELECT count() FROM (SELECT ts, s, count() c FROM tab)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n12\n");
+            // a single-key subquery behaves the same way
+            assertQuery("SELECT count() FROM (SELECT s, count() c FROM tab) WHERE c > 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+
+            // genuine duplicates are still reported: 3 symbols, each repeated 4 times
+            execute("CREATE TABLE dup (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO dup " +
+                    "SELECT ('2020-02-27T12:00:00.000000Z'::TIMESTAMP + x), ('sym' || (x % 3)) " +
+                    "FROM long_sequence(12)");
+            assertQuery("SELECT count() dups FROM (SELECT s, count() c FROM dup) WHERE c > 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("dups\n3\n");
+            // a non-count outer aggregate over the filtered subquery is also correct: 3 groups of 4
+            assertQuery("SELECT sum(c) FROM (SELECT s, count() c FROM dup) WHERE c > 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("sum\n12\n");
+        });
+    }
+
+    @Test
     public void testCountUuid() throws Exception {
         assertQuery("select count(uuid), first(uuid), last(uuid) from x where id % 2 = 0")
                 .ddl("create table x as (" +
