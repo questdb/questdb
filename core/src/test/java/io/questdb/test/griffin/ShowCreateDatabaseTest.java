@@ -90,8 +90,8 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             drainWalQueue();
 
             final String inventoryBefore = inventory();
-            final ObjList<String> dump = dumpDatabase();
-            Assert.assertEquals(4, dump.size());
+            final ObjList<String> before = dumpDatabase();
+            Assert.assertEquals(4, before.size());
 
             // tear everything down in reverse dependency order
             execute("drop view v");
@@ -101,12 +101,20 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             drainWalQueue();
 
             // replaying the whole dump on the empty database must recreate every object
-            for (int i = 0, n = dump.size(); i < n; i++) {
-                execute(dump.getQuick(i));
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
             }
             drainWalQueue();
 
             Assert.assertEquals(inventoryBefore, inventory());
+
+            // the dump is a fixpoint: re-dumping after replay yields byte-identical DDL,
+            // including the materialized view and view bodies
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
         });
     }
 

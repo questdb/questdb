@@ -50,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -86,6 +87,18 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.put(alias);
             }
         }
+    }
+
+    public static void putTrimmed(Utf8Sink sink, CharSequence text) {
+        int lo = 0;
+        int hi = text.length();
+        while (lo < hi && text.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && text.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        sink.put(text, lo, hi);
     }
 
     public static void ttlToSink(int ttl, CharSink<?> sink) {
