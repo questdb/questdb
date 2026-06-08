@@ -120,6 +120,19 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         }
     }
 
+    public long sumChunkBytes(int startSlot, int slotCount) {
+        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
+        long total = 0;
+        for (int s = 0; s < slotCount; s++) {
+            final long base = chunksPtr + (startSlot + s) * CHUNK_STRUCT_SIZE;
+            total += Unsafe.getLong(base + CHUNK_DATA_SIZE_OFFSET)
+                    + Unsafe.getLong(base + CHUNK_AUX_SIZE_OFFSET)
+                    + Unsafe.getLong(base + CHUNK_PAGE_BUFFERS_SIZE_OFFSET);
+        }
+        return total;
+    }
+
     private static native long chunkAuxPtrOffset();
 
     private static native long chunkAuxSizeOffset();

@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.ParquetDecodeMetrics;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -783,6 +784,8 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 8 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
         PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
         try {
             WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -813,6 +816,8 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     configuration,
                     LOG
             );
+            Assert.assertTrue("varchar spill restore never fired; rebaseVarcharAux unexercised [restores="
+                    + metrics.restores() + "]", metrics.restores() > 0);
         } finally {
             PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
         }

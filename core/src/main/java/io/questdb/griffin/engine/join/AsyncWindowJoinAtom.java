@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -595,10 +596,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     ) throws SqlException {
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
         ownerSlaveTimeFrameCursor.of(sharedState, pageFrameCursor, timestampIndex);
+        ownerSlaveTimeFrameCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
         for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
             final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
             workerCursor.of(sharedState, pageFrameCursor, timestampIndex);
+            workerCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 

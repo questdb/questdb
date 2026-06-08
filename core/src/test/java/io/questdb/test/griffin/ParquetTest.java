@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.ParquetDecodeMetrics;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -52,6 +53,7 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -2022,6 +2024,40 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheAsyncTopKSpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 53)::int, x::double, timestamp_sequence('2024-01-01', 18_000_000)
+                    FROM long_sequence(10_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, v, ts FROM src_native WHERE k > 0 ORDER BY v LIMIT 2_000",
+                    "SELECT k, v, ts FROM src WHERE k > 0 ORDER BY v LIMIT 2_000"
+            );
+
+            Assert.assertTrue("async TopK did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertTrue("async TopK did not exercise spill restore [restores="
+                    + metrics.restores() + "]", metrics.restores() > 0);
+        });
+    }
+
+    @Test
     public void testParquetCacheCachedWindowSpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
@@ -2980,6 +3016,40 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheHashOuterJoinSpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 53)::int, x::double, timestamp_sequence('2024-01-01', 18_000_000)
+                    FROM long_sequence(10_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT a.k, b.v FROM src_native a LEFT JOIN src_native b ON a.k = b.k ORDER BY a.k, b.v",
+                    "SELECT a.k, b.v FROM src a LEFT JOIN src b ON a.k = b.k ORDER BY a.k, b.v"
+            );
+
+            Assert.assertTrue("hash outer join did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertTrue("hash outer join did not exercise spill restore [restores="
+                    + metrics.restores() + "]", metrics.restores() > 0);
+        });
+    }
+
+    @Test
     public void testParquetCacheLatestBySpillRoundTrip() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
@@ -3049,6 +3119,40 @@ public class ParquetTest extends AbstractCairoTest {
 
             Assert.assertTrue("spill path never fired [spills=" + metrics.spills() + "]", metrics.spills() > 0);
             Assert.assertTrue("restore path never fired [restores=" + metrics.restores() + "]", metrics.restores() > 0);
+        });
+    }
+
+    @Test
+    public void testParquetCacheNestedLoopJoinSpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            execute("""
+                    INSERT INTO src
+                    SELECT (x % 17)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    FROM long_sequence(2_000)""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("""
+                    CREATE TABLE src_native AS (SELECT * FROM src)
+                    TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT a.k, b.v FROM src_native a LEFT JOIN src_native b ON a.k > b.k ORDER BY a.k, b.v",
+                    "SELECT a.k, b.v FROM src a LEFT JOIN src b ON a.k > b.k ORDER BY a.k, b.v"
+            );
+
+            Assert.assertTrue("nested loop join did not propagate SCATTERED hint; spill never fired [spills="
+                    + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertTrue("nested loop join did not exercise spill restore [restores="
+                    + metrics.restores() + "]", metrics.restores() > 0);
         });
     }
 
@@ -3338,6 +3442,36 @@ public class ParquetTest extends AbstractCairoTest {
                     "write failure on spill file should bump spillFailures [failures=" + metrics.spillFailures() + "]",
                     metrics.spillFailures() > 0
             );
+        });
+    }
+
+    @Test
+    public void testParquetCacheVarcharBudgetCountsPageBuffers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT rnd_varchar(120, 120, 0), timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(100)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            try (RecordCursorFactory factory = select("SELECT v FROM x");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertNotNull(record.getVarcharA(0));
+                    rows++;
+                }
+                Assert.assertEquals(100, rows);
+
+                final Field field = AbstractPageFrameRecordCursor.class
+                        .getDeclaredField("frameMemoryPool");
+                field.setAccessible(true);
+                final PageFrameMemoryPool pool = (PageFrameMemoryPool) field.get(cursor);
+                final long cached = pool.getCachedBytes();
+                Assert.assertTrue(
+                        "cachedBytes=" + cached + " too small; getChunkPageBuffersSize likely not counted",
+                        cached > 8 * 1024
+                );
+            }
         });
     }
 

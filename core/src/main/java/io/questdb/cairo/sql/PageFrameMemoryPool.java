@@ -53,6 +53,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -98,13 +99,14 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, Mutable {
     public static final String SPILL_FILE_PREFIX = "qdb-parquet-spill-";
+    static final int MAX_CACHED_BUFFERS = 256;
     private static final AtomicLong CURSOR_ID_GENERATOR = new AtomicLong();
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
     private static final Log LOG = LogFactory.getLog(PageFrameMemoryPool.class);
     private static final long PID = ProcessHandle.current().pid();
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
-    private static final int SHELL_POOL_CAP = 8;
+    private static final int SHELL_POOL_CAP = MAX_CACHED_BUFFERS;
     // O(1) frameIndex lookup. LRU order is tracked separately via the
     // intrusive lruHead/lruTail doubly linked list through ParquetBuffers.
     private final IntObjHashMap<ParquetBuffers> byFrameIndex;
@@ -114,7 +116,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final PageFrameMemoryImpl frameMemory;
     // Bounded LIFO of closed ParquetBuffers shells, reused by acquireBuffer on the
     // async-parquet per-frame release path so the wrapper object doesn't churn.
-    private final ObjList<ParquetBuffers> freeParquetBufferShells = new ObjList<>(8);
+    private final ObjList<ParquetBuffers> freeParquetBufferShells = new ObjList<>(SHELL_POOL_CAP);
     private final ParquetFileDecoder legacyDecoder;
     private final long maxCacheBytes;
     // Contains [parquet_column_index, column_type] pairs.
@@ -223,6 +225,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             spillManager.close();
         }
         addressCache = null;
+    }
+
+    @TestOnly
+    public long getCachedBytes() {
+        return cachedBytes;
     }
 
     /**
@@ -411,7 +418,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
         assert getBound(usageBit) == null : "acquireBuffer requires the prior pin to have been cleared by tryHit";
-        if (cachedBytes >= effectiveBudgetBytes) {
+        if (cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= MAX_CACHED_BUFFERS) {
             for (ParquetBuffers victim = lruHead; victim != null; victim = victim.next) {
                 if (victim.usageFlags != 0) {
                     continue;
@@ -754,7 +761,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
             long pid = PID;
-            int digits = pid == 0 ? 1 : 0;
+            int digits = 0;
             for (long p = pid; p > 0; p /= 10) {
                 digits++;
             }
@@ -1426,23 +1433,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
                 slotCount = (int) (parquetColumns.size() / 2);
-                long bytes = 0;
-                final boolean isTrackingForSpill = spillManager != null;
-                for (int s = 0; s < slotCount; s++) {
-                    // getChunkPageBuffersSize covers VARCHAR_SLICE string bytes retained in
-                    // native page buffers; getChunkDataSize does not see them because data_vec
-                    // stays empty for the Plain/DeltaLength/dictionary encodings. Without this
-                    // term the budget undercounts varchar frames and the byte cap fails to
-                    // bound RSS for the heaviest column type.
-                    bytes += rowGroupBuffers.getChunkDataSize(s)
-                            + rowGroupBuffers.getChunkAuxSize(s)
-                            + rowGroupBuffers.getChunkPageBuffersSize(s);
-                    if (isTrackingForSpill) {
+                if (spillManager != null) {
+                    for (int s = 0; s < slotCount; s++) {
                         slotParquetIndexes.add(parquetColumns.get(2L * s));
                         slotColumnTypes.add(parquetColumns.get(2L * s + 1));
                     }
                 }
-                decodedBytes = bytes;
+                decodedBytes = rowGroupBuffers.sumChunkBytes(0, slotCount);
             } else {
                 slotCount = 0;
                 decodedBytes = 0;
@@ -1476,7 +1473,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
             }
             final int extraSlots = (int) (parquetColumns.size() / 2);
-            final long extra = sumChunkBytes(columnOffset, extraSlots);
+            final long extra = rowGroupBuffers.sumChunkBytes(columnOffset, extraSlots);
             if (extraSlots > 0) {
                 if (spillManager != null) {
                     for (int s = 0; s < extraSlots; s++) {
@@ -1663,14 +1660,5 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
-        private long sumChunkBytes(int startSlot, int slotCount) {
-            long bytes = 0;
-            for (int s = 0; s < slotCount; s++) {
-                bytes += rowGroupBuffers.getChunkDataSize(startSlot + s)
-                        + rowGroupBuffers.getChunkAuxSize(startSlot + s)
-                        + rowGroupBuffers.getChunkPageBuffersSize(startSlot + s);
-            }
-            return bytes;
-        }
     }
 }
