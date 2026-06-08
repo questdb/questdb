@@ -1250,13 +1250,23 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_header() {
+    fn test_empty_page_pushes_nulls() {
+        // An all-null varchar page (e.g. a column-top `var_top` column whose
+        // partition is entirely null) carries an empty length buffer. The
+        // decoder must construct and emit nulls rather than rejecting it.
+        // Regression for the suspended-table replication fuzz failure.
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
         let mut buffers = create_test_buffers(&allocator);
-        // Empty data → can't decode ULEB128 header
         let data: &[u8] = &[];
-        let result = DeltaLAVarcharSliceDecoder::try_new(data, &mut buffers, true);
-        assert!(result.is_err(), "expected error for empty header");
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(data, &mut buffers, true).unwrap();
+        decoder.reserve(4).unwrap();
+        decoder.push_nulls(4).unwrap();
+
+        let entries = read_aux_entries(&buffers);
+        assert_eq!(entries.len(), 4);
+        for e in &entries {
+            assert!(is_null_entry(e.0, e.1));
+        }
     }
 }

@@ -44,6 +44,27 @@ where
     i64: AsPrimitive<U>,
 {
     pub fn try_new(page_data: &'a [u8]) -> ParquetResult<(Self, U)> {
+        if page_data.is_empty() {
+            // An all-null data page carries no encoded values, so some encoders
+            // (including QuestDB's own writer for column-top integer columns)
+            // emit an empty values buffer with no DELTA_BINARY_PACKED header.
+            // The page's definition levels drive null filling, so the value
+            // decoder is never asked to produce a value. Return a degenerate
+            // iterator that yields no miniblocks. If a value is ever requested
+            // (e.g. a genuinely corrupt/truncated page), decoding fails later
+            // with "not enough values to iterate".
+            let iterator = Self {
+                page_data,
+                miniblocks_per_block: 0,
+                blocks_remaining: 0,
+                block_bitwidths_offset: 0,
+                miniblock_size: 0,
+                miniblock_offset: 0,
+                miniblock_index: 0,
+                min_delta: U::default(),
+            };
+            return Ok((iterator, U::default()));
+        }
         let (block_size, offset) = uleb128::decode(page_data)
             .map_err(|_| fmt_err!(Layout, "failed to decode block size"))?;
         if block_size == 0 {
@@ -1013,14 +1034,35 @@ mod tests {
     // ─── Unhappy path tests ───
 
     #[test]
-    fn empty_data() {
-        let err = MiniblockIterator::<i64>::try_new(&[]).err().unwrap();
-        let msg = format!("{err}");
-        // Empty input decodes block_size as 0, triggering the zero check.
-        assert!(
-            msg.contains("block size must be greater than zero"),
-            "got: {msg}"
-        );
+    fn empty_data_yields_no_values() {
+        // An empty values buffer (an all-null data page) is treated as zero
+        // values, not an error: try_new succeeds and yields no miniblocks.
+        let (mut iter, first) = MiniblockIterator::<i64>::try_new(&[]).unwrap();
+        assert_eq!(first, 0);
+        assert!(iter.next_miniblock().unwrap().is_none());
+        let end = iter.get_end_pointer().unwrap();
+        assert_eq!(end, iter.page_data.as_ptr());
+    }
+
+    #[test]
+    fn all_null_page_pushes_nulls() {
+        // Simulates decoding an all-null data page: the values buffer is empty
+        // and the decoder is only ever asked to emit nulls (definition levels
+        // are all zero). Regression for the suspended-table fuzz failure.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let null_val: i64 = i64::MIN;
+        let count = 10;
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&[], &mut buffers, null_val).unwrap();
+            decoder.reserve(count).unwrap();
+            decoder.push_nulls(count).unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
+        assert_eq!(out, &[null_val; 10]);
     }
 
     #[test]

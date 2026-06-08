@@ -386,12 +386,14 @@ pub trait SimdEncodable: NativeType {
         mut buffer: Vec<u8>,
     ) -> ParquetResult<Vec<u8>> {
         let non_null_count = slice.len() - null_count;
-        if non_null_count == 0 {
-            return Ok(buffer);
-        }
 
         match encoding {
             Encoding::Plain => {
+                // An all-null page has no values to write. PLAIN reads the empty
+                // values buffer back as zero values, driven by definition levels.
+                if non_null_count == 0 {
+                    return Ok(buffer);
+                }
                 buffer.reserve(size_of::<Self>() * non_null_count);
                 if null_count == 0 {
                     // Fast path: no nulls, memcpy entire slice
@@ -410,6 +412,11 @@ pub trait SimdEncodable: NativeType {
                 Ok(buffer)
             }
             Encoding::DeltaBinaryPacked => {
+                // Always emit a self-describing DELTA_BINARY_PACKED header, even
+                // with zero non-null values: the empty-iterator encode still
+                // writes block size, miniblock count, value_count=0 and
+                // first_value=0. Returning an empty buffer instead would produce
+                // a page the decoder cannot parse (block size decoded as 0).
                 if Self::encode_delta(slice, non_null_count, &mut buffer) {
                     Ok(buffer)
                 } else {
@@ -977,5 +984,30 @@ mod tests {
         let (num_values, num_nulls, _) = v2_header(&page);
         assert_eq!(num_values, 5);
         assert_eq!(num_nulls, 5);
+    }
+
+    #[test]
+    fn encode_data_delta_all_null_writes_header() {
+        // An all-null DELTA_BINARY_PACKED page (non_null_count == 0) must still
+        // carry a self-describing header so the reader can parse it. Regression
+        // for the suspended-table fuzz failure: this previously returned an
+        // empty buffer that the decoder rejected with "block size must be
+        // greater than zero". The full write->read round trip through QuestDB's
+        // reader is covered in tests/encode_primitives.rs.
+        let slice: Vec<i64> = vec![i64::MIN; 8];
+        let buf = <i64 as SimdEncodable>::encode_data(
+            &slice,
+            slice.len(),
+            Encoding::DeltaBinaryPacked,
+            vec![],
+        )
+        .expect("encode delta");
+        assert!(!buf.is_empty(), "all-null DELTA page must carry a header");
+
+        // PLAIN, by contrast, legitimately writes an empty values buffer.
+        let plain =
+            <i64 as SimdEncodable>::encode_data(&slice, slice.len(), Encoding::Plain, vec![])
+                .expect("encode plain");
+        assert!(plain.is_empty());
     }
 }
