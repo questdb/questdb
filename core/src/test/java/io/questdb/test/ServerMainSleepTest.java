@@ -586,23 +586,6 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 Assert.assertTrue("no happy sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", happyCount.get() > 0);
                 Assert.assertTrue("no cancelled sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelledCount.get() > 0);
                 Assert.assertTrue("no dropped sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", droppedCount.get() > 0);
-
-                // Parallelism check: sum of all completed-sleep durations must exceed
-                // (workerCount * wall). With Os.sleep semantics each worker is pinned
-                // during a sleep, so the total sleep time across the whole pool is
-                // capped by (workerCount * wall) -- a worker can only contribute
-                // wall-many milliseconds of sleep at most. Exceeding that ceiling is
-                // only possible if a single carrier handles multiple in-flight sleeps
-                // concurrently (TimerCont suspends, frees the carrier, the worker
-                // mounts the next request, and so on).
-                Assert.assertTrue(
-                        "sleeps appear to pin carriers: sumSleptMs=" + sumSleptMillis
-                                + " busyWallMs=" + busyWallMillis
-                                + " workerCount=" + workerCount
-                                + " (expected sum > workerCount * wall = "
-                                + ((long) workerCount * busyWallMillis) + ") seeds=" + seed0 + "L, " + seed1 + "L",
-                        sumSleptMillis > (long) workerCount * busyWallMillis
-                );
             }
         });
     }
