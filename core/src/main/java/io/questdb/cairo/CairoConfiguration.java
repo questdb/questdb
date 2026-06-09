@@ -897,6 +897,17 @@ public interface CairoConfiguration {
 
     long getWalApplyTableTimeQuota();
 
+    /**
+     * Whether WAL-apply-suspended tables (see {@link #getWalApplySuspendedTables()} and
+     * {@code ALTER TABLE ... SUSPEND WAL}) also deny WAL writes, rejecting commits like a dropped
+     * table but with a distinct exception. When false, suspension only excludes the table from WAL
+     * apply while writes keep buffering for later. Configured via
+     * {@code cairo.wal.apply.suspended.write.denied} and reloadable.
+     */
+    default boolean isWalApplySuspendedWriteDenied() {
+        return false;
+    }
+
     long getWalDataAppendPageSize();
 
     boolean getWalEnabledDefault();

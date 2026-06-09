@@ -40,6 +40,11 @@ public class SeqTxnTracker {
     private volatile long dirtyWriterTxn;
     private boolean dropped;
     private volatile String errorMessage = "";
+    // Hard-suspend flag: when set, the table is excluded from WAL apply and (when
+    // cairo.wal.apply.suspended.write.denied is enabled) denied WAL writes. Set by
+    // ALTER TABLE ... SUSPEND WAL, cleared by ALTER TABLE ... RESUME WAL. The reloadable
+    // cairo.wal.apply.suspended.tables config list is an additional source checked by the engine.
+    private volatile boolean hardSuspended;
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
@@ -96,6 +101,10 @@ public class SeqTxnTracker {
         return seqTxn > 0 && seqTxn > writerTxn;
     }
 
+    public boolean isHardSuspended() {
+        return hardSuspended;
+    }
+
     public boolean isInitialised() {
         return writerTxn != UNINITIALIZED_TXN;
     }
@@ -139,6 +148,10 @@ public class SeqTxnTracker {
         dropped = true;
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
+    }
+
+    public void setHardSuspended(boolean hardSuspended) {
+        this.hardSuspended = hardSuspended;
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {

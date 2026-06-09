@@ -319,6 +319,7 @@ public class TableSequencerImpl implements TableSequencer {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         checkDropped();
+        checkHardSuspended();
         long txn;
         try {
             // From sequencer perspective metadata version is the same as column structure version
@@ -380,6 +381,7 @@ public class TableSequencerImpl implements TableSequencer {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         checkDropped();
+        checkHardSuspended();
         long txn;
         final long timestamp = microClock.getTicks();
         try {
@@ -443,6 +445,15 @@ public class TableSequencerImpl implements TableSequencer {
     private void checkDropped() {
         if (metadata.isDropped()) {
             throw CairoException.tableDropped(tableToken);
+        }
+    }
+
+    private void checkHardSuspended() {
+        // A hard-suspended table denies commits like a dropped table, but with a distinct
+        // exception. Gated by cairo.wal.apply.suspended.write.denied so suspension can instead
+        // keep buffering WAL writes for later apply.
+        if (seqTxnTracker.isHardSuspended() && engine.getConfiguration().isWalApplySuspendedWriteDenied()) {
+            throw CairoException.tableSuspended(tableToken);
         }
     }
 

@@ -1409,6 +1409,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalApplySuspendedWriteDenied() {
+        return getDelegate().isWalApplySuspendedWriteDenied();
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return getDelegate().getWalApplyTableTimeQuota();
     }

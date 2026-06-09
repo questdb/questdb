@@ -199,10 +199,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
-    // Tables hard-suspended from WAL apply at runtime via ALTER TABLE ... SUSPEND WAL.
-    // The configured set lives in CairoConfiguration.getWalApplySuspendedTables(); a table is
-    // hard-suspended if it is in either source. Keyed by logical table name.
-    private final ConcurrentHashMap<String> walApplySuspendedTables = new ConcurrentHashMap<>();
     private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
@@ -1152,6 +1148,9 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
+        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+            throw CairoException.tableSuspended(tableToken);
+        }
         return walWriterPool.get(tableToken);
     }
 
@@ -1162,6 +1161,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // it will do unnecessary token verification
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
+        }
+        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+            throw CairoException.tableSuspended(tableToken);
         }
         return walWriterPool.get(tableToken);
     }
@@ -1253,6 +1255,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
         verifyTableToken(tableToken);
+        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+            throw CairoException.tableSuspended(tableToken);
+        }
         try {
             return walWriterPool.get(tableToken);
         } catch (EntryLockedException e) {
@@ -1380,7 +1385,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * Called by {@code ALTER TABLE ... SUSPEND WAL}.
      */
     public void addWalApplySuspended(TableToken tableToken) {
-        walApplySuspendedTables.put(tableToken.getTableName(), tableToken.getTableName());
+        tableSequencerAPI.setHardSuspended(tableToken, true);
     }
 
     /**
@@ -1389,7 +1394,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code cairo.wal.apply.suspended.tables} stays suspended until also removed from the config.
      */
     public void removeWalApplySuspended(TableToken tableToken) {
-        walApplySuspendedTables.remove(tableToken.getTableName());
+        tableSequencerAPI.setHardSuspended(tableToken, false);
     }
 
     /**
@@ -1400,12 +1405,11 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code ALTER TABLE ... RESUME WAL}.
      */
     public boolean isWalApplySuspended(TableToken tableToken) {
-        final String tableName = tableToken.getTableName();
-        if (walApplySuspendedTables.containsKey(tableName)) {
+        if (tableSequencerAPI.getTxnTracker(tableToken).isHardSuspended()) {
             return true;
         }
         final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
-        return configured != null && configured.contains(tableName);
+        return configured != null && configured.contains(tableToken.getTableName());
     }
 
     public boolean isWalTable(TableToken tableToken) {

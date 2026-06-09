@@ -101,6 +101,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT,
             PropertyKey.CAIRO_SQL_COPIER_CHUNKED,
             PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES,
+            PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED,
             PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {

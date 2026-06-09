@@ -998,38 +998,6 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterSuspendExcludesFromApplyAndResumeReapplies() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table t1 (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("create table t2 (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("insert into t1 values ('2024-01-01T00:00:00.000000Z', 1)");
-            execute("insert into t2 values ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-            assertSql("count\n1\n", "select count() from t1");
-            assertSql("count\n1\n", "select count() from t2");
-
-            // Hard-suspend t1 at runtime; it must be excluded from WAL apply.
-            execute("alter table t1 suspend wal");
-            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t1")));
-            Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("t2")));
-
-            execute("insert into t1 values ('2024-01-02T00:00:00.000000Z', 2)");
-            execute("insert into t2 values ('2024-01-02T00:00:00.000000Z', 2)");
-            drainWalQueue();
-
-            // t2 keeps applying; t1's new transaction is held back.
-            assertSql("count\n2\n", "select count() from t2");
-            assertSql("count\n1\n", "select count() from t1");
-
-            // RESUME clears the runtime entry and re-applies the outstanding transaction.
-            execute("alter table t1 resume wal");
-            Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("t1")));
-            drainWalQueue();
-            assertSql("count\n2\n", "select count() from t1");
-        });
-    }
-
-    @Test
     public void testAlterTableAllowedWhenDataTransactionPending() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
@@ -1883,30 +1851,6 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConfiguredSuspendedTableExcludedFromApply() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, "t_suspended");
-        assertMemoryLeak(() -> {
-            execute("create table t_suspended (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("create table t_active (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("insert into t_suspended values ('2024-01-01T00:00:00.000000Z', 1)");
-            execute("insert into t_active values ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-
-            // The configured table is excluded from apply; the other table applies normally.
-            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t_suspended")));
-            assertSql("count\n0\n", "select count() from t_suspended");
-            assertSql("count\n1\n", "select count() from t_active");
-
-            // Removing it from the config (a reload) lets apply resume. No ALTER RESUME is needed
-            // here because the table was never SeqTxnTracker-suspended, only config-excluded.
-            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
-            Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("t_suspended")));
-            drainWalQueue();
-            assertSql("count\n1\n", "select count() from t_suspended");
-        });
-    }
-
-    @Test
     public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
         testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
     }
@@ -2287,30 +2231,6 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 assertFalse(eventCursor.hasNext());
             }
-        });
-    }
-
-    @Test
-    public void testManualApplyJobAppliesNothingForSqlSuspendedTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("alter table t suspend wal");
-            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
-
-            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
-
-            // Run the apply job manually; the SQL-suspended table's transaction must not be applied.
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                walApplyJob.drain(0);
-            }
-            assertSql("count\n0\n", "select count() from t");
-
-            // Sanity: after RESUME a manual apply makes the row visible, proving apply itself works.
-            execute("alter table t resume wal");
-            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                walApplyJob.drain(0);
-            }
-            assertSql("count\n1\n", "select count() from t");
         });
     }
 
@@ -4881,6 +4801,140 @@ public class WalWriterTest extends AbstractCairoTest {
             } catch (UnsupportedOperationException ex) {
                 TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
             }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendDeniesSequencerCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("t");
+            // Acquire the writer first, then suspend: the commit must be denied at the sequencer.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                execute("alter table t suspend wal");
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(1, 1);
+                row.append();
+                try {
+                    walWriter.commit();
+                    Assert.fail("expected the commit to be denied");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isTableSuspended());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendDeniesWrites() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertSql("count\n1\n", "select count() from t");
+
+            // A suspended table denies WAL writes, like a dropped table but with a distinct error.
+            execute("alter table t suspend wal");
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+                Assert.assertFalse(e.isTableDropped());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "table is suspended"));
+            }
+
+            // RESUME re-allows writes.
+            execute("alter table t resume wal");
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendExcludesPendingTxnFromApply() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            // Pending WAL exists before suspension; it must not be applied while suspended.
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("alter table t suspend wal");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.drain(0);
+            }
+            assertSql("count\n0\n", "select count() from t");
+
+            // RESUME lets the pending transaction apply.
+            execute("alter table t resume wal");
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.drain(0);
+            }
+            assertSql("count\n1\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendViaConfigDeniesWrites() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertSql("count\n1\n", "select count() from t");
+
+            // The reloadable config list suspends the table and denies writes.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, "t");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // Removing it from the config (a reload) re-allows writes.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendWriteDeniedFlagIsReloadable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("alter table t suspend wal");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+
+            // Flag off (default): a suspended table still accepts writes (buffered for later apply).
+            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+
+            // Turn the flag on at runtime (reload): writes are now denied.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+            Assert.assertTrue(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // Turn it back off (reload): writes are accepted again.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "false");
+            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+
+            // Resume and apply: the two accepted rows materialize, the denied one was never written.
+            execute("alter table t resume wal");
+            drainWalQueue();
+            assertSql("count\n2\n", "select count() from t");
         });
     }
 
