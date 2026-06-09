@@ -301,4 +301,26 @@ mod tests {
         assert_eq!(result, data);
         Ok(())
     }
+
+    #[test]
+    fn bitpacked_run_bitwidth_over_32_errors() {
+        // The definition/repetition-levels decode path builds
+        // bitpacked::Decoder::<u32> via read_next() with a width taken from the
+        // schema's max level. A foreign file can declare a level bit width wider
+        // than 32; without the num_bits guard that reaches
+        // unreachable!("invalid num_bits 40") and aborts the JVM across JNI.
+        // HybridRleDecoder::try_new must surface a clean error instead. The bit
+        // width (40) is passed as the level width, not embedded in the stream.
+        // Wire format: [0x03 = bitpacked indicator (1 group of 8), then 40 data
+        // bytes = 8 * 40 bits].
+        let mut data = vec![0x03u8];
+        data.extend(std::iter::repeat_n(0u8, 40));
+
+        let err = HybridRleDecoder::try_new(&data, 40, 8)
+            .expect_err("a level bit width over 32 must error, not panic");
+        assert!(
+            format!("{err:?}").contains("exceeds"),
+            "expected a clean bit-width error, got: {err:?}"
+        );
+    }
 }

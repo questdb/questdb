@@ -2950,6 +2950,19 @@ mod tests {
         }
     }
 
+    fn make_byte_array_type() -> PrimitiveType {
+        PrimitiveType {
+            field_info: FieldInfo {
+                name: "str_col".to_string(),
+                repetition: Repetition::Required,
+                id: None,
+            },
+            logical_type: None,
+            converted_type: None,
+            physical_type: PhysicalType::ByteArray,
+        }
+    }
+
     fn make_int32_type() -> PrimitiveType {
         PrimitiveType {
             field_info: FieldInfo {
@@ -4189,6 +4202,88 @@ mod tests {
             .expect_err("a non-null claim over an empty values buffer must be a decode error");
         assert!(
             err.to_string().contains("not enough length values"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn decode_page_dict_num_values_over_buffer_errors_not_panics() {
+        // End-to-end through decode_page: a dictionary-encoded Varchar column
+        // whose dictionary page header claims far more values (i32::MAX) than its
+        // buffer can hold. decode_page builds BaseVarDictDecoder, whose num_values
+        // guard must surface a clean Layout error rather than letting
+        // Vec::with_capacity reserve tens of gigabytes and abort the JVM. Proves
+        // the guard propagates through the full decode dispatch, not just the
+        // direct constructor.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // A valid 1-entry var-width dictionary buffer, but a lying header.
+        let mut dict_page = make_dict_page_var(&[b"aaa".to_vec()]);
+        dict_page.num_values = i32::MAX as usize;
+        let dict_page = dict_page.as_page();
+
+        let indices = [0u32];
+        let page = make_dict_data_page(make_byte_array_type(), Encoding::RleDictionary, &indices);
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::Varchar.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let err = decode_page(
+            &page,
+            Some(&dict_page),
+            &mut bufs,
+            col_info,
+            0,
+            indices.len(),
+        )
+        .expect_err("an oversized dictionary num_values must error, not abort");
+        assert!(
+            err.to_string().contains("too short to hold"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn decode_page_dict_index_bitwidth_over_32_errors_not_panics() {
+        // End-to-end through decode_page: a dictionary-encoded String column whose
+        // index bit width (40) exceeds the 32-bit u32 the indices unpack into. The
+        // RLE_DICTIONARY index decode reaches bitpacked::Decoder::<u32>::try_new,
+        // whose num_bits guard must surface a clean error rather than reaching
+        // unreachable!("invalid num_bits 40") and aborting the JVM. Proves the
+        // guard propagates through the full decode dispatch. Values-buffer wire
+        // format: [40 = bit width, 0x03 = bitpacked indicator (1 group of 8), then
+        // 40 data bytes = 8 * 40 bits].
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // A valid var-width dictionary so the only fault is the index bit width.
+        let dict_page = make_dict_page_var(&[b"aaa".to_vec(), b"bbb".to_vec(), b"ccc".to_vec()]);
+        let dict_page = dict_page.as_page();
+
+        let mut values = vec![40u8, 0x03];
+        values.extend(std::iter::repeat_n(0u8, 40));
+        let page = make_required_page(make_byte_array_type(), Encoding::RleDictionary, values, 8);
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::String.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let err = decode_page(&page, Some(&dict_page), &mut bufs, col_info, 0, 8)
+            .expect_err("an index bit width over 32 must error, not abort");
+        assert!(
+            err.to_string().contains("exceeds"),
             "unexpected error: {err}"
         );
     }
