@@ -464,6 +464,37 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelConstArrayKeyWithCountDistinctDoesNotLeak() throws Exception {
+        // A thread-safe constant ARRAY group key alongside a non-thread-safe aggregate
+        // (count_distinct) makes the async GROUP BY create per-worker copies. Each worker's
+        // copy of the thread-safe ArrayConstant key must be extracted and freed; otherwise it
+        // leaks NATIVE_ND_ARRAY native memory, scaling with worker count.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute("CREATE TABLE tab (ts TIMESTAMP, sym SYMBOL) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        final int rowsPerPartition = MIN_PAGE_FRAME_MAX_ROWS;
+                        final int partitions = 40;
+                        engine.execute(
+                                "INSERT INTO tab SELECT" +
+                                        " ((x - 1) / " + rowsPerPartition + " * 86400000000 + x)::timestamp," +
+                                        " ('s' || ((x - 1) % 5))::symbol" +
+                                        " FROM long_sequence(" + (rowsPerPartition * partitions) + ")",
+                                sqlExecutionContext
+                        );
+                        TestUtils.printSql(engine, sqlExecutionContext, "SELECT ARRAY[0.5] k, count_distinct(sym) c FROM tab", sink);
+                        TestUtils.assertEquals("k\tc\n[0.5]\t5\n", sink);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelCountDistinctFuzz() throws Exception {
         // With this test, we aim to verify correctness of merge() method
         // implementation in count_distinct functions.

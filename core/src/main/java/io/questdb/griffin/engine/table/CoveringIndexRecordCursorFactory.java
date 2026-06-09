@@ -203,7 +203,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
                         key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
                     }
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    // Bind-variable / runtime-constant list elements may resolve
+                    // to the same symbol key; dedup so the multi-key merge does
+                    // not open a duplicate posting cursor per key and merge the
+                    // same row-id stream twice (duplicate rows / inflated
+                    // aggregates).
+                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
                         multiKeyCursor.multiKeys.add(key);
                     }
                 }
@@ -285,7 +290,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
                         key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
                     }
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    // See getCursor(): dedup duplicate resolved keys so the
+                    // parallel GROUP BY page-frame path does not over-count.
+                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyPageFrameCursor.multiKeys.contains(key)) {
                         multiKeyPageFrameCursor.multiKeys.add(key);
                     }
                 }
@@ -311,6 +318,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(frameCursor);
             throw th;
         }
+    }
+
+    @Override
+    public int getScanDirection() {
+        // Non-latestBy: partition iteration is ASC, and within each
+        // partition rows are emitted in row-id ascending order (single
+        // key directly; multi key via the row-id merge across per-key
+        // posting cursors). Row-id is ts-ascending by the designated
+        // timestamp contract, so the overall stream is ts-ascending and
+        // SAMPLE BY / ORDER-BY-ts elision can trust this advertisement.
+        // Single-key latestBy returns a single row (the latest for the one
+        // resolved key), so it is trivially ts-ordered. Only multi-key
+        // latestBy breaks the order: it emits one row per key in key order,
+        // not ts order, so it alone advertises no ordering.
+        return latestBy && multiKeyCursor != null ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
     }
 
     @Override
@@ -744,7 +766,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
-    private static abstract class CoveringPageFrameCursor implements PageFrameCursor {
+    private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
         private static final int INITIAL_CAPACITY = 4096;
         private static int maxRowsPerFrameOverride = -1;
         protected int maxRowsPerFrame;
@@ -847,8 +869,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public boolean isExternal() {
-            return false;
+        public TableReader getTableReader() {
+            return tableReader;
         }
 
         @Override
@@ -865,6 +887,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return null;
             }
             return nextImpl();
+        }
+
+        // Initialized via the package-private of(PartitionFrameCursor, int, boolean) below.
+        @Override
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1088,12 +1116,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
                     case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
                             Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
-                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT ->
+                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
                             Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
                     case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                             Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
-                    case ColumnType.DECIMAL16 ->
-                            Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
                     case ColumnType.UUID, ColumnType.DECIMAL128 -> {
                         long off128 = (long) count * 16;
                         Unsafe.putLong(addr + off128, crc.getCoveredLong128Lo(includeIdx));
