@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -45,14 +46,15 @@ import io.questdb.std.Vect;
 
 class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
     private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
-    protected RecordCursor baseCursor;
-    protected Record baseRecord;
-    protected SqlExecutionCircuitBreaker circuitBreaker;
-    protected long limit;
+    protected final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
     private final long parallelThreshold;
+    protected RecordCursor baseCursor;
+    protected Record baseRecord;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
+    protected long limit;
     private long count;
     private long currentAddr;
     private long endAddr;
@@ -85,6 +87,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
         }
         this.encoder = encoderInit;
         this.entryMem = entryMemInit;
+        this.buildReadColumns = extractSortKeyColumnIndexes(sortColumnFilter);
         final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), MAX_HEAP_SIZE_LIMIT);
         final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_HEAP_SIZE_LIMIT);
         this.maxEntryMemBytes = Math.min(keyCap + valueCap, MAX_HEAP_SIZE_LIMIT);
@@ -148,6 +151,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
             isOpen = true;
             entryMem.reopen();
         }
+        baseCursor.setParentUsedColumns(buildReadColumns);
         final SortKeyType keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
         entrySize = keyType.entrySize();
@@ -199,7 +203,16 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
         rowsLeft = end - start;
     }
 
-    protected void buildAndSort() {
+    private static IntHashSet extractSortKeyColumnIndexes(IntList sortColumnFilter) {
+        final IntHashSet indexes = new IntHashSet(sortColumnFilter.size());
+        for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
+            final int encoded = sortColumnFilter.getQuick(i);
+            indexes.add((encoded > 0 ? encoded : -encoded) - 1);
+        }
+        return indexes;
+    }
+
+    private void buildAndSort() {
         try {
             if (limit > 0) {
                 runBuild();
@@ -212,6 +225,22 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
         toTop();
+    }
+
+    private long emitCount() {
+        final long sliceStart = isFirstN ? 0 : Math.max(count - limit, 0);
+        final long sliceEnd = isFirstN ? Math.min(limit, count) : count;
+        return Math.max(sliceEnd - sliceStart - skipFirst - skipLast, 0);
+    }
+
+    private void throwLimitOverflow() {
+        throw LimitOverflowException.instance()
+                .put("limit of ").put(maxEntryMemBytes)
+                .put(" memory exceeded in EncodedSort (raise ")
+                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                .put(" or ")
+                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
+                .put(')');
     }
 
     protected final void encodeAndAppendCurrentRow() {
@@ -229,21 +258,5 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
             circuitBreaker.statefulThrowExceptionIfTripped();
             encodeAndAppendCurrentRow();
         }
-    }
-
-    private long emitCount() {
-        final long sliceStart = isFirstN ? 0 : Math.max(count - limit, 0);
-        final long sliceEnd = isFirstN ? Math.min(limit, count) : count;
-        return Math.max(sliceEnd - sliceStart - skipFirst - skipLast, 0);
-    }
-
-    private void throwLimitOverflow() {
-        throw LimitOverflowException.instance()
-                .put("limit of ").put(maxEntryMemBytes)
-                .put(" memory exceeded in EncodedSort (raise ")
-                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                .put(" or ")
-                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                .put(')');
     }
 }

@@ -58,6 +58,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    private IntHashSet lateMatSkipColumnIndexes;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
@@ -90,6 +91,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public void clear() {
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        lateMatSkipColumnIndexes = null;
     }
 
     @Override
@@ -106,6 +108,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     public @Nullable IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
+    }
+
+    public @NotNull IntHashSet getLateMaterializationSkipColumnIndexes() {
+        return lateMatSkipColumnIndexes != null ? lateMatSkipColumnIndexes : filterUsedColumnIndexes;
     }
 
     public SelectivityStats getSelectivityStats(int slotId) {
@@ -243,6 +249,23 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public void releaseFilter(int filterId) {
         if (perWorkerLocks != null) {
             perWorkerLocks.releaseSlot(filterId);
+        }
+    }
+
+    public void setParentUsedColumns(@Nullable IntHashSet columns) {
+        if (columns == null) {
+            lateMatSkipColumnIndexes = null;
+            return;
+        }
+        if (lateMatSkipColumnIndexes == null) {
+            lateMatSkipColumnIndexes = new IntHashSet();
+        } else {
+            lateMatSkipColumnIndexes.clear();
+        }
+        for (int i = 0, n = columnTypes.size(); i < n; i++) {
+            if (!columns.contains(i) || filterUsedColumnIndexes.contains(i)) {
+                lateMatSkipColumnIndexes.add(i);
+            }
         }
     }
 

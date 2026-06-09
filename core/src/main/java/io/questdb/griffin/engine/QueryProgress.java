@@ -58,6 +58,7 @@ import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -626,6 +627,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void setParentUsedColumns(IntHashSet columnIndexes) {
+            base.setParentUsedColumns(columnIndexes);
         }
 
         @Override

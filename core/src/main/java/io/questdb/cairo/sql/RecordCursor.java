@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntHashSet;
 
 import java.io.Closeable;
 
@@ -291,6 +292,15 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * a memory size in bytes, but a stable value used to detect state changes.
      */
     long preComputedStateSize();
+
+    /**
+     * Declares which projected column indexes the parent cursor will read during forward
+     * iteration (via {@link #getRecord()}); columns accessed only via
+     * {@link #recordAt(Record, long)} may be omitted. Null restores the default of
+     * materialising every projected column.
+     */
+    default void setParentUsedColumns(IntHashSet columnIndexes) {
+    }
 
     /**
      * Declares the access pattern the enclosing factory will use when calling

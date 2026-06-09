@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
@@ -251,6 +252,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setParentUsedColumns(IntHashSet columnIndexes) {
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(columnIndexes);
+    }
+
+    @Override
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         frameMemoryPool.setParquetDecodeHint(hint);
     }
@@ -432,6 +438,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameRowIndex = -1;
         this.frameRowCount = -1;
         this.allFramesActive = true;
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
