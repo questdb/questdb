@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.mp.continuation.ContinuationQueue;
 import io.questdb.mp.continuation.WorkerContinuation;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -45,6 +46,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public class Worker extends Thread {
     public static final Clock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
     public static final int NO_THREAD_AFFINITY = -1;
+    // The current carrier's POOL-LOCAL worker id, published per carrier so that
+    // cont-aware code can read it after a continuation migrates to a peer carrier.
+    // Distinct from CarrierIdentity (the globally-unique carrier id used for
+    // CarrierLocal row addressing): the pool-local id is what PerWorkerLocks expects,
+    // since a globally-unique id collides mod slot count and breaks per-slot ordering.
+    public static final CarrierLocal<Integer> WORKER_ID = CarrierLocal.withInitial(() -> -1);
     // Carrier-pinned suspends are throttled to one log line per worker per this
     // interval. Pinning typically clears within a job iteration, but if it
     // persists, periodic re-logging keeps the condition visible without flooding.
@@ -138,6 +145,10 @@ public class Worker extends Thread {
                 // globally unique across pools - workerId is pool-local and
                 // would collide between e.g. shared:0 and io:0.
                 CarrierIdentity.bind();
+                // Publish this carrier's pool-local worker id (bound for the carrier's
+                // lifetime). Read it via WORKER_ID.get() wherever the pool-local id is
+                // needed, instead of conflating it with the global CarrierIdentity.
+                WORKER_ID.set(workerId);
 
                 String workerName = getName();
 
@@ -319,11 +330,15 @@ public class Worker extends Thread {
             boolean runAsap = false;
             // measure latency of all jobs tick
             jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
-            final int carrierId = CarrierIdentity.current();
+            // Restore the pool-local worker id of the carrier running this tick. A
+            // cont remount can resume this loop on a peer carrier, so it is re-read
+            // from WORKER_ID (carrier-aware, travels with the carrier) each iteration
+            // rather than aliasing this Worker's field.
+            final int currentWorkerId = WORKER_ID.get();
             for (int i = 0, n = myJobs.size(); i < n; i++) {
                 Unsafe.loadFence();
                 try {
-                    runAsap |= myJobs.get(i).run(carrierId, runStatus);
+                    runAsap |= myJobs.get(i).run(currentWorkerId, runStatus);
                 } catch (Throwable e) {
                     if (metrics.isEnabled()) {
                         try {

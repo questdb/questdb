@@ -68,7 +68,6 @@ public class WorkerPoolUtils {
     ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = sharedPoolQuery.getWorkerCount();
 
         sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
 
