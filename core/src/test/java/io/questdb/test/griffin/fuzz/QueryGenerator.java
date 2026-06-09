@@ -31,6 +31,7 @@ import io.questdb.test.griffin.fuzz.clauses.PostingClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.clauses.SimpleClause;
 import io.questdb.test.griffin.fuzz.clauses.TemporalJoinClause;
+import io.questdb.test.griffin.fuzz.clauses.WindowClause;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 
 /**
@@ -38,9 +39,16 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * <p>
  * Shape distribution is roughly: temporal JOIN 15% (when two or more
  * tables exist), posting-index read 15% (when the table has a
- * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 20%, SIMPLE 30%. The
- * join and posting bands fall through to the generic single-table shapes
- * when their precondition is not met.
+ * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 20%, and the remaining
+ * ~30% split between SIMPLE and WINDOW. The join and posting bands fall
+ * through to the generic single-table shapes when their precondition is
+ * not met; SAMPLE BY and WINDOW downgrade to SIMPLE on sources without a
+ * designated timestamp.
+ * <p>
+ * When window fuzzing is enabled ({@code windowEnabled}, on by default), a
+ * WINDOW band is carved out of the upper half of the SIMPLE range; the
+ * SAMPLE BY and GROUP BY bands are unchanged, so disabling window restores
+ * the exact pre-window shape distribution (SIMPLE ~30%).
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -59,7 +67,7 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn) {
+    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
@@ -98,6 +106,14 @@ public final class QueryGenerator {
         }
         if (pick < 70) {
             return GroupByClause.generate(rnd, source, ctx, injectFaultFn);
+        }
+        // pick in [70, 100) is SIMPLE. When window fuzzing is enabled, carve the
+        // upper half [85, 100) into a WINDOW band; this leaves the SAMPLE BY and
+        // GROUP BY bands untouched, so disabling window restores the exact
+        // pre-window distribution. Window functions order by the designated
+        // timestamp, so a source without one falls through to SIMPLE.
+        if (windowEnabled && pick >= 85 && source.getTable().getTsColumnName() != null) {
+            return WindowClause.generate(rnd, source, ctx, injectFaultFn);
         }
         return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
     }

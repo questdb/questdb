@@ -90,6 +90,15 @@ import java.nio.file.Paths;
  *         The runner then asserts the factory frees its resources on the error
  *         path and that the same query runs cleanly once the fault is removed.
  *         Fault queries run serially and bypass the differential oracle.</li>
+ *     <li>{@code -Dquestdb.fuzz.window=true|false} &mdash; generate
+ *         window-function shapes ({@code fn(...) OVER (PARTITION BY ...
+ *         ORDER BY ts [frame])}) on a fraction of queries (default true).
+ *         On by default like fault injection; it currently surfaces
+ *         still-unfixed window-function defects, so the run goes red on
+ *         the seeds that hit them. The WINDOW band is carved from the
+ *         SIMPLE range, so the other shapes' frequencies are unchanged;
+ *         pass {@code false} to drop window shapes and exercise the
+ *         rest.</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
@@ -212,6 +221,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", verifyCursor=").$(config.isVerifyCursorEnabled())
                 .$(", faults=").$(config.isFaultInjectionEnabled())
                 .$(", faultPct=").$(config.getFaultProbabilityPct())
+                .$(", window=").$(config.isWindowEnabled())
                 .$();
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
@@ -254,7 +264,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn);
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -303,7 +313,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn);
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;

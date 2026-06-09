@@ -40,11 +40,13 @@ public final class FuzzConfig {
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
+    public static final String WINDOW_PROP = "questdb.fuzz.window";
 
     private final boolean isDiffJitEnabled;
     private final boolean isDiffShadowEnabled;
     private final boolean isFaultInjectionEnabled;
     private final boolean isVerifyCursorEnabled;
+    private final boolean isWindowEnabled;
     private final String dumpPath;
     private final int faultProbabilityPct;
     private final int maxColumnsPerTable;
@@ -70,6 +72,11 @@ public final class FuzzConfig {
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
+        // On by default, like fault injection: window-function shapes still
+        // surface unfixed window-function defects, so the run goes red on the
+        // seeds that hit them until those are fixed. Pass
+        // -Dquestdb.fuzz.window=false to exercise the rest of the corpus.
+        this.isWindowEnabled = Boolean.parseBoolean(System.getProperty(WINDOW_PROP, "true"));
     }
 
     public String getDumpPath() {
@@ -122,5 +129,9 @@ public final class FuzzConfig {
 
     public boolean isVerifyCursorEnabled() {
         return isVerifyCursorEnabled;
+    }
+
+    public boolean isWindowEnabled() {
+        return isWindowEnabled;
     }
 }
