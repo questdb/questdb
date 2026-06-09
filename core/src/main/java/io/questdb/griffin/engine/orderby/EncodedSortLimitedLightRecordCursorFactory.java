@@ -56,7 +56,6 @@ import org.jetbrains.annotations.Nullable;
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final CairoConfiguration configuration;
-    private final ParquetDecodeHint decodeHint;
     private final EncodedSortLimitedLightRecordCursor genericCursor;
     private final Function hiFunction;
     private final Function loFunction;
@@ -86,7 +85,6 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.hiFunction = hiFunction;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        this.decodeHint = timestampIndex != -1 ? ParquetDecodeHint.MONOTONIC : ParquetDecodeHint.SCATTERED;
         EncodedSortLimitedLightRecordCursor generic = null;
         EncodedSortLimitedPartiallySortedLightRecordCursor partial = null;
         try {
@@ -120,7 +118,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         }
 
         try {
-            baseCursor.setParquetDecodeHint(decodeHint);
+            baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             activeCursor.of(baseCursor, executionContext);
             return activeCursor;
         } catch (Throwable th) {
