@@ -287,9 +287,13 @@ mod tests {
     fn try_new_rejects_num_values_exceeding_buffer() {
         // A foreign dictionary page header can claim a huge num_values (up to
         // i32::MAX) while carrying a tiny buffer. Each value needs at least a
-        // 4-byte length prefix, so try_new must reject the header rather than
-        // Vec::with_capacity(num_values) reserving tens of gigabytes and
-        // aborting the process on allocation failure.
+        // 4-byte length prefix, so try_new must reject the header up front with
+        // its own "too short to hold" error -- distinct from the per-element
+        // loop's "too short to read" -- before it reaches
+        // Vec::with_capacity(num_values), whose tens-of-gigabytes reservation
+        // aborts the process when the allocator refuses it. (with_capacity is
+        // lazy, so this pins the guard's rejection and its distinct message, not
+        // the abort itself, which is allocator/overcommit dependent.)
         let buffer = [0u8; 8]; // room for at most 2 zero-length values
         let dict_page = DictPage {
             buffer: &buffer,
@@ -311,5 +315,19 @@ mod tests {
         let dict = BaseVarDictDecoder::try_new(&dict_page).unwrap();
         assert_eq!(dict.dict_values.len(), 2);
         assert!(dict.dict_values.iter().all(|v| v.is_empty()));
+    }
+
+    #[test]
+    fn try_new_rejects_num_values_one_over_buffer() {
+        // Tight boundary: one more than the buffer can hold (len/4 + 1) must be
+        // rejected. Sits right next to try_new_accepts_values_filling_buffer
+        // (which accepts exactly len/4) to pin the comparison and catch a
+        // `>`-to-`>=` or off-by-one regression in the bound.
+        let buffer = [0u8; 8]; // holds at most 2 zero-length values (len/4 == 2)
+        let dict_page = DictPage { buffer: &buffer, num_values: 3, is_sorted: false };
+        let err = BaseVarDictDecoder::try_new(&dict_page)
+            .err()
+            .expect("num_values one over capacity must error");
+        assert!(format!("{err}").contains("too short to hold"), "got: {err}");
     }
 }
