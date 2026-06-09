@@ -630,9 +630,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
-            this.masterCursor = masterCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
             internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
@@ -643,6 +641,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             lastSlaveTimestamp = Long.MIN_VALUE;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -976,9 +978,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
-            this.masterCursor = masterCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
             internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
@@ -986,6 +986,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             lastSlaveTimestamp = Long.MIN_VALUE;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 

@@ -490,8 +490,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             slaveTimeFrameHelper.of(slaveCursor);
 
             // Initialize horizon timestamp iterator with master cursor
@@ -512,6 +510,10 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                 groupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
             }
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
 
             isDataMapBuilt = false;
         }

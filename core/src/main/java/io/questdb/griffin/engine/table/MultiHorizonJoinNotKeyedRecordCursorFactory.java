@@ -426,7 +426,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.masterCursor = masterCursor;
 
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s));
@@ -450,6 +449,9 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
             isValueBuilt = false;
             isExhausted = false;
+
+            // Adopt master last so an init() throw above can't double-free it via the getCursor() catch.
+            this.masterCursor = masterCursor;
         }
     }
 }

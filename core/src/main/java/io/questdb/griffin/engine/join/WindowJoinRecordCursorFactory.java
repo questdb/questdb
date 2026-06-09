@@ -452,8 +452,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
             }
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
@@ -470,6 +468,10 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 

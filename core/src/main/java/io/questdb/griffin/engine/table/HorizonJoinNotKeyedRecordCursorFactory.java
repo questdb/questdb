@@ -406,8 +406,6 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             slaveTimeFrameHelper.of(slaveCursor);
 
             // Initialize horizon timestamp iterator with master cursor
@@ -434,6 +432,10 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             isValueBuilt = false;
             isExhausted = false;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

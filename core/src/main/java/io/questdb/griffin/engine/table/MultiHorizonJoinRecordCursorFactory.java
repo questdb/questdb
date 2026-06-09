@@ -506,7 +506,6 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.masterCursor = masterCursor;
 
             // Initialize each slave's time frame helper and symbol translating record
             for (int s = 0; s < slaveCount; s++) {
@@ -530,6 +529,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                 groupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
             }
+
+            // Adopt master last so an init() throw above can't double-free it via the getCursor() catch.
+            this.masterCursor = masterCursor;
 
             isDataMapBuilt = false;
         }
