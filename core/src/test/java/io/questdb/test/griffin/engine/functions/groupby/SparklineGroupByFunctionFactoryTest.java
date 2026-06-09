@@ -1248,9 +1248,9 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
         // and renders just "sparkline(val)" without the min/max/width suffix.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertPlanNoLeakCheck(
-                    "SELECT sparkline(val) FROM t",
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: false
                               values: [sparkline(val)]
@@ -1258,8 +1258,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 

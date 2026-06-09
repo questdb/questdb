@@ -52,15 +52,21 @@ public interface SqlParserCallback {
                 SqlException.matViewDoesNotExist(tableNameExpr.position, tableNameExpr.token)
         );
         if (!viewToken.isMatView()) {
-            throw SqlException.$(tableNameExpr.position, "materialized view name expected, got table name");
+            throw SqlException.$(tableNameExpr.position, viewToken.isView()
+                    ? "materialized view name expected, got view name"
+                    : "materialized view name expected, got table name");
         }
         return viewToken;
     }
 
-    static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
-        return getTableToken(tableNameExpr, executionContext, path,
+    static @NotNull TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken tableToken = getTableToken(tableNameExpr, executionContext, path,
                 SqlException.tableDoesNotExist(tableNameExpr.position, tableNameExpr.token)
         );
+        if (tableToken.isMatView() || tableToken.isView()) {
+            throw SqlException.$(tableNameExpr.position, "table name expected, got view or materialized view name");
+        }
+        return tableToken;
     }
 
     static @NotNull TableToken getViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
@@ -68,7 +74,9 @@ public interface SqlParserCallback {
                 SqlException.viewDoesNotExist(tableNameExpr.position, tableNameExpr.token)
         );
         if (!viewToken.isView()) {
-            throw SqlException.$(tableNameExpr.position, "view name expected, got table name");
+            throw SqlException.$(tableNameExpr.position, viewToken.isMatView()
+                    ? "view name expected, got materialized view name"
+                    : "view name expected, got table name");
         }
         return viewToken;
     }

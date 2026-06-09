@@ -52,7 +52,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * A concurrent registry of running sql commands.
  */
 public class QueryRegistry {
-
     private static final Log LOG = LogFactory.getLog(QueryRegistry.class);
     private final Clock clock;
     private final AtomicLong idSeq = new AtomicLong();

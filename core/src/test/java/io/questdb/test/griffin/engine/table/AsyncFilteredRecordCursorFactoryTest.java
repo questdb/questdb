@@ -47,7 +47,6 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -119,56 +118,32 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testDeferredSymbolInFilter() throws Exception {
         withPool(
-                (_, compiler, sqlExecutionContext) -> {
+                (_, _, sqlExecutionContext) -> {
                     // JIT compiler doesn't support IN operator for symbols.
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                    execute(
-                            compiler,
-                            "create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
-                            sqlExecutionContext
-                    );
-
-                    snapshotMemoryUsage();
-                    final String sql = "select * from x where s in ('C','D') limit 10";
-                    try (final RecordCursorFactory factory = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                        Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getBaseFactory().getClass());
-
-                        assertCursor(
-                                "s\tt\n",
-                                factory,
-                                true,
-                                false,
-                                false,
-                                sqlExecutionContext
-                        );
-
-                        execute(compiler,
-                                "insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)",
-                                sqlExecutionContext);
-
-                        // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
-                        assertCursor(
-                                """
-                                        s\tt
-                                        C\t1970-01-02T03:46:40.000000Z
-                                        C\t1970-01-02T03:46:40.100000Z
-                                        D\t1970-01-02T03:46:40.200000Z
-                                        C\t1970-01-02T03:46:40.300000Z
-                                        D\t1970-01-02T03:46:40.400000Z
-                                        C\t1970-01-02T03:46:40.500000Z
-                                        D\t1970-01-02T03:46:40.600000Z
-                                        D\t1970-01-02T03:46:40.700000Z
-                                        C\t1970-01-02T03:46:40.800000Z
-                                        D\t1970-01-02T03:46:40.900000Z
-                                        """,
-                                factory,
-                                true,
-                                false,
-                                false,
-                                sqlExecutionContext
-                        );
-                    }
-
+                    assertQuery("select * from x where s in ('C','D') limit 10")
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .ddl("create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour")
+                            .timestamp("t")
+                            .withBaseFactoryClass(AsyncFilteredRecordCursorFactory.class)
+                            .mutateWith("insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)")
+                            .returns(
+                                    "s\tt\n",
+                                    """
+                                            s\tt
+                                            C\t1970-01-02T03:46:40.000000Z
+                                            C\t1970-01-02T03:46:40.100000Z
+                                            D\t1970-01-02T03:46:40.200000Z
+                                            C\t1970-01-02T03:46:40.300000Z
+                                            D\t1970-01-02T03:46:40.400000Z
+                                            C\t1970-01-02T03:46:40.500000Z
+                                            D\t1970-01-02T03:46:40.600000Z
+                                            D\t1970-01-02T03:46:40.700000Z
+                                            C\t1970-01-02T03:46:40.800000Z
+                                            D\t1970-01-02T03:46:40.900000Z
+                                            """
+                            );
                     resetTaskCapacities();
                 }, new AtomicBooleanCircuitBreaker(engine)
         );
@@ -176,12 +151,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDeferredSymbolInFilter2() throws Exception {
-        withPool((_, compiler, sqlExecutionContext) -> testDeferredSymbolInFilter0(compiler, sqlExecutionContext));
+        withPool((_, _, sqlExecutionContext) -> testDeferredSymbolInFilter0(sqlExecutionContext));
     }
 
     @Test
     public void testDeferredSymbolInFilter2TwoPools() throws Exception {
-        withDoublePool((_, compiler, sqlExecutionContext) -> testDeferredSymbolInFilter0(compiler, sqlExecutionContext));
+        withDoublePool((_, _, sqlExecutionContext) -> testDeferredSymbolInFilter0(sqlExecutionContext));
     }
 
     @Test
@@ -336,13 +311,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getMessage(), "unexpected reduce error");
                     }
 
-                    assertQuery("explain select timestamp, count() as trades" +
+                    assertQuery("select timestamp, count() as trades" +
                             " from x" +
                             " where symbol like '%_ETH' and (row_id != 100)" +
                             " sample by 1h")
                             .noLeakCheck()
-                            .returnsOnce("""
-                                    QUERY PLAN
+                            .assertsPlan("""
                                     Encode sort light
                                       keys: [timestamp]
                                         Async Group By workers: 1
@@ -653,25 +627,23 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPreTouchEnabled() throws Exception {
         withPool(
-                (engine, _, sqlExecutionContext) -> {
+                (_, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
                     execute("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
                     final String sql = "select /*+ ENABLE_PRE_TOUCH(x) */ 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            sql,
-                            sink,
-                            """
+                    assertQuery(sql)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("c2")
+                            .returns("""
                                     c1\tc2\tc3\tc4
                                     foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163
                                     foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911
                                     foobar\t1970-01-01T00:42:39.700000Z\t0.3457641654104435\t0.5880171472078374
                                     foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813
                                     foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728
-                                    """
-                    );
+                                    """);
                 }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
         );
     }
@@ -753,56 +725,35 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
     }
 
-    private void testDeferredSymbolInFilter0(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testDeferredSymbolInFilter0(SqlExecutionContext sqlExecutionContext) throws Exception {
         // JIT compiler doesn't support IN operator for symbols.
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        execute(
-                compiler,
-                "create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
-                sqlExecutionContext
-        );
-
-        snapshotMemoryUsage();
-        final String sql = "select * from x where s in ('C','D') limit 10";
-        try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getBaseFactory().getClass());
-
-            assertCursor(
-                    "s\tt\n",
-                    factory,
-                    true,
-                    false,
-                    false,
-                    sqlExecutionContext
-            );
-
-            execute(
-                    compiler,
-                    "insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)",
-                    sqlExecutionContext
-            );
-            // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
-            assertCursor(
-                    """
-                            s\tt
-                            C\t1970-01-01T00:16:40.000000Z
-                            C\t1970-01-01T00:16:40.100000Z
-                            D\t1970-01-01T00:16:40.200000Z
-                            C\t1970-01-01T00:16:40.300000Z
-                            D\t1970-01-01T00:16:40.400000Z
-                            C\t1970-01-01T00:16:40.500000Z
-                            D\t1970-01-01T00:16:40.600000Z
-                            D\t1970-01-01T00:16:40.700000Z
-                            C\t1970-01-01T00:16:40.800000Z
-                            D\t1970-01-01T00:16:40.900000Z
-                            """,
-                    factory,
-                    true,
-                    false,
-                    false,
-                    sqlExecutionContext
-            );
-        }
+        // The same compiled factory is asserted before and after the insert: withBaseFactoryClass pins
+        // the async execution path, mutateWith adds the deferred 'C'/'D' symbols, and returns(before,
+        // after) verifies the factory's symbol tables refresh on re-execution.
+        assertQuery("select * from x where s in ('C','D') limit 10")
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .ddl("create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour")
+                .timestamp("t")
+                .withBaseFactoryClass(AsyncFilteredRecordCursorFactory.class)
+                .mutateWith("insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)")
+                .returns(
+                        "s\tt\n",
+                        """
+                                s\tt
+                                C\t1970-01-01T00:16:40.000000Z
+                                C\t1970-01-01T00:16:40.100000Z
+                                D\t1970-01-01T00:16:40.200000Z
+                                C\t1970-01-01T00:16:40.300000Z
+                                D\t1970-01-01T00:16:40.400000Z
+                                C\t1970-01-01T00:16:40.500000Z
+                                D\t1970-01-01T00:16:40.600000Z
+                                D\t1970-01-01T00:16:40.700000Z
+                                C\t1970-01-01T00:16:40.800000Z
+                                D\t1970-01-01T00:16:40.900000Z
+                                """
+                );
         resetTaskCapacities();
     }
 

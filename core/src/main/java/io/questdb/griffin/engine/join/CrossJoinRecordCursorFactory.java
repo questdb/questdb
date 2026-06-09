@@ -209,6 +209,25 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 return;
             }
 
+            // The bulk per-master-row skip below is only valid at a master-row boundary: with a fresh
+            // master row whose slave scan starts at the top. When a prior skipRows() or hasNext() has
+            // already advanced us partway through the current master row's slave scan
+            // (isMasterHasNextPending == false), first skip the remaining slave rows of that row. Without
+            // this realignment a second skipRows() call re-skips the already-consumed master cursor and
+            // silently drops the partially iterated master row's remaining rows.
+            if (!isMasterHasNextPending) {
+                if (!masterHasNext) {
+                    return; // the cursor is already exhausted
+                }
+                slaveCursor.skipRows(rowCount);
+                if (rowCount.get() == 0) {
+                    return; // skipped entirely within the current master row
+                }
+                // Drained the current master row; realign to the next master-row boundary.
+                slaveCursor.toTop();
+                isMasterHasNextPending = true;
+            }
+
             if (!isSlaveSizeCalculated) {
                 slaveCursor.calculateSize(this.circuitBreaker, tmpCounter);
                 slaveSize = tmpCounter.get();

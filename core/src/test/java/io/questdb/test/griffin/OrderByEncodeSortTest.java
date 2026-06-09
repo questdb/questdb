@@ -773,7 +773,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         " end as timestamp) as a" +
                         " from long_sequence(25)" +
                         ")")
-                .timestamp("a###desc")
+                .timestampDesc("a")
                 .expectSize()
                 .returns("""
                         a

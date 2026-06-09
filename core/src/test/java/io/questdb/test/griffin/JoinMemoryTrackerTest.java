@@ -487,7 +487,11 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k FROM long_sequence(20))");
             execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(20))");
             drainWalQueue();
-            assertSql("count\n20\n", "SELECT count(*) FROM (SELECT m.k, s.v FROM m LEFT JOIN s ON k)");
+            assertQuery("SELECT count(*) FROM (SELECT m.k, s.v FROM m LEFT JOIN s ON k)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n20\n");
         });
     }
 

@@ -141,6 +141,76 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinDenseReReadProducesStableResults() throws Exception {
+        // Regression: the Dense ASOF join cursor must reset its forward/backward scan state
+        // both on toTop() and on cursor re-acquisition. A stale backwardScanExhausted flag
+        // used to make the second pass skip the backward scan and miss matches that the first
+        // pass had found.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('B', 'Y', 4.0, '2024-01-01T10:03:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T09:45:00.000000Z'),
+                        ('A', 'X', 11.0, '2024-01-01T10:00:30.000000Z')
+                    """);
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\t20.0
+                    B\tX\t3.0\t30.0
+                    B\tY\t4.0\tnull
+                    """;
+            String query = "SELECT /*+ asof_dense(m s) */ m.sym1, m.sym2, m.val, s.price " +
+                    "FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            StringSink sink = new StringSink();
+            try (RecordCursorFactory factory = select(query)) {
+                RecordMetadata metadata = factory.getMetadata();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+                    // re-read the same cursor: scan state must be reset by toTop()
+                    cursor.toTop();
+                    sink.clear();
+                    TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+                }
+                // re-acquire the cursor from the same factory: scan state must be reset by of()
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinDynamicTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -335,6 +405,116 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq")
                 .noRandomAccess()
                 .returns(expected);
+    }
+
+    @Test
+    public void testAsOfJoinFullFatStringToSymbolKey() throws Exception {
+        // Regression: full-fat AsOf/Lt projection of a slave SYMBOL key tripped
+        // SymbolColumn.init when master's matching key was STRING.
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE master_str (s STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        leftTableTimestampType.getTypeName()
+                );
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        rightTableTimestampType.getTypeName()
+                );
+                execute(compiler, """
+                        INSERT INTO master_str VALUES
+                            ('A', '2024-01-01T10:00:00.000000Z'),
+                            ('B', '2024-01-01T10:01:00.000000Z'),
+                            ('C', '2024-01-01T10:02:00.000000Z'),
+                            (NULL, '2024-01-01T10:03:00.000000Z')
+                        """);
+                execute(compiler, """
+                        INSERT INTO slave_sym VALUES
+                            ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                            ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                            (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                        """);
+
+                final String expected = """
+                        s\tsym\tprice
+                        A\tA\t1.0
+                        B\tB\t2.0
+                        C\t\tnull
+                        \t\t9.0
+                        """;
+                assertQuery("SELECT m.s, s.sym, s.price FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT m.s, s.sym, s.price FROM master_str m LT JOIN slave_sym s ON m.s = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFullFatVarcharToSymbolKey() throws Exception {
+        // VARCHAR master + SYMBOL slave: createFullFatJoin must override
+        // both the output metadata AND slaveTypes to the master's type.
+        // Without the slaveTypes override the no-match null record holds
+        // a SymbolConstant.NULL slot whose getVarcharSize throws.
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE master_vch (v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        leftTableTimestampType.getTypeName()
+                );
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        rightTableTimestampType.getTypeName()
+                );
+                execute(compiler, """
+                        INSERT INTO master_vch VALUES
+                            ('A', '2024-01-01T10:00:00.000000Z'),
+                            ('B', '2024-01-01T10:01:00.000000Z'),
+                            ('C', '2024-01-01T10:02:00.000000Z'),
+                            (NULL, '2024-01-01T10:03:00.000000Z')
+                        """);
+                execute(compiler, """
+                        INSERT INTO slave_sym VALUES
+                            ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                            ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                            (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                        """);
+
+                final String expected = """
+                        v\tsym\tprice
+                        A\tA\t1.0
+                        B\tB\t2.0
+                        C\t\tnull
+                        \t\t9.0
+                        """;
+                assertQuery("SELECT m.v, s.sym, s.price FROM master_vch m ASOF JOIN slave_sym s ON m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT m.v, s.sym, s.price FROM master_vch m LT JOIN slave_sym s ON m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+        });
     }
 
     @Test
@@ -975,6 +1155,77 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns(expectedResult);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinLinearStringAndVarcharToSymbol() throws Exception {
+        // Regression: AsOf Light path called SymbolJoinKeyMapping.of(RecordCursor)
+        // which the String/Varchar -> Symbol mappings did not implement, throwing
+        // UnsupportedOperationException. asof_linear forces the Light path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master_str (
+                                s STRING,
+                                v VARCHAR,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave_sym (
+                                sym SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master_str VALUES
+                        ('A', 'A', '2024-01-01T10:00:00.000000Z'),
+                        ('B', 'B', '2024-01-01T10:01:00.000000Z'),
+                        ('C', 'C', '2024-01-01T10:02:00.000000Z'),
+                        (NULL, NULL, '2024-01-01T10:03:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO slave_sym VALUES
+                        ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                        (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                    """);
+
+            // STRING (master) = SYMBOL (slave) on the Light path
+            assertQuery("SELECT /*+ asof_linear(m s) */ m.s, s.sym, s.price "
+                    + "FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tsym\tprice
+                            A\tA\t1.0
+                            B\tB\t2.0
+                            C\t\tnull
+                            \t\t9.0
+                            """);
+
+            // VARCHAR (master) = SYMBOL (slave) on the Light path
+            assertQuery("SELECT /*+ asof_linear(m s) */ m.v, s.sym, s.price "
+                    + "FROM master_str m ASOF JOIN slave_sym s ON m.v = s.sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            v\tsym\tprice
+                            A\tA\t1.0
+                            B\tB\t2.0
+                            C\t\tnull
+                            \t\t9.0
+                            """);
         });
     }
 
@@ -5866,6 +6117,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Light
+                                  condition: s.sym=m.sym
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: dyn_master
+                                    VirtualRecord
+                                      functions: [ts,sym_str::symbol]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: dyn_slave_src
+                            """)
                     .returns(replaceTimestampSuffix1("""
                                     sym	ts
                                     A	2025-01-01T00:00:00.000000Z
@@ -5878,22 +6142,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     """,
                             rightTableTimestampType.getTypeName()
                     ));
-            assertQuery("explain " + sql)
-                    .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
-                            SelectedRecord
-                                AsOf Join Light
-                                  condition: s.sym=m.sym
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: dyn_master
-                                    VirtualRecord
-                                      functions: [ts,sym_str::symbol]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: dyn_slave_src
-                            """);
         });
     }
 
@@ -5944,17 +6192,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
         } else {
             hintedQuery = "SELECT " + queryBody;
         }
-        printSql("EXPLAIN " + hintedQuery);
-        TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
-        if (hint.contains("asof_driveby_cache(t q)")) {
-            TestUtils.assertContains(sink, "driveByCache: true");
-        }
-        if (expectSymbolKeyJoin) {
-            TestUtils.assertContains(sink, "symbolKeyJoin: true");
-        }
         assertQuery(hintedQuery)
                 .noLeakCheck()
-                .returnsOnce(expectedResult);
+                .noRandomAccess()
+                .inferTimestamp()
+                .sizeMayVary()
+                .withPlanContaining(
+                        "AsOf Join " + expectedAlgo,
+                        hint.contains("asof_driveby_cache(t q)") ? "driveByCache: true" : null,
+                        expectSymbolKeyJoin ? "symbolKeyJoin: true" : null
+                )
+                .returns(expectedResult);
     }
 
     private void assertAsOfJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2) throws Exception {
