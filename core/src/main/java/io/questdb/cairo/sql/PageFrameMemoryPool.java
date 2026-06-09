@@ -348,7 +348,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (free > 0) {
             ParquetBuffers buffers = freeParquetBuffers.getQuick(free - 1);
             freeParquetBuffers.remove(free - 1);
-            buffers.reopen();
+            try {
+                buffers.reopen();
+            } catch (Throwable th) {
+                // reopen() allocates the page-address lists one by one; if it fails
+                // part-way, close the buffer to free what it already allocated and
+                // return it to the free list so the pool still owns it.
+                buffers.close();
+                freeParquetBuffers.add(buffers);
+                throw th;
+            }
             buffers.frameIndex = frameIndex;
             buffers.usageFlags = usageBit;
             buffers.cacheHit = false;
