@@ -4,7 +4,7 @@ use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
 use crate::parquet_read::column_sink::var::fixup_varchar_slice_spill_pointers;
 use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
-    page_row_count, sliced_page_row_count,
+    page_row_count, resize_decompress_buffer, sliced_page_row_count,
 };
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
@@ -128,8 +128,7 @@ pub(super) fn decompress_varchar_slice_dict<'bufs>(
         (dict_page.buffer.as_ptr(), dict_page.buffer.len())
     } else {
         let mut buf = buf_pool.pop().unwrap_or_default();
-        buf.clear();
-        buf.resize(dict_page.uncompressed_size, 0);
+        resize_decompress_buffer(&mut buf, dict_page.uncompressed_size)?;
         parquet2::compression::decompress(dict_page.compression, dict_page.buffer, &mut buf)?;
         let ptr = buf.as_ptr();
         let len = buf.len();

@@ -2116,13 +2116,37 @@ fn decode_null_bitmap<'a>(
     Ok(Some(iter))
 }
 
+/// Sizes `buffer` to hold a `size`-byte decompressed page using a fallible
+/// reservation, returning a clean error instead of aborting the process when the
+/// allocation fails.
+///
+/// `size` is the page header's `uncompressed_page_size`. It is attacker-controlled
+/// up to `i32::MAX` and, unlike `compressed_page_size`, is NOT bounded by
+/// `max_page_size` on the read path: `max_page_size` is the compressed
+/// column-chunk size, and a highly compressible page can legitimately decompress
+/// to more than that, so the size cannot be range-checked up front. A plain
+/// `Vec::resize` aborts the JVM over JNI on allocation failure; `try_reserve`
+/// turns a decompression-bomb header into a recoverable `Layout` error while still
+/// decoding any page that genuinely fits in memory.
+pub(super) fn resize_decompress_buffer(buffer: &mut Vec<u8>, size: usize) -> ParquetResult<()> {
+    buffer.clear();
+    buffer.try_reserve(size).map_err(|_| {
+        fmt_err!(
+            Layout,
+            "cannot allocate {} bytes for a decompressed page",
+            size
+        )
+    })?;
+    buffer.resize(size, 0);
+    Ok(())
+}
+
 pub(super) fn decompress_sliced_dict<'a>(
     page: SlicedDictPage<'a>,
     buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DictPage<'a>> {
     let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
-        let read_size = page.uncompressed_size;
-        buffer.resize(read_size, 0);
+        resize_decompress_buffer(buffer, page.uncompressed_size)?;
         parquet2::compression::decompress(page.compression, page.buffer, buffer)?;
         buffer
     } else {
@@ -2142,8 +2166,7 @@ pub(super) fn decompress_sliced_data<'a>(
     let buffer = if page.compression != parquet2::compression::Compression::Uncompressed {
         match &page.header {
             DataPageHeader::V1(_) => {
-                let read_size = page.uncompressed_size;
-                decompress_buffer.resize(read_size, 0);
+                resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
                 parquet2::compression::decompress(
                     page.compression,
                     page.buffer,
@@ -2152,8 +2175,7 @@ pub(super) fn decompress_sliced_data<'a>(
                 decompress_buffer
             }
             DataPageHeader::V2(header) => {
-                let read_size = page.uncompressed_size;
-                decompress_buffer.resize(read_size, 0);
+                resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
                 let offset = (header.definition_levels_byte_length
                     + header.repetition_levels_byte_length) as usize;
                 let can_decompress = header.is_compressed.unwrap_or(true);
@@ -2256,7 +2278,7 @@ pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> Parque
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_page, decode_page_filtered};
+    use super::{decode_page, decode_page_filtered, resize_decompress_buffer};
     use crate::allocator::{AcVec, TestAllocatorState};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
@@ -4287,6 +4309,27 @@ mod tests {
             .expect_err("an index bit width over 32 must error, not abort");
         assert!(
             err.to_string().contains("exceeds"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resize_decompress_buffer_rejects_unsatisfiable_size_instead_of_aborting() {
+        // uncompressed_page_size is attacker-controlled and drives the up-front
+        // decompression-buffer allocation. Unlike compressed_page_size it is not
+        // bounded by max_page_size on the read path (a highly compressible page
+        // can legitimately decompress to more than the compressed chunk), so it
+        // cannot be range-checked; the buffer sizing must instead be fallible. A
+        // genuine i32::MAX (~2 GiB) request may succeed on a large host, so to pin
+        // the fallible path deterministically we ask for usize::MAX: try_reserve
+        // fails with CapacityOverflow without attempting (and aborting on) a real
+        // allocation. Proves the sizing surfaces a clean error rather than the
+        // process-aborting Vec::resize.
+        let mut buf = Vec::new();
+        let err = resize_decompress_buffer(&mut buf, usize::MAX)
+            .expect_err("an unsatisfiable decompressed size must error, not abort");
+        assert!(
+            err.to_string().contains("cannot allocate"),
             "unexpected error: {err}"
         );
     }
