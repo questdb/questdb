@@ -477,6 +477,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double sqlCountDistinctLoadFactor;
     private final int sqlCreateTableColumnModelPoolCapacity;
     private final long sqlCreateTableModelBatchSize;
+    private final boolean sqlDistinctGroupByRewriteEnabled;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
     private final int sqlExplainModelPoolCapacity;
@@ -1684,6 +1685,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (this.locale == null) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_DATE_LOCALE.getPropertyPath(), dateLocale);
             }
+            this.sqlDistinctGroupByRewriteEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_GROUP_BY_REWRITE_ENABLED, true);
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY, 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, "0.5");
             this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
@@ -5252,6 +5254,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
+        }
+
+        @Override
+        public boolean isSqlDistinctGroupByRewriteEnabled() {
+            return sqlDistinctGroupByRewriteEnabled;
         }
 
         @Override

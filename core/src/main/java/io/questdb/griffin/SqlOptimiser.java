@@ -7572,7 +7572,7 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-        if (model.isDistinct()) {
+        if (model.isDistinct() && configuration.isSqlDistinctGroupByRewriteEnabled()) {
             // bingo
             // create wrapper models
             final IQueryModel wrapperNested = queryModelPool.next();
