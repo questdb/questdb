@@ -2048,11 +2048,11 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
             drainWalQueue();
 
-            assertSql(
-                    "x\ts\tts\tnew_i\tnew_s\n" +
-                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n",
-                    "SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'"
-            );
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
         });
     }
 
@@ -2091,11 +2091,11 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
             drainWalQueue();
 
-            assertSql(
-                    "x\ts\tts\tnew_i\tnew_s\n" +
-                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n",
-                    "SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'"
-            );
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
         });
     }
 

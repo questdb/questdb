@@ -271,6 +271,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ParquetPartitionDecoder parquetDecoder = new ParquetPartitionDecoder();
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
+    // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
+    // at once; the writer-thread paths touch the same list only after the O3 workers
+    // join. Historically the writer side held no lock and leaned on that join ordering
+    // alone for safety. Every list/pool access -- writer and worker -- now takes this
+    // lock, so the non-thread-safe ObjList/ObjectStackPool are safe by construction,
+    // not by timing: a future change that moved a mutation into the O3 window can no
+    // longer corrupt them. The lock is a leaf (nothing else is held across it) and the
+    // writer paths run post-join uncontended, so it costs nothing measurable.
+    private final Object parquetSealPurgeLock = new Object();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
@@ -4038,6 +4048,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     getPrimaryColumn(i).jumpTo(newTransientRowCount << shl);
                 }
             }
+            // Configure covering on the posting writers BEFORE indexing. A
+            // covering posting index writes its .pc covered sidecar inline
+            // (writeSidecarGenData), reached both from the commit below and from
+            // a mid-stream spill flush inside updateIndexesParallel; the spill
+            // path bounds RSS for large batches and must still produce a complete
+            // sidecar. Every other index path configures covering before it
+            // indexes (see configureCoveringIfNeeded call sites); the WAL
+            // fast-lag path is the exception because
+            // publishPostingIndexesForLastPartitionFastLag's addr-based
+            // configureCovering clears the writer-owned cover schema set at
+            // openPartition. Restore it here so spill-flushed generations carry
+            // their covered data; otherwise a covered read over-reads the .pc.
+            configureCoveringForLastPartitionFastLag();
             updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
             try {
                 publishPostingIndexesForLastPartitionFastLag();
@@ -4679,6 +4702,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void closeDeferredPostingSealPurges() {
+        synchronized (parquetSealPurgeLock) {
+            closeDeferredPostingSealPurges0();
+        }
+    }
+
+    private void closeDeferredPostingSealPurges0() {
         long currentTableTxn = txWriter != null ? txWriter.getTxn() : -1L;
         if (txWriter != null) {
             publishDeferredPostingSealPurgesOnClose(currentTableTxn);
@@ -4919,6 +4948,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void configureCoveringForLastPartitionFastLag() {
+        // Wire each covering POSTING writer's covered-column read maps for the
+        // last (active) partition before updateIndexesParallel indexes into it,
+        // so a mid-stream spill flush during indexing writes a complete .pc
+        // covered sidecar. configureCoveringIfNeeded is a no-op for non-covering
+        // and non-posting columns. Runs serially on the writer thread, so the
+        // shared covering* scratch it uses is safe.
+        // hasPostingIndexers short-circuits the per-commit column scan for the
+        // common non-posting table (this runs on every WAL fast-lag commit).
+        if (!hasPostingIndexers || lastPartitionTimestamp == Long.MIN_VALUE) {
+            return;
+        }
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            // metadata can mark a column indexed before its indexer slot is populated
+            // (a WAL metadata change applied ahead of openPartition), so indexers may
+            // be shorter than columnCount -- mirror the `index < indexers.size()` guard
+            // used elsewhere (see the updateIndexes path) to avoid an out-of-bounds get.
+            if (!metadata.isColumnIndexed(colIdx) || colIdx >= indexers.size()) {
+                continue;
+            }
+            ColumnIndexer indexer = indexers.getQuick(colIdx);
+            if (indexer != null) {
+                configureCoveringIfNeeded(indexer, colIdx, lastPartitionTimestamp);
+            }
+        }
+    }
+
     /**
      * Wires up the addr-based covering path on the indexer so that
      * seal reads covered column data from the mmap-backed temp files.
@@ -4967,6 +5023,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 coveringAddrs, coveringAuxAddrs, coveringTops, coveringShifts,
                 coveringIndices, coveringTypes, coverCount, metadata.getTimestampIndex());
         indexer.setCoveredColumnNameTxns(coveringNameTxns);
+        // No setCoveredColumnAddrSizes here, unlike the O3-seal / fast-lag sites that
+        // map whole on-disk column files and pass o3Seal*MappedSizes. getCovered*ReadAddr
+        // bounds-asserts addr-based reads only when that list is non-empty; leaving it
+        // empty makes the asserts skip, which is correct for this path: the covered reads
+        // are columnTop-relative over temp files sized to exactly (partitionSize - colTop)
+        // rows, so an in-range rowId cannot address past the mapping by construction.
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
@@ -6028,24 +6090,63 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // Routes a parquet index rebuild's seal-purges into the same deferred path
+    // the native reseal uses, so the post-commit publishDeferredPostingSealPurges
+    // and the scoreboard-gated PostingSealPurgeJob reclaim the superseded .pv when
+    // no reader is pinned in its [from, to) txn window. Unlike the native reseal,
+    // updateParquetIndexes runs on parallel O3 workers and frees its pooled writer
+    // before the commit -- without this its outbox is discarded by close().
+    // publishPendingPurges only touches the thread-safe global queue and the
+    // writer's own outbox (lock-free); drainPendingFuturePurges mutates the shared
+    // deferredPostingSealPurges list and task pool under parquetSealPurgeLock -- the
+    // same lock every writer-side list/pool access now also takes.
+    void deferParquetPostingSealPurges(IndexWriter writer, long currentTableTxn) {
+        writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
+        synchronized (parquetSealPurgeLock) {
+            writer.drainPendingFuturePurges(
+                    deferredPostingSealPurges,
+                    getDeferredPostingSealPurgeTaskPool(),
+                    tableToken,
+                    partitionBy,
+                    timestampType,
+                    currentTableTxn
+            );
+        }
+    }
+
     private void deferPendingPostingSealPurges(ColumnIndexer indexer, long currentTableTxn) {
+        // The native (writer-thread) reseal twin of deferParquetPostingSealPurges,
+        // which is the O3-worker path. This one runs only post-join, so -- unlike the
+        // parquet path -- no O3 worker is concurrently stashing into the list.
+        assert o3PartitionUpdRemaining.get() == 0 : "native posting seal-purge defer ran with O3 partition workers in flight";
         // First publish entries already safe for the current committed txn.
         // Only finite future entries must cross an indexer reopen in the
         // TableWriter-owned list below.
         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
 
         IndexWriter writer = indexer.getWriter();
-        writer.drainPendingFuturePurges(
-                deferredPostingSealPurges,
-                getDeferredPostingSealPurgeTaskPool(),
-                tableToken,
-                partitionBy,
-                timestampType,
-                currentTableTxn
-        );
+        // Same lock the parquet O3-worker path takes; keeps every deferredPostingSealPurges
+        // + task-pool mutation under parquetSealPurgeLock (structural, not timing, safety).
+        synchronized (parquetSealPurgeLock) {
+            writer.drainPendingFuturePurges(
+                    deferredPostingSealPurges,
+                    getDeferredPostingSealPurgeTaskPool(),
+                    tableToken,
+                    partitionBy,
+                    timestampType,
+                    currentTableTxn
+            );
+        }
     }
 
     private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
+        synchronized (parquetSealPurgeLock) {
+            discardAbandonedDeferredPostingSealPurges0(currentTableTxn);
+        }
+    }
+
+    private void discardAbandonedDeferredPostingSealPurges0(long currentTableTxn) {
+        assert o3PartitionUpdRemaining.get() == 0 : "deferred posting seal-purge discard ran with O3 partition workers in flight";
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
@@ -6617,6 +6718,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private ObjectStackPool<PostingSealPurgeTask> getDeferredPostingSealPurgeTaskPool() {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (deferredPostingSealPurgeTaskPool == null) {
             deferredPostingSealPurgeTaskPool = new ObjectStackPool<>(PostingSealPurgeTask::new, 16);
         }
@@ -6876,6 +6978,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean hasCoveringPostingIndex() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                final IntList covering = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+                if (covering != null && covering.size() > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean hasPostingIndex() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
@@ -7027,6 +7142,173 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Index one SYMBOL column (plus its covered columns, if any) of an already-open
+     * parquet partition decoder into the column's posting index, then seal. The
+     * caller owns the parquet mmap + {@link #parquetDecoder} lifecycle, so a reseal
+     * touching several covering columns of one partition decodes the parquet once
+     * and feeds each column here, instead of re-opening the file per column.
+     *
+     * @param allowDestructiveRecovery passed straight to createIndexFiles: true only
+     *                                 for a fresh ADD INDEX build (no live indexer
+     *                                 holds the .pk); false for the O3/squash covering
+     *                                 reseal, where readers may pin the committed .pk.
+     */
+    private void indexParquetColumn(
+            SymbolColumnIndexer indexer,
+            CharSequence columnName,
+            int columnIndex,
+            long columnNameTxn,
+            int indexValueBlockSize,
+            byte indexType,
+            int plen,
+            long timestamp,
+            RowGroupBuffers rowGroupBuffers,
+            boolean allowDestructiveRecovery
+    ) {
+        final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
+
+        int parquetColumnIndex = findParquetColumnIndex(parquetMetadata, columnIndex);
+        if (parquetColumnIndex == -1) {
+            path.trimTo(plen);
+            LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$substr(pathRootSize, path)
+                    .$(", columnIndex=").$(columnIndex)
+                    .I$();
+            return;
+        }
+
+        // A fresh ALTER TABLE ADD INDEX build holds no live indexer, so an existing
+        // torn .pk may be destructively reset (allowDestructiveRecovery = true). The
+        // O3/squash covering reseal runs while readers may hold the .pk, so it passes
+        // false -- a committed .pk is preserved (createIndexFiles' non-destructive
+        // branch returns early on ff.exists, never resetting it).
+        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, allowDestructiveRecovery);
+        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+        final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+
+        // Invariant: on a parquet partition the indexed SYMBOL's columnTop
+        // is either 0 (column has data from row 0) or partitionSize (column
+        // is all-NULL in this partition). zeroColumnTopsAfterParquetRewrite
+        // collapses every intermediate 0 < columnTop < partitionSize down
+        // to 0 at convert time, so the merged decode below can rely on
+        // columnTop == 0 whenever it executes. A future ATTACH PARQUET /
+        // restore path that bypasses that routine must restore this
+        // invariant before reaching here, or the rowLo formula at the
+        // decodeRowGroup call would truncate the covered columns.
+        assert columnTop == 0 || columnTop == partitionSize
+                : "parquet partition indexed SYMBOL columnTop=" + columnTop
+                + " is neither 0 nor partitionSize=" + partitionSize
+                + " (timestamp=" + timestamp + ", columnIndex=" + columnIndex + ")";
+
+        if (columnTop > -1 && partitionSize > columnTop) {
+            indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
+            indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+            indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
+            // Discard any existing chain generations before re-adding from the
+            // parquet. On a fresh ADD INDEX this is a no-op (empty chain); on an
+            // O3/squash reseal of an already-indexed parquet partition it stops the
+            // rebuilt rows being appended on top of the O3 worker's .pv, which would
+            // otherwise double the row count.
+            indexer.getWriter().discardForRebuild();
+
+            final IntList coveringColumnIndices = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
+            final boolean hasCovering = coveringColumnIndices != null && coveringColumnIndices.size() > 0;
+            final int coverCount = hasCovering ? coveringColumnIndices.size() : 0;
+
+            // Build combined column list: SYMBOL (chunk 0) + covered
+            // columns (chunks 1..N). A single decodeRowGroup call per
+            // row group replaces the two separate decode loops.
+            parquetColumnIdsAndTypes.clear();
+            parquetColumnIdsAndTypes.add(parquetColumnIndex);
+            parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
+
+            // covSlotMeta packs per-slot state: [decodedChunkIdx, colType,
+            // dataVecBytesWritten] (3 longs per slot). Slots whose column
+            // is absent from parquet have decodedChunkIdx == -1.
+            final DirectLongList covSlotMeta = hasCovering ? getTempDirectLongList(3L * coverCount) : null;
+            // Mmap-backed temp files for covered column data (+ aux for
+            // var-size). Written via mmap in the row-group loop and read
+            // from the same addresses during seal — no write()/re-mmap
+            // round-trip. The ObjList is closed in the finally block.
+            final ObjList<MemoryMARW> covMmaps = hasCovering ? new ObjList<>(2 * coverCount) : null;
+            int includedCoveredCount = 0;
+
+            try {
+                if (hasCovering) {
+                    includedCoveredCount = prepareCoveredColumnMmaps(
+                            coveringColumnIndices, timestamp, plen,
+                            parquetMetadata, partitionSize, covSlotMeta, covMmaps);
+                }
+
+                long rowCount = 0;
+                final int rowGroupCount = parquetMetadata.getRowGroupCount();
+                final IndexWriter indexWriter = indexer.getWriter();
+                for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                    final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+
+                    // For row groups fully below columnTop, covered columns
+                    // still need decoding (their column_top may differ from
+                    // the symbol's) but the SYMBOL data is skipped.
+                    final boolean belowColumnTop = rowCount + rowGroupSize <= columnTop;
+                    if (belowColumnTop && includedCoveredCount == 0) {
+                        rowCount += rowGroupSize;
+                        continue;
+                    }
+
+                    parquetDecoder.decodeRowGroup(
+                            rowGroupBuffers,
+                            parquetColumnIdsAndTypes,
+                            rowGroupIndex,
+                            belowColumnTop ? 0 : (int) Math.max(0, columnTop - rowCount),
+                            (int) rowGroupSize
+                    );
+
+                    // Accumulate covered column data into mmap'd temp files.
+                    if (includedCoveredCount > 0) {
+                        accumulateCoveredColumnsFromRowGroup(
+                                coveringColumnIndices, covSlotMeta, covMmaps,
+                                rowGroupBuffers, rowGroupIndex, rowGroupSize);
+                    }
+
+                    // Feed SYMBOL column to the posting index.
+                    if (!belowColumnTop) {
+                        long rowId = Math.max(rowCount, columnTop);
+                        final long addr = rowGroupBuffers.getChunkDataPtr(0);
+                        final long size = rowGroupBuffers.getChunkDataSize(0);
+                        if (size == 0) {
+                            BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                        } else {
+                            for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                                indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                            }
+                        }
+                    }
+
+                    rowCount += rowGroupSize;
+                }
+
+                // Wire up covered column addresses for the seal path.
+                if (hasCovering) {
+                    configureCoveringFromMmaps(
+                            indexer, coveringColumnIndices, timestamp,
+                            covMmaps);
+                }
+
+                indexWriter.setMaxValue(partitionSize - 1);
+                indexer.seal();
+            } finally {
+                if (hasCovering) {
+                    indexer.releaseCoveredColumnReadMappings();
+                }
+                Misc.freeObjListIfCloseable(covMmaps);
+                if (hasCovering) {
+                    cleanupMaterialisedCoveredColumnTempFiles(
+                            coveringColumnIndices, timestamp, plen);
+                }
+            }
+        }
+    }
+
     private void indexParquetPartition(
             SymbolColumnIndexer indexer,
             CharSequence columnName,
@@ -7051,137 +7333,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(plen).concat(PARQUET_PARTITION_NAME).$();
             parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
-
-            int parquetColumnIndex = findParquetColumnIndex(parquetMetadata, columnIndex);
-            if (parquetColumnIndex == -1) {
-                path.trimTo(plen);
-                LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$substr(pathRootSize, path)
-                        .$(", columnIndex=").$(columnIndex)
-                        .I$();
-                return;
-            }
-
-            // ALTER TABLE ALTER COLUMN ADD INDEX (parquet partition): building a fresh index from scratch.
-            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
-            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-            final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
-
-            // Invariant: on a parquet partition the indexed SYMBOL's columnTop
-            // is either 0 (column has data from row 0) or partitionSize (column
-            // is all-NULL in this partition). zeroColumnTopsAfterParquetRewrite
-            // collapses every intermediate 0 < columnTop < partitionSize down
-            // to 0 at convert time, so the merged decode below can rely on
-            // columnTop == 0 whenever it executes. A future ATTACH PARQUET /
-            // restore path that bypasses that routine must restore this
-            // invariant before reaching here, or the rowLo formula at the
-            // decodeRowGroup call would truncate the covered columns.
-            assert columnTop == 0 || columnTop == partitionSize
-                    : "parquet partition indexed SYMBOL columnTop=" + columnTop
-                    + " is neither 0 nor partitionSize=" + partitionSize
-                    + " (timestamp=" + timestamp + ", columnIndex=" + columnIndex + ")";
-
-            if (columnTop > -1 && partitionSize > columnTop) {
-                indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
-                indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
-
-                final IntList coveringColumnIndices = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
-                final boolean hasCovering = coveringColumnIndices != null && coveringColumnIndices.size() > 0;
-                final int coverCount = hasCovering ? coveringColumnIndices.size() : 0;
-
-                // Build combined column list: SYMBOL (chunk 0) + covered
-                // columns (chunks 1..N). A single decodeRowGroup call per
-                // row group replaces the two separate decode loops.
-                parquetColumnIdsAndTypes.clear();
-                parquetColumnIdsAndTypes.add(parquetColumnIndex);
-                parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
-
-                // covSlotMeta packs per-slot state: [decodedChunkIdx, colType,
-                // dataVecBytesWritten] (3 longs per slot). Slots whose column
-                // is absent from parquet have decodedChunkIdx == -1.
-                final DirectLongList covSlotMeta = hasCovering ? getTempDirectLongList(3L * coverCount) : null;
-                // Mmap-backed temp files for covered column data (+ aux for
-                // var-size). Written via mmap in the row-group loop and read
-                // from the same addresses during seal — no write()/re-mmap
-                // round-trip. The ObjList is closed in the finally block.
-                final ObjList<MemoryMARW> covMmaps = hasCovering ? new ObjList<>(2 * coverCount) : null;
-                int includedCoveredCount = 0;
-
-                try {
-                    if (hasCovering) {
-                        includedCoveredCount = prepareCoveredColumnMmaps(
-                                coveringColumnIndices, timestamp, plen,
-                                parquetMetadata, partitionSize, covSlotMeta, covMmaps);
-                    }
-
-                    long rowCount = 0;
-                    final int rowGroupCount = parquetMetadata.getRowGroupCount();
-                    final IndexWriter indexWriter = indexer.getWriter();
-                    for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                        final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
-
-                        // For row groups fully below columnTop, covered columns
-                        // still need decoding (their column_top may differ from
-                        // the symbol's) but the SYMBOL data is skipped.
-                        final boolean belowColumnTop = rowCount + rowGroupSize <= columnTop;
-                        if (belowColumnTop && includedCoveredCount == 0) {
-                            rowCount += rowGroupSize;
-                            continue;
-                        }
-
-                        parquetDecoder.decodeRowGroup(
-                                rowGroupBuffers,
-                                parquetColumnIdsAndTypes,
-                                rowGroupIndex,
-                                belowColumnTop ? 0 : (int) Math.max(0, columnTop - rowCount),
-                                (int) rowGroupSize
-                        );
-
-                        // Accumulate covered column data into mmap'd temp files.
-                        if (includedCoveredCount > 0) {
-                            accumulateCoveredColumnsFromRowGroup(
-                                    coveringColumnIndices, covSlotMeta, covMmaps,
-                                    rowGroupBuffers, rowGroupIndex, rowGroupSize);
-                        }
-
-                        // Feed SYMBOL column to the posting index.
-                        if (!belowColumnTop) {
-                            long rowId = Math.max(rowCount, columnTop);
-                            final long addr = rowGroupBuffers.getChunkDataPtr(0);
-                            final long size = rowGroupBuffers.getChunkDataSize(0);
-                            if (size == 0) {
-                                BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
-                            } else {
-                                for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
-                                }
-                            }
-                        }
-
-                        rowCount += rowGroupSize;
-                    }
-
-                    // Wire up covered column addresses for the seal path.
-                    if (hasCovering) {
-                        configureCoveringFromMmaps(
-                                indexer, coveringColumnIndices, timestamp,
-                                covMmaps);
-                    }
-
-                    indexWriter.setMaxValue(partitionSize - 1);
-                    indexer.seal();
-                } finally {
-                    if (hasCovering) {
-                        indexer.releaseCoveredColumnReadMappings();
-                    }
-                    Misc.freeObjListIfCloseable(covMmaps);
-                    if (hasCovering) {
-                        cleanupMaterialisedCoveredColumnTempFiles(
-                                coveringColumnIndices, timestamp, plen);
-                    }
-                }
-            }
+            // Fresh ADD INDEX over a parquet partition indexes a single column and
+            // holds no live indexer, so destructive .pk recovery is permitted.
+            indexParquetColumn(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp, rowGroupBuffers, true);
         } finally {
             // Release the decoder's native state before tearing down the mmaps it
             // borrows from. ParquetPartitionDecoder documents a clear-then-munmap
@@ -8694,6 +8848,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void persistDeferredPostingSealPurgesDirect(long currentTableTxn) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (!PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, 0, deferredPostingSealPurges.size(), currentTableTxn)) {
             return;
         }
@@ -10785,6 +10940,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long currentTableTxn,
             LongList orphanSealTxns
     ) {
+        synchronized (parquetSealPurgeLock) {
+            publishAbandonedPostingSealPurges0(
+                    columnName,
+                    columnNameTxn,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    currentTableTxn,
+                    orphanSealTxns
+            );
+        }
+    }
+
+    private void publishAbandonedPostingSealPurges0(
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTableTxn,
+            LongList orphanSealTxns
+    ) {
         if (orphanSealTxns.size() == 0) {
             return;
         }
@@ -10812,6 +10987,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+        // Fast path: every caller runs post-join (the 0-body asserts
+        // o3PartitionUpdRemaining == 0), so no O3 worker mutates
+        // deferredPostingSealPurges here and this size() read needs no lock. It skips
+        // the monitor for the common empty case -- every non-posting table, and
+        // posting tables with nothing pending -- on this per-commit path.
+        if (deferredPostingSealPurges.size() == 0) {
+            return;
+        }
+        synchronized (parquetSealPurgeLock) {
+            publishDeferredPostingSealPurges0(currentTableTxn, persistOnQueueFull, queueRetryCount);
+        }
+    }
+
+    private void publishDeferredPostingSealPurges0(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+        assert o3PartitionUpdRemaining.get() == 0 : "deferred posting seal-purge publish ran with O3 partition workers in flight";
         if (deferredPostingSealPurges.size() == 0) {
             return;
         }
@@ -10908,8 +11098,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int coveringPathLen = -1;
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // indexers may be shorter than columnCount when a WAL metadata change
+                // marked a column indexed before its indexer slot was populated; guard
+                // the get the same way the updateIndexes path does.
                 if (metadata.getColumnType(colIdx) <= 0
                         || !metadata.isColumnIndexed(colIdx)
+                        || colIdx >= indexers.size()
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }
@@ -10945,6 +11139,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                        indexer.setCoveredColumnAddrSizes(o3SealMappedSizes, o3SealAuxMappedSizes);
                         // WAL fast-lag uses getTxn() (NOT getTxn()+1L like the
                         // O3 seal paths). See publishToChain javadoc: the
                         // partition stays attached and openPartition's
@@ -11431,6 +11626,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * close if they still cannot be handed off). Best-effort: never throws.
      */
     private void recoverSpilledPostingSealPurges() {
+        synchronized (parquetSealPurgeLock) {
+            recoverSpilledPostingSealPurges0();
+        }
+    }
+
+    private void recoverSpilledPostingSealPurges0() {
         path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
         if (!ff.exists(path.$())) {
             path.trimTo(pathSize);
@@ -11513,12 +11714,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void releaseDeferredPostingSealPurgeTask(PostingSealPurgeTask task) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (deferredPostingSealPurgeTaskPool != null) {
             deferredPostingSealPurgeTaskPool.release(task);
         }
     }
 
     private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         for (int i = readPos; i < n; i++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
             if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
@@ -12286,6 +12489,125 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Materialise the covering sidecars (.pci/.pc) for a PARQUET partition's covering
+     * posting indexes. sealPostingIndexForPartition's native reseal reads native column
+     * files (absent on parquet) and skips parquet, but the O3 worker that rewrites a
+     * parquet partition builds only the non-covering .pv. Without rebuilding the
+     * covering here -- in finishO3Commit / squash, before the commit exposes the new
+     * version -- a concurrent reader can open the new parquet version, walk the chain
+     * (count() correct) but find no .pci, report coverCount=0 and resolve covered
+     * values as NULL. indexParquetPartition reads the rewritten parquet and wires up
+     * both the .pv and the covering sidecars.
+     *
+     * @return true if at least one covering posting column was rebuilt.
+     */
+    private boolean resealParquetCoveringForPartition(long partitionTimestamp) {
+        // No covering posting index anywhere on the table: the worker-built
+        // non-covering .pv already stands, so skip the path resolution + stat(2)
+        // and the per-column scan entirely.
+        if (!hasCoveringPostingIndex()) {
+            return false;
+        }
+        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
+        if (partitionIndex < 0) {
+            return false;
+        }
+        boolean processed = false;
+        long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        int plen = path.size();
+        if (!ff.exists(path.slash().$()) && PartitionBy.isPartitioned(partitionBy)) {
+            path.trimTo(pathSize);
+            partitionNameTxn = txWriter.getTxn();
+            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            plen = path.size();
+        }
+        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        // One parquet open/mmap/decoder for the whole partition: a partition with
+        // several covering posting columns decodes the file once and feeds each
+        // column to indexParquetColumn, instead of re-opening the parquet per
+        // column. Opened lazily on the first eligible column, so a partition whose
+        // covering columns are all absent / all-NULL pays nothing for the open.
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                    continue;
+                }
+                final IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+                if (coveringCols == null || coveringCols.size() == 0) {
+                    // Non-covering parquet posting: the worker-built .pv stands.
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                if (columnTop == -1 || columnTop >= partitionSize) {
+                    continue;
+                }
+                if (!(indexers.getQuick(colIdx) instanceof SymbolColumnIndexer indexer)) {
+                    continue;
+                }
+                if (parquetAddr == 0) {
+                    // First eligible covering column: open the shared decoder and log the
+                    // reseal once per partition (the extracted indexParquetColumn no longer
+                    // logs, unlike the old per-column indexParquetPartition reseal path).
+                    LOG.info().$("resealing parquet covering index [path=").$substr(pathRootSize, path).I$();
+                    final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+                    openParquetMetadataOrThrow(path, plen, parquetFileSize);
+                    parquetSize = parquetMetaReader.getParquetFileSize();
+                    path.trimTo(plen).concat(PARQUET_PARTITION_NAME).$();
+                    parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                }
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                try {
+                    try {
+                        indexParquetColumn(
+                                indexer,
+                                metadata.getColumnName(colIdx),
+                                colIdx,
+                                columnNameTxn,
+                                metadata.getIndexValueBlockCapacity(colIdx),
+                                metadata.getColumnIndexType(colIdx),
+                                plen,
+                                partitionTimestamp,
+                                rowGroupBuffers,
+                                false
+                        );
+                    } finally {
+                        // Drain the rebuild's seal-purge outbox (the .pv/.pc its
+                        // discardForRebuild superseded) before releaseIndexWriter frees
+                        // it -- in a finally so an I/O fault mid-seal still hands the entry
+                        // to the scoreboard-gated PostingSealPurgeJob instead of leaking
+                        // the value file (idempotent no-op on an empty outbox).
+                        deferPendingPostingSealPurges(indexer, txWriter.getTxn());
+                    }
+                    processed = true;
+                } finally {
+                    indexer.releaseIndexWriter();
+                    path.trimTo(plen);
+                }
+            }
+        } finally {
+            // Unconditional teardown: a never-opened decoder/reader reads back 0 here
+            // (munmaps skipped, clear() a no-op), and a metadata open that succeeded
+            // before a mapRO failure is still released.
+            Misc.free(parquetDecoder);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathSize);
+        }
+        return processed;
+    }
+
+    /**
      * Per-partition helper for {@link #sealPostingIndexesForO3Partitions()}.
      * Opens each posting-index column on the given partition, folds any O3
      * tentative state into the active view, rolls back stale rowids left over
@@ -12304,6 +12626,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one column indexer was touched.
      */
     private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+        // Invariant: posting seal runs only after every O3 partition worker has
+        // joined (finishO3Commit / post-await, or a writer-thread squash). It reads
+        // the just-written partition column data and rotates value files; a worker
+        // still in flight would race that. o3PartitionUpdRemaining is the work-steal
+        // drain counter -- 0 means no O3 partition task is outstanding.
+        assert o3PartitionUpdRemaining.get() == 0 : "posting seal ran with O3 partition workers in flight";
         // Tables without any POSTING index incur per-call filesystem and
         // metadata work below, including a stat(2). Bail out before any of
         // that when no POSTING index column exists.
@@ -12317,7 +12645,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         if (txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp)) {
-            return false;
+            // The native reseal below reads native column files, which a parquet
+            // partition lacks. But an O3/squash rewrite that produces a new parquet
+            // version with a COVERING posting index still needs that version's covering
+            // sidecars (.pci/.pc) materialised -- the O3 worker builds only the
+            // non-covering .pv -- else a reader opening the new version walks the chain
+            // (count() correct) but finds no .pci, reports coverCount=0 and returns NULL
+            // covered values. Rebuild covering from the parquet here, pre-commit.
+            return resealParquetCoveringForPartition(partitionTimestamp);
         }
 
         boolean processed = false;
@@ -12421,6 +12756,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                        indexer.setCoveredColumnAddrSizes(o3SealMappedSizes, o3SealAuxMappedSizes);
                         // Same getTxn()+1 convention as the REBUILD entry
                         // above and as O3CopyJob's setO3PathContext. Picker
                         // (per-gen visibility via slot[0].TXN_AT_SEAL) keeps
@@ -12483,6 +12819,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void sealPostingIndexesForO3Partitions() {
+        assert o3PartitionUpdRemaining.get() == 0 : "posting seal sweep ran with O3 partition workers in flight";
         // O3 rebuilds posting indexes via pool IndexWriters that have no covering
         // configuration and never seal (FD-based close skips seal). Re-open each
         // affected partition's posting index, seal it (converting sparse gens to
@@ -12645,6 +12982,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * dropping them with a critical log.
      */
     private boolean spillReadyPostingSealPurges(long currentTableTxn) {
+        assert Thread.holdsLock(parquetSealPurgeLock);
         if (currentTableTxn < 0) {
             // No committed table txn (writer never fully opened): readiness is
             // undefined, so do not spill. Fall back to the drop path.
@@ -13056,13 +13394,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // files after switch.
         updateIndexes();
         // Flush posting index sidecar data before the partition switch.
-        // PostingIndexWriter reads covered column values from the MemoryMA
-        // objects that were set via configureCovering(). Those MemoryMA
-        // objects are the TableWriter's column memories — the same Java
-        // objects get remapped to the new partition's files in openPartition().
-        // Any unflushed pending/spill data still holds row IDs from the
-        // current partition, so we must write the sidecar gen block now,
-        // while the MemoryMA still points to the correct file.
+        // Unflushed pending/spill data still holds row IDs from the CURRENT
+        // partition, and PostingIndexWriter resolves covered column values by
+        // NAME against that partition's files -- a fresh read-only mmap opened
+        // in mapColumnFile, keyed by coveredPartitionPath, NOT the TableWriter's
+        // live MemoryMA column memories. openPartition() below re-points the
+        // indexer at the new partition's path, so we must write the sidecar gen
+        // block now, while the writer still resolves covered columns against the
+        // current partition's files.
         final int sealThreshold = configuration.getPostingSealGenThreshold();
         // The seal here runs before the upcoming switchPartitions/commit, so
         // tag any chain entry the seal publishes with txnAtSeal=getTxn()+1

@@ -376,24 +376,52 @@ public class TelemetryTest extends AbstractCairoTest {
 
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
                     String expectedSql = "count\n1\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expectedSql);
                     expectedSql = "version\tos\n" +
                             "1.0\t" + os + "\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expectedSql);
                 }
 
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
                     String expectedSql = "count\n1\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expectedSql);
                 }
 
                 refVersion.set("1.1");
                 try (TelemetryJob ignore = new TelemetryJob(engine)) {
                     String expectedSql = "count\n2\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    assertQuery("SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expectedSql);
                     expectedSql = "version\tos\n" +
                             "1.1\t" + os + "\n";
-                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sink, expectedSql);
+                    assertQuery("SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1")
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expectedSql);
                 }
             }
         });

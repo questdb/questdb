@@ -45,6 +45,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1224,7 +1225,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
+    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1273,7 +1274,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             int iteration,
             int maxUncommittedRows,
             Rnd rnd
-    ) throws SqlException, NumericException {
+    ) throws Exception {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
         engine.execute(
@@ -1333,13 +1334,13 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         // We will not insert value 'aa' in str column. The count of rows with 'aa' is our invariant
         int aaCount = 2 * (initialCount + additionalCount);
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select count() from x where str = 'aa'", sink,
-                "count\n" +
-                        aaCount + "\n"
-        );
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "select count() from x where str = 'aa'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" +
+                        aaCount + "\n");
         engine.execute("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
 
         try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
@@ -1381,7 +1382,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         );
     }
 
-    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws Exception {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
         sqlExecutionContext.getCairoEngine().execute(
@@ -1420,27 +1421,28 @@ public class O3MaxLagTest extends AbstractO3Test {
             appendRowsWithDroppedColumn(tw, halfCount, rnd);
             tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                    replaceTimestampSuffix("""
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, "select * from x where str = 'aa'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             str\tts\tx\tstr2\ty
                             aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
                             aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
-                            """, timestampType.getTypeName())
-            );
+                            """, timestampType.getTypeName()));
 
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
             tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select * from x where str = 'aa'", sink,
-                    replaceTimestampSuffix("""
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, "select * from x where str = 'aa'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             str\tts\tx\tstr2\ty
                             aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
                             aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
-                            """, timestampType.getTypeName())
-            );
+                            """, timestampType.getTypeName()));
 
             if (iteration % 2 == 0) {
                 tw.commit();
@@ -1451,12 +1453,14 @@ public class O3MaxLagTest extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                replaceTimestampSuffix("""
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "select * from x where str = 'aa'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(replaceTimestampSuffix("""
                         str\tts\tx\tstr2\ty
                         aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
                         aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
-                        """, timestampType.getTypeName())
-        );
+                        """, timestampType.getTypeName()));
     }
 }

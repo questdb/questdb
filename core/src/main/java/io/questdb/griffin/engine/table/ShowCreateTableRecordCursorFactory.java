@@ -192,6 +192,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
+            // SHOW CREATE TABLE rejects views and materialized views during parsing
+            // (see SqlParserCallback.getTableToken); guard against any future caller that bypasses it.
+            assert !tableToken.isView() && !tableToken.isMatView();
 
             toTop();
             return this;

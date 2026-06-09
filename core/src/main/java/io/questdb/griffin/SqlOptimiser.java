@@ -121,6 +121,10 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_OUTER_MODEL = 8;
     public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
+    private static final int JOIN_OP_AND = 2;
+    private static final int JOIN_OP_EQUAL = 1;
+    private static final int JOIN_OP_OR = 3;
+    private static final int JOIN_OP_REGEX = 4;
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -139,10 +143,6 @@ public class SqlOptimiser implements Mutable {
                     | REWRITE_STATUS_USE_GROUP_BY_MODEL
                     | REWRITE_STATUS_USE_HORIZON_JOIN_MODE
                     | REWRITE_STATUS_USE_WINDOW_MODEL;
-    private static final int JOIN_OP_AND = 2;
-    private static final int JOIN_OP_EQUAL = 1;
-    private static final int JOIN_OP_OR = 3;
-    private static final int JOIN_OP_REGEX = 4;
     private static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     // Maximum depth of nested window functions (e.g., sum(sum(row_number() OVER ()) OVER ()) OVER () is 3 levels)
@@ -433,6 +433,41 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean allOrderByColumnsPresentIn(IQueryModel src, IQueryModel target) {
+        final LowerCaseCharSequenceObjHashMap<QueryColumn> targetMap = target.getAliasToColumnMap();
+        final ObjList<QueryColumn> projection = src.getColumns();
+        final int columnCount = projection.size();
+        // The gate runs before rewriteOrderByPosition / rewriteOrderBy, so normalize each token
+        // the way they would before the lookup.
+        for (IQueryModel m = src; m != null; m = m.getNestedModel()) {
+            final ObjList<ExpressionNode> orderBy = m.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                CharSequence token = orderBy.getQuick(i).token;
+                // Positional (ORDER BY 5): the projection column's name. Out-of-range or
+                // non-numeric falls through to the name lookup below.
+                final char first = token.charAt(0);
+                if (first >= '0' && first <= '9') {
+                    try {
+                        final int position = Numbers.parseInt(token);
+                        if (position >= 1 && position <= columnCount) {
+                            token = projection.getQuick(position - 1).getName();
+                        }
+                    } catch (NumericException ignore) {
+                        // not a position; fall through to the name lookup
+                    }
+                }
+                // Qualified (ORDER BY t.x): the bare name. Single join model (see caller), so the
+                // strip is unambiguous.
+                final int dot = Chars.indexOfLastUnquoted(token, '.');
+                final CharSequence name = dot > -1 ? token.subSequence(dot + 1, token.length()) : token;
+                if (!targetMap.contains(name)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean columnNotExistsInJoinModels(IQueryModel baseModel, CharSequence columnName) {
@@ -1666,9 +1701,9 @@ public class SqlOptimiser implements Mutable {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {
                             addJoinContext(parent, jc);
-                            if (lhi != rhi) {
-                                linkDependencies(parent, Math.min(lhi, rhi), Math.max(lhi, rhi));
-                            }
+                            // lhi == rhi returned above, so we are guaranteed to have two
+                            // distinct tables here.
+                            linkDependencies(parent, Math.min(lhi, rhi), Math.max(lhi, rhi));
                         }
                     } else {
                         addOuterJoinExpression(parent, joinModel, joinIndex, node);
@@ -1704,7 +1739,6 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     addOuterJoinExpression(parent, joinModel, joinIndex, node);
                 }
-
                 break;
         }
     }
@@ -2661,15 +2695,28 @@ public class SqlOptimiser implements Mutable {
         // taking into account that column is pre-aliased, e.g.
         // "col, col" will look like "col, col col1"
 
-        final CharSequence translatedColumnName = translatingModel.getColumnNameToAliasMap().get(columnAst.token);
+        CharSequence translatedColumnName = translatingModel.getColumnNameToAliasMap().get(columnAst.token);
+        if (translatedColumnName == null && baseModel != null && baseModel.getJoinModels().size() == 1) {
+            // Single base model: an earlier qualified emit stripped the prefix, so retry under
+            // the stripped key to reuse it. Restrict to a bare projection (output name == column
+            // name) where reuse is identity-preserving; a distinct alias ("x AS y", or a lateral
+            // correlation marker __qdb_outer_ref__N_col) must stay its own column.
+            final int dot = Chars.indexOfLastUnquoted(columnAst.token, '.');
+            if (dot != -1 && Chars.equalsIgnoreCase(columnName, columnAst.token, dot + 1, columnAst.token.length())) {
+                translatedColumnName = translatingModel.getColumnNameToAliasMap()
+                        .get(columnAst.token, dot + 1, columnAst.token.length());
+            }
+        }
         if (translatedColumnName != null) {
             // the column is already being referenced by the translating model
             final CharSequence groupByColumnName = groupByModel.getColumnNameToAliasMap().get(translatedColumnName);
             final QueryColumn translatedColumn;
+            final QueryColumn outerColumn;
             if (isGroupBy && groupByColumnName != null) {
                 // there is already a key referencing the column in the group-by model;
                 // to minimize the number of group-by keys, we simply refer to the key in the outer models
                 translatedColumn = nextColumn(columnName, groupByColumnName, includeIntoWildcard);
+                outerColumn = translatedColumn;
             } else {
                 // no key in the group-by model;
                 // create an alias and add it to the inner models
@@ -2678,12 +2725,19 @@ public class SqlOptimiser implements Mutable {
                 innerVirtualModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
                 groupByModel.addBottomUpColumn(translatedColumn);
                 windowModel.addBottomUpColumn(translatedColumn);
+                // The group-by exposes innerAlias for this column, not translatedColumnName,
+                // so when columnName != translatedColumnName the outer reference must use
+                // innerAlias or codegen fails to resolve the token. The SAMPLE BY wrapper
+                // (isGroupBy=false) deliberately keeps translatedColumnName.
+                outerColumn = isGroupBy
+                        ? nextColumn(columnName, innerAlias, includeIntoWildcard)
+                        : translatedColumn;
             }
 
             // expose the column in the outer models
-            outerVirtualModel.addBottomUpColumn(translatedColumn);
+            outerVirtualModel.addBottomUpColumn(outerColumn);
             if (distinctModel != null) {
-                distinctModel.addBottomUpColumn(translatedColumn);
+                distinctModel.addBottomUpColumn(outerColumn);
             }
         } else {
             // the column is not referenced by the translating model
@@ -3309,6 +3363,21 @@ public class SqlOptimiser implements Mutable {
                         return node;
                     }
                     return nextLiteral(map.valueAtQuick(index), node.position);
+                }
+            } else {
+                // Single base model: addColumnToTranslatingModel stripped the table
+                // prefix, so a previously registered column must still resolve when
+                // the literal arrives qualified.
+                final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+                if (dot != -1) {
+                    final CharSequence stripped = node.token.subSequence(dot + 1, node.token.length());
+                    final int strippedIdx = map.keyIndex(stripped);
+                    if (strippedIdx < 0) {
+                        if (preserveQualifiedNames) {
+                            return node;
+                        }
+                        return nextLiteral(map.valueAtQuick(strippedIdx), node.position);
+                    }
                 }
             }
 
@@ -6138,9 +6207,21 @@ public class SqlOptimiser implements Mutable {
         final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange()
                 && model.allowsNestedColumnsChange();
 
-        final IQueryModel union = skipNoneTypeModels(model.getUnionModel());
-        if (!topLevel && modelIsFlex(union)) {
-            emitColumnLiteralsTopDown(model.getColumns(), union);
+        // By default, don't emit this model's columns to its UNION sibling by name. In UNION,
+        // columns are matched by position, not name. A branch's column expressions reference its
+        // own source names (e.g. "SELECT close price ..." references "close"), which generally
+        // don't match the sibling's projection aliases (e.g. "price"), so only the
+        // accidentally-equal names resolve. When the outer query selects nothing from the union
+        // (e.g. count()/sum()), this used to prune just the immediate sibling down to those few
+        // matching names while leaving the other branches intact, so the union sides diverged in
+        // column count and code generation hit an assertion. The indexed propagation below (the
+        // loop over unionColumnIndexes) handles cross-branch propagation correctly, by position.
+        // The cairo.sql.legacy.union.column.propagation flag restores the old by-name emit.
+        if (configuration.isCairoSqlLegacyUnionColumnPropagation()) {
+            final IQueryModel union = skipNoneTypeModels(model.getUnionModel());
+            if (!topLevel && modelIsFlex(union)) {
+                emitColumnLiteralsTopDown(model.getColumns(), union);
+            }
         }
 
         // process join models and their join conditions
@@ -6215,17 +6296,14 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns0(jm, false, model, true);
         }
 
-        // If this is group by model we need to add all non-selected keys, only if this is sub-query
-        // For top level models top-down column list will be empty
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
-            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
-            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-                QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                    model.addTopDownColumn(qc, qc.getAlias());
-                }
-            }
-        }
+        // If this is a group by sub-query whose projection will be pruned to its top-down columns,
+        // retain all non-selected grouping keys so pruning cannot collapse the keyed group by into a
+        // scalar aggregate. This early pass preserves the key ordering for the common case where the
+        // parent already contributed top-down columns; it is repeated once more below, after the
+        // model's own WHERE/HAVING and ORDER BY literals have been emitted, to also cover a HAVING-style
+        // filter that references only an aggregate alias (its literals are the sole top-down contributor,
+        // so an empty list here would skip retention). For top level models the list is empty -> no-op.
+        retainGroupByKeysAsTopDownColumns(model);
 
         // latest on
         if (model.getLatestBy().size() > 0) {
@@ -6258,6 +6336,14 @@ public class SqlOptimiser implements Mutable {
         if (!topLevel) {
             emitLiteralsTopDown(model.getOrderBy(), model);
         }
+
+        // Repeat group by key retention now that the model's own WHERE/HAVING and ORDER BY literals
+        // have been emitted into top-down columns. This covers HAVING-style filters on a group by
+        // sub-query whose only top-down contribution is an aggregate alias (e.g. count() > 1); the
+        // early pass above would have observed an empty list and skipped, letting pruning collapse the
+        // keyed group by into a scalar aggregate. addTopDownColumn() dedupes by alias, so re-running is
+        // idempotent and leaves the key ordering from the early pass untouched in the common case.
+        retainGroupByKeysAsTopDownColumns(model);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
@@ -7248,6 +7334,23 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             node = sqlNodeStack.poll();
+        }
+    }
+
+    // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
+    // top-down column pruning cannot drop the keys that define the grouping. Runs only when the model
+    // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
+    // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
+    // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
+    private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                QueryColumn qc = bottomUpColumns.getQuick(i);
+                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                    model.addTopDownColumn(qc, qc.getAlias());
+                }
+            }
         }
     }
 
@@ -10391,9 +10494,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Looks for models with trivial expressions over the same column, and lifts them from the group by.
+     * Lifts trivial expressions such as {@code A + 1} out of a GROUP BY when several keys share
+     * the same underlying column. Triggered when a VIRTUAL wraps a single-join, non-union,
+     * non-sample-by GROUP BY.
      * <p>
-     * For now, this rewrite is very specific and only kicks in for queries similar to ClickBench's Q35:
+     * Inspired by ClickBench Q35:
      * <pre>
      * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c
      * FROM hits
@@ -10401,25 +10506,30 @@ public class SqlOptimiser implements Mutable {
      * ORDER BY c DESC
      * LIMIT 10;
      * </pre>
-     * The above query gets effectively rewritten into:
-     * <p>
-     * SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
-     * FROM (<br>
-     * SELECT ClientIP, COUNT() c<br>
-     * FROM hits <br>
-     * ORDER BY c DESC<br>
-     * LIMIT 10<br>
-     * )
+     * After parsing, the model tree wraps the GROUP BY (with all four keys) in an outer VIRTUAL.
+     * The four keys all derive from {@code ClientIP}, so grouping by them produces the same set
+     * of groups as grouping by {@code ClientIP} alone with the offsets recomputed in the
+     * projection. This method removes the redundant keys from the GROUP BY and moves the
+     * surviving expressions up to the VIRTUAL:
      * <pre>
-     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c
+     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c   -- outer VIRTUAL recomputes the offsets
      * FROM (
-     *   SELECT ClientIP, COUNT(*) AS c
+     *   SELECT ClientIP, COUNT(*) AS c                               -- inner GROUP BY keys on ClientIP only
      *   FROM hits
      *   GROUP BY ClientIP
      *   ORDER BY c DESC
      *   LIMIT 10
      * );
      * </pre>
+     * Detection: for each nested GROUP BY column take its base token - either the literal itself
+     * or the column inside a trivial two-arg operation like {@code A + k} or {@code k + A} - and
+     * lift candidates whose base appears more than once.
+     * <p>
+     * LIMIT interaction: when the outer VIRTUAL has a LIMIT and the nested GROUP BY does not,
+     * push the LIMIT down so the group-by factory can report a bounded cursor size. The push
+     * is gated on every ORDER BY token resolving against the GROUP BY's output; otherwise an
+     * ORDER BY referencing a virtual-only alias (such as a folded constant after DISTINCT)
+     * would attach to the limited GROUP BY and fail to resolve at code-generation time.
      */
     private void rewriteTrivialGroupByExpressions(IQueryModel model) throws SqlException {
         if (model == null || !model.isOptimisable()) {
@@ -10500,10 +10610,16 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                // If limit is on the virtual model, push it down to the group by.
+                // Push limit from virtual down to group by only if every ORDER BY token resolves
+                // against a group-by output. ORDER BY may sit anywhere in the nested chain
+                // below the VIRTUAL, so walk down and check them all. Otherwise the later
+                // rewriteOrderBy attaches the ORDER BY (e.g. a folded constant alias after
+                // DISTINCT) to the limited group-by where it cannot bind, and generateOrderBy
+                // crashes at code-generation time.
                 final ExpressionNode lo = model.getLimitLo();
                 final ExpressionNode hi = model.getLimitHi();
-                if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null) {
+                if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null
+                        && allOrderByColumnsPresentIn(model, nestedModel)) {
                     nestedModel.setLimit(lo, hi);
                     model.setLimit(null, null);
                 }

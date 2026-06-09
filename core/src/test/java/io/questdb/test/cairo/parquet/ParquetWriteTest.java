@@ -649,7 +649,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             "order by ts, s"
             );
             drainWalQueue();
-            assertSql("count\n8000\n", "select count() from tab");
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8000\n");
 
             // Commit 2: re-insert all 8 symbols at the boundary timestamp as
             // out-of-order data. They are all known dedup keys, so the row count
@@ -661,14 +665,19 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertSql("count\n8000\n", "select count() from tab");
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8000\n");
             // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
             // materialized group-by rather than count() over a filtered subquery, which
             // trips an unrelated count fast-path bug (questdb/questdb#7201).
-            assertSql(
-                    "max\n1\n",
-                    "select max(c) from (select ts, s, count() c from tab)"
-            );
+            assertQuery("select max(c) from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("max\n1\n");
         });
     }
 
@@ -700,7 +709,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             "from long_sequence(12)"
             );
             drainWalQueue();
-            assertSql("count\n12\n", "select count() from tab");
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
 
             // Commit 2: re-insert the same 12 keys at the same timestamp as
             // out-of-order data. All are known dedup keys, so the count must stay 12
@@ -712,14 +725,19 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertSql("count\n12\n", "select count() from tab");
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
             // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
             // materialized group-by rather than count() over a filtered subquery, which
             // trips an unrelated count fast-path bug (questdb/questdb#7201).
-            assertSql(
-                    "max\n1\n",
-                    "select max(c) from (select ts, s, count() c from tab)"
-            );
+            assertQuery("select max(c) from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("max\n1\n");
         });
     }
 
@@ -1128,7 +1146,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             "from long_sequence(12)"
             );
             drainWalQueue();
-            assertSql("count\n12\n", "select count() from tab");
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
 
             // Commit 2: re-insert the same 12 rows at the same timestamp as out-of-order
             // data. No dedup, so every row is kept: the count doubles to 24.
@@ -1139,14 +1161,19 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertSql("count\n24\n", "select count() from tab");
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n24\n");
             // 12 distinct (ts, s) groups, each appearing exactly twice: max == min == 2.
             // (max()/min() over the materialized group-by avoids the count() fast-path bug
             // that a filtered count subquery trips -- questdb/questdb#7201.)
-            assertSql(
-                    "mx\tmn\n2\t2\n",
-                    "select max(c) mx, min(c) mn from (select ts, s, count() c from tab)"
-            );
+            assertQuery("select max(c) mx, min(c) mn from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("mx\tmn\n2\t2\n");
         });
     }
 

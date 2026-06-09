@@ -166,6 +166,8 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
             long s1 = rnd.getSeed1();
             final String sqlA = "with x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 1s";
+            // returnsOnce(): the query (built above) evaluates rnd_*() inline, so its values differ
+            // across the re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery(sqlA)
                     .noLeakCheck()
                     .returnsOnce(expected);
@@ -173,6 +175,8 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
             rnd.reset(s0, s1);
             final String sqlB = "with x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count(distinct s) from x sample by 1s";
+            // returnsOnce(): the query (built above) evaluates rnd_*() inline, so its values differ
+            // across the re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery(sqlB)
                     .noLeakCheck()
                     .returnsOnce(expected);

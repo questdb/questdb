@@ -324,6 +324,13 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 oldMeta.isSymbolCacheFlag()
         );
         newColumnMetadata.setParquetEncodingConfig(oldMeta.getParquetEncodingConfig());
+        // Preserve the covering-index schema across a symbol-capacity change.
+        // The covering column indices (and, derived from them, the column's
+        // covering flag) live on the column metadata; rebuilding the column to
+        // change its capacity must carry them over, otherwise the next
+        // rewriteAndSwapMetadata() persists a _meta with no covering flag/section
+        // and every reader thereafter sees the posting index as non-covering.
+        newColumnMetadata.setCoveringColumnIndices(oldMeta.getCoveringColumnIndices());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 

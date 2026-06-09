@@ -322,16 +322,22 @@ public class TableFormatTest extends AbstractCairoTest {
                     "UNION ALL " +
                     "SELECT '2024-01-02T00:00:00.000000Z'::timestamp, 'foo', 'bar'::varchar, rnd_bin(4, 4, 0)");
             drainWalQueue();
-            assertSql("name\tisParquet\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
                             "2024-01-01\ttrue\n" +
-                            "2024-01-02\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+                            "2024-01-02\ttrue\n");
             // BINARY prints as empty in the text sink, so round-trip is asserted
             // via length(): non-null bytes survive the parquet write/read path.
-            assertSql("ts\ts\tv\tlen\n" +
+            assertQuery("SELECT ts, s, v, length(b) AS len FROM tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\tv\tlen\n" +
                             "2024-01-01T00:00:00.000000Z\thello\tworld\t4\n" +
-                            "2024-01-02T00:00:00.000000Z\tfoo\tbar\t4\n",
-                    "SELECT ts, s, v, length(b) AS len FROM tango");
+                            "2024-01-02T00:00:00.000000Z\tfoo\tbar\t4\n");
         });
     }
 
@@ -344,17 +350,23 @@ public class TableFormatTest extends AbstractCairoTest {
                     "('2024-01-02T00:00:00.000000Z', 'b', 2), " +
                     "('2024-01-03T00:00:00.000000Z', 'a', 3)");
             drainWalQueue();
-            assertSql("name\tisParquet\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
                             "2024-01-01\ttrue\n" +
                             "2024-01-02\ttrue\n" +
-                            "2024-01-03\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+                            "2024-01-03\ttrue\n");
             // Symbol values must round-trip through the parquet file.
-            assertSql("ts\tsym\tn\n" +
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tsym\tn\n" +
                             "2024-01-01T00:00:00.000000Z\ta\t1\n" +
                             "2024-01-02T00:00:00.000000Z\tb\t2\n" +
-                            "2024-01-03T00:00:00.000000Z\ta\t3\n",
-                    "tango");
+                            "2024-01-03T00:00:00.000000Z\ta\t3\n");
         });
     }
 
@@ -368,11 +380,14 @@ public class TableFormatTest extends AbstractCairoTest {
                     "('2024-01-03T00:00:00.000000Z')");
             drainWalQueue();
             // Every partition must be parquet because the table is FORMAT PARQUET.
-            assertSql("name\tisParquet\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
                             "2024-01-01\ttrue\n" +
                             "2024-01-02\ttrue\n" +
-                            "2024-01-03\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+                            "2024-01-03\ttrue\n");
         });
     }
 
@@ -396,9 +411,12 @@ public class TableFormatTest extends AbstractCairoTest {
                     "FROM long_sequence(200)");
             drainWalQueue();
 
-            assertSql("name\tisParquet\n" +
-                            "2024-01-01\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n");
 
             assertEquals(2, getParquetRowGroupCount("tango"));
 
@@ -409,12 +427,13 @@ public class TableFormatTest extends AbstractCairoTest {
             // per-row read: v=101 is the first row of the second row group, so a
             // strided encoder ignoring row-group bounds would pair it with the
             // first timestamp (00:00:00) instead of 00:01:40.
-            assertSql("v\tts\n" +
+            assertQuery("SELECT v, ts FROM tango WHERE v IN (1, 100, 101, 200) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("v\tts\n" +
                             "1\t2024-01-01T00:00:00.000000Z\n" +
                             "100\t2024-01-01T00:01:39.000000Z\n" +
                             "101\t2024-01-01T00:01:40.000000Z\n" +
-                            "200\t2024-01-01T00:03:19.000000Z\n",
-                    "SELECT v, ts FROM tango WHERE v IN (1, 100, 101, 200) ORDER BY v");
+                            "200\t2024-01-01T00:03:19.000000Z\n");
         });
     }
 
@@ -455,11 +474,14 @@ public class TableFormatTest extends AbstractCairoTest {
                     "('2024-01-02T00:00:00.000000Z', 2), " +
                     "('2024-01-03T00:00:00.000000Z', 3)");
             drainWalQueue();
-            assertSql("name\tisParquet\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
                             "2024-01-01\ttrue\n" +
                             "2024-01-02\ttrue\n" +
-                            "2024-01-03\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+                            "2024-01-03\ttrue\n");
 
             // Second commit: each partition gets a later timestamp. With no
             // overlap to the existing row group, the merge strategy picks
@@ -470,20 +492,26 @@ public class TableFormatTest extends AbstractCairoTest {
                     "('2024-01-03T12:00:00.000000Z', 6)");
             drainWalQueue();
 
-            assertSql("ts\tv\n" +
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
                             "2024-01-01T00:00:00.000000Z\t1\n" +
                             "2024-01-01T12:00:00.000000Z\t4\n" +
                             "2024-01-02T00:00:00.000000Z\t2\n" +
                             "2024-01-02T12:00:00.000000Z\t5\n" +
                             "2024-01-03T00:00:00.000000Z\t3\n" +
-                            "2024-01-03T12:00:00.000000Z\t6\n",
-                    "tango");
+                            "2024-01-03T12:00:00.000000Z\t6\n");
 
             // Min/max round-trip — sensitive to off-by-one or wrong-stride
             // reads of the merge index.
-            assertSql("min\tmax\tcount\n" +
-                            "2024-01-01T00:00:00.000000Z\t2024-01-03T12:00:00.000000Z\t6\n",
-                    "SELECT min(ts), max(ts), count() FROM tango");
+            assertQuery("SELECT min(ts), max(ts), count() FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("min\tmax\tcount\n" +
+                            "2024-01-01T00:00:00.000000Z\t2024-01-03T12:00:00.000000Z\t6\n");
         });
     }
 
@@ -514,7 +542,11 @@ public class TableFormatTest extends AbstractCairoTest {
             TableToken token = engine.verifyTableName("tango");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
             // After failure, the partition is not registered.
-            assertSql("name\tisParquet\n", "SELECT name, isParquet FROM table_partitions('tango')");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n");
         });
     }
 
@@ -548,15 +580,26 @@ public class TableFormatTest extends AbstractCairoTest {
 
             TableToken token = engine.verifyTableName("tango");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
-            assertSql("name\tisParquet\n", "SELECT name, isParquet FROM table_partitions('tango')");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n");
 
             execute("ALTER TABLE tango RESUME WAL");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
-            assertSql("name\tisParquet\n2024-01-01\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
-            assertSql("ts\tn\n2024-01-01T00:00:00.000000Z\t1\n", "tango");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n2024-01-01\ttrue\n");
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tn\n2024-01-01T00:00:00.000000Z\t1\n");
         });
     }
 
@@ -570,10 +613,13 @@ public class TableFormatTest extends AbstractCairoTest {
             // Now insert a backdated row that creates a new partition before the seed.
             execute("INSERT INTO tango VALUES ('2024-01-02T00:00:00.000000Z', 2)");
             drainWalQueue();
-            assertSql("name\tisParquet\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
                             "2024-01-02\ttrue\n" +
-                            "2024-01-05\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+                            "2024-01-05\ttrue\n");
         });
     }
 
@@ -588,13 +634,19 @@ public class TableFormatTest extends AbstractCairoTest {
             drainWalQueue();
             execute("INSERT INTO tango VALUES ('2024-01-01T00:00:01.000000Z', 2)");
             drainWalQueue();
-            assertSql("name\tisParquet\n" +
-                            "2024-01-01\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
-            assertSql("ts\tn\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n");
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tn\n" +
                             "2024-01-01T00:00:00.000000Z\t1\n" +
-                            "2024-01-01T00:00:01.000000Z\t2\n",
-                    "tango");
+                            "2024-01-01T00:00:01.000000Z\t2\n");
         });
     }
 
@@ -613,12 +665,15 @@ public class TableFormatTest extends AbstractCairoTest {
             drainWalQueue();
             execute("INSERT INTO tango VALUES ('2024-01-04T00:00:00.000000Z', 4)");
             drainWalQueue();
-            assertSql("name\tisParquet\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
                             "2024-01-01\tfalse\n" +
                             "2024-01-02\tfalse\n" +
                             "2024-01-03\tfalse\n" +
-                            "2024-01-04\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+                            "2024-01-04\ttrue\n");
         });
     }
 
@@ -626,13 +681,15 @@ public class TableFormatTest extends AbstractCairoTest {
     public void testShowCreateTableEmitsFormatParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
                             \tts TIMESTAMP
                             ) timestamp(ts) PARTITION BY DAY FORMAT PARQUET;
-                            """,
-                    "SHOW CREATE TABLE tango");
+                            """);
         });
     }
 
@@ -640,13 +697,15 @@ public class TableFormatTest extends AbstractCairoTest {
     public void testShowCreateTableOmitsFormatNative() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
                             \tts TIMESTAMP
                             ) timestamp(ts) PARTITION BY DAY;
-                            """,
-                    "SHOW CREATE TABLE tango");
+                            """);
         });
     }
 
@@ -658,16 +717,23 @@ public class TableFormatTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00.000000Z', 1), " +
                     "('2024-01-02T00:00:00.000000Z', 2)");
             drainWalQueue();
-            assertSql("name\tisParquet\n" +
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
                             "2024-01-01\tfalse\n" +
-                            "2024-01-02\tfalse\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+                            "2024-01-02\tfalse\n");
 
             // Wipe all rows. After this txWriter.getRowCount() == 0 and
             // partitionCount == 0, the same state as a fresh table.
             execute("TRUNCATE TABLE tango");
             drainWalQueue();
-            assertSql("name\tisParquet\n", "SELECT name, isParquet FROM table_partitions('tango')");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n");
 
             execute("ALTER TABLE tango SET FORMAT PARQUET");
             drainWalQueue();
@@ -677,9 +743,16 @@ public class TableFormatTest extends AbstractCairoTest {
             // processWalCommit. The new partition must be written as parquet.
             execute("INSERT INTO tango VALUES ('2024-01-03T00:00:00.000000Z', 3)");
             drainWalQueue();
-            assertSql("name\tisParquet\n2024-01-03\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
-            assertSql("ts\tn\n2024-01-03T00:00:00.000000Z\t3\n", "tango");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n2024-01-03\ttrue\n");
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tn\n2024-01-03T00:00:00.000000Z\t3\n");
         });
     }
 
