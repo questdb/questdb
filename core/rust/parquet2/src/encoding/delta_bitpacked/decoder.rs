@@ -138,7 +138,15 @@ impl<'a> Decoder<'a> {
         let mut consumed_bytes = 0;
         let (block_size, consumed) = uleb128::decode(values)?;
         consumed_bytes += consumed;
-        assert_eq!(block_size % 128, 0);
+        // A valid DELTA_BINARY_PACKED header always carries a block size that is
+        // a multiple of 128. A foreign or corrupt page may not; reject it with a
+        // clean error instead of asserting -- a panic across the JNI boundary
+        // aborts the whole JVM with no recovery.
+        if !block_size.is_multiple_of(128) {
+            return Err(Error::oos(format!(
+                "delta binary packed block size {block_size} is not a multiple of 128"
+            )));
+        }
         values = &values[consumed..];
         let (num_mini_blocks, consumed) = uleb128::decode(values)?;
         let num_mini_blocks = num_mini_blocks as usize;
@@ -152,8 +160,18 @@ impl<'a> Decoder<'a> {
         consumed_bytes += consumed;
         values = &values[consumed..];
 
+        // Guard the division: a zero mini-block count divides by zero.
+        if num_mini_blocks == 0 {
+            return Err(Error::oos(
+                "delta binary packed header declares zero mini blocks",
+            ));
+        }
         let values_per_mini_block = block_size as usize / num_mini_blocks;
-        assert_eq!(values_per_mini_block % 8, 0);
+        if !values_per_mini_block.is_multiple_of(8) {
+            return Err(Error::oos(format!(
+                "delta binary packed values per mini block {values_per_mini_block} is not a multiple of 8"
+            )));
+        }
 
         // If we only have one value (first_value), there are no blocks.
         let current_block = if total_count > 1 {
@@ -361,5 +379,38 @@ mod tests {
 
         assert_eq!(&expected[..], &r[..]);
         assert_eq!(decoder.consumed_bytes(), data.len() - 3);
+    }
+
+    #[test]
+    fn malformed_block_size_not_multiple_of_128() {
+        // block_size=1: a foreign/corrupt header. Previously asserted (panic);
+        // now a clean error.
+        let err = Decoder::try_new(&[1, 1, 1, 0]).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("not a multiple of 128"),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_zero_mini_blocks() {
+        // block_size=0 (passes the %128 check), num_mini_blocks=0: previously a
+        // 0/0 divide panic; now a clean error.
+        let err = Decoder::try_new(&[0, 0, 1, 0]).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("zero mini blocks"),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_values_per_mini_block_not_multiple_of_8() {
+        // block_size=128, num_mini_blocks=3 -> values_per_mini_block=42:
+        // previously asserted (panic); now a clean error.
+        let err = Decoder::try_new(&[128, 1, 3, 1, 0]).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("not a multiple of 8"),
+            "got: {err:?}"
+        );
     }
 }

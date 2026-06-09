@@ -525,3 +525,39 @@ fn test_rle_dictionary_slicer_zero_bit_width() {
     slicer.skip(3).unwrap();
     assert_eq!(slicer.next().unwrap(), b"only_value");
 }
+
+#[test]
+fn test_delta_length_slicer_block_size_not_mult_128_errors() {
+    // block_size=1 (not a multiple of 128): foreign/corrupt header. Must return a
+    // clean error rather than panicking in parquet2 (decoder.rs:141) and aborting
+    // the JVM over JNI.
+    assert!(DeltaLengthArraySlicer::try_new(&[1, 1, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_length_slicer_vpmb_not_mult_8_errors() {
+    // block_size=128, mini_blocks=3 -> values_per_mini_block=42 (not a multiple of
+    // 8): parquet2 decoder.rs:156. Must error, not panic.
+    assert!(DeltaLengthArraySlicer::try_new(&[128, 1, 3, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_length_slicer_zero_miniblocks_errors() {
+    // block_size=0 (passes %128), mini_blocks=0 -> 0/0 divide at parquet2
+    // decoder.rs:155. Must error, not panic.
+    assert!(DeltaLengthArraySlicer::try_new(&[0, 0, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_block_size_not_mult_128_errors() {
+    // Same malformed header through DeltaBytesArraySlicer's first decoder (:451).
+    assert!(DeltaBytesArraySlicer::try_new(&[1, 1, 1, 0], 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_empty_suffix_errors() {
+    // Valid prefix header but an empty suffix region: the second parquet2
+    // decoder would divide 0/0 (zero mini blocks). Must return a clean error
+    // rather than panicking and aborting the JVM.
+    assert!(DeltaBytesArraySlicer::try_new(&[128, 1, 1, 0], 1, 1).is_err());
+}
