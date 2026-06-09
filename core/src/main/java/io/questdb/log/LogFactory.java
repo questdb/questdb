@@ -173,6 +173,11 @@ public class LogFactory implements Closeable {
         setGuaranteedLogging(true, classes);
     }
 
+    @TestOnly
+    public static void failNextCursorHolderInit() {
+        AbstractLogRecord.failNextCursorHolderInit();
+    }
+
     public static synchronized LogFactory getInstance() {
         LogFactory logFactory = INSTANCE;
         if (logFactory == null) {

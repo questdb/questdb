@@ -40,6 +40,7 @@ import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.util.Set;
@@ -47,6 +48,11 @@ import java.util.Set;
 import static io.questdb.ParanoiaState.*;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
+    // Test-only: when set, the next per-thread CursorHolder materialisation throws, simulating an
+    // OutOfMemoryError landing inside the holder's lazy allocation. It exists to prove that the holder
+    // is materialised before the ring slot is claimed (so such a failure cannot strand a slot and wedge
+    // the ring); production never sets it.
+    private static volatile boolean failNextCursorHolderInit = false;
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
@@ -58,7 +64,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     protected final Sequence errorSeq;
     protected final RingQueue<LogRecordUtf8Sink> infoRing;
     protected final Sequence infoSeq;
-    protected final ThreadLocal<CursorHolder> tl = ThreadLocal.withInitial(CursorHolder::new);
+    protected final ThreadLocal<CursorHolder> tl = ThreadLocal.withInitial(AbstractLogRecord::newCursorHolder);
     private final Clock clock;
     private final CharSequence name;
 
@@ -458,6 +464,19 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
     }
 
+    @TestOnly
+    static void failNextCursorHolderInit() {
+        failNextCursorHolderInit = true;
+    }
+
+    private static CursorHolder newCursorHolder() {
+        if (failNextCursorHolderInit) {
+            failNextCursorHolderInit = false;
+            throw new OutOfMemoryError("simulated OOM during CursorHolder allocation");
+        }
+        return new CursorHolder();
+    }
+
     private static void put(
             Utf8Sink sink,
             Throwable throwable,
@@ -564,12 +583,23 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         if (seq == null) {
             return NullLogRecord.INSTANCE;
         }
-        return prepareLogRecord(seq, ring, level, seq.nextBully());
+        // Materialise the thread-local CursorHolder (and its lazily allocated abandonedLogRecordError)
+        // BEFORE claiming the ring slot. The guaranteed-logging path claims with the blocking
+        // nextBully(): if the lazy allocation here ran AFTER the claim and hit an OutOfMemoryError,
+        // the claimed slot would never be published or released, permanently stalling the producer
+        // barrier so every later waiting producer spins forever in nextBully. Allocating first means
+        // any such failure happens before a slot is held, leaving the ring's liveness intact.
+        CursorHolder h = tl.get();
+        return prepareLogRecord(h, seq, ring, level, seq.nextBully());
     }
 
     @NotNull
     protected LogRecord prepareLogRecord(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
-        CursorHolder h = tl.get();
+        return prepareLogRecord(tl.get(), seq, ring, level, cursor);
+    }
+
+    @NotNull
+    private LogRecord prepareLogRecord(CursorHolder h, Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
         // It's important to keep this before the assignment to the fields of CursorHolder.
         // We need the values before the assignment in order to recover the abandoned log record.
         LogError logError = detectAbandonedLogRecord(h);

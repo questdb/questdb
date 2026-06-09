@@ -107,6 +107,11 @@ public final class Logger extends AbstractLogRecord implements Log {
             return NullLogRecord.INSTANCE;
         }
 
+        // Materialise the thread-local CursorHolder (and its lazily allocated abandonedLogRecordError)
+        // before claiming the ring slot, so a failure in the lazy allocation cannot strand a claimed
+        // slot. Mirrors the guaranteed-logging nextWaiting path; harmless on the hot path because the
+        // first materialisation per thread allocates and every later call is a cheap lookup.
+        tl.get();
         final long cursor = seq.next();
         if (cursor < 0) {
             return NullLogRecord.INSTANCE;
