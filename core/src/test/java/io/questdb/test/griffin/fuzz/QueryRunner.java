@@ -42,6 +42,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
@@ -146,6 +147,7 @@ public final class QueryRunner {
     private static final long FAULT_MALLOC_SLACK_MIN = 4 * 1024;
     private static final int FAULT_MALLOC_SLACK_RANGE = 256 * 1024;
     private static final int FAULT_MAX_FILE_OPS = 48;
+    private static final int FAULT_MAX_FN_CALLS = 40;
     private static final long FAULT_MEM_LEAK_SLACK = 256 * 1024;
     // Matches LONG, FLOAT, DOUBLE, DECIMAL, TIMESTAMP, or DATE type hints in a
     // candidate subexpression. The presence of any such hint means the bind
@@ -164,6 +166,8 @@ public final class QueryRunner {
     private final FailureFileFacade failureFf;
     // Fault kinds available this run; FILE is present only when failureFf != null.
     private final FaultType[] faultTypes;
+    // Count of injected faults that actually fired (vs armed but not reached).
+    private int faultsFired;
     // Reused per parseFunction call. Stateful (metadataStack, function stacks)
     // but parseFunction is contractually re-entrant: it pushes/pops its own
     // state in try/finally, so a single instance is safe across the runner's
@@ -199,8 +203,8 @@ public final class QueryRunner {
         this.verifyCursor = verifyCursor;
         this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
         this.faultTypes = failureFf != null
-                ? new FaultType[]{FaultType.FILE, FaultType.MALLOC}
-                : new FaultType[]{FaultType.MALLOC};
+                ? new FaultType[]{FaultType.FILE, FaultType.FUNCTION, FaultType.MALLOC}
+                : new FaultType[]{FaultType.FUNCTION, FaultType.MALLOC};
         if (diffShadow) {
             int n = tables.size();
             primaryPatterns = new Pattern[n];
@@ -236,6 +240,10 @@ public final class QueryRunner {
      */
     public FaultType chooseFaultType(Rnd rnd) {
         return faultTypes[rnd.nextInt(faultTypes.length)];
+    }
+
+    public int getFaultsFired() {
+        return faultsFired;
     }
 
     public Result run(GeneratedQuery query) {
@@ -282,10 +290,7 @@ public final class QueryRunner {
                 savedRssLimit = Unsafe.getRssMemLimit();
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + FAULT_MALLOC_SLACK_MIN + rnd.nextInt(FAULT_MALLOC_SLACK_RANGE));
             }
-            case FUNCTION -> {
-                // Stage B: the generator has emitted test_fault() into the SQL; arm
-                // its per-row counter here.
-            }
+            case FUNCTION -> TestFaultFunctionFactory.armToFailAfter(rnd.nextInt(FAULT_MAX_FN_CALLS));
         }
         Outcome outcome;
         // Read the file-failure count before disarming: clearFailures() resets it.
@@ -299,16 +304,17 @@ public final class QueryRunner {
             switch (type) {
                 case FILE -> failureFf.clearFailures();
                 case MALLOC -> Unsafe.setRssMemLimit(savedRssLimit);
-                case FUNCTION -> {
-                    // Stage B: disarm the function counter.
-                }
+                case FUNCTION -> TestFaultFunctionFactory.disarm();
             }
         }
         boolean faultFired = switch (type) {
             case FILE -> fileFiredAfter > fileFailBaseline;
             case MALLOC -> outcome.failure instanceof CairoException ce && ce.isOutOfMemory();
-            case FUNCTION -> false; // Stage B
+            case FUNCTION -> TestFaultFunctionFactory.faultsTriggered() > 0;
         };
+        if (faultFired) {
+            faultsFired++;
+        }
         // Oracle 1: the fault must not be swallowed. A FILE op failure may be
         // handled gracefully (a non-fatal -1 return), so only the deterministic
         // throws (MALLOC OOM, FUNCTION throw) are required to surface.

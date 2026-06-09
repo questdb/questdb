@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -81,6 +82,14 @@ import java.nio.file.Paths;
  *         and {@code size()} / {@code calculateSize()} must agree with the
  *         materialized row count. These hold for every cursor, so a violation
  *         is reported as a failure with no skip valves.</li>
+ *     <li>{@code -Dquestdb.fuzz.faults=true|false} &mdash; randomly enabled
+ *         fault injection (default true). On a fraction of queries
+ *         ({@code -Dquestdb.fuzz.fault.pct=N}, default 15) one fault is armed:
+ *         a failing filesystem op, a native allocation that trips the RSS
+ *         memory limit, or a thrown {@code test_fault()} woven into the query.
+ *         The runner then asserts the factory frees its resources on the error
+ *         path and that the same query runs cleanly once the fault is removed.
+ *         Fault queries run serially and bypass the differential oracle.</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
@@ -115,6 +124,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testQueryFuzz() throws Exception {
+        // Enable dev mode so the test_fault() function the FUNCTION fault relies on
+        // is active; it folds to the constant true otherwise.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         // Install a FailureFileFacade as the engine's files facade so the runner can
         // arm file-I/O faults; it is a transparent passthrough until armed.
         final FailureFileFacade faultFf = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
@@ -239,9 +251,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 FaultType faultType = (config.isFaultInjectionEnabled() && rnd.nextInt(100) < config.getFaultProbabilityPct())
                         ? runner.chooseFaultType(rnd)
                         : null;
+                boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null);
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn);
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -290,7 +303,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx);
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn);
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
@@ -335,7 +348,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         LOG.info().$("fuzz done: ").$(config.getNumQueries()).$(" queries, ")
                 .$(serial).$(" serial, ")
-                .$(faultGen).$(" with fault injection, ")
+                .$(faultGen).$(" with fault injection (").$(runner.getFaultsFired()).$(" fired), ")
                 .$(bindGen).$(" with bind variant, ")
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")

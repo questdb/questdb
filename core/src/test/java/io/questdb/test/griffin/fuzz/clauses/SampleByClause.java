@@ -63,7 +63,7 @@ public final class SampleByClause {
     private SampleByClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx, boolean injectFaultFn) {
         FuzzTable table = source.getTable();
         boolean useColAliases = rnd.nextBoolean();
         ExpressionGenerator exprGen = new ExpressionGenerator(rnd, table.getColumns(), null, 2);
@@ -107,10 +107,7 @@ public final class SampleByClause {
 
         sql.put(" FROM ").put(source.getFromSqlWithGarble(rnd));
 
-        if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 1).generate(table.getColumns(), null, ctx);
-            sql.put(" WHERE ").put(pred);
-        }
+        PredicateGenerator.appendWhere(sql, rnd, table.getColumns(), null, 1, ctx, injectFaultFn);
 
         sql.put(" SAMPLE BY ").put(INTERVALS[rnd.nextInt(INTERVALS.length)]);
 
