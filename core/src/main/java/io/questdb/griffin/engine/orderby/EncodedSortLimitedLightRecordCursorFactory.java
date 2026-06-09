@@ -42,12 +42,15 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Encoded-key top-K replacement for {@link LimitedSizeSortedLightRecordCursorFactory}.
  * <p>
- * The build phase keeps a size-K binary heap of fixed-width encoded entries
- * (see {@link EncodedTopKHeap}) and never calls {@code recordAt} on the base
- * cursor, which is what makes the consumer-side Parquet decode cache
- * work-set independent of K. The base record stays bound to whichever frame
- * {@code hasNext()} advanced into; comparisons happen as native byte
- * compares on encoded keys.
+ * The build phase encodes each scanned row's sort key into a flat native
+ * buffer and never calls {@code recordAt} on the base cursor, which is what
+ * makes the consumer-side Parquet decode cache work-set independent of K.
+ * The base record stays bound to whichever frame {@code hasNext()} advanced
+ * into; comparisons happen as native byte compares on the encoded keys.
+ * After the scan, {@link io.questdb.std.Vect#sortEncodedEntries} sorts the
+ * full buffer and emit yields the requested slice. The partial-sort variant
+ * bounds the scan via timestamp-group early stop, keeping the buffer size
+ * close to {@code limit}.
  * <p>
  * Used only when {@link SortKeyEncoder#isSupported(RecordMetadata,
  * io.questdb.std.IntList)} accepts the sort key. The legacy tree-chain

@@ -37,7 +37,7 @@ import io.questdb.std.Numbers;
  * leading sort key is that timestamp and we want the first N rows, scanning can
  * stop as soon as a completed timestamp group pushes the cumulative row count
  * past the limit: any further row carries a strictly larger leading key than
- * every heap entry, so it cannot displace one.
+ * every collected row, so it cannot enter the top-K slice.
  */
 final class EncodedSortLimitedPartiallySortedLightRecordCursor extends EncodedSortLimitedLightRecordCursor {
     private final int timestampIndex;
@@ -72,7 +72,7 @@ final class EncodedSortLimitedPartiallySortedLightRecordCursor extends EncodedSo
             if (!baseCursor.hasNext()) {
                 return;
             }
-            encodeAndPushCurrentRow();
+            encodeAndAppendCurrentRow();
             groupTimestamp = baseRecord.getTimestamp(timestampIndex);
             rowsInGroup = 1;
             timestampInitialized = true;
@@ -90,7 +90,7 @@ final class EncodedSortLimitedPartiallySortedLightRecordCursor extends EncodedSo
                 groupTimestamp = currentTimestamp;
                 rowsInGroup = 1;
             }
-            encodeAndPushCurrentRow();
+            encodeAndAppendCurrentRow();
         }
     }
 }
