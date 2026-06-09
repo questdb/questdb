@@ -47,17 +47,16 @@ public class GroupByTest extends AbstractCairoTest {
                     "    select 1, 'a' )");
 
             String query1 = "select l, s from t group by l,s";
-            assertPlanNoLeakCheck(
-                    query1,
-                    """
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               keys: [l,s]
                               filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query1)
                     .expectSize()
                     .noLeakCheck()
@@ -65,9 +64,9 @@ public class GroupByTest extends AbstractCairoTest {
 
             String query2 = "select l as l1, s as s1 from t group by l,s";
             // virtual model must be used here to change aliases
-            assertPlanNoLeakCheck(
-                    query2,
-                    """
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [l,s]
                                 Async Group By workers: 1
@@ -76,8 +75,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query2)
                     .expectSize()
                     .noLeakCheck()
@@ -251,9 +249,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x+1 ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [column,count]
                                 Async Group By workers: 1
@@ -264,8 +262,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -290,9 +287,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by case when x < 0 then -1 when x = 0 then 0 else 1 end ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               keys: [case]
                               keyFunctions: [case([x<0,-1,x=0,0,1])]
@@ -301,8 +298,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -327,9 +323,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x+1";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [case([column<0,-1,column=0,0,1]),count]
                                 Async Group By workers: 1
@@ -340,8 +336,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -363,9 +358,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x,avg,avg+min,x+10,avg1,avg1+10]
                                 Async Group By workers: 1
@@ -375,8 +370,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -402,9 +396,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x,avg,:bv::string]
                                 Async Group By workers: 1
@@ -414,8 +408,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -435,9 +428,9 @@ public class GroupByTest extends AbstractCairoTest {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t group by x ";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x*10,x+avg,min]
                                 Async Group By workers: 1
@@ -447,8 +440,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -468,9 +460,9 @@ public class GroupByTest extends AbstractCairoTest {
             execute("create table t (x long, y long);");
             execute("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [column,x+avg,min]
                                 Async Group By workers: 1
@@ -481,8 +473,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -527,9 +518,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
@@ -539,8 +530,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: dat
-                            """
-            );
+                            """);
             assertQuery(query)
                     .timestamp("date_report")
                     .expectSize()
@@ -565,9 +555,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "from dat ordr " +
                     "group by date_report " + // no alias used here
                     "order by ordr.date_report";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
@@ -577,8 +567,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: dat
-                            """
-            );
+                            """);
             assertQuery(query)
                     .timestamp("date_report")
                     .expectSize()
@@ -604,9 +593,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
@@ -616,8 +605,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: dat
-                            """
-            );
+                            """);
             assertQuery(query)
                     .timestamp("date_report")
                     .expectSize()
@@ -643,9 +631,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by date_report, ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [date_report1]
                                 VirtualRecord
@@ -657,8 +645,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: dat
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .timestamp("date_report1")
@@ -686,9 +673,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by dateadd('d', -1, date_report), ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [date_report]
                                 VirtualRecord
@@ -701,8 +688,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: dat
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .timestamp("date_report")
@@ -731,9 +717,9 @@ public class GroupByTest extends AbstractCairoTest {
                     group by ordr.date_report
                     order by ordr.date_report""";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [date_report]
                                 VirtualRecord
@@ -745,8 +731,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: dat
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .timestamp("date_report")
@@ -781,9 +766,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by details.date_report " +
                     "order by details.date_report";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [date_report]
                                 VirtualRecord
@@ -801,8 +786,7 @@ public class GroupByTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: det
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .timestamp("date_report")
@@ -1164,9 +1148,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "    select 1, 'a' )");
 
             String query = "select l, s, l+1 from t group by l+1,s, l, l+2";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [l,s,column]
                                 Async Group By workers: 1
@@ -1176,8 +1160,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -1466,9 +1449,9 @@ public class GroupByTest extends AbstractCairoTest {
             );
 
             String query = "select s, max, max(l) from t group by s, max order by s, max";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [s, max]
                                 Async Group By workers: 1
@@ -1478,8 +1461,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -1533,9 +1515,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x " +
                     "order by t1.x, t2.x";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [x, x1]
@@ -1554,8 +1536,7 @@ public class GroupByTest extends AbstractCairoTest {
                                                         PageFrame
                                                             Row forward scan
                                                             Frame forward scan on: t2
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -1582,9 +1563,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "join t2 on t1.y = t2.y  " +
                     "group by t1.x, t2.x, case when t1.x > 1 then 30*t1.x else 20*t2.x end";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x,max,case]
                                 GroupBy vectorized: false
@@ -1600,8 +1581,7 @@ public class GroupByTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: t2
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -1629,9 +1609,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
                     "order by 1";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [x]
                                 VirtualRecord
@@ -1649,8 +1629,7 @@ public class GroupByTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: t2
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -1678,9 +1657,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
                     "order by 1, 2, 3";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [x, max, dateadd]
                                 VirtualRecord
@@ -1698,8 +1677,7 @@ public class GroupByTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: t2
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -1780,9 +1758,9 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
-                assertPlanNoLeakCheck(
-                        query1,
-                        "Sort light lo: 10000\n" +
+                assertQuery(query1)
+                        .noLeakCheck()
+                        .assertsPlan("Sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1798,8 +1776,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "                    Hash\n" +
                                 "                        PageFrame\n" +
                                 "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n"
-                );
+                                "                            Frame forward scan on: dim_apTemperature\n");
 
                 // With no aliases in GROUP BY clause - 1
                 final String query2 = "SELECT\n" +
@@ -1821,9 +1798,9 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
-                assertPlanNoLeakCheck(
-                        query2,
-                        "Sort light lo: 10000\n" +
+                assertQuery(query2)
+                        .noLeakCheck()
+                        .assertsPlan("Sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1839,8 +1816,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "                    Hash\n" +
                                 "                        PageFrame\n" +
                                 "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n"
-                );
+                                "                            Frame forward scan on: dim_apTemperature\n");
 
                 // With no aliases in GROUP BY clause - 2
                 final String query3 = "SELECT\n" +
@@ -1862,9 +1838,9 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
-                assertPlanNoLeakCheck(
-                        query3,
-                        "Sort light lo: 10000\n" +
+                assertQuery(query3)
+                        .noLeakCheck()
+                        .assertsPlan("Sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1880,8 +1856,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "                    Hash\n" +
                                 "                        PageFrame\n" +
                                 "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n"
-                );
+                                "                            Frame forward scan on: dim_apTemperature\n");
 
                 // Without GROUP BY clause
                 final String query4 = "SELECT\n" +
@@ -1900,9 +1875,9 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
-                assertPlanNoLeakCheck(
-                        query4,
-                        "Sort light lo: 10000\n" +
+                assertQuery(query4)
+                        .noLeakCheck()
+                        .assertsPlan("Sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    GroupBy vectorized: false\n" +
                                 "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
@@ -1916,8 +1891,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "                Hash\n" +
                                 "                    PageFrame\n" +
                                 "                        Row forward scan\n" +
-                                "                        Frame forward scan on: dim_apTemperature\n"
-                );
+                                "                        Frame forward scan on: dim_apTemperature\n");
             }
         });
     }
@@ -1934,9 +1908,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "    select 1, 'a' )");
 
             String query = "select l,s,rnd_int(0,1,0)/10 from t group by l,s";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [l,s,memoize(rnd_int(0,1,0)/10)]
                                 Async Group By workers: 1
@@ -1945,8 +1919,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .noRandomAccess()
                     .expectSize()
@@ -2002,17 +1975,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
             );
             String query = "select s2, sum(l) from t where s2 in ('c') latest on ts partition by s1";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             GroupBy vectorized: false
                               keys: [s2]
                               values: [sum(l)]
                                 LatestByDeferredListValuesFiltered
                                   filter: s2 in [c]
                                     Frame backward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2038,9 +2010,9 @@ public class GroupByTest extends AbstractCairoTest {
                             "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
             );
             String query = "select s2, sum(l) from t where s2 in ('c', 'd') latest on ts partition by s1 order by s2";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [s2]
                                 GroupBy vectorized: false
@@ -2049,8 +2021,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     LatestByDeferredListValuesFiltered
                                       filter: s2 in [c,d]
                                         Frame backward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2077,17 +2048,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
             );
             String query = "select concat('_', s2, '_'), sum(l) from t where s2 in ('d') latest on ts partition by s1";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             GroupBy vectorized: false
                               keys: [concat]
                               values: [sum(l)]
                                 LatestByDeferredListValuesFiltered
                                   filter: s2 in [d]
                                     Frame backward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2114,9 +2084,9 @@ public class GroupByTest extends AbstractCairoTest {
                             where a = 1
                             group by a,b,z
                             """;
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Group By workers: 1
                               keys: [a,b,z]
                               values: [count(*)]
@@ -2124,8 +2094,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2186,9 +2155,9 @@ public class GroupByTest extends AbstractCairoTest {
                             1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188.0
                             """);
 
-            assertPlanNoLeakCheck(
-                    query1,
-                    """
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [i]
                                 VirtualRecord
@@ -2213,8 +2182,7 @@ public class GroupByTest extends AbstractCairoTest {
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             String query2 = "select last(ts) as ts, " +
                     "i, " +
@@ -2259,9 +2227,9 @@ public class GroupByTest extends AbstractCairoTest {
                             1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188
                             """);
 
-            assertPlanNoLeakCheck(
-                    query2,
-                    """
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [i]
                                 GroupBy vectorized: false
@@ -2273,8 +2241,7 @@ public class GroupByTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                            """
-            );
+                            """);
         });
     }
 
@@ -2292,9 +2259,9 @@ public class GroupByTest extends AbstractCairoTest {
                             where a = 1
                             group by a,b,z
                             """;
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Group By workers: 1
                               keys: [a,b,z]
                               values: [count(*)]
@@ -2302,8 +2269,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2328,9 +2294,9 @@ public class GroupByTest extends AbstractCairoTest {
                             where a = 1
                             group by a,B,z
                             """;
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Group By workers: 1
                               keys: [a,B,z]
                               values: [count(*)]
@@ -2338,8 +2304,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2366,9 +2331,9 @@ public class GroupByTest extends AbstractCairoTest {
                             where a = 1
                             group by a,b,c
                             """;
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [a,b,c,views]
                                 Async JIT Group By workers: 1
@@ -2378,8 +2343,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2406,9 +2370,9 @@ public class GroupByTest extends AbstractCairoTest {
                             where a = 1
                             group by a,b,c
                             """;
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Group By workers: 1
                               keys: [a,b,c]
                               values: [count(*)]
@@ -2416,8 +2380,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2547,9 +2510,9 @@ public class GroupByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns(expected);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [y_utc_15m]
                                 GroupBy vectorized: false
@@ -2561,8 +2524,7 @@ public class GroupByTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -2581,9 +2543,9 @@ public class GroupByTest extends AbstractCairoTest {
                     group by a,b,z
                     order by a,b,z
                     """;
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [a, b, z]
@@ -2596,8 +2558,7 @@ public class GroupByTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -2634,9 +2595,9 @@ public class GroupByTest extends AbstractCairoTest {
                             GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst
                             ORDER BY PageViews DESC
                             LIMIT 1000, 1010;""";
-            assertPlanNoLeakCheck(
-                    query1,
-                    """
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
@@ -2650,8 +2611,7 @@ public class GroupByTest extends AbstractCairoTest {
                                             Row forward scan
                                             Interval forward scan on: hits
                                               intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
-                            """
-            );
+                            """);
             String query2 =
                     """
                             SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews
@@ -2660,9 +2620,9 @@ public class GroupByTest extends AbstractCairoTest {
                             GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL
                             ORDER BY PageViews DESC
                             LIMIT 1000, 1010;""";
-            assertPlanNoLeakCheck(
-                    query2,
-                    """
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
@@ -2676,8 +2636,7 @@ public class GroupByTest extends AbstractCairoTest {
                                             Row forward scan
                                             Interval forward scan on: hits
                                               intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
-                            """
-            );
+                            """);
             String query3 = """
                     SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews, concat(lpad(cast(TraficSourceId as string), 10, '0'), lpad(cast(Referer as string), 32, '0')) as cat
                     FROM hits
@@ -2685,9 +2644,9 @@ public class GroupByTest extends AbstractCairoTest {
                     GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL, cat
                     ORDER BY PageViews DESC
                     LIMIT 1000, 1010;""";
-            assertPlanNoLeakCheck(
-                    query3,
-                    """
+            assertQuery(query3)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
@@ -2701,8 +2660,7 @@ public class GroupByTest extends AbstractCairoTest {
                                             Row forward scan
                                             Interval forward scan on: hits
                                               intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -2722,9 +2680,9 @@ public class GroupByTest extends AbstractCairoTest {
                             1\t1\t1\t3
                             1\t3\t3\t2
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [k1, key2]
                                 VirtualRecord
@@ -2736,8 +2694,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2755,9 +2712,9 @@ public class GroupByTest extends AbstractCairoTest {
                             1\t0\t0\t50
                             2\t1\t1\t50
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [column, key, key1 desc]
                                 VirtualRecord
@@ -2769,8 +2726,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2787,9 +2743,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
                     "order by 1, 2, 3";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [x, max, dateadd]
                                 VirtualRecord
@@ -2807,8 +2763,7 @@ public class GroupByTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: t2
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .expectSize()
@@ -2873,7 +2828,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             // assertQueryNoLeakCheck's cursor memory verification is too strict, so we're using assertSql;
             // that's because non-keyed group by cursors only close their map value when the factory is closed
-            assertQuery(query.toString())
+            assertQuery(query)
                     .noLeakCheck()
                     .returnsOnce(expectedHeader + expectedValues.toString());
         });
@@ -3128,9 +3083,9 @@ public class GroupByTest extends AbstractCairoTest {
             );
 
             String query = "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(v),min(v),max(v),count(*),avg(v),first(v),last(v)]
@@ -3138,8 +3093,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .noRandomAccess()
                     .expectSize()
@@ -3233,9 +3187,9 @@ public class GroupByTest extends AbstractCairoTest {
             );
 
             String query = "SELECT first(v), last(v), first_not_null(v), last_not_null(v) FROM t";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: true
                               values: [first(v),last(v),first_not_null(v),last_not_null(v)]
@@ -3243,8 +3197,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .noRandomAccess()
                     .expectSize()
@@ -3270,9 +3223,9 @@ public class GroupByTest extends AbstractCairoTest {
 
             // first(v) is batch-eligible, last(v + 1) is not (expression arg, not decomposable).
             String query = "SELECT first(v), last(v + 1) FROM t";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: true
                               values: [first(v),last(v+1)]
@@ -3280,8 +3233,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .noRandomAccess()
                     .expectSize()
@@ -3335,9 +3287,9 @@ public class GroupByTest extends AbstractCairoTest {
 
             // All functions use expression args, so none are batch-eligible.
             String query = "SELECT first(v * 2), last(v + 1) FROM t";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: false
                               values: [first(v*2),last(v+1)]
@@ -3345,8 +3297,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .noRandomAccess()
                     .expectSize()
@@ -3373,9 +3324,9 @@ public class GroupByTest extends AbstractCairoTest {
 
             // Filter disables the vectorized path.
             String query = "SELECT sum(v), count(*), first(v) FROM t WHERE v > 15";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Group By workers: 1
                               vectorized: false
                               values: [sum(v),count(*),first(v)]
@@ -3383,8 +3334,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
             assertQuery(query)
                     .noRandomAccess()
                     .expectSize()
@@ -3486,9 +3436,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tab.created " +
                     "ORDER BY tab.created";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ref0]
                                 VirtualRecord
@@ -3499,8 +3449,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .timestamp("ref0")
@@ -3532,9 +3481,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "ORDER BY dateadd('h', 1, tab.created)";
 
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ref0]
                                 VirtualRecord
@@ -3545,8 +3494,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .timestamp("ref0")
@@ -3577,9 +3525,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tab.created " +
                     "ORDER BY tab.created";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [created]
                                 Async JIT Group By workers: 1
@@ -3588,8 +3536,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .timestamp("created")
@@ -3620,9 +3567,9 @@ public class GroupByTest extends AbstractCairoTest {
                     " from long_sequence(20)");
 
             String query = "select sym, hour(ts), avg(bid) avgBid from x group by hour(ts), sym order by hour(ts), sym";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [hour, sym]
                                 VirtualRecord
@@ -3635,8 +3582,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
             assertQuery(query)
                     .expectSize()
                     .noLeakCheck()
@@ -3684,9 +3630,9 @@ public class GroupByTest extends AbstractCairoTest {
                             6.020496469863701\t5.702005218155505\tC
                             """);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [category]
                                 VirtualRecord
@@ -3697,8 +3643,7 @@ public class GroupByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: avg
-                            """
-            );
+                            """);
         });
     }
 

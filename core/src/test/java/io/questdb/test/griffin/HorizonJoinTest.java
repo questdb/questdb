@@ -1571,22 +1571,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertPlanNoLeakCheck(
-                    """
-                            SELECT avg(p.price), sum(t.qty)
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            RANGE FROM 0s TO 1s STEP 1s AS h
-                            """,
-                    getHorizonJoinPlanType() + " offsets: 2\n" +
+            assertQuery("""
+                    SELECT avg(p.price), sum(t.qty)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 1s STEP 1s AS h
+                    """)
+                    .noLeakCheck()
+                    .assertsPlan(getHorizonJoinPlanType() + " offsets: 2\n" +
                             "  values: [avg(p.price),sum(t.qty)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n"
-            );
+                            "        Frame forward scan on: prices\n");
         });
     }
 
@@ -1881,12 +1880,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
-            assertPlanNoLeakCheck(
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_off, avg(p.bid), avg(p.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h",
-                    "VirtualRecord\n" +
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_off, avg(p.bid), avg(p.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h")
+                    .noLeakCheck()
+                    .assertsPlan("VirtualRecord\n" +
                             "  functions: [sec_off,avg,avg1]\n" +
                             "    " + getHorizonJoinPlanType() + " offsets: 2\n" +
                             "      keys: [sec_off]\n" +
@@ -1896,8 +1895,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n"
-            );
+                            "            Frame forward scan on: prices\n");
         });
     }
 
@@ -3260,10 +3258,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 2s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            // Verify the query plan
-            assertPlanNoLeakCheck(
-                    sql,
-                    "Encode sort light\n" +
+            // Verify results
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("Encode sort light\n" +
                             "  keys: [sec_offs]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sec_offs,avg]\n" +
@@ -3275,13 +3274,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: prices\n"
-            );
-
-            // Verify results
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .expectSize()
+                            "                Frame forward scan on: prices\n")
                     .returns("""
                             sec_offs\tavg
                             0\t20.0
