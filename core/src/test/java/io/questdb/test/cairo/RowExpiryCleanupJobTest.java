@@ -31,7 +31,10 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -306,6 +309,61 @@ public class RowExpiryCleanupJobTest extends AbstractCairoTest {
             } finally {
                 Misc.free(job);
             }
+        });
+    }
+
+    @Test
+    public void testExpiryTimestampThresholdDetection() throws Exception {
+        // Unit test of the fast-path threshold resolver: it returns the epoch-micros upper bound for a
+        // "<ts> < T"/"<ts> <= T" designated-timestamp predicate (so the cleanup classifies by bounds), and
+        // LONG_NULL for any other shape (so the cleanup falls back to the scan). A wrong value here would
+        // mean wrong partition classification, so the exact value is asserted.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("t");
+            ((SqlExecutionContextImpl) sqlExecutionContext).initNow(); // populate now() from the test clock
+            try (TableMetadata md = engine.getTableMetadata(token); SqlCompiler c = engine.getSqlCompiler()) {
+                assertEquals(NOW_MICROS, c.expiryTimestampThresholdMicros(sqlExecutionContext, md, "ts < now()", "ts"));
+                assertEquals(NOW_MICROS, c.expiryTimestampThresholdMicros(sqlExecutionContext, md, "ts <= now()", "ts"));
+                assertEquals(NOW_MICROS - 2 * 86_400_000_000L,
+                        c.expiryTimestampThresholdMicros(sqlExecutionContext, md, "ts < dateadd('d', -2, now())", "ts"));
+                // Not a fast-path shape -> LONG_NULL (caller scans).
+                assertEquals(Numbers.LONG_NULL, c.expiryTimestampThresholdMicros(sqlExecutionContext, md, "v < 2.0", "ts"));
+                assertEquals(Numbers.LONG_NULL, c.expiryTimestampThresholdMicros(sqlExecutionContext, md, "ts < now() and v > 1.0", "ts"));
+                assertEquals(Numbers.LONG_NULL, c.expiryTimestampThresholdMicros(sqlExecutionContext, md, "ts >= now()", "ts"));
+                assertEquals(Numbers.LONG_NULL, c.expiryTimestampThresholdMicros(sqlExecutionContext, md, "now() > ts", "ts"));
+            }
+        });
+    }
+
+    @Test
+    public void testJobFastPathByPartitionBounds() throws Exception {
+        // Designated-timestamp predicate: the cleanup classifies each partition from its [floor, nextFloor)
+        // bounds vs the threshold with NO scan (fully-expired -> DROP, fully-live -> SKIP), and falls back
+        // to the survivor scan only for the partition that straddles the threshold. The straddle partition
+        // must keep its live rows (no data loss). now()=2024-01-10T12 -> threshold (now-2d) = 2024-01-08T12.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1704888000000000L); // 2024-01-10T12:00:00Z
+            execute("create table t (v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -2, now())");
+            execute("insert into t values (1.0, '2024-01-05T10:00:00.000000Z')"); // fully before  -> DROP (fast)
+            execute("insert into t values (2.0, '2024-01-08T06:00:00.000000Z')"); // straddle, expired
+            execute("insert into t values (3.0, '2024-01-08T18:00:00.000000Z')"); // straddle, live -> survives
+            execute("insert into t values (4.0, '2024-01-09T10:00:00.000000Z')"); // after threshold -> SKIP (fast)
+            execute("insert into t values (5.0, '2024-01-10T06:00:00.000000Z')"); // active partition -> protected
+            drainWalQueue();
+            assertEquals(5, rawRowCount("t"));
+
+            runCleanup();
+            drainWalQueue();
+
+            assertEquals(3, rawRowCount("t"));
+            assertEquals(0, rawRowCountWhere("t", "2024-01-05")); // fully-expired partition dropped (fast path)
+            assertEquals(1, rawRowCountWhere("t", "2024-01-08")); // straddle: only the live 18:00 row survives
+            assertEquals(1, rawRowCountWhere("t", "2024-01-09")); // fully-live partition kept (fast skip)
+            // The surviving straddle row is the live 18:00 one, not the expired 06:00 one.
+            assertSql("ts\n" + "2024-01-08T18:00:00.000000Z\n", "select ts from t where ts in '2024-01-08'");
         });
     }
 

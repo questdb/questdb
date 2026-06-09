@@ -94,6 +94,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private static final int ACTION_DROP = 1;
     private static final int ACTION_REPLACE = 2;
     private static final int ACTION_SKIP = 0;
+    private static final int ACTION_UNKNOWN = -1; // bounds were not decisive; fall back to the survivor scan
     private static final long GLOBAL_CHECK_INTERVAL_MICROS = 1_000_000L;
     private static final Log LOG = LogFactory.getLog(RowExpiryCleanupJob.class);
     private static final long NO_LAST_RUN = Long.MIN_VALUE;
@@ -150,6 +151,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         final int partitionBy;
         final int timestampType;
         final String timestampColumnName;
+        // Fast-path threshold for a "<ts> < T"/"<ts> <= T" predicate: lets each partition be classified by
+        // its [floor, nextFloor) bounds with no survivor scan (LONG_NULL = not applicable -> scan instead).
+        long timestampThreshold = Numbers.LONG_NULL;
 
         // Snapshot non-active LOGICAL partitions. Totals come from the tx file (no column mapping, so
         // parquet partitions are fine), and physical O3 splits of the same logical day are collapsed
@@ -194,6 +198,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     partitionRowCounts.setQuick(last, partitionRowCounts.getQuick(last) + size);
                 }
             }
+
+            // Resolve the fast-path timestamp threshold once per table (now() must be initialised first).
+            if (partitionFloors.size() > 0) {
+                initNow();
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    timestampThreshold = compiler.expiryTimestampThresholdMicros(
+                            sqlExecutionContext, metadata, predicate, timestampColumnName);
+                }
+            }
         }
 
         boolean workDone = false;
@@ -206,8 +219,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 final long nextFloorTs = partitionNextFloors.getQuick(i);
                 final long rowCount = partitionRowCounts.getQuick(i);
                 try {
-                    final int action = classifyPartition(tableName, keepFilter, timestampColumnName,
-                            timestampType, partitionBy, floorTs, rowCount);
+                    // Fast path: classify by the partition's [floor, nextFloor) bounds vs the threshold,
+                    // with no scan. Only when the bounds straddle the threshold (or there is no threshold)
+                    // do we fall back to the authoritative survivor count scan.
+                    int action = fastClassifyByBounds(timestampThreshold, floorTs, nextFloorTs);
+                    if (action == ACTION_UNKNOWN) {
+                        action = classifyPartition(tableName, keepFilter, timestampColumnName,
+                                timestampType, partitionBy, floorTs, rowCount);
+                    }
                     if (action == ACTION_DROP) {
                         dropFloors.add(floorTs);
                         workDone = true;
@@ -332,6 +351,30 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             lastRunByTable.put(Chars.toString(tableKey), nowMicros);
         }
         return workDone;
+    }
+
+    /**
+     * Classifies a logical partition from its {@code [floorTs, nextFloorTs)} bounds against the fast-path
+     * timestamp threshold T (from a {@code <ts> < T}/{@code <ts> <= T} predicate), with no row scan:
+     * <ul>
+     *   <li>{@code nextFloorTs <= T}: every row has {@code ts < nextFloorTs <= T}, so all expired -> DROP;</li>
+     *   <li>{@code floorTs > T}: every row has {@code ts >= floorTs > T}, so none expired -> SKIP.</li>
+     * </ul>
+     * Both rules fire only when the WHOLE partition range is decisively on one side of T, so a partition
+     * holding any live row is never dropped. Returns {@link #ACTION_UNKNOWN} when there is no threshold or
+     * the bounds straddle T, so the caller falls back to the authoritative survivor count scan.
+     */
+    private static int fastClassifyByBounds(long timestampThreshold, long floorTs, long nextFloorTs) {
+        if (timestampThreshold == Numbers.LONG_NULL) {
+            return ACTION_UNKNOWN;
+        }
+        if (nextFloorTs <= timestampThreshold) {
+            return ACTION_DROP;
+        }
+        if (floorTs > timestampThreshold) {
+            return ACTION_SKIP;
+        }
+        return ACTION_UNKNOWN;
     }
 
     private int classifyPartition(

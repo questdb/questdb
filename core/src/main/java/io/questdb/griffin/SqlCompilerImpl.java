@@ -5347,6 +5347,76 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T} or
+     * {@code <ts> <= T} on the (micros) designated timestamp, where {@code T} references no column, returns
+     * {@code T} as epoch micros — so the cleanup can classify a whole partition from its
+     * {@code [floor, nextFloor)} bounds (entirely below T -> all expired -> DROP; entirely above ->
+     * SKIP) without a per-row survivor scan. Returns {@link Numbers#LONG_NULL} for any other shape (custom
+     * or compound predicate, timestamp on the right, non-micros timestamp, non-constant T) or on any
+     * parse/bind/eval issue, which makes the caller fall back to the scan — so this is purely an
+     * optimisation and never affects correctness. The caller must have initialised {@code now()} on the
+     * execution context first.
+     */
+    @Override
+    public long expiryTimestampThresholdMicros(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    ) {
+        if (timestampColumn == null) {
+            return Numbers.LONG_NULL;
+        }
+        final int tsIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        if (tsIndex < 0 || metadata.getColumnType(tsIndex) != ColumnType.TIMESTAMP) {
+            return Numbers.LONG_NULL; // only the micros designated timestamp, so the partition bounds match T's units
+        }
+        Function f = null;
+        try {
+            clear();
+            lexer.of(predicate);
+            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
+            if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                    || !(Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))
+                    || node.lhs == null || node.rhs == null
+                    || node.lhs.type != ExpressionNode.LITERAL || !Chars.equals(node.lhs.token, timestampColumn)
+                    || exprReferencesColumn(node.rhs)) {
+                return Numbers.LONG_NULL;
+            }
+            f = functionParser.parseFunction(node.rhs, metadata, executionContext);
+            if (f == null || f.getType() != ColumnType.TIMESTAMP || !(f.isConstant() || f.isRuntimeConstant())) {
+                return Numbers.LONG_NULL;
+            }
+            f.init(null, executionContext);
+            return f.getTimestamp(null);
+        } catch (Exception e) {
+            return Numbers.LONG_NULL; // any issue -> no fast path; the caller scans (still correct)
+        } finally {
+            Misc.free(f);
+        }
+    }
+
+    // True if the sub-tree references any column (LITERAL) or bind variable, i.e. it cannot be evaluated to
+    // a single constant threshold independent of the row.
+    private static boolean exprReferencesColumn(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            return true;
+        }
+        if (exprReferencesColumn(node.lhs) || exprReferencesColumn(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (exprReferencesColumn(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'view' expected");

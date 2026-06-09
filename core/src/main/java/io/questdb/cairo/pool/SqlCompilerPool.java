@@ -157,6 +157,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public long expiryTimestampThresholdMicros(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, CharSequence timestampColumn) {
+            return delegate.expiryTimestampThresholdMicros(executionContext, metadata, predicate, timestampColumn);
+        }
+
+        @Override
         public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
             return delegate.generateExecutionModel(sqlText, executionContext);
         }
