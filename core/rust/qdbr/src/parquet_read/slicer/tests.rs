@@ -561,3 +561,43 @@ fn test_delta_bytes_slicer_empty_suffix_errors() {
     // rather than panicking and aborting the JVM.
     assert!(DeltaBytesArraySlicer::try_new(&[128, 1, 1, 0], 1, 1).is_err());
 }
+
+#[test]
+fn test_delta_length_array_slicer_skip_beyond_lengths_errors() {
+    // skip() must reject a count that runs past the decoded lengths via its
+    // .get(index..index + count) bound, rather than panicking on the slice.
+    let strings = ["aa", "bb"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 2, 2).unwrap();
+    let err = slicer.skip(3).unwrap_err();
+    assert!(
+        format!("{err}").contains("not enough length values to skip"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_delta_length_array_slicer_next_into_beyond_lengths_errors() {
+    // next_into()'s length-index bound must reject a request past the decoded
+    // lengths rather than indexing out of bounds. (next() covers this via the
+    // empty-buffer test; next_into has its own duplicate bound.)
+    let strings = ["aa", "bb"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 2, 2).unwrap();
+    let mut sink = TestSink::new();
+    slicer.next_into(&mut sink).unwrap(); // "aa"
+    slicer.next_into(&mut sink).unwrap(); // "bb"
+    let err = slicer.next_into(&mut sink).unwrap_err();
+    assert!(
+        format!("{err}").contains("not enough length values to iterate"),
+        "got: {err}"
+    );
+}
