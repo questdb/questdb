@@ -3397,7 +3397,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // view derives from the RAW base (refresh reads raw base too), so folding the base's expiry in here
         // would alter the aggregation and, for a now()-based base policy, hard-fail this validation with
         // "non-deterministic function ... now". This mirrors MatViewRefreshSqlExecutionContext.
-        final boolean ogExpiryReadFilter = executionContext.isExpiryReadFilterEnabled();
+        final boolean wasExpiryReadFilterEnabled = executionContext.isExpiryReadFilterEnabled();
         executionContext.setExpiryReadFilterEnabled(false);
         try {
             final IQueryModel queryModel;
@@ -3427,7 +3427,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
         } finally {
-            executionContext.setExpiryReadFilterEnabled(ogExpiryReadFilter);
+            executionContext.setExpiryReadFilterEnabled(wasExpiryReadFilterEnabled);
         }
     }
 
@@ -5452,7 +5452,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return false;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            return metadata.getColumnIndexQuiet(unquote(node.token)) == columnIndex;
+            return resolvePredicateColumnIndex(metadata, node.token) == columnIndex;
         }
         if (exprReferencesColumnIndex(node.lhs, metadata, columnIndex) || exprReferencesColumnIndex(node.rhs, metadata, columnIndex)) {
             return true;
@@ -5463,6 +5463,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return false;
+    }
+
+    // Resolves a predicate LITERAL token to a column index in metadata. Handles a plain (possibly quoted)
+    // column name AND a table/alias-qualified reference such as t.v or "t"."v": EXPIRE predicates are
+    // single-table, so a qualifier is the table name — the column is the segment after the last unquoted
+    // dot. Returns -1 when the token names no column. Without the qualified-name handling a predicate like
+    // `t.v < 2` would be seen as referencing no column, and dropping v would silently brick every read.
+    private static int resolvePredicateColumnIndex(RecordMetadata metadata, CharSequence token) {
+        int idx = metadata.getColumnIndexQuiet(unquote(token));
+        if (idx >= 0) {
+            return idx;
+        }
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot >= 0 && dot + 1 < token.length()) {
+            return metadata.getColumnIndexQuiet(unquote(token.subSequence(dot + 1, token.length())));
+        }
+        return -1;
     }
 
     /**

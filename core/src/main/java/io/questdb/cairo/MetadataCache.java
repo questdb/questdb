@@ -595,12 +595,6 @@ public class MetadataCache implements QuietCloseable {
             rwLock.readLock().unlock();
         }
 
-        /**
-         * Returns a table ONLY if it is already present in the cache.
-         *
-         * @param tableToken the token for the table
-         * @return CairoTable the table, if present in the cache.
-         */
         @Override
         public void collectPoliciedTables(ObjList<TableToken> tokensOut, ObjList<String> predicatesOut, LongList cleanupIntervalsOut) {
             for (int i = 0, n = tableMap.size(); i < n; i++) {
@@ -623,6 +617,12 @@ public class MetadataCache implements QuietCloseable {
             }
         }
 
+        /**
+         * Returns a table ONLY if it is already present in the cache.
+         *
+         * @param tableToken the token for the table
+         * @return CairoTable the table, if present in the cache.
+         */
         @Override
         public @Nullable CairoTable getTable(@NotNull TableToken tableToken) {
             return tableMap.get(tableToken.getTableName());

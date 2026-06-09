@@ -80,16 +80,20 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * read filter ALSO wraps it. This is idempotent with the explicit keep-filter
  * ({@code NOT(pred) AND NOT(pred)} == {@code NOT(pred)}), so results stay correct.
  * <p>
- * <b>Concurrency — never deletes a non-expired row:</b> survivors are computed on a separate handle from
- * any concurrent writer, so a row could be back-filled into a non-active partition between the survivor
- * scan and the destructive commit. A back-filled row that is NOT expired is itself a survivor (the keep
- * filter is true for it), so it would change the partition's survivor count. The job therefore RE-COUNTS
- * the partition's survivors immediately before committing a REPLACE (and before a count-based DROP) and
- * DEFERS to the next sweep if the count differs from what it just computed — shrinking the window to the
- * tiny recount->commit gap. A <i>bounds-based</i> DROP of a logical partition lying wholly below a
- * designated-timestamp threshold needs no such check: every row there, including any concurrent back-fill,
- * necessarily satisfies {@code ts < T} and so is expired. Either way the read filter stays authoritative
- * for VISIBILITY, so expired rows are never shown even when physical reclamation is deferred.
+ * <b>Concurrency (best-effort; minimises but does not fully close the non-expired-deletion window):</b>
+ * survivors are computed on a separate reader handle from any concurrent writer, so a row could be
+ * back-filled into a non-active partition between the survivor scan and the destructive commit. A
+ * back-filled row that is NOT expired is itself a survivor, so it changes the partition's survivor count;
+ * the job therefore RE-COUNTS the partition's survivors immediately before committing a REPLACE (and before
+ * a count-based DROP) and DEFERS to the next sweep if the count differs from what it just computed. This
+ * narrows the window but does NOT eliminate it: the reader sees only WAL state that has been APPLIED, so a
+ * write that is committed (sequenced with a lower txn than the cleanup's REPLACE) but not yet applied at
+ * recount time is invisible, and the REPLACE_RANGE (applied later) would still overwrite it. Such a row is
+ * physically lost; this is the feature's documented best-effort limit for the REPLACE / count-DROP paths.
+ * A <i>bounds-based</i> DROP of a logical partition lying wholly below a designated-timestamp threshold is
+ * the only fully-safe reclamation: every row there, including any concurrent back-fill, necessarily
+ * satisfies {@code ts < T} and so is expired. Either way the read filter stays authoritative for
+ * VISIBILITY, so an expired row is never shown even when physical reclamation is deferred.
  */
 public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private static final int ACTION_DROP = 1;
@@ -102,12 +106,12 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final MicrosecondClock clock;
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
+    private final LongList countDropFloors = new LongList();
     // Per-tick snapshot of policied objects, collected under the metadata-cache read lock and then
     // processed AFTER the lock is released (never hold the cache lock during cleanup).
     private final LongList discoveredCleanupIntervals = new LongList();
     private final ObjList<String> discoveredPredicates = new ObjList<>();
     private final ObjList<TableToken> discoveredTokens = new ObjList<>();
-    private final LongList countDropFloors = new LongList();
     private final LongList dropFloors = new LongList();
     private final CairoEngine engine;
     private final CharSequenceLongHashMap lastRunByTable = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
@@ -517,12 +521,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
-        // Concurrency guard: re-count the partition's survivors right before the destructive commit. The
-        // survivors were read on a separate handle, so a row could have been back-filled into this partition
-        // since. A back-filled NON-expired row is itself a survivor, so it changes the count; if the recount
-        // differs from what we just appended, the precomputed REPLACE set is stale and committing it could
-        // delete a not-yet-expired row. Roll back the appended rows and defer to the next sweep. This shrinks
-        // the best-effort window to the recount->commit gap (was the whole survivor scan + append).
+        // Concurrency guard (best-effort): re-count the partition's survivors right before the destructive
+        // commit. The survivors were read on a separate handle, so a row could have been back-filled into
+        // this partition since. A back-filled NON-expired row is itself a survivor, so it changes the count;
+        // if the recount differs from what we just appended, the precomputed REPLACE set is stale and
+        // committing it could delete a not-yet-expired row, so we roll back and defer. This NARROWS but does
+        // not close the window: the reader sees only APPLIED WAL state, so a committed-but-not-yet-applied
+        // back-fill (lower txn than this REPLACE) is invisible here and would still be overwritten on apply.
+        // See the class javadoc — only the bounds-based DROP is fully safe.
         final long recount = countSurvivors(tableName, keepFilter, timestampColumnName, timestampType, partitionBy, floorTs);
         if (recount != appended) {
             walWriter.rollback();

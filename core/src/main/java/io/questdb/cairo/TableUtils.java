@@ -2828,45 +2828,6 @@ public final class TableUtils {
         return offset;
     }
 
-    /**
-     * Reads the trailing row-expiry cleanup interval (micros) from a raw _meta buffer, or {@code 0}
-     * when there's no policy (older format, or empty section).
-     */
-    static long getExpiryCleanupIntervalMicros(MemoryR metaMem, int columnCount) {
-        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
-            return 0;
-        }
-        long offset = getMetaExpiryPolicyOffset(metaMem, columnCount);
-        if (offset < 0 || offset + Integer.BYTES > metaMem.size()) {
-            return 0;
-        }
-        CharSequence pred = metaMem.getStrA(offset);
-        offset += Vm.getStorageLength(pred);
-        if (offset + Long.BYTES > metaMem.size()) {
-            return 0;
-        }
-        return metaMem.getLong(offset);
-    }
-
-    /**
-     * Reads the trailing row-expiry predicate (raw SQL text) from a raw _meta buffer, or {@code null}
-     * when there's no policy (older format, or empty section).
-     */
-    static String getExpiryPredicate(MemoryR metaMem, int columnCount) {
-        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
-            return null;
-        }
-        long offset = getMetaExpiryPolicyOffset(metaMem, columnCount);
-        if (offset < 0 || offset + Integer.BYTES > metaMem.size()) {
-            return null;
-        }
-        CharSequence pred = metaMem.getStrA(offset);
-        if (pred == null || pred.length() == 0) {
-            return null;
-        }
-        return Chars.toString(pred);
-    }
-
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_COVERING) != 0;
     }

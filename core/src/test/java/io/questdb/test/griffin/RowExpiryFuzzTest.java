@@ -28,6 +28,7 @@ import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongHashSet;
@@ -115,7 +116,7 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
     }
 
     private static String expiryPredicateOf(String table) {
-        try (io.questdb.cairo.sql.TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(table))) {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(table))) {
             return metadata.getExpiryPredicate();
         }
     }

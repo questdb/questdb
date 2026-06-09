@@ -655,4 +655,95 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testDropColumnReferencedByQualifiedPredicateRejected() throws Exception {
+        // Regression: a TABLE-QUALIFIED predicate reference (t.v) must be recognised by the column-op guard.
+        // ALTER SET EXPIRE accepts a qualified ref (the read filter resolves it against the table), so the
+        // guard must resolve t.v -> column v; otherwise DROP COLUMN v would be wrongly allowed and brick reads.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired once policied
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')"); // live
+            drainWalQueue();
+            execute("alter table t set expire rows when t.v < 2.0");
+            drainWalQueue();
+
+            try {
+                execute("alter table t drop column v");
+                Assert.fail("expected the drop of a qualified-predicate column to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "referenced by the EXPIRE ROWS predicate");
+            }
+            // Still readable + the policy still hides v<2.
+            assertSql("sym\tv\tts\n" +
+                    "BBB\t5.0\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testMultiColumnDropRejectedWhenAnyColumnReferenced() throws Exception {
+        // The guard runs per dropped column; a referenced column that is NOT first in the list must still
+        // be caught, and the table must stay readable.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, extra int, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('BBB', 7, 5.0, '2024-01-06T00:00:00.000000Z')");
+            drainWalQueue();
+
+            try {
+                execute("alter table t drop column extra, v"); // 'v' is second; must still be rejected
+                Assert.fail("expected the multi-column drop to be rejected for the referenced column");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "referenced by the EXPIRE ROWS predicate");
+            }
+            // The whole ALTER was rejected (compile-time), so 'extra' is also still present and reads work.
+            assertSql("sym\textra\tv\tts\n" +
+                    "BBB\t7\t5.0\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testRenameDesignatedTimestampReferencedByPredicateRejected() throws Exception {
+        // The most common predicate references the designated timestamp; renaming it would brick reads.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            execute("insert into t values ('BBB', 5.0, '2024-01-09T12:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            try {
+                execute("alter table t rename column ts to ts2");
+                Assert.fail("expected the rename of the predicate-referenced timestamp to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "referenced by the EXPIRE ROWS predicate");
+            }
+            assertSql("sym\tv\tts\n" +
+                    "BBB\t5.0\t2024-01-09T12:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testDropColumnReferencedByInPredicateRejected() throws Exception {
+        // IN is a composite whose operands live in node.args; the guard's recursive walk must reach them.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN sym IN ('AAA', 'CCC')");
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            try {
+                execute("alter table t drop column sym");
+                Assert.fail("expected the drop of an IN-predicate column to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "referenced by the EXPIRE ROWS predicate");
+            }
+            assertSql("sym\tv\tts\n" +
+                    "BBB\t5.0\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
 }
