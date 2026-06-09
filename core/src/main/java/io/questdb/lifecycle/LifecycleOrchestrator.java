@@ -467,15 +467,23 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     private void fireStableBelowCallbacks() {
         // Every state-change round re-evaluates every watcher; dispatch is global rather than
-        // gated on a specific dep.
-        for (StableWatch w : stableWatchers.values()) {
+        // gated on a specific dep. Iterate the entry set so a watch that fires its single-shot
+        // callback can be removed from the map by its key (safe to remove during a ConcurrentHashMap
+        // iteration); otherwise a fired single-shot watch would linger as dead state and the map
+        // would accumulate one entry per round-evaluated watch over the orchestrator's lifetime.
+        for (java.util.Map.Entry<Long, StableWatch> e : stableWatchers.entrySet()) {
+            StableWatch w = e.getValue();
             if (allHardDependentsStable(w.componentName)) {
-                // #049: getAndSet(null) is a single CAS so two threads observing READY at the
-                // same time can no longer both null-and-invoke. Previously the three independent
-                // volatile ops (read cb, null callback, run cb) allowed a race where both threads
-                // saw a non-null callback and fired it twice. The callback contract is single-shot.
+                // getAndSet(null) is a single CAS so two threads observing READY at the same time
+                // can no longer both null-and-invoke. Previously the three independent volatile ops
+                // (read cb, null callback, run cb) allowed a race where both threads saw a non-null
+                // callback and fired it twice. The callback contract is single-shot: only the thread
+                // that wins the CAS sees a non-null callback, fires it, and removes the watch.
                 Runnable cb = w.callback.getAndSet(null);
                 if (cb != null) {
+                    // The CAS winner owns this single-shot watch -- drop it from the map now that it
+                    // has fired, preserving the at-most-once contract while not leaking the entry.
+                    stableWatchers.remove(e.getKey());
                     try {
                         cb.run();
                     } catch (Throwable t) {

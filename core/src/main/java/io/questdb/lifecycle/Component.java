@@ -27,8 +27,12 @@ public interface Component {
     String name();
 
     /**
-     * Notification of a dependency's state transition. Async; runs on the
-     * orchestrator's executor; per-dependent ordering preserved. Default no-op.
+     * Notification of a dependency's state transition. The orchestrator dispatches
+     * this synchronously, on the thread that drives the dependency's transition --
+     * it does NOT hand off to a separate executor. Per-dependent ordering is
+     * preserved (a dependent observes its dependencies' transitions in order).
+     * Implementations must therefore return promptly and must not block the
+     * dispatching thread. Default no-op.
      */
     default void onDependencyState(String depName, State previous, State current) {
     }

@@ -53,6 +53,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -138,14 +139,37 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     public void commitAll() {
-        if (writer != null) {
-            writer.commit();
+        // Cheap early-out: a node already read-only before we try to acquire the lock
+        // has nothing to flush -- skip the lock acquire entirely. This is NOT the
+        // authoritative refusal, the in-lock re-check below is.
+        if (engine.isReadOnlyMode()) {
+            commitList.clear();
+            return;
         }
-        for (int i = 0, n = commitList.size(); i < n; i++) {
-            //noinspection resource
-            commitList.valueQuick(i).commit();
+        // Hold the role-switch lock across the authoritative re-check and the actual
+        // commits, matching the TCP TableUpdateDetails discipline. The role-flip path in
+        // EntCairoEngine acquires the same lock around the REPLICA flag publish, so either
+        // the flip runs first (we see REPLICA on the in-lock re-check and skip the flush) or
+        // we run first (we flush as PRIMARY and the flip waits). This closes the window where
+        // a node demoted mid-ingest would otherwise flush a cached writer to a read-only replica.
+        final ReentrantLock lock = engine.getRoleSwitchLock();
+        lock.lock();
+        try {
+            if (engine.isReadOnlyMode()) {
+                commitList.clear();
+                return;
+            }
+            if (writer != null) {
+                writer.commit();
+            }
+            for (int i = 0, n = commitList.size(); i < n; i++) {
+                //noinspection resource
+                commitList.valueQuick(i).commit();
+            }
+        } finally {
+            commitList.clear();
+            lock.unlock();
         }
-        commitList.clear();
     }
 
     @Override

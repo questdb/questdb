@@ -901,7 +901,13 @@ public class ServerMain implements Closeable {
 
         @Override
         public void onDependencyState(String depName, State previous, State current) {
-            if ("engine".equals(depName) && current == State.READY) {
+            // Fire-once guard. The engine re-publishes READY on every role switch (a demote/promote
+            // drives the engine envelope SWITCHING->READY again), and without this guard each such
+            // re-publish would re-spawn the hydrator and view-compiler threads, orphaning the prior
+            // thread references (single fields, never joined). The FIRST hydration after boot still
+            // runs; only the redundant per-switch re-run is suppressed. This mirrors the catch-up
+            // self-fire check in start(), which is already gated on hydrateMetadataThread == null.
+            if ("engine".equals(depName) && current == State.READY && ServerMain.this.hydrateMetadataThread == null) {
                 ServerMain.this.hydrateMetadataThread = new Thread(() -> {
                     ServerMain.this.engine.getMetadataCache().onStartupAsyncHydrator();
                     ServerMain.this.engine.hydrateRecentWriteTracker();
@@ -1139,23 +1145,28 @@ public class ServerMain implements Closeable {
                 pool.start(log);
                 ctx.publish(io.questdb.lifecycle.State.READY);
             } catch (Throwable t) {
-                // #090: free partially-allocated resources in reverse-construction order before
-                // rethrow. Server first (it captured pool slots via assign() during construction),
-                // then the pool itself. The orchestrator's close loop skips FAILED components, so
-                // without this wrap a mid-body throw leaks the HttpServer and WorkerPool. Mirrors
-                // the WR-09 addSuppressed pattern from PrimaryRoleState.openLoops.
-                if (server != null) {
-                    try {
-                        Misc.free(server);
-                        server = null;
-                    } catch (Throwable suppressed) {
-                        t.addSuppressed(suppressed);
-                    }
-                }
+                // Free partially-allocated resources before rethrow. The orchestrator's close loop
+                // skips FAILED components, so without this wrap a mid-body throw would leak the
+                // HttpServer and the WorkerPool. Halt the pool BEFORE freeing the server: the
+                // server captured pool slots via assign() during construction and pool.start() may
+                // already have launched worker threads, so a worker can be inside the dispatcher
+                // touching native FD state. Freeing the server first releases that native memory
+                // while a worker may still dereference it (a boot-fail use-after-free). pool.halt()
+                // joins the workers, so once it returns no thread can run against the server, making
+                // it safe to free. This matches the halt-then-free discipline stop() already uses.
+                // Each branch aggregates its own teardown failure into the original throwable.
                 if (pool != null) {
                     try {
                         pool.halt();
                         pool = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                }
+                if (server != null) {
+                    try {
+                        Misc.free(server);
+                        server = null;
                     } catch (Throwable suppressed) {
                         t.addSuppressed(suppressed);
                     }

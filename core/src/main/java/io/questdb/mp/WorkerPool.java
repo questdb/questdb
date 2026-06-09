@@ -154,8 +154,17 @@ public class WorkerPool implements Closeable {
      * Tradeoff: proceeding while a worker is still running means that worker may touch state that
      * later cleanup frees. Keep the timeout generous -- it is only a backstop against a truly
      * wedged worker, not a normal-path tuning knob. Healthy pools count down well within it.
+     * <p>
+     * Footgun: this overload takes a RELATIVE timeout (a nanosecond duration measured from now),
+     * but {@link io.questdb.WorkerPoolManager#halt(long)} has the identical {@code (long)} signature
+     * and takes an ABSOLUTE deadline (a {@link System#nanoTime()} value). The two cannot be used
+     * interchangeably: passing this method an absolute nanoTime would wait for a duration roughly
+     * equal to the system's uptime, and passing WorkerPoolManager a small relative value would make
+     * its deadline already in the past. Read the parameter name before calling either one.
      *
-     * @param timeoutNanos upper bound on the combined wait for started and halted, in nanoseconds
+     * @param timeoutNanos upper bound on the combined wait for started and halted, a RELATIVE
+     *                     duration in nanoseconds measured from the call (NOT an absolute
+     *                     {@link System#nanoTime()} deadline, unlike {@link io.questdb.WorkerPoolManager#halt(long)})
      */
     public void halt(long timeoutNanos) {
         if (closed.compareAndSet(false, true)) {
