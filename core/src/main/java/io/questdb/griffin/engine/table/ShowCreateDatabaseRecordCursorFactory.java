@@ -38,9 +38,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -53,11 +57,13 @@ import java.util.Comparator;
 /**
  * Emits the DDL needed to recreate the logical structure of the whole database,
  * one statement per row in the single {@code ddl} column. Objects are emitted in
- * dependency order so that every object's dependencies (base tables, referenced
- * views/materialized views) precede it, which keeps the dump replayable for
- * view-on-view, materialized-view-on-table, and similar chains. The enterprise
- * build extends this with ACL principals (emitted first, ahead of any inline
- * {@code OWNED BY}) and the trailing grants and memberships.
+ * dependency order so that every object's dependencies precede it, which keeps
+ * the dump replayable for view-on-view, materialized-view-on-table and similar
+ * chains. A view's dependencies come from the view graph; a materialized view's
+ * dependencies are discovered by compiling its query and walking the plan for
+ * the tables it reads (a materialized view may join tables beyond its declared
+ * base). The enterprise build extends this with ACL principals (emitted first,
+ * ahead of any inline {@code OWNED BY}) and the trailing grants and memberships.
  * <p>
  * Each object's DDL is produced by delegating to the matching per-object
  * {@code SHOW CREATE ...} factory, so the dump stays in lock-step with those
@@ -71,6 +77,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     private static final Comparator<TableToken> TABLE_NAME_COMPARATOR =
             (a, b) -> a.getTableName().compareTo(b.getTableName());
     private final ShowCreateDatabaseCursor cursor = new ShowCreateDatabaseCursor();
+    private final TableTokenCollector tableTokenCollector = new TableTokenCollector();
 
     public ShowCreateDatabaseRecordCursorFactory() {
         super(METADATA);
@@ -132,7 +139,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         try {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    out.add(cursor.getRecord().getVarcharA(ShowCreateTableRecordCursorFactory.N_DDL_COL).toString());
+                    out.add(cursor.getRecord().getVarcharA(N_DDL_COL).toString());
                 }
             }
         } finally {
@@ -180,11 +187,67 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         final ObjHashSet<TableToken> emitted = new ObjHashSet<>();
         final ObjList<TableToken> ordered = new ObjList<>();
         for (int i = 0, n = objects.size(); i < n; i++) {
-            topoEmit(objects.getQuick(i), engine, visible, emitted, ordered);
+            topoEmit(objects.getQuick(i), engine, executionContext, visible, emitted, ordered);
         }
 
         for (int i = 0, n = ordered.size(); i < n; i++) {
             appendObjectDdl(out, objectFactory(ordered.getQuick(i)), executionContext);
+        }
+    }
+
+    // collects, into out, the tokens of the objects the given object depends on
+    private void collectDependencies(
+            TableToken token,
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            ObjList<TableToken> out
+    ) {
+        if (token.isMatView()) {
+            collectMatViewDependencies(token, engine, executionContext, out);
+        } else if (token.isView()) {
+            final ViewDefinition definition = engine.getViewGraph().getViewDefinition(token);
+            if (definition != null) {
+                final ObjList<CharSequence> names = definition.getDependencies().keys();
+                for (int i = 0, n = names.size(); i < n; i++) {
+                    final TableToken dependency = engine.getTableTokenIfExists(names.getQuick(i));
+                    if (dependency != null) {
+                        out.add(dependency);
+                    }
+                }
+            }
+        }
+        // plain tables have no logical dependencies
+    }
+
+    // a materialized view may read tables beyond its declared base (e.g. via a join), so the full
+    // dependency set is the set of tables the compiled query reads; fall back to the base table on
+    // any compilation failure
+    private void collectMatViewDependencies(
+            TableToken matView,
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            ObjList<TableToken> out
+    ) {
+        final MatViewDefinition definition = engine.getMatViewGraph().getViewDefinition(matView);
+        if (definition == null) {
+            return;
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final CompiledQuery compiledQuery = compiler.compile(definition.getMatViewSql(), executionContext);
+            try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory()) {
+                if (factory != null) {
+                    tableTokenCollector.collect(factory, executionContext);
+                    final ObjList<TableToken> collected = tableTokenCollector.tables.getList();
+                    for (int i = 0, n = collected.size(); i < n; i++) {
+                        out.add(collected.getQuick(i));
+                    }
+                }
+            }
+        } catch (SqlException | CairoException e) {
+            final TableToken base = engine.getTableTokenIfExists(definition.getBaseTableName());
+            if (base != null) {
+                out.add(base);
+            }
         }
     }
 
@@ -201,6 +264,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     private void topoEmit(
             TableToken token,
             CairoEngine engine,
+            SqlExecutionContext executionContext,
             ObjHashSet<TableToken> visible,
             ObjHashSet<TableToken> emitted,
             ObjList<TableToken> ordered
@@ -210,37 +274,42 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         }
         // mark before recursing so a malformed cycle cannot cause infinite recursion
         emitted.add(token);
-        if (token.isMatView()) {
-            final MatViewDefinition definition = engine.getMatViewGraph().getViewDefinition(token);
-            if (definition != null) {
-                visitDependency(definition.getBaseTableName(), engine, visible, emitted, ordered);
-            }
-        } else if (token.isView()) {
-            final ViewDefinition definition = engine.getViewGraph().getViewDefinition(token);
-            if (definition != null) {
-                final ObjList<CharSequence> dependencies = definition.getDependencies().keys();
-                for (int i = 0, n = dependencies.size(); i < n; i++) {
-                    visitDependency(dependencies.getQuick(i), engine, visible, emitted, ordered);
-                }
+        final ObjList<TableToken> dependencies = new ObjList<>();
+        collectDependencies(token, engine, executionContext, dependencies);
+        // deterministic output regardless of graph/plan iteration order
+        dependencies.sort(TABLE_NAME_COMPARATOR);
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            final TableToken dependency = dependencies.getQuick(i);
+            // only order against objects that are part of this dump (visible and non-system)
+            if (!dependency.equals(token) && visible.contains(dependency)) {
+                topoEmit(dependency, engine, executionContext, visible, emitted, ordered);
             }
         }
         ordered.add(token);
     }
 
-    private void visitDependency(
-            CharSequence dependencyName,
-            CairoEngine engine,
-            ObjHashSet<TableToken> visible,
-            ObjHashSet<TableToken> emitted,
-            ObjList<TableToken> ordered
-    ) {
-        if (dependencyName == null) {
-            return;
+    // Walks a compiled query plan collecting the tokens of every table the query reads.
+    private static final class TableTokenCollector extends TextPlanSink {
+        private final ObjHashSet<TableToken> tables = new ObjHashSet<>();
+
+        public void collect(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+            tables.clear();
+            addToken(factory.getTableToken());
+            of(factory, executionContext);
         }
-        final TableToken dependency = engine.getTableTokenIfExists(dependencyName);
-        // only order against objects that are part of this dump (visible and non-system)
-        if (dependency != null && visible.contains(dependency)) {
-            topoEmit(dependency, engine, visible, emitted, ordered);
+
+        @Override
+        public PlanSink child(Plannable p) {
+            if (p instanceof RecordCursorFactory) {
+                addToken(((RecordCursorFactory) p).getTableToken());
+            }
+            return super.child(p);
+        }
+
+        private void addToken(TableToken token) {
+            if (token != null) {
+                tables.add(token);
+            }
         }
     }
 

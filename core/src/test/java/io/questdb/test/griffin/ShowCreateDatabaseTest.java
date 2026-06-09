@@ -83,6 +83,42 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewJoinDependencyOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // m_mv joins z_join, which sorts AFTER the materialized view; ordering by base table
+            // alone would emit m_mv before z_join and the replay would fail
+            execute("create table a_base (ts timestamp, k symbol, v double) timestamp(ts) partition by day wal");
+            execute("create table z_join (ts timestamp, k symbol, label string) timestamp(ts) partition by day wal");
+            execute("create materialized view m_mv with base a_base as " +
+                    "(select a_base.ts, z_join.label, avg(a_base.v) v from a_base join z_join on k sample by 1h) partition by day");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            final int joinIdx = dump.indexOf("CREATE TABLE 'z_join'");
+            final int mvIdx = dump.indexOf("CREATE MATERIALIZED VIEW 'm_mv'");
+            Assert.assertTrue(joinIdx >= 0 && mvIdx >= 0);
+            Assert.assertTrue("joined table must precede the materialized view that reads it", joinIdx < mvIdx);
+
+            execute("drop materialized view m_mv");
+            execute("drop table z_join");
+            execute("drop table a_base");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
     public void testReplayRecreatesEveryObject() throws Exception {
         assertMemoryLeak(() -> {
             // SHOW CREATE TABLE emits WAL implicitly, so replay needs the WAL default on
