@@ -2175,16 +2175,19 @@ public class JoinTest extends AbstractCairoTest {
             ).noLeakCheck().timestamp("ts").returns(expected);
 
             // INNER join is the common real-world shape and enters the ON case via the direct arm
-            // (not the ASOF/HORIZON fall-through). A hash join retains >64 KiB of legitimate map RSS
-            // after cursor close, which trips assertQuery's factory-property check, so assert data
-            // only with assertSql here.
-            assertSql(expected,
-                    "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)");
+            // (not the ASOF/HORIZON fall-through). The hash join in the lambda still filters trades
+            // down to A, B, but it retains >64 KiB of legitimate map RSS after the cursor closes, so
+            // skip assertQuery's post-close memory-usage check (which would flag it as a false leak).
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
 
             // multi-column shorthand ON (a, b) inside the lambda exercises the list-of-columns drain
-            // arm (parseJoin's default case), distinct from the single-column ON (col) above
-            assertSql(expected,
-                    "select * from trades where symbol in (select s.symbol from src s join ref r on (symbol, ts))");
+            // arm (parseJoin's default case), distinct from the single-column ON (col) above; the same
+            // hash-join RSS retention applies, hence noMemoryUsageCheck()
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on (symbol, ts))"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
 
             // NOT IN exercises the same parse path with a negated operator -- expect only C
             assertQuery(
@@ -2207,14 +2210,16 @@ public class JoinTest extends AbstractCairoTest {
                             "B\t2020-01-02T00:00:00.000000Z\n"
             );
 
-            // the same for a scalar ">" with an INNER (hash) join; assert with assertSql for the
+            // the same for a scalar ">" with an INNER (hash) join; skip the memory-usage check for the
             // >64 KiB RSS reason above. min(s.ts) over the join is 2020-01-01, so trades after it is B, C.
-            assertSql(
+            assertQuery(
+                    "select * from trades where ts > " +
+                            "(select min(s.ts) from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(
                     "symbol\tts\n" +
                             "B\t2020-01-02T00:00:00.000000Z\n" +
-                            "C\t2020-01-03T00:00:00.000000Z\n",
-                    "select * from trades where ts > " +
-                            "(select min(s.ts) from src s join ref r on s.symbol = r.symbol)");
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
 
             // ON-clause sub-queries stay unsupported when nested, just like at top level. On master
             // the nested "IN sub-query in ON" form returned a misleading "Column name expected" ...
