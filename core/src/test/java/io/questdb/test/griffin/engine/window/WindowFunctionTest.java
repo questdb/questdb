@@ -1914,6 +1914,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstValueDateOverPartitionByAndOrderBy() throws Exception {
+        // first_value() over a DATE argument; default frame's first row of each partition
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, first_value(d) OVER (PARTITION BY grp ORDER BY ts) f FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tf
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFirstValueDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             // Test similar to testMaxDoubleOverPartitionedRangeWithLargeFrame but for first_value(double)
@@ -6696,6 +6723,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxDateWithPartitionByAndOrderBy() throws Exception {
+        // max() over a DATE argument resolves to the dedicated DATE window factory; the 3-digit
+        // millisecond rendering confirms the result column is DATE (a TIMESTAMP would render 6 digits)
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, max(d) OVER (PARTITION BY grp ORDER BY ts) m FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tm
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            """);
+        });
+    }
+
+    @Test
     public void testMaxDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
@@ -8053,6 +8108,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMinDateOverPartition() throws Exception {
+        // min() over a DATE argument on the two-pass cached path (PARTITION BY with no ORDER BY)
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, min(d) OVER (PARTITION BY grp) m FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tm
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
                             """);
         });
     }
@@ -10387,6 +10468,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t20.0\tnull
                             """));
+        });
+    }
+
+    @Test
+    public void testNthValueDateOverPartition() throws Exception {
+        // nth_value() over a DATE argument on the cached path; 2nd row (ts order) of each partition
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, nth_value(d, 2) OVER (PARTITION BY grp) n FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tn
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            """);
         });
     }
 

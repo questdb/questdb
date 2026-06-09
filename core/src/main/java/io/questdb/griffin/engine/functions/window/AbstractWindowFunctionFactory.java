@@ -160,6 +160,30 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
+    static class DateNullFunction extends BaseNullFunction implements WindowDateFunction {
+        private final long zeroValue;
+
+        DateNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.zeroValue = zeroValue;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return zeroValue;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+        }
+    }
+
     static class Decimal128NullFunction extends BaseNullFunction {
         private final int type;
 
