@@ -1,24 +1,24 @@
 /*+*****************************************************************************
- *     ___                  _   ____  ____
- *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | | |  _ \
- *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *    \__\_\\__,_|\___||___/\__|____/|____/
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2026 QuestDB
+ * Copyright (c) 2014-2019 Appsicle
+ * Copyright (c) 2019-2026 QuestDB
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  ******************************************************************************/
 
@@ -57,11 +57,11 @@ public class LineTcpParser implements QuietCloseable {
      * <p>
      * - binary format:
      * <pre>
-     *    +--------+--------+------------+
-     *    | scale  |  len   |   values   |
-     *    +--------+--------+------------+
-     *    | 1 byte | 1 byte | $len bytes |
-     *    +--------+--------+------------+
+     * +--------+--------+------------+
+     * | scale  |  len   |   values   |
+     * +--------+--------+------------+
+     * | 1 byte | 1 byte | $len bytes |
+     * +--------+--------+------------+
      * </pre>
      * <p>
      * Values is the unscaled value of the decimal in big-endian two's complement format.
@@ -242,10 +242,25 @@ public class LineTcpParser implements QuietCloseable {
                 case '=':
                 case ' ':
                     isQuotedFieldValue = false;
+
+                    // Catch spaces occurring before an equals sign ("tag =value")
+                    // If we are currently parsing a name (ENTITY_HANDLER_NAME) and we hit a space
+                    // followed immediately by an '=', that is illegal whitespace
+                    if (entityHandler == ENTITY_HANDLER_NAME && bufAt > entityLo) {
+                        if (bufAt + 1 < bufHi && Unsafe.getByte(bufAt + 1) == '=') {
+                            errorCode = ErrorCode.INVALID_WHITESPACE;
+                            return ParseResult.ERROR;
+                        }
+                    }
+
+                    // Catch leading spaces
+                    if (bufAt == entityLo) {
+                        errorCode = ErrorCode.INVALID_WHITESPACE;
+                        return ParseResult.ERROR;
+                    }
+
                     if (!completeEntity(b, bufHi)) {
-                        // parse of key or value is unsuccessful
                         if (errorCode == ErrorCode.EMPTY_LINE) {
-                            // An empty line
                             bufAt++;
                             entityLo = bufAt;
                             break;
@@ -256,7 +271,6 @@ public class LineTcpParser implements QuietCloseable {
                         return ParseResult.ERROR;
                     }
                     if (endOfLine) {
-                        // EOL reached, time to return
                         if (nEntities > 0) {
                             entityHandler = ENTITY_HANDLER_NEW_LINE;
                             return ParseResult.MEASUREMENT_COMPLETE;
@@ -264,12 +278,9 @@ public class LineTcpParser implements QuietCloseable {
                         errorCode = ErrorCode.NO_FIELDS;
                         return ParseResult.ERROR;
                     }
-                    // skip the separator
                     bufAt++;
                     if (!isQuotedFieldValue) {
-                        // reset few indicators
                         nEscapedChars = 0;
-                        // start next value from here
                         entityLo = bufAt;
                     }
                     break;
@@ -470,15 +481,20 @@ public class LineTcpParser implements QuietCloseable {
 
         boolean emptyEntity = bufAt == entityLo;
         if (emptyEntity) {
-            if (endOfEntityByte == (byte) ' ') {
+            // Check if we hit a space instead of a key (e.g., "tag ,")
+            // OR if we hit a space before an equals (e.g., "tag =")
+            if (endOfEntityByte == (byte) ' ' || endOfEntityByte == (byte) '=') {
                 if (tagsComplete) {
-                    entityHandler = ENTITY_HANDLER_TIMESTAMP;
+                    if (endOfEntityByte == (byte) ' ') {
+                        entityHandler = ENTITY_HANDLER_TIMESTAMP;
+                        return true;
+                    }
                 } else {
-                    tagsComplete = true;
+                    // This catches "tag =..." or "tag ,"
+                    errorCode = ErrorCode.INVALID_WHITESPACE;
+                    return false;
                 }
-                return true;
             }
-
             if (endOfEntityByte == (byte) '\n') {
                 return true;
             }
@@ -507,6 +523,20 @@ public class LineTcpParser implements QuietCloseable {
     private boolean expectEntityValue(byte endOfEntityByte, long bufHi) {
         boolean endOfSet = endOfEntityByte == (byte) ' ';
         if (endOfSet || endOfEntityByte == (byte) ',' || endOfEntityByte == (byte) '\n') {
+
+            // Check for an empty value before processing.
+            // If bufAt == entityLo, the '=' was followed immediately by a delimiter.
+            if (bufAt == entityLo) {
+                if (endOfSet) {
+                    // It was an '=' followed immediately by a space
+                    errorCode = ErrorCode.INVALID_WHITESPACE;
+                } else {
+                    // It was an '=' followed immediately by a comma or newline
+                    errorCode = tagsComplete ? ErrorCode.MISSING_FIELD_VALUE : ErrorCode.MISSING_TAG_VALUE;
+                }
+                return false;
+            }
+
             if (currentEntity.setValueAndUnit()) {
                 if (endOfSet) {
                     if (tagsComplete) {
@@ -698,6 +728,7 @@ public class LineTcpParser implements QuietCloseable {
         INVALID_COLUMN_NAME,
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
+        INVALID_WHITESPACE,
         UNSUPPORTED_BINARY_FORMAT,
         /**
          * Failed to parse the array element type

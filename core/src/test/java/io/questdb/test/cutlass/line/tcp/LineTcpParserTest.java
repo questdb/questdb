@@ -1,24 +1,24 @@
 /*+*****************************************************************************
- *     ___                  _   ____  ____
- *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | | |  _ \
- *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *    \__\_\\__,_|\___||___/\__|____/|____/
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2026 QuestDB
+ * Copyright (c) 2014-2019 Appsicle
+ * Copyright (c) 2019-2026 QuestDB
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  ******************************************************************************/
 
@@ -114,8 +114,51 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "9223372036854775807i");
     }
 
+    @Test
+    public void testInvalidWhitespace() throws Exception {
+        // Space after comma
+        assertErrorCode("weather,location=us, sensor=temp temp=85\n", LineTcpParser.ErrorCode.INVALID_WHITESPACE);
+
+        // Space before equals
+        assertErrorCode("weather,location =us temp=85\n", LineTcpParser.ErrorCode.INVALID_WHITESPACE);
+
+        // Space after equals
+        assertErrorCode("weather,location= us temp=85\n", LineTcpParser.ErrorCode.INVALID_WHITESPACE);
+
+        // Multiple spaces after a comma
+        assertErrorCode("weather,location=us,  sensor=temp temp=85\n", LineTcpParser.ErrorCode.INVALID_WHITESPACE);
+    }
+
     private static void assertError(byte type, String value) throws Exception {
         assertType(type, CommonUtils.TIMESTAMP_UNIT_UNSET, value, value, LineTcpParser.ParseResult.ERROR);
+    }
+
+    private static void assertErrorCode(String line, LineTcpParser.ErrorCode expectedCode) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LineTcpParser lineTcpParser = new LineTcpParser()) {
+                byte[] bytes = line.getBytes(Files.UTF_8);
+                final int len = bytes.length;
+                long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < bytes.length; i++) {
+                        Unsafe.putByte(mem + i, bytes[i]);
+                    }
+                    lineTcpParser.of(mem);
+
+                    // Assert parsing fails
+                    Assert.assertEquals(
+                            "Expected parser to fail but it succeeded for line: " + line,
+                            LineTcpParser.ParseResult.ERROR,
+                            lineTcpParser.parseMeasurement(mem + len)
+                    );
+
+                    // Assert specific error code matches
+                    Assert.assertEquals(expectedCode, lineTcpParser.getErrorCode());
+                } finally {
+                    Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
     }
 
     private static void assertType(byte type, String value) throws Exception {
