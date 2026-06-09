@@ -1603,11 +1603,27 @@ impl ParquetDecoder {
                 }
             }
 
-            // Filtered/late-materialisation decode compacts matched rows, so the column-top
-            // prefix is not simply the first N rows of the buffer. Column-top null handling
-            // for the filtered path is a follow-up; pass 0 to preserve current behaviour.
+            // Column-top nulls for a no-sentinel source must be stamped with the target
+            // sentinel. column_top here is partition-absolute, so make it window-relative the
+            // same way as the non-filtered path above. rows_filter is window-relative and
+            // ascending and the output preserves order, so the matched column-top rows are a
+            // contiguous leading prefix of the (possibly compacted) buffer.
+            let window_column_top = column_top
+                .saturating_sub(accumulated_size + row_group_lo as usize)
+                .min((row_group_hi - row_group_lo) as usize);
+            let leading_nulls = if FILL_NULLS {
+                window_column_top
+            } else {
+                rows_filter.partition_point(|&r| (r as usize) < window_column_top)
+            };
+            column_chunk_bufs.column_top = leading_nulls;
             // Post-decode conversions that cannot be handled by the decode dispatch.
-            post_convert(original_column_type, to_column_type, 0, column_chunk_bufs)?;
+            post_convert(
+                original_column_type,
+                to_column_type,
+                leading_nulls,
+                column_chunk_bufs,
+            )?;
 
             // Timestamp nano additional scaling after post_convert.
             // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.

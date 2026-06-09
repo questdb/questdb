@@ -1872,31 +1872,49 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     @Test
     public void testFilteredColumnTopNullOverConvertedNoSentinelColumn() throws Exception {
+        // SHORT -> LONG: the documented M1 reproducer path (FILL_NULLS=false GROUP BY).
+        assertMemoryLeak(() -> assertFilteredColumnTopNull("SHORT", "LONG", "x::SHORT"));
+    }
+
+    @Test
+    public void testFilteredColumnTopNullBooleanToInt() throws Exception {
+        assertMemoryLeak(() -> assertFilteredColumnTopNull("BOOLEAN", "INT", "(x % 2 = 0)"));
+    }
+
+    @Test
+    public void testFilteredColumnTopNullByteToDouble() throws Exception {
+        assertMemoryLeak(() -> assertFilteredColumnTopNull("BYTE", "DOUBLE", "x::BYTE"));
+    }
+
+    @Test
+    public void testFilteredColumnTopNullByteToDecimal() throws Exception {
+        assertMemoryLeak(() -> assertFilteredColumnTopNull("BYTE", "DECIMAL(18,2)", "x::BYTE"));
+    }
+
+    /**
+     * All-null fast path (parquet_meta_decode.rs: chunk.null_count == chunk.num_values): a
+     * no-sentinel column that is entirely column-top in the parquet partition (added, then
+     * the partition converted with no values for it), then ALTER'd to a sentinel target and
+     * read under a filter. The fast path skips post_convert; the filtered read must still
+     * surface NULL for every selected row, matching native.
+     */
+    @Test
+    public void testFilteredAllNullNoSentinelColumnConverted() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 execute("CREATE TABLE nt (sel INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 execute("CREATE TABLE pt (sel INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-                // Seed rows precede ADD COLUMN v, so v has a column top (NULL) for them.
                 String seed = """
                         INSERT INTO %s(sel, ts)
                         SELECT x::INT, timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000)
-                        FROM long_sequence(20)""";
+                        FROM long_sequence(50)""";
                 execute(seed.formatted("nt"));
                 execute(seed.formatted("pt"));
                 drainWalQueue();
 
+                // v is added but never populated, so the whole partition is column-top for v.
                 execute("ALTER TABLE nt ADD COLUMN v SHORT");
                 execute("ALTER TABLE pt ADD COLUMN v SHORT");
-                drainWalQueue();
-
-                // Value rows (v not null), larger sel so the filter below excludes them.
-                String vals = """
-                        INSERT INTO %s(sel, v, ts)
-                        SELECT (x + 1000)::INT, x::SHORT, timestamp_sequence('2024-01-01T01:00:00.000000Z', 1_000_000)
-                        FROM long_sequence(200)""";
-                execute(vals.formatted("nt"));
-                execute(vals.formatted("pt"));
                 drainWalQueue();
 
                 execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
@@ -1905,8 +1923,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
                 drainWalQueue();
 
-                // GROUP BY v with a selective filter on sel routes v through late materialization.
-                // The column-top rows (sel < 10) must group under v = NULL, not v = 0.
                 assertSqlCursors(
                         "SELECT v, count() c FROM nt WHERE sel < 10 GROUP BY v ORDER BY v",
                         "SELECT v, count() c FROM pt WHERE sel < 10 GROUP BY v ORDER BY v"
@@ -2728,6 +2744,54 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             tryDrop("pt");
             tryDrop("bids");
             tryDrop("asks");
+        }
+    }
+
+    /**
+     * Shared body for the M1 filtered column-top tests. 'v' is ADDed after seed rows so it
+     * carries a column top (NULL) for the first 20 rows; value rows get a larger 'sel' so the
+     * WHERE filter excludes them. GROUP BY v with a selective filter on sel routes v through the
+     * late-materialization filtered decode (decode_row_group_filtered in parquet_meta_decode.rs).
+     * For a no-sentinel source ({@code srcType} in BOOLEAN/BYTE/SHORT) widened to a sentinel
+     * target, the selected column-top rows must group under NULL, not 0 -- matching native (nt).
+     */
+    private void assertFilteredColumnTopNull(String srcType, String dstType, String valueExpr) throws Exception {
+        try {
+            execute("CREATE TABLE nt (sel INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (sel INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            String seed = """
+                    INSERT INTO %s(sel, ts)
+                    SELECT x::INT, timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000)
+                    FROM long_sequence(20)""";
+            execute(seed.formatted("nt"));
+            execute(seed.formatted("pt"));
+            drainWalQueue();
+
+            execute("ALTER TABLE nt ADD COLUMN v " + srcType);
+            execute("ALTER TABLE pt ADD COLUMN v " + srcType);
+            drainWalQueue();
+
+            // Use replace (not formatted): valueExpr may contain '%' (e.g. BOOLEAN "x % 2 = 0").
+            String vals = "INSERT INTO $T(sel, v, ts)\n"
+                    + "SELECT (x + 1000)::INT, " + valueExpr + ", timestamp_sequence('2024-01-01T01:00:00.000000Z', 1_000_000)\n"
+                    + "FROM long_sequence(200)";
+            execute(vals.replace("$T", "nt"));
+            execute(vals.replace("$T", "pt"));
+            drainWalQueue();
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN v TYPE " + dstType);
+            execute("ALTER TABLE pt ALTER COLUMN v TYPE " + dstType);
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT v, count() c FROM nt WHERE sel < 10 GROUP BY v ORDER BY v",
+                    "SELECT v, count() c FROM pt WHERE sel < 10 GROUP BY v ORDER BY v"
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
         }
     }
 

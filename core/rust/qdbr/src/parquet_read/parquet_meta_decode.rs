@@ -95,6 +95,18 @@ fn apply_timestamp_nano_scaling(
     }
 }
 
+/// Count of column-top (def-level 0) rows that fall inside the decoded window.
+///
+/// `rg_column_top` is the per-row-group column top (for a no-sentinel source it equals the
+/// column chunk's null count). The decoded buffer starts at row-group row `row_group_lo`, so the
+/// leading nulls present in this window are the column-top rows minus those skipped before the
+/// window start, clamped to the window length.
+fn window_leading_nulls(rg_column_top: usize, row_group_lo: usize, row_group_hi: usize) -> usize {
+    rg_column_top
+        .saturating_sub(row_group_lo)
+        .min(row_group_hi.saturating_sub(row_group_lo))
+}
+
 /// Decode a row group using metadata from a `_pm` sidecar file.
 ///
 /// Column types, byte ranges, codecs, and descriptors are read from the
@@ -223,11 +235,14 @@ pub fn decode_row_group(
         // are the contiguous column-top prefix, so the column-chunk null count equals its
         // length. post_convert stamps the target sentinel over those rows. Falls back to 0
         // when stats are absent (e.g. external parquet files, which carry no column top).
-        let leading_nulls = if stat_flags.has_null_count() {
+        // The buffer starts at row_group_lo, so make the count window-relative: a partial
+        // window (row_group_lo > 0) must not stamp rows before the window start.
+        let rg_column_top = if stat_flags.has_null_count() {
             usize::try_from(chunk.null_count).unwrap_or(0)
         } else {
             0
         };
+        let leading_nulls = window_leading_nulls(rg_column_top, row_group_lo, row_group_hi);
         // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
         // conversions, where the source has no in-band null and Java must emit NULL here.
         column_chunk_bufs.column_top = leading_nulls;
@@ -357,10 +372,32 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             Err(err) => return Err(err),
         }
 
-        // Filtered/late-materialisation decode compacts matched rows, so the column-top
-        // prefix is not the first N rows of the buffer. Column-top null handling for the
-        // filtered path is a follow-up; pass 0 to preserve current behaviour.
-        post_convert(original_column_type, to_column_type, 0, column_chunk_bufs)?;
+        // Column-top nulls for a no-sentinel source must be stamped with the target sentinel,
+        // same as the non-filtered path. filtered_rows is window-relative and ascending and the
+        // output preserves that order, so the matched column-top rows are a contiguous leading
+        // prefix of the (possibly compacted) buffer.
+        let rg_column_top = if stat_flags.has_null_count() {
+            usize::try_from(chunk.null_count).unwrap_or(0)
+        } else {
+            0
+        };
+        let window_column_top = window_leading_nulls(rg_column_top, row_group_lo, row_group_hi);
+        let leading_nulls = if FILL_NULLS {
+            // Output is full-width scan order over [row_group_lo, row_group_hi): the column-top
+            // rows are literally the first window_column_top outputs.
+            window_column_top
+        } else {
+            // Output is compacted matched rows in ascending order: count the matched rows whose
+            // window-relative index falls inside the column top.
+            filtered_rows.partition_point(|&r| (r as usize) < window_column_top)
+        };
+        column_chunk_bufs.column_top = leading_nulls;
+        post_convert(
+            original_column_type,
+            to_column_type,
+            leading_nulls,
+            column_chunk_bufs,
+        )?;
         apply_timestamp_nano_scaling(original_column_type, to_column_type, column_chunk_bufs);
     }
 

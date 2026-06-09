@@ -4646,6 +4646,124 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    // No-sentinel source (SHORT) widened to a sentinel target (LONG) on the filtered decode
+    // path: column-top rows that pass the filter must materialize as the target NULL sentinel
+    // (i64::MIN), not 0. Covers FILL_NULLS=false (compacted) and true (full scan order), with a
+    // partial window (row_group_lo > 0). Regression for the M1 "leading_nulls = 0" follow-up.
+    #[test]
+    fn test_decode_row_group_filtered_short_to_long_column_top() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let column_top = 8usize;
+        let data_row_count = 20usize;
+        let total_row_count = column_top + data_row_count;
+        let row_group_size = total_row_count;
+        let data_page_size = 10;
+        let version = Version::V2;
+
+        let data_values: Vec<i16> = (0..data_row_count).map(|i| (i as i16) * 10 + 1).collect();
+
+        let column = Column::from_raw_data(
+            0,
+            "short_col",
+            ColumnTypeTag::Short.into_type().code(),
+            column_top as i64,
+            total_row_count,
+            data_values.as_ptr() as *const u8,
+            std::mem::size_of_val(data_values.as_slice()),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let file =
+            write_cols_to_parquet_file(row_group_size, data_page_size, version, vec![column]);
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        // Decode the SHORT parquet column as LONG (lazy widening conversion).
+        let columns = vec![(0i32, ColumnTypeTag::Long.into_type())];
+
+        let row_group_lo = 5u32;
+        let row_group_hi = 23u32;
+        // Window-relative, ascending. abs_row = row_group_lo + entry; null iff abs_row < column_top.
+        let rows_filter: Vec<i64> = vec![0, 1, 2, 3, 5, 8, 10, 14, 17];
+
+        // FILL_NULLS=false: compacted output, one i64 per matched row.
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+        assert_eq!(count, rows_filter.len());
+        let result: Vec<i64> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i64>())
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i64> = rows_filter
+            .iter()
+            .map(|&row| {
+                let abs_row = row_group_lo as usize + row as usize;
+                if abs_row < column_top {
+                    i64::MIN
+                } else {
+                    data_values[abs_row - column_top] as i64
+                }
+            })
+            .collect();
+        assert_eq!(result, expected, "FILL_NULLS=false");
+
+        // FILL_NULLS=true: full scan order over [row_group_lo, row_group_hi). The late-
+        // materialization consumer reads ONLY matched positions (record.setRowIndex(rows.get(i))
+        // in AsyncWindowJoinRecordCursorFactory), so we assert just those. Unmatched positions
+        // are placeholders the consumer never reads; for a no-sentinel source they keep the
+        // source-null fill (0), which is irrelevant. Matched column-top rows must be i64::MIN.
+        let mut rgb_fill = RowGroupBuffers::new(allocator);
+        let count_fill = decoder
+            .decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb_fill,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+        assert_eq!(count_fill, (row_group_hi - row_group_lo) as usize);
+        let result_fill: Vec<i64> = rgb_fill.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i64>())
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        for &row in &rows_filter {
+            let j = row as usize; // FILL_NULLS=true output is indexed by window-relative row
+            let abs_row = row_group_lo as usize + j;
+            let want = if abs_row < column_top {
+                i64::MIN
+            } else {
+                data_values[abs_row - column_top] as i64
+            };
+            assert_eq!(result_fill[j], want, "FILL_NULLS=true matched row {j}");
+        }
+    }
+
     #[test]
     fn test_decode_flba_decimal_sign_extended_unfiltered() {
         let tas = TestAllocatorState::new();
