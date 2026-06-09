@@ -636,7 +636,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             if (key.findValue() == null) {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (d != Numbers.LONG_NULL) {
                     MapValue value = key.createValue();
                     value.putTimestamp(0, d);
@@ -748,7 +748,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (mapValue.isNew()) {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -806,7 +806,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                     }
                 }
                 firstIdx = newFirstIdx;
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (d != Numbers.LONG_NULL) {
                     if (size == capacity) { //buffer full
                         memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
@@ -939,7 +939,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                     return;
                 }
 
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (firstNotNullIdx == -1 && d != Numbers.LONG_NULL) {
                     firstNotNullIdx = count;
                     memory.putLong(startOffset, d);
@@ -950,7 +950,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                 value.putLong(2, firstNotNullIdx);
                 value.putLong(3, count + 1);
             } else {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (firstNotNullIdx != -1 && memory.getLong(startOffset + loIdx * Long.BYTES) != Numbers.LONG_NULL) {
                     firstNotNullIdx = -1;
                 }
@@ -1032,7 +1032,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * - Otherwise, scans the buffer from {@code firstIdx} to drop elements older than {@code maxDiff}
          * relative to the current timestamp and locates the first element that satisfies {@code |timestamp - ts| >= minDiff}
          * to set {@code firstValue}.
-         * - Retrieves the current row value via {@code arg.getTimestamp(record)}; if non-null, appends it to the ring buffer,
+         * - Retrieves the current row value via {@code readArgValue(arg, record)}; if non-null, appends it to the ring buffer,
          * expanding and realigning the underlying memory when capacity is reached.
          * - If no qualifying first value was found during the scan, sets {@code firstValue} to the current row's value
          * when the frame includes the current row, otherwise to {@code Numbers.LONG_NULL}.</p>
@@ -1079,7 +1079,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                 }
             }
             firstIdx = newFirstIdx;
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
             if (d != Numbers.LONG_NULL) {
                 if (size == capacity) { //buffer full
                     long newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
@@ -1170,7 +1170,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                     return;
                 }
 
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (firstNotNullIdx == -1 && d != Numbers.LONG_NULL) {
                     firstNotNullIdx = count;
                     buffer.putLong(0, d);
@@ -1180,7 +1180,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                 }
                 count++;
             } else {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (firstNotNullIdx != -1 && buffer.getLong((long) loIdx * Long.BYTES) != Numbers.LONG_NULL) {
                     firstNotNullIdx = -1;
                 }
@@ -1303,7 +1303,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             if (mapValue != null) {
                 this.value = mapValue.getTimestamp(0);
             } else {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (d != Numbers.LONG_NULL) {
                     mapValue = key.createValue();
                     mapValue.putLong(0, d);
@@ -1351,7 +1351,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         @Override
         public void computeNext(Record record) {
             if (!found) {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (d != Numbers.LONG_NULL) {
                     this.value = d;
                     this.found = true;
@@ -1388,7 +1388,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (!found) {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 if (d != Numbers.LONG_NULL) {
                     this.value = d;
                     this.found = true;
@@ -1463,7 +1463,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          */
         @Override
         public void computeNext(Record record) {
-            value = arg.getTimestamp(record);
+            value = readArgValue(arg, record);
         }
 
         /**
@@ -1568,7 +1568,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             MapValue value = key.createValue();
 
             if (value.isNew()) {
-                firstValue = arg.getTimestamp(record);
+                firstValue = readArgValue(arg, record);
                 value.putLong(0, firstValue);
             } else {
                 firstValue = value.getTimestamp(0);
@@ -1738,7 +1738,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             long firstIdx;
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -2052,7 +2052,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             long loIdx;//current index of lo frame value ('oldest')
             long startOffset;
             long count;
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             if (value.isNew()) {
                 loIdx = 0;
@@ -2304,7 +2304,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          *
          * @param record the current input row used to advance the window frame; its timestamp is read
          *               using the function's configured timestampIndex and the associated argument
-         *               function (arg.getTimestamp(record))
+         *               function (readArgValue(arg, record))
          */
         @Override
         public void computeNext(Record record) {
@@ -2314,7 +2314,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             }
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             long newFirstIdx = firstIdx;
 
@@ -2595,7 +2595,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                 return;
             }
 
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             if (count > bufferSize - frameSize) {//we've some elements in the frame
                 firstValue = buffer.getLong((loIdx + bufferSize - count) % bufferSize * Long.BYTES);
@@ -2794,7 +2794,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             MapValue mapValue = key.createValue();
 
             if (mapValue.isNew()) {
-                long d = arg.getTimestamp(record);
+                long d = readArgValue(arg, record);
                 mapValue.putLong(0, d);
                 value = d;
             } else {
@@ -2910,7 +2910,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         @Override
         public void computeNext(Record record) {
             if (!found) {
-                this.value = arg.getTimestamp(record);
+                this.value = readArgValue(arg, record);
                 this.found = true;
             }
         }

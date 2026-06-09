@@ -345,6 +345,34 @@ public class WindowDateFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxRangeFrameNanoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // designated timestamp in nanoseconds; the DATE value stays in milliseconds and the
+            // RANGE frame still orders by the nanosecond timestamp
+            execute("CREATE TABLE tn (ts TIMESTAMP_NS, d DATE) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("INSERT INTO tn VALUES " +
+                    "('2024-01-01T00:00:00', '2020-01-06T00:00:00.006Z'::date), " +
+                    "('2024-01-01T00:01:00', '2020-01-04T00:00:00.004Z'::date), " +
+                    "('2024-01-01T00:02:00', '2020-01-08T00:00:00.008Z'::date), " +
+                    "('2024-01-01T00:03:00', '2020-01-02T00:00:00.002Z'::date), " +
+                    "('2024-01-01T00:04:00', '2020-01-10T00:00:00.010Z'::date)");
+            assertQuery("SELECT ts, max(d) OVER (ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) m FROM tn")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tm
+                            2024-01-01T00:00:00.000000000Z\t2020-01-06T00:00:00.006Z
+                            2024-01-01T00:01:00.000000000Z\t2020-01-06T00:00:00.006Z
+                            2024-01-01T00:02:00.000000000Z\t2020-01-08T00:00:00.008Z
+                            2024-01-01T00:03:00.000000000Z\t2020-01-08T00:00:00.008Z
+                            2024-01-01T00:04:00.000000000Z\t2020-01-10T00:00:00.010Z
+                            """);
+        });
+    }
+
+    @Test
     public void testMaxRowsFrame() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
@@ -488,6 +516,28 @@ public class WindowDateFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:02:00.000000Z\t2020-01-04T00:00:00.004Z
                             2024-01-01T00:03:00.000000Z\t2020-01-04T00:00:00.004Z
                             2024-01-01T00:04:00.000000Z\t2020-01-04T00:00:00.004Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampWindowCastToDate() throws Exception {
+        // casting a TIMESTAMP window result to DATE reaches WindowTimestampFunction.getDate(), which
+        // converts timestamp ticks to DATE milliseconds; a naive passthrough would be ~1000x off
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tt (ts TIMESTAMP, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("INSERT INTO tt VALUES " +
+                    "('2024-01-01T00:00:00', '2020-01-06T00:00:00.006Z'), " +
+                    "('2024-01-01T00:01:00', '2020-01-08T00:00:00.008Z')");
+            assertQuery("SELECT ts, cast(max(v) OVER (ORDER BY ts) AS date) m FROM tt")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tm
+                            2024-01-01T00:00:00.000000Z\t2020-01-06T00:00:00.006Z
+                            2024-01-01T00:01:00.000000Z\t2020-01-08T00:00:00.008Z
                             """);
         });
     }

@@ -415,7 +415,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void computeNext(Record record) {
-            value = arg.getTimestamp(record);
+            value = readArgValue(arg, record);
         }
 
         /**
@@ -536,7 +536,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
             if (l != Numbers.LONG_NULL) {
                 partitionByRecord.of(record);
                 MapKey key = map.withKey();
@@ -711,7 +711,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             long dequeStartIndex = 0;
             long dequeEndIndex = 0;
             long timestamp = record.getTimestamp(timestampIndex);
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -1113,7 +1113,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
 
             long loIdx; //current index of lo frame value ('oldest')
             long startOffset;
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
 
             long dequeStartOffset = 0;
             long dequeStartIndex = 0;
@@ -1450,7 +1450,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void computeNext(Record record) {
             long timestamp = record.getTimestamp(timestampIndex);
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
 
             long newFirstIdx = firstIdx;
             if (frameLoBounded) {
@@ -1818,7 +1818,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          *
          * <p>Behavior details:</p>
          * <ul>
-         *   <li>Reads the timestamp via the wrapped argument function (arg.getTimestamp(record)).</li>
+         *   <li>Reads the timestamp via the wrapped argument function (readArgValue(arg, record)).</li>
          *   <li>If the frame lower bound is bounded, maintains a monotonic deque in dequeMemory:
          *       new values are pushed while removing smaller elements according to the comparator;
          *       the deque front represents the current frame maximum.</li>
@@ -1836,7 +1836,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void computeNext(Record record) {
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
 
             //compute value using top frame element (that could be current or previous row)
             long hiValue = l;
@@ -2073,7 +2073,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
 
             if (l != Numbers.LONG_NULL) {
                 MapValue value = key.createValue();
@@ -2201,7 +2201,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void computeNext(Record record) {
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
             if (l != Numbers.LONG_NULL && (maxMin == Numbers.LONG_NULL || comparator.compare(l, maxMin))) {
                 maxMin = l;
             }
@@ -2352,7 +2352,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            long l = arg.getTimestamp(record);
+            long l = readArgValue(arg, record);
             if (l != Numbers.LONG_NULL && (maxMin == Numbers.LONG_NULL || comparator.compare(l, maxMin))) {
                 maxMin = l;
             }

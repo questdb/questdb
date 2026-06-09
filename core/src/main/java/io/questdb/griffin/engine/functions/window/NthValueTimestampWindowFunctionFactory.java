@@ -413,7 +413,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public void computeNext(Record record) {
-            value = n == 1 ? arg.getTimestamp(record) : Numbers.LONG_NULL;
+            value = n == 1 ? readArgValue(arg, record) : Numbers.LONG_NULL;
         }
 
         @Override
@@ -486,7 +486,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
             if (value.isNew()) {
                 if (n == 1) {
-                    value.putLong(0, arg.getTimestamp(record));
+                    value.putLong(0, readArgValue(arg, record));
                 } else {
                     value.putLong(0, Numbers.LONG_NULL);
                 }
@@ -495,7 +495,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 long count = value.getLong(1) + 1;
                 value.putLong(1, count);
                 if (count == n) {
-                    value.putLong(0, arg.getTimestamp(record));
+                    value.putLong(0, readArgValue(arg, record));
                 }
             }
         }
@@ -582,7 +582,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             long firstIdx;
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -813,7 +813,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             long loIdx;
             long startOffset;
@@ -965,7 +965,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
             long count;
             if (mapValue.isNew()) {
                 count = 0;
@@ -1093,7 +1093,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             long newFirstIdx = firstIdx;
 
@@ -1280,7 +1280,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public void computeNext(Record record) {
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
 
             long effectiveCount = Math.min(count, bufferSize);
             long currentFrameElements;
@@ -1412,7 +1412,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public void computeNext(Record record) {
-            long d = arg.getTimestamp(record);
+            long d = readArgValue(arg, record);
             totalCount++;
             if (totalCount == n) {
                 lockedValue = d;
@@ -1509,7 +1509,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
             if (mapValue.isNew()) {
                 if (n == 1) {
-                    long d = arg.getTimestamp(record);
+                    long d = readArgValue(arg, record);
                     mapValue.putLong(0, d);
                     value = d;
                 } else {
@@ -1526,7 +1526,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                     count++;
                     mapValue.putLong(1, count);
                     if (count == n) {
-                        long d = arg.getTimestamp(record);
+                        long d = readArgValue(arg, record);
                         mapValue.putLong(0, d);
                         value = d;
                     } else {
@@ -1592,7 +1592,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             if (!isFound) {
                 count++;
                 if (count == n) {
-                    value = arg.getTimestamp(record);
+                    value = readArgValue(arg, record);
                     isFound = true;
                 }
             }
@@ -1681,7 +1681,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             if (!isFound) {
                 count++;
                 if (count == n) {
-                    value = arg.getTimestamp(record);
+                    value = readArgValue(arg, record);
                     isFound = true;
                 }
             }

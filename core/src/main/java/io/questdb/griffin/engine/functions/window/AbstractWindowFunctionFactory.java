@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -81,6 +82,17 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
 
         desc.startOffset = newAddress - memory.getPageAddress(0);
+    }
+
+    /**
+     * Reads a value-window function's argument as a native long. A DATE argument is read as
+     * milliseconds; everything else (TIMESTAMP ticks, or a SYMBOL/STRING/VARCHAR parsed to a
+     * timestamp) goes through getTimestamp(). The max/min/first_value/last_value/nth_value value
+     * functions store and write this native long, and report getType() = arg.getType(), so the
+     * cached chain column reads it back at the right scale for both DATE and TIMESTAMP results.
+     */
+    static long readArgValue(Function arg, Record rec) {
+        return ColumnType.tagOf(arg.getType()) == ColumnType.DATE ? arg.getDate(rec) : arg.getTimestamp(rec);
     }
 
     protected boolean supportNullsDesc() {
@@ -157,30 +169,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-        }
-    }
-
-    static class DateNullFunction extends BaseNullFunction implements WindowDateFunction {
-        private final long zeroValue;
-
-        DateNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
-            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
-            this.zeroValue = zeroValue;
-        }
-
-        @Override
-        public long getDate(Record rec) {
-            return zeroValue;
-        }
-
-        @Override
-        public int getType() {
-            return arg.getType();
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
         }
     }
 

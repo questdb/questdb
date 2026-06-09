@@ -24,11 +24,23 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Numbers;
 
 public interface WindowTimestampFunction extends WindowFunction {
+    // getTimestamp() returns the stored value in the result's native unit: timestamp ticks for a
+    // TIMESTAMP result, milliseconds for a DATE result (the value functions store a DATE argument
+    // as milliseconds). A DATE result is already milliseconds; timestamp ticks need converting so
+    // that reading a DATE window column, or casting a TIMESTAMP window result to DATE, yields the
+    // right value. toDate() passes LONG_NULL through.
+    @Override
+    default long getDate(Record rec) {
+        final long val = getTimestamp(rec);
+        return ColumnType.isTimestamp(getType()) ? ColumnType.getTimestampDriver(getType()).toDate(val) : val;
+    }
+
     @Override
     default double getDouble(Record rec) {
         final long val = getTimestamp(rec);
