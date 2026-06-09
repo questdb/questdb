@@ -112,12 +112,63 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIncludeRejectsUnknownCategory() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
-                "SHOW CREATE DATABASE INCLUDE (BOGUS)",
-                30,
-                "unexpected category"
-        ));
+    public void testIncludeRejectsMalformedClauses() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (BOGUS)", 30, "unexpected category");
+            assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE ()", 30, "unexpected category");
+            assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (TABLES,)", 37, "unexpected category");
+            assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE TABLES", 29, "'ALL' or '('");
+            assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE ALL garbage", 33, "garbage");
+        });
+    }
+
+    @Test
+    public void testIncludeViewsAndMatViewsInIsolation() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select ts, s, avg(v) v from base sample by 1d) partition by day");
+            execute("create view v as (select ts, s from base)");
+            drainWalQueue();
+
+            final String viewsOnly = dump("SHOW CREATE DATABASE INCLUDE (VIEWS)");
+            Assert.assertTrue(viewsOnly, viewsOnly.contains("CREATE VIEW 'v'"));
+            Assert.assertFalse(viewsOnly, viewsOnly.contains("CREATE TABLE"));
+            Assert.assertFalse(viewsOnly, viewsOnly.contains("CREATE MATERIALIZED VIEW"));
+
+            final String matViewsOnly = dump("SHOW CREATE DATABASE INCLUDE (MATERIALIZED_VIEWS)");
+            Assert.assertTrue(matViewsOnly, matViewsOnly.contains("CREATE MATERIALIZED VIEW 'mv'"));
+            Assert.assertFalse(matViewsOnly, matViewsOnly.contains("CREATE TABLE"));
+            Assert.assertFalse(matViewsOnly, matViewsOnly.contains("CREATE VIEW 'v'"));
+
+            // EXCLUDE ALL -> empty dump
+            Assert.assertEquals(0, dumpDatabase("SHOW CREATE DATABASE EXCLUDE ALL").size());
+        });
+    }
+
+    @Test
+    public void testFilteredSchemaDumpReplays() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol index, v double) timestamp(ts) partition by day wal dedup upsert keys(ts, s)");
+            execute("create view v as (select ts, s from base)");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase("SHOW CREATE DATABASE INCLUDE (SCHEMA)");
+            execute("drop view v");
+            execute("drop table base");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase("SHOW CREATE DATABASE INCLUDE (SCHEMA)");
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
     }
 
     @Test

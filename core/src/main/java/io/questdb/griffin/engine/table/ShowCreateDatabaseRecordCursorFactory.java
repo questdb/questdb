@@ -74,6 +74,7 @@ import java.util.Comparator;
  * could not otherwise see.
  */
 public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
+    public static final int N_DDL_COL = 0;
     // category bits selected by the INCLUDE/EXCLUDE clause
     public static final int INCLUDE_TABLES = 1;
     public static final int INCLUDE_VIEWS = 1 << 1;
@@ -85,7 +86,6 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     public static final int INCLUDE_SCHEMA = INCLUDE_TABLES | INCLUDE_VIEWS | INCLUDE_MATERIALIZED_VIEWS;
     public static final int INCLUDE_ACL = INCLUDE_USERS | INCLUDE_GROUPS | INCLUDE_SERVICE_ACCOUNTS | INCLUDE_PERMISSIONS;
     public static final int INCLUDE_ALL = INCLUDE_SCHEMA | INCLUDE_ACL;
-    public static final int N_DDL_COL = 0;
     private static final Log LOG = LogFactory.getLog(ShowCreateDatabaseRecordCursorFactory.class);
     private static final RecordMetadata METADATA;
     private static final Comparator<TableToken> TABLE_NAME_COMPARATOR =
