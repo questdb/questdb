@@ -636,11 +636,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES " +
                     "('2024-01-01T00:00:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m), " +
                     "('2024-01-01T00:01:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m)");
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(v) OVER () c FROM t2",
-                    "SELECT avg(".length(),
-                    "avg aggregation failed"
-            );
+            assertQuery("SELECT avg(v) OVER () c FROM t2")
+                    .noLeakCheck()
+                    .fails("SELECT avg(".length(), "avg aggregation failed");
         });
     }
 
@@ -1862,7 +1860,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT avg(" + col + ", -1) OVER () FROM t";
                 int nPos = "SELECT avg(".length() + col.length() + 2;
-                assertExceptionNoLeakCheck(sql, nPos, "non-negative scale required: -1");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(nPos, "non-negative scale required: -1");
             }
         });
     }
@@ -1874,7 +1874,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             String sql = "SELECT avg(v256, 17) OVER () FROM t";
             int nPos = "SELECT avg(v256, ".length();
-            assertExceptionNoLeakCheck(sql, nPos, "rescaled decimal has precision that exceeds maximum of");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(nPos, "rescaled decimal has precision that exceeds maximum of");
         });
     }
 
@@ -1897,7 +1899,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT avg(" + col + ", 77) OVER () FROM t";
                 int nPos = "SELECT avg(".length() + col.length() + 2;
-                assertExceptionNoLeakCheck(sql, nPos, "scale exceeds maximum of");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(nPos, "scale exceeds maximum of");
             }
         });
     }
@@ -2385,76 +2389,100 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     @Test
     public void testExplainPlanAllFactoriesAllSubTypesCoverage() throws Exception {
         // Covers toPlan for every factory + every sub-type via EXPLAIN. Each call uses
-        // assertPlanNoLeakCheck with the exact expected plan string.
+        // assertQuery(...).assertsPlan(...) with the exact expected plan string.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             // ---- sum ----
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck("SELECT sum(" + col + ") OVER () FROM t",
-                        "CachedWindow\n  unorderedFunctions: [sum(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT sum(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [sum(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT sum(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [sum(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT sum(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [sum(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT sum(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [sum(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT sum(" + col + ") OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT sum(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [sum(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT sum(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [sum(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT sum(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [sum(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT sum(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [sum(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
             // ---- avg ----
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck("SELECT avg(" + col + ") OVER () FROM t",
-                        "CachedWindow\n  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT avg(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT avg(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT avg(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT avg(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ") OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
             // ---- max ----
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck("SELECT max(" + col + ") OVER () FROM t",
-                        "CachedWindow\n  unorderedFunctions: [max(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT max(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [max(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT max(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [max(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT max(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [max(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT max(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [max(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT max(" + col + ") OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindow\n  unorderedFunctions: [max(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT max(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [max(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT max(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [max(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT max(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [max(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT max(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [max(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
             // ---- min ----
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck("SELECT min(" + col + ") OVER () FROM t",
-                        "CachedWindow\n  unorderedFunctions: [min(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT min(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [min(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT min(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [min(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT min(" + col + ") OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindow\n  unorderedFunctions: [min(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT min(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [min(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT min(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [min(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
             // ---- first_value (ZERO_PASS, streaming) / last_value (TWO_PASS for OVER (), cached) ----
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck("SELECT first_value(" + col + ") OVER () FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT last_value(" + col + ") OVER () FROM t",
-                        "CachedWindow\n  unorderedFunctions: [last_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT first_value(" + col + ") OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindow\n  unorderedFunctions: [last_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 for (String fn : new String[]{"first_value", "last_value"}) {
-                    assertPlanNoLeakCheck("SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                            "Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                    assertPlanNoLeakCheck("SELECT " + fn + "(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                            "Window\n  functions: [" + fn + "(" + col + ") ignore nulls over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    assertQuery("SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    assertQuery("SELECT " + fn + "(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("Window\n  functions: [" + fn + "(" + col + ") ignore nulls over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 }
             }
             // ---- nth_value ----
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck("SELECT nth_value(" + col + ", 1) OVER () FROM t",
-                        "CachedWindow\n  unorderedFunctions: [nth_value(" + col + ",1) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck("SELECT nth_value(" + col + ", 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",1) over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT nth_value(" + col + ", 1) OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindow\n  unorderedFunctions: [nth_value(" + col + ",1) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT nth_value(" + col + ", 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",1) over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -2463,18 +2491,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanAvgOverWholeAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT avg(v8) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v16) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v32) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v64) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v128) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v256) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v8) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v16) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v32) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v64) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v128) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v256) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2482,18 +2516,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanAvgRangePartitionAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT avg(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v8) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v16) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v16) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v32) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v32) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v64) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v64) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v128) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v128) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT avg(v256) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v256) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v8) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v16) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v16) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v32) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v32) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v64) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v64) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v128) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v128) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v256) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v256) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2506,12 +2546,14 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 // OVER () -> OverWholeResultSet (TWO_PASS), inherits base toPlan
-                assertPlanNoLeakCheck("SELECT avg(" + col + ", 5) OVER () FROM t",
-                        "CachedWindow\n  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ", 5) OVER () FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 // ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW -> OverCurrentRow (ZERO_PASS),
                 // inherits base toPlan with "over ()" suffix
-                assertPlanNoLeakCheck("SELECT avg(" + col + ", 5) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ", 5) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -2520,16 +2562,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanAvgRescalePartitionRange() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT avg(v128, 5) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    """
+            assertQuery("SELECT avg(v128, 5) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [avg(v128,5) over (partition by [grp] range between 60000000 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2537,16 +2578,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanAvgRows() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT avg(v64) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    """
+            assertQuery("SELECT avg(v64) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [avg(v64) over ( rows between 2 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2556,16 +2596,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         // through BaseNullFunction (with isRange=false, rowLo/rowHi bound).
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) FROM t",
-                    """
+            assertQuery("SELECT sum(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v8) over ( rows between 1 preceding and 2 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2575,16 +2614,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         // BaseNullFunction.toPlan.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) FROM t",
-                    """
+            assertQuery("SELECT sum(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v8) over (partition by [grp] rows between 1 preceding and 2 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2593,12 +2631,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 120 second PRECEDING AND 60 second PRECEDING) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over (range between 120000000 preceding and 60000000 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 120 second PRECEDING AND 60 second PRECEDING) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (range between 120000000 preceding and 60000000 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT first_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 120 second PRECEDING AND 60 second PRECEDING) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over (range between 120000000 preceding and 60000000 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 120 second PRECEDING AND 60 second PRECEDING) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (range between 120000000 preceding and 60000000 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -2607,18 +2645,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanFirstValueIgnoreNullsAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT first_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [first_value(v8) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT first_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [first_value(v16) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT first_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [first_value(v32) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT first_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [first_value(v64) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT first_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [first_value(v128) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT first_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [first_value(v256) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT first_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [first_value(v8) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT first_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [first_value(v16) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT first_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [first_value(v32) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT first_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [first_value(v64) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT first_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [first_value(v128) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT first_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [first_value(v256) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2626,16 +2670,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanLagPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT lag(v8, 1) OVER (PARTITION BY grp ORDER BY ts) FROM t",
-                    """
+            assertQuery("SELECT lag(v8, 1) OVER (PARTITION BY grp ORDER BY ts) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [lag(v8, 1, NULL) over (partition by [grp])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2644,26 +2687,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         // lead(col, 0) collapses to lag(col, 0).
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT lag(v64, 0) OVER (ORDER BY ts) FROM t",
-                    """
+            assertQuery("SELECT lag(v64, 0) OVER (ORDER BY ts) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [lag(v64, 0, NULL) over ()]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT lead(v64, 0) OVER (ORDER BY ts) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT lead(v64, 0) OVER (ORDER BY ts) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [lag(v64, 0, NULL) over ()]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2671,18 +2712,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanLastValueIgnoreNullsAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [last_value(v8) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [last_value(v16) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [last_value(v32) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [last_value(v64) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [last_value(v128) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [last_value(v256) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [last_value(v8) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [last_value(v16) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [last_value(v32) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [last_value(v64) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [last_value(v128) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [last_value(v256) ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2690,18 +2737,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanMaxOverPartitionAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT max(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [max(v8) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT max(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [max(v16) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT max(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [max(v32) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT max(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [max(v64) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT max(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [max(v128) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT max(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [max(v256) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT max(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [max(v8) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT max(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [max(v16) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT max(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [max(v32) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT max(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [max(v64) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT max(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [max(v128) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT max(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [max(v256) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2709,16 +2762,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanMaxPartitionRowsBoundedHi() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT max(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) FROM t",
-                    """
+            assertQuery("SELECT max(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [max(v32) over (partition by [grp] rows between 3 preceding and 0 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2726,18 +2778,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanMinOverPartitionAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT min(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [min(v8) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT min(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [min(v16) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT min(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [min(v32) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT min(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [min(v64) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT min(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [min(v128) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT min(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [min(v256) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT min(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [min(v8) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT min(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [min(v16) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT min(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [min(v32) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT min(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [min(v64) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT min(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [min(v128) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT min(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [min(v256) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2746,66 +2804,60 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         // Exercises Decimal{8,16,32,64,128,256}NthValueOverCurrentRowFunction.toPlan.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v8, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                    """
+            assertQuery("SELECT nth_value(v8, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [nth_value(v8,1) over (rows between current row and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v16, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT nth_value(v16, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [nth_value(v16,1) over (rows between current row and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v32, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT nth_value(v32, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [nth_value(v32,1) over (rows between current row and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v64, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT nth_value(v64, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [nth_value(v64,1) over (rows between current row and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v128, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT nth_value(v128, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [nth_value(v128,1) over (rows between current row and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v256, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT nth_value(v256, 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [nth_value(v256,1) over (rows between current row and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2813,16 +2865,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanNthValueRange() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v16, 2) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                    """
+            assertQuery("SELECT nth_value(v16, 2) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [nth_value(v16,2) over (rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2830,18 +2881,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanSumOverPartitionAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT sum(v8) OVER (PARTITION BY grp) FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v16) OVER (PARTITION BY grp) FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v16) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v32) OVER (PARTITION BY grp) FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v32) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v64) OVER (PARTITION BY grp) FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v64) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v128) OVER (PARTITION BY grp) FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v128) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v256) OVER (PARTITION BY grp) FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v256) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v8) OVER (PARTITION BY grp) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v16) OVER (PARTITION BY grp) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v16) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v32) OVER (PARTITION BY grp) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v32) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v64) OVER (PARTITION BY grp) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v64) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v128) OVER (PARTITION BY grp) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v128) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v256) OVER (PARTITION BY grp) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v256) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2849,18 +2906,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanSumOverPartitionRowsAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT sum(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v8) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v16) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v32) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v64) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v128) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v256) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v8) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v16) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v32) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v64) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v128) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v256) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2868,66 +2931,60 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanSumOverRangeAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v8) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    """
+            assertQuery("SELECT sum(v8) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v8) over (range between 60000000 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v16) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT sum(v16) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v16) over (range between 60000000 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v32) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT sum(v32) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v32) over (range between 60000000 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v64) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT sum(v64) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v64) over (range between 60000000 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v128) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT sum(v128) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v128) over (range between 60000000 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v256) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                    """
+                            """);
+            assertQuery("SELECT sum(v256) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v256) over (range between 60000000 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2935,18 +2992,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanSumOverRowsAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT sum(v8) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v8) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v16) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v16) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v32) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v32) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v64) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v64) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v128) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v128) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v256) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [sum(v256) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v8) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v8) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v16) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v16) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v32) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v32) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v64) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v64) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v128) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v128) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v256) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [sum(v256) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2954,18 +3017,24 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanSumOverWholeAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck("SELECT sum(v8) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v16) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v32) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v64) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v128) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
-            assertPlanNoLeakCheck("SELECT sum(v256) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [sum(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v8) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v16) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v32) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v64) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v128) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT sum(v256) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2973,16 +3042,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testExplainPlanSumWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT sum(v256) OVER () FROM t",
-                    """
+            assertQuery("SELECT sum(v256) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             CachedWindow
                               unorderedFunctions: [sum(v256) over ()]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -7145,7 +7213,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     String sql = "SELECT nth_value(" + col + ", " + n + ") OVER (ORDER BY ts) FROM t";
                     // n position is after "SELECT nth_value(<col>, ", i.e. 17 + col.length() + 2
                     int nPos = "SELECT nth_value(".length() + col.length() + 2;
-                    assertExceptionNoLeakCheck(sql, nPos, "n must be a positive integer");
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .fails(nPos, "n must be a positive integer");
                 }
             }
         });
@@ -7770,16 +7840,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             execute(INSERT_5);
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sum(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 3 PRECEDING) s FROM t",
-                    """
+            assertQuery("SELECT ts, sum(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 3 PRECEDING) s FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [sum(v8) over (partition by [grp] rows between 2 preceding and 3 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -7792,7 +7861,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(INSERT_5);
             assertQuery("SELECT ts, sum(v64) OVER (ORDER BY ts DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s64 FROM t ORDER BY ts DESC")
                     .noLeakCheck()
-                    .timestamp("ts###DESC")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
@@ -8580,11 +8649,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES " +
                     "('2024-01-01T00:00:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m), " +
                     "('2024-01-01T00:01:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m)");
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(v) OVER () c FROM t2",
-                    "SELECT sum(".length(),
-                    "sum aggregation failed"
-            );
+            assertQuery("SELECT sum(v) OVER () c FROM t2")
+                    .noLeakCheck()
+                    .fails("SELECT sum(".length(), "sum aggregation failed");
         });
     }
 
@@ -10182,10 +10249,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over (partition by [grp] rows between unbounded preceding and current row )]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over (partition by [grp] rows between unbounded preceding and current row )]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10196,14 +10262,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") ignore nulls over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT first_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") ignore nulls over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10213,14 +10277,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") ignore nulls over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT first_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") ignore nulls over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10230,14 +10292,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") ignore nulls over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT first_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") ignore nulls over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10247,14 +10307,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT first_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10264,18 +10322,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10285,14 +10340,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",2) over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",2) over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10303,14 +10356,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
-                    assertPlanNoLeakCheck(
-                            "SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                            "Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                    );
-                    assertPlanNoLeakCheck(
-                            "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                            "Window\n  functions: [" + fn + "(" + col + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                    );
+                    assertQuery("SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    assertQuery("SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("Window\n  functions: [" + fn + "(" + col + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 }
             }
         });
@@ -10323,10 +10374,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             // AvgRescale OverPartitionRangeFrame: avg(col, scale) over (partition by ...)
             // Use D8 source with all 6 target scales (0/3/5/14/30/60).
             for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
-                assertPlanNoLeakCheck(
-                        "SELECT avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(v8," + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(v8," + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10336,10 +10386,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
-                assertPlanNoLeakCheck(
-                        "SELECT avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(v8," + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(v8," + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10349,10 +10398,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
-                assertPlanNoLeakCheck(
-                        "SELECT avg(v8, " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(v8," + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(v8, " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(v8," + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10362,10 +10410,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
-                assertPlanNoLeakCheck(
-                        "SELECT avg(v8, " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(v8," + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(v8, " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(v8," + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10377,10 +10424,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
-                    assertPlanNoLeakCheck(
-                            "SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp) FROM t",
-                            "CachedWindow\n  unorderedFunctions: [" + fn + "(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                    );
+                    assertQuery("SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("CachedWindow\n  unorderedFunctions: [" + fn + "(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 }
             }
         });
@@ -10392,10 +10438,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
-                    assertPlanNoLeakCheck(
-                            "SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                            "Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                    );
+                    assertQuery("SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 }
             }
         });
@@ -10408,10 +10453,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
-                    assertPlanNoLeakCheck(
-                            "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                            "Window\n  functions: [" + fn + "(" + col + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                    );
+                    assertQuery("SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("Window\n  functions: [" + fn + "(" + col + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 }
             }
         });
@@ -10424,10 +10468,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
-                    assertPlanNoLeakCheck(
-                            "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                            "Window\n  functions: [" + fn + "(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                    );
+                    assertQuery("SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                            .noLeakCheck()
+                            .assertsPlan("Window\n  functions: [" + fn + "(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 }
             }
         });
@@ -10440,18 +10483,15 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT first_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [first_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (rows between 0 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",1) over (rows between current row and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT first_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [first_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (rows between 0 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT nth_value(" + col + ", 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",1) over (rows between current row and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10461,26 +10501,21 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         // OverWholeResultSet uses inherited BaseWindowFunction.toPlan -> no scale shown.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            assertPlanNoLeakCheck(
-                    "SELECT avg(v8, 5) OVER () FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT avg(v8, 5) OVER (PARTITION BY grp) FROM t",
-                    "CachedWindow\n  unorderedFunctions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT avg(v8, 5) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT avg(v8, 5) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-            );
-            assertPlanNoLeakCheck(
-                    "SELECT avg(v8, 5) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
-                    "Window\n  functions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-            );
+            assertQuery("SELECT avg(v8, 5) OVER () FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v8, 5) OVER (PARTITION BY grp) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v8, 5) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v8, 5) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+            assertQuery("SELECT avg(v8, 5) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -10496,15 +10531,21 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // Non-designated ts ORDER BY with RANGE -> rejected.
                 String sql = "SELECT first_value(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
                 // IGNORE NULLS variant
                 String sql2 = "SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos2 = sql2.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql2, pos2, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql2)
+                        .noLeakCheck()
+                        .fails(pos2, "RANGE is supported only for queries ordered by designated timestamp");
                 // With PARTITION BY too
                 String sql3 = "SELECT first_value(" + col + ") OVER (PARTITION BY ts ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos3 = sql3.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql3, pos3, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql3)
+                        .noLeakCheck()
+                        .fails(pos3, "RANGE is supported only for queries ordered by designated timestamp");
             }
         });
     }
@@ -10519,10 +10560,14 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT last_value(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
                 String sql2 = "SELECT last_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos2 = sql2.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql2, pos2, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql2)
+                        .noLeakCheck()
+                        .fails(pos2, "RANGE is supported only for queries ordered by designated timestamp");
             }
         });
     }
@@ -10537,7 +10582,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT nth_value(" + col + ", 1) OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
             }
         });
     }
@@ -10553,7 +10600,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
                     String sql = "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                     int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                    assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
                 }
             }
         });
@@ -10564,22 +10613,18 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",2) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",2) over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",2) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",2) over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10589,31 +10634,25 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 // IGNORE NULLS variants
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") ignore nulls over (partition by [grp] range between 60000000 preceding and 0 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") ignore nulls over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT last_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [last_value(" + col + ") ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT last_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") ignore nulls over (partition by [grp] range between 60000000 preceding and 0 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") ignore nulls over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT last_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [last_value(" + col + ") ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10629,14 +10668,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             }) {
                 String col = "v" + sourceScales[0];
                 int scale = sourceScales[1];
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + "," + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + "," + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + "," + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + "," + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -10652,12 +10689,20 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 String prefix = "SELECT nth_value(" + col + ", ";
                 int posN = prefix.length();
                 // n must be positive (constants)
-                assertExceptionNoLeakCheck(prefix + "0) OVER (ORDER BY ts) FROM tn", posN, "n must be a positive integer");
-                assertExceptionNoLeakCheck(prefix + "-1) OVER (ORDER BY ts) FROM tn", posN, "n must be a positive integer");
+                assertQuery(prefix + "0) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n must be a positive integer");
+                assertQuery(prefix + "-1) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n must be a positive integer");
                 // n must be a constant — non-constant column reference
-                assertExceptionNoLeakCheck(prefix + "x) OVER (ORDER BY ts) FROM tn", posN, "n must be a constant");
+                assertQuery(prefix + "x) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n must be a constant");
                 // n cannot be NULL — null::int literal
-                assertExceptionNoLeakCheck(prefix + "null) OVER (ORDER BY ts) FROM tn", posN, "n cannot be NULL");
+                assertQuery(prefix + "null) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n cannot be NULL");
             }
         });
     }
@@ -11036,7 +11081,10 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                         "sum(" + col + ") OVER (PARTITION BY grp) s " +
                         "FROM t) ORDER BY ts")
                         .noLeakCheck()
-                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n");
             }
         });
     }
@@ -11100,15 +11148,13 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             // row 2: frame [-2..-2] -> row 0 of partition -> 0.6
             // row 4: frame [-2..-2] absolute idx 2 = row 1 of partition = ? Actually counts include rows before, not within partition.
             // Use EXPLAIN to verify routing:
-            assertPlanNoLeakCheck(
-                    "SELECT nth_value(v8, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) FROM t",
-                    "Window\n  functions: [nth_value(v8,1) over (partition by [grp] rows between unbounded preceding and 2 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-            );
+            assertQuery("SELECT nth_value(v8, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("Window\n  functions: [nth_value(v8,1) over (partition by [grp] rows between unbounded preceding and 2 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                assertPlanNoLeakCheck(
-                        "SELECT nth_value(" + col + ", 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) FROM t",
-                        "Window\n  functions: [nth_value(" + col + ",1) over (partition by [grp] rows between unbounded preceding and 2 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT nth_value(" + col + ", 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [nth_value(" + col + ",1) over (partition by [grp] rows between unbounded preceding and 2 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -11159,22 +11205,18 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 String col = "v" + sourceScales[0];
                 int scale = sourceScales[1];
                 String sep = sourceScales[0] == 64 ? ", " : ",";
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + sep + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + sep + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + sep + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + sep + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + sep + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + sep + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + sep + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + sep + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -11191,15 +11233,13 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 String col = "v" + sourceScales[0];
                 int scale = sourceScales[1];
                 // OverPartitionRowsFrame
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + "," + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + "," + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 // OverRowsFrame
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + "," + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + "," + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -11218,25 +11258,21 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             }) {
                 String col = "v" + sourceScales[0];
                 int scale = sourceScales[1];
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
             // D64 has custom toPlan: includes scale with space
             for (int scale : new int[]{0, 22, 58}) {
-                assertPlanNoLeakCheck(
-                        "SELECT avg(v64, " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(v64, " + scale + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
-                assertPlanNoLeakCheck(
-                        "SELECT avg(v64, " + scale + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
-                        "Window\n  functions: [avg(v64, " + scale + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
-                );
+                assertQuery("SELECT avg(v64, " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(v64, " + scale + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                assertQuery("SELECT avg(v64, " + scale + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("Window\n  functions: [avg(v64, " + scale + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             }
         });
     }
@@ -11403,11 +11439,17 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // OverPartitionRangeFrame
                 assertQuery("SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t)")
                         .noLeakCheck()
-                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
                 // OverPartitionRowsFrame
                 assertQuery("SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) av FROM t)")
                         .noLeakCheck()
-                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
             }
         });
     }
@@ -11429,7 +11471,10 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // Just verify it runs (5 rows expected).
                 assertQuery("SELECT ts, av FROM (" + query + ") WHERE 1=0")
                         .noLeakCheck()
-                        .returnsOnce("ts\tav\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("ts\tav\n");
             }
         });
     }

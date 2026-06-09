@@ -24,12 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class InVarcharTest extends AbstractCairoTest {
@@ -66,65 +64,58 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarTypeChange() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "all varchar",
+                """
+                        a\tts
+                        1\t1970-01-01T00:00:00.000000Z
+                        2\t1970-01-01T00:00:01.000000Z
+                        30\t1970-01-01T00:00:29.000000Z
+                        """,
+                bindVariableService -> {
+                    bindVariableService.setVarchar(0, new Utf8String("1"));
+                    bindVariableService.setVarchar(1, new Utf8String("2"));
+                    bindVariableService.setVarchar(2, new Utf8String("30"));
+                }
+        ));
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-            tuples.add(new BindVariableTestTuple(
-                    "all varchar",
-                    """
-                            a\tts
-                            1\t1970-01-01T00:00:00.000000Z
-                            2\t1970-01-01T00:00:01.000000Z
-                            30\t1970-01-01T00:00:29.000000Z
-                            """,
-                    bindVariableService -> {
-                        bindVariableService.setVarchar(0, new Utf8String("1"));
-                        bindVariableService.setVarchar(1, new Utf8String("2"));
-                        bindVariableService.setVarchar(2, new Utf8String("30"));
-                    }
-            ));
+        cases.add(BindVarTuple.ok(
+                "type change",
+                """
+                        a\tts
+                        4\t1970-01-01T00:00:03.000000Z
+                        15\t1970-01-01T00:00:14.000000Z
+                        77\t1970-01-01T00:01:16.000000Z
+                        """,
+                bindVariableService -> {
+                    bindVariableService.setChar(0, '4');
+                    bindVariableService.setStr(1, "15");
+                    bindVariableService.setVarchar(2, new Utf8String("77"));
+                }
+        ));
 
-            tuples.add(new BindVariableTestTuple(
-                    "type change",
-                    """
-                            a\tts
-                            4\t1970-01-01T00:00:03.000000Z
-                            15\t1970-01-01T00:00:14.000000Z
-                            77\t1970-01-01T00:01:16.000000Z
-                            """,
-                    bindVariableService -> {
-                        bindVariableService.setChar(0, '4');
-                        bindVariableService.setStr(1, "15");
-                        bindVariableService.setVarchar(2, new Utf8String("77"));
-                    }
-            ));
-
-            assertSql("test where a in ($1, $2, $3)", tuples);
-        });
+        assertQuery("test where a in ($1, $2, $3)")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
     public void testBindVarTypeNotConvertible() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.fails(
+                "mixed",
+                38,
+                "cannot compare VARCHAR with type INT",
+                bindVariableService -> {
+                    bindVariableService.setVarchar(0, new Utf8String("52"));
+                    bindVariableService.setInt(1, 4567);
+                }
+        ));
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-            tuples.add(new BindVariableTestTuple(
-                    "mixed",
-                    "a\tts\n",
-                    bindVariableService -> {
-                        bindVariableService.setVarchar(0, new Utf8String("52"));
-                        bindVariableService.setInt(1, 4567);
-                    }
-            ));
-
-            try {
-                assertSql("test where a in ('6', '81', $1, null, $2)", tuples);
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getMessage(), "[38] cannot compare VARCHAR with type INT");
-            }
-        });
+        assertQuery("test where a in ('6', '81', $1, null, $2)")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
@@ -146,8 +137,8 @@ public class InVarcharTest extends AbstractCairoTest {
                             79\t1970-01-01T00:01:18.000000Z
                             """);
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-            tuples.add(new BindVariableTestTuple(
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
                     "char test",
                     """
                             a\tts
@@ -162,7 +153,9 @@ public class InVarcharTest extends AbstractCairoTest {
                     }
             ));
 
-            assertSql("test where a in ($1, $2, $3)", tuples);
+            assertQuery("test where a in ($1, $2, $3)")
+                    .noLeakCheck()
+                    .assertBinds(cases);
         });
     }
 
@@ -233,27 +226,25 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testConstAndBindVarMixed() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "mixed",
+                """
+                        a\tts
+                        6\t1970-01-01T00:00:05.000000Z
+                        27\t1970-01-01T00:00:26.000000Z
+                        52\t1970-01-01T00:00:51.000000Z
+                        81\t1970-01-01T00:01:20.000000Z
+                        """,
+                bindVariableService -> {
+                    bindVariableService.setStr(0, "27");
+                    bindVariableService.setVarchar(1, new Utf8String("52"));
+                }
+        ));
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-            tuples.add(new BindVariableTestTuple(
-                    "mixed",
-                    """
-                            a\tts
-                            6\t1970-01-01T00:00:05.000000Z
-                            27\t1970-01-01T00:00:26.000000Z
-                            52\t1970-01-01T00:00:51.000000Z
-                            81\t1970-01-01T00:01:20.000000Z
-                            """,
-                    bindVariableService -> {
-                        bindVariableService.setStr(0, "27");
-                        bindVariableService.setVarchar(1, new Utf8String("52"));
-                    }
-            ));
-
-            assertSql("test where a in ('6', '81', $1, null, $2)", tuples);
-        });
+        assertQuery("test where a in ('6', '81', $1, null, $2)")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
@@ -342,8 +333,8 @@ public class InVarcharTest extends AbstractCairoTest {
                             79\t1970-01-01T00:01:18.000000Z
                             """);
 
-            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-            tuples.add(new BindVariableTestTuple(
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
                     "null test",
                     """
                             a\tts
@@ -358,7 +349,9 @@ public class InVarcharTest extends AbstractCairoTest {
                     }
             ));
 
-            assertSql("test where a in ($1, $2, $3)", tuples);
+            assertQuery("test where a in ($1, $2, $3)")
+                    .noLeakCheck()
+                    .assertBinds(cases);
         });
     }
 }

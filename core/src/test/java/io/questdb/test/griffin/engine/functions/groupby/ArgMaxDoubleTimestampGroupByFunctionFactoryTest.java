@@ -135,7 +135,8 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce(
+                                .expectSize()
+                                .returns(
                                         """
                                                 sym\targ_max
                                                 A\tnull

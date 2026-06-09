@@ -467,10 +467,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ")");
 
             // thread-safe
-            assertQuery("explain select * from x where ts::string::timestamp < (select null)")
+            assertQuery("select * from x where ts::string::timestamp < (select null)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -481,10 +480,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where ts::string::timestamp < (select 1::timestamp)")
+            assertQuery("select * from x where ts::string::timestamp < (select 1::timestamp)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -495,10 +493,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where ts::string::timestamp < (select '2015-03-11'::string)")
+            assertQuery("select * from x where ts::string::timestamp < (select '2015-03-11'::string)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -509,10 +506,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where ts::string::timestamp < (select '2015-03-12'::varchar)")
+            assertQuery("select * from x where ts::string::timestamp < (select '2015-03-12'::varchar)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -525,10 +521,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
             // thread-safe
 
-            assertQuery("explain select * from x where ts < (select null)")
+            assertQuery("select * from x where ts < (select null)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord
@@ -539,10 +534,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where ts < (select 1::timestamp)")
+            assertQuery("select * from x where ts < (select 1::timestamp)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord
@@ -553,10 +547,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where ts < (select '2015-03-11'::string)")
+            assertQuery("select * from x where ts < (select '2015-03-11'::string)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord
@@ -567,10 +560,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where ts < (select '2015-03-12'::varchar)")
+            assertQuery("select * from x where ts < (select '2015-03-12'::varchar)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord

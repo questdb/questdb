@@ -25,8 +25,9 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.MutationStep;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -778,25 +779,29 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     ) sub
                     ORDER BY o.category, sub.rate
                     """;
-            try (final RecordCursorFactory factory = select(query)) {
-                final int ROW_CNT = 5;
-                for (int i = 1; i <= ROW_CNT; i++) {
-                    execute("INSERT INTO items VALUES ('A', " + i + ".0, '2024-01-01T0" + i + ":00:00.000000Z')");
-                    final StringBuilder arr = new StringBuilder("[");
-                    for (int j = 1; j <= i; j++) {
-                        if (j > 1) arr.append(',');
-                        arr.append(j).append(".0");
-                    }
-                    arr.append(']');
-                    final String expected;
-                    if (i == ROW_CNT) {
-                        expected = "category\tarr\trate\nA\t" + arr + "\t0.1\nA\t" + arr + "\t0.2\n";
-                    } else {
-                        expected = "category\tarr\trate\nA\t" + arr + "\t0.1\n";
-                    }
-                    assertCursor(expected, factory, true, true);
+            final int ROW_CNT = 5;
+            final ObjList<MutationStep> steps = new ObjList<>();
+            for (int i = 1; i <= ROW_CNT; i++) {
+                final StringBuilder arr = new StringBuilder("[");
+                for (int j = 1; j <= i; j++) {
+                    if (j > 1) arr.append(',');
+                    arr.append(j).append(".0");
                 }
+                arr.append(']');
+                final String expected;
+                if (i == ROW_CNT) {
+                    expected = "category\tarr\trate\nA\t" + arr + "\t0.1\nA\t" + arr + "\t0.2\n";
+                } else {
+                    expected = "category\tarr\trate\nA\t" + arr + "\t0.1\n";
+                }
+                steps.add(MutationStep.of(
+                        "INSERT INTO items VALUES ('A', " + i + ".0, '2024-01-01T0" + i + ":00:00.000000Z')",
+                        expected));
             }
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .mutateStepwise(steps);
         });
     }
 

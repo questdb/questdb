@@ -166,6 +166,8 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             weighted_avg	sum_over_sum
                             7.0	7.0
                             """);
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("SELECT round(weighted_avg(5.0, rnd_double()), 10) weighted_avg FROM long_sequence(10)\n")
                     .noLeakCheck()
                     .returnsOnce("""
