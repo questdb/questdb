@@ -37,9 +37,11 @@ public final class FuzzConfig {
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
+    public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
 
     private final boolean isDiffJitEnabled;
     private final boolean isDiffShadowEnabled;
+    private final boolean isVerifyCursorEnabled;
     private final String dumpPath;
     private final int maxColumnsPerTable;
     private final int minColumnsPerTable;
@@ -61,6 +63,7 @@ public final class FuzzConfig {
         this.dumpPath = System.getProperty(DUMP_PROP);
         this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
         this.isDiffShadowEnabled = Boolean.parseBoolean(System.getProperty(DIFF_SHADOW_PROP, "true"));
+        this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
     }
 
     public String getDumpPath() {
@@ -101,5 +104,9 @@ public final class FuzzConfig {
 
     public boolean isDiffShadowEnabled() {
         return isDiffShadowEnabled;
+    }
+
+    public boolean isVerifyCursorEnabled() {
+        return isVerifyCursorEnabled;
     }
 }

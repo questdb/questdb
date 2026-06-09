@@ -46,7 +46,9 @@ import java.nio.file.Paths;
  * scalar types plus DECIMAL and DOUBLE arrays, inserts rows that span
  * multiple DAY partitions, then runs a budget of randomly generated
  * SELECT / GROUP BY / SAMPLE BY / ASOF-LT-SPLICE JOIN queries and
- * materializes every result row.
+ * materializes every result row, additionally re-iterating each cursor
+ * after {@code toTop()} and cross-checking {@code size()} /
+ * {@code calculateSize()} against the materialized row count.
  * <p>
  * Oracle is crash-only: {@link SqlException} is swallowed (legitimate
  * user-facing error); anything else, including {@link CairoException},
@@ -71,6 +73,13 @@ import java.nio.file.Paths;
  *         compared. With both diffs enabled, three runs per query are
  *         needed (primary @ JIT-on, primary @ JIT-off, shadow @ JIT-off)
  *         and either divergence axis fails the query.</li>
+ *     <li>{@code -Dquestdb.fuzz.verify.cursor=true|false} &mdash; verify
+ *         per-cursor self-consistency (default true): every materialization
+ *         is re-iterated after {@code toTop()} and must reproduce the same
+ *         result set, {@code toTop()} must preserve {@code preComputedStateSize()},
+ *         and {@code size()} / {@code calculateSize()} must agree with the
+ *         materialized row count. These hold for every cursor, so a violation
+ *         is reported as a failure with no skip valves.</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
@@ -183,6 +192,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", queries=").$(config.getNumQueries())
                 .$(", diffJit=").$(config.isDiffJitEnabled())
                 .$(", diffShadow=").$(config.isDiffShadowEnabled())
+                .$(", verifyCursor=").$(config.isVerifyCursorEnabled())
                 .$();
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
@@ -201,7 +211,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
         }
 
-        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), tables);
+        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isVerifyCursorEnabled(), tables);
         // Snapshot the four parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.

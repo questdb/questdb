@@ -97,6 +97,20 @@ import java.util.regex.Pattern;
  * queries (LIMIT over parallel GROUP BY / hash join etc.) compare row
  * counts only.
  * <p>
+ * Independently of the diff axes, every materialization is also checked
+ * for per-cursor self-consistency: after the first pass the cursor is
+ * rewound with {@link RecordCursor#toTop()} and re-iterated, and the
+ * second pass must reproduce the first (same multiset for a deterministic
+ * query, same row count otherwise); {@code toTop()} must leave
+ * {@code preComputedStateSize()} unchanged; and {@code size()} / {@code
+ * calculateSize()} must agree with the materialized row count.
+ * {@code toTop()} is contractually a cheap rewind that neither re-executes
+ * nor recomputes, so these properties hold for every cursor regardless of
+ * access path -- a violation is always a real bug, never a benign artifact,
+ * so unlike the diff axes this check has no skip valves. It runs on every
+ * pass (primary, shadow, JIT-on/off, bind), so each distinct factory shape
+ * gets exercised.
+ * <p>
  * Two storage-diff escape valves keep the oracle focused on data
  * correctness rather than planner artifacts:
  * <ul>
@@ -142,14 +156,19 @@ public final class QueryRunner {
     private final StringSink rowsB = new StringSink();
     private final StringSink rowsC = new StringSink();
     private final StringSink rowsD = new StringSink();
+    // Scratch sink for the toTop() re-iteration pass; compared against the
+    // first pass to confirm the cursor reproduces its result set on rewind.
+    private final StringSink rowsToTop = new StringSink();
     private final boolean shadowHasAnyParquet;
     private final String[] shadowReplacements;
+    private final boolean verifyCursor;
 
     public QueryRunner(
             CairoEngine engine,
             SqlExecutionContext executionContext,
             boolean diffJit,
             boolean diffShadow,
+            boolean verifyCursor,
             ObjList<FuzzTable> tables
     ) {
         this.engine = engine;
@@ -157,6 +176,7 @@ public final class QueryRunner {
         this.functionParser = new FunctionParser(engine.getConfiguration(), engine.getFunctionFactoryCache());
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
+        this.verifyCursor = verifyCursor;
         if (diffShadow) {
             int n = tables.size();
             primaryPatterns = new Pattern[n];
@@ -185,63 +205,33 @@ public final class QueryRunner {
     }
 
     public Result run(GeneratedQuery query) {
-        String sql = query.sql();
-        if (!diffJit && !diffShadow && !query.hasBind()) {
-            Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet);
-            return toResult(sql, outcome);
-        }
-        int prevJitMode = executionContext.getJitMode();
+        // A per-cursor self-consistency violation detected by any runOnce pass
+        // surfaces as a CursorCheckException so it can short-circuit the
+        // per-axis reconciliation in runQuery; catch it here and report it as a
+        // fuzz failure like any other.
         try {
-            // Pivot: primary at JIT-off. The pivot is the right-hand side of
-            // the JIT comparison and the left-hand side of the storage and
-            // bind-variable comparisons, so it runs whenever any of the three
-            // diffs is on.
-            executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            Outcome bJ = runOnce(sql, rowsB, primaryHasAnyParquet);
-
-            Outcome aJ = null;
-            Result jitResult = null;
-            if (diffJit) {
-                executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                aJ = runOnce(sql, rowsA, primaryHasAnyParquet);
-                jitResult = reconcilePair(sql, aJ, bJ, rowsA, rowsB, query.deterministic(),
-                        "JIT divergence", "jit on ", "jit off");
-                if (jitResult.isFailed()) {
-                    return jitResult;
-                }
-            }
-
-            if (diffShadow) {
-                executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                String shadowSql = rewriteForShadow(sql);
-                Outcome bS = runOnce(shadowSql, rowsC, shadowHasAnyParquet);
-                Result storageResult = reconcilePair(
-                        sql,
-                        bJ,
-                        bS,
-                        rowsB,
-                        rowsC,
-                        query.deterministic(),
-                        "storage divergence",
-                        "primary",
-                        "shadow "
-                );
-                if (storageResult.isFailed()) {
-                    return storageResult;
-                }
-            }
-
-            if (query.hasBind()) {
-                Result bindResult = runBindVariant(query, aJ, bJ);
-                if (bindResult != null && bindResult.isFailed()) {
-                    return bindResult;
-                }
-            }
-
-            return jitResult != null ? jitResult : Result.ok();
-        } finally {
-            executionContext.setJitMode(prevJitMode);
+            return runQuery(query);
+        } catch (CursorCheckException e) {
+            return Result.failed(query.sql(), e);
         }
+    }
+
+    /**
+     * Formats a per-cursor-check failure message: the reason, the SQL, and the
+     * first-pass row dump. When {@code secondPass} is non-null (the toTop
+     * re-iteration diff) it is appended as a second dump so the divergence is
+     * visible; the {@code size()} / {@code calculateSize()} checks pass null
+     * since they compare a count against a single materialization.
+     */
+    private static String cursorFailureMessage(String reason, String sql, CharSequence firstPass, int firstRowsRead,
+                                               CharSequence secondPass, int secondRowsRead) {
+        String base = reason + ":\n"
+                + "  sql: " + sql + "\n"
+                + "  first pass (" + firstRowsRead + " rows):\n" + firstPass;
+        if (secondPass == null) {
+            return base;
+        }
+        return base + "  second pass (" + secondRowsRead + " rows):\n" + secondPass;
     }
 
     /**
@@ -409,6 +399,26 @@ public final class QueryRunner {
             return false;
         }
         return erroring.failure instanceof ImplicitCastException || erroring.failure instanceof NumericException;
+    }
+
+    /**
+     * Iterates {@code cursor} to exhaustion, appending one tab-separated line per
+     * row to {@code rows} via {@link CursorPrinter#printColumn}, and returns the
+     * row count. Shared by the first pass and the {@link #checkToTop} re-iteration
+     * so both materialize identically.
+     */
+    private static int materialize(RecordCursor cursor, RecordMetadata metadata, int columnCount, StringSink rows) {
+        Record record = cursor.getRecord();
+        int rowsRead = 0;
+        while (cursor.hasNext()) {
+            for (int i = 0; i < columnCount; i++) {
+                CursorPrinter.printColumn(record, metadata, i, rows, false);
+                rows.put('\t');
+            }
+            rows.put('\n');
+            rowsRead++;
+        }
+        return rowsRead;
     }
 
     /**
@@ -668,6 +678,96 @@ public final class QueryRunner {
             return Result.skipped(outcome.exceptionClass + ": " + outcome.exceptionMessage);
         }
         return Result.failed(sql, outcome.failure);
+    }
+
+    /**
+     * Cross-checks {@link RecordCursor#size()} and {@code calculateSize()} against
+     * the materialized row count, mirroring the {@code calculateSize()} pass the
+     * assertQuery battery runs. {@code size()}, when it reports a known value
+     * (>= 0), must equal the count; {@code calculateSize()} from the top must
+     * count exactly that many rows and leave {@link RecordCursor#hasNext()} false.
+     * These hold for every cursor, so a violation is always a real bug -- never a
+     * benign access-path artifact -- and throws {@link CursorCheckException}.
+     * Leaves the cursor exhausted. Call after the first pass has set
+     * {@code firstRowsRead}.
+     */
+    private void checkCalculateSize(String sql, RecordCursor cursor, StringSink firstPass, int firstRowsRead) {
+        long declaredSize = cursor.size();
+        if (declaredSize >= 0 && declaredSize != firstRowsRead) {
+            throw new CursorCheckException(cursorFailureMessage(
+                    "size() reported " + declaredSize + " but the cursor materialized " + firstRowsRead + " rows",
+                    sql, firstPass, firstRowsRead, null, -1), null);
+        }
+        RecordCursor.Counter counter = new RecordCursor.Counter();
+        long calculated;
+        try {
+            cursor.toTop();
+            cursor.calculateSize(executionContext.getCircuitBreaker(), counter);
+            calculated = counter.get();
+        } catch (Exception e) {
+            // The first pass materialized cleanly, so a throw out of toTop() /
+            // calculateSize() is itself a defect, not a legitimate user error.
+            // Errors (OOME, etc.) still propagate as in runOnce.
+            throw new CursorCheckException("calculateSize() threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (cursor.hasNext()) {
+            throw new CursorCheckException(cursorFailureMessage(
+                    "hasNext() returned true after calculateSize() exhausted the cursor",
+                    sql, firstPass, firstRowsRead, null, -1), null);
+        }
+        if (calculated != firstRowsRead) {
+            throw new CursorCheckException(cursorFailureMessage(
+                    "calculateSize() counted " + calculated + " but the cursor materialized " + firstRowsRead + " rows",
+                    sql, firstPass, firstRowsRead, null, -1), null);
+        }
+    }
+
+    /**
+     * Verifies two {@link RecordCursor#toTop()} invariants on a cursor the first
+     * pass has fully materialized. First, {@code toTop()} must preserve precomputed
+     * state, so {@link RecordCursor#preComputedStateSize()} must read the same value
+     * across the rewind (the invariant the assertQuery battery checks). Second,
+     * re-iterating must reproduce the first pass: {@code toTop()} is contractually a
+     * cheap rewind that neither re-executes the query nor recomputes cached state,
+     * so the second pass must yield the same rows -- the same multiset for a
+     * deterministic query (iteration order can legitimately vary for hash/parallel
+     * cursors, so a strict order check would false-positive), or at least the same
+     * row count for a non-deterministic one (LIMIT without a fully disambiguating
+     * ORDER BY). A violation is always a real bug and throws
+     * {@link CursorCheckException}. Leaves the cursor exhausted.
+     */
+    private void checkToTop(String sql, RecordCursor cursor, RecordMetadata metadata, int columnCount,
+                            StringSink firstPass, int firstRowsRead, boolean deterministic) {
+        // The first pass has fully iterated the cursor, so any lazily built state
+        // is in place; toTop() must rewind without discarding it.
+        long stateBefore = cursor.preComputedStateSize();
+        rowsToTop.clear();
+        int secondRowsRead;
+        long stateAfter;
+        try {
+            cursor.toTop();
+            stateAfter = cursor.preComputedStateSize();
+            secondRowsRead = materialize(cursor, metadata, columnCount, rowsToTop);
+        } catch (Exception e) {
+            // The first pass materialized cleanly, so a throw while rewinding and
+            // re-reading is itself a defect (e.g. a cursor that cannot re-iterate),
+            // not a legitimate user error. Errors (OOME, etc.) still propagate.
+            throw new CursorCheckException("cursor re-iteration threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (stateBefore != stateAfter) {
+            throw new CursorCheckException(cursorFailureMessage(
+                    "toTop() changed preComputedStateSize from " + stateBefore + " to " + stateAfter,
+                    sql, firstPass, firstRowsRead, null, -1), null);
+        }
+        if (deterministic) {
+            if (!rowsetEquals(firstPass, rowsToTop)) {
+                throw new CursorCheckException(cursorFailureMessage(
+                        "toTop re-iteration changed the row set", sql, firstPass, firstRowsRead, rowsToTop, secondRowsRead), null);
+            }
+        } else if (firstRowsRead != secondRowsRead) {
+            throw new CursorCheckException(cursorFailureMessage(
+                    "toTop re-iteration changed the row count", sql, firstPass, firstRowsRead, rowsToTop, secondRowsRead), null);
+        }
     }
 
     private AssertionError divergence(String diffName, Outcome a, Outcome b,
@@ -961,7 +1061,7 @@ public final class QueryRunner {
         }
         try {
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            Outcome bindOff = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet);
+            Outcome bindOff = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic());
             Result offResult = reconcilePair(
                     query.sql(),
                     bJ,
@@ -978,7 +1078,7 @@ public final class QueryRunner {
             }
             if (aJ != null) {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                Outcome bindOn = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet);
+                Outcome bindOn = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic());
                 return reconcilePair(
                         query.sql(),
                         aJ,
@@ -997,26 +1097,28 @@ public final class QueryRunner {
         }
     }
 
-    private Outcome runOnce(String sql, StringSink rows, boolean usesParquet) {
+    private Outcome runOnce(String sql, StringSink rows, boolean usesParquet, boolean deterministic) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
             int rowsRead;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
-                Record record = cursor.getRecord();
-                rowsRead = 0;
-                while (cursor.hasNext()) {
-                    for (int i = 0; i < columnCount; i++) {
-                        CursorPrinter.printColumn(record, metadata, i, rows, false);
-                        rows.put('\t');
-                    }
-                    rows.put('\n');
-                    rowsRead++;
+                rowsRead = materialize(cursor, metadata, columnCount, rows);
+                // toTop() must rewind without re-executing, and size() /
+                // calculateSize() must agree with the materialized row count.
+                // These hold for every cursor, so a violation is a real bug;
+                // the checks throw CursorCheckException to bypass the diff-axis
+                // reconciliation below and fail the query outright.
+                if (verifyCursor) {
+                    checkToTop(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic);
+                    checkCalculateSize(sql, cursor, rows, rowsRead);
                 }
             }
             planSink.of(factory, executionContext);
             return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), usesParquet);
+        } catch (CursorCheckException e) {
+            throw e;
         } catch (SqlException e) {
             return Outcome.error(e, e.getFlyweightMessage().toString(), usesParquet);
         } catch (ImplicitCastException e) {
@@ -1028,6 +1130,72 @@ public final class QueryRunner {
             // propagate: catching them would let the fuzzer keep iterating in a degraded JVM.
             String msg = t.getMessage();
             return Outcome.error(t, msg == null ? "" : msg, usesParquet);
+        }
+    }
+
+    private Result runQuery(GeneratedQuery query) {
+        String sql = query.sql();
+        if (!diffJit && !diffShadow && !query.hasBind()) {
+            Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
+            return toResult(sql, outcome);
+        }
+        int prevJitMode = executionContext.getJitMode();
+        try {
+            // Pivot: primary at JIT-off. The pivot is the right-hand side of
+            // the JIT comparison and the left-hand side of the storage and
+            // bind-variable comparisons, so it runs whenever any of the three
+            // diffs is on.
+            executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            Outcome bJ = runOnce(sql, rowsB, primaryHasAnyParquet, query.deterministic());
+
+            Outcome aJ = null;
+            Result jitResult = null;
+            if (diffJit) {
+                executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                aJ = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
+                jitResult = reconcilePair(sql, aJ, bJ, rowsA, rowsB, query.deterministic(),
+                        "JIT divergence", "jit on ", "jit off");
+                if (jitResult.isFailed()) {
+                    return jitResult;
+                }
+            }
+
+            if (diffShadow) {
+                executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                String shadowSql = rewriteForShadow(sql);
+                Outcome bS = runOnce(shadowSql, rowsC, shadowHasAnyParquet, query.deterministic());
+                Result storageResult = reconcilePair(
+                        sql,
+                        bJ,
+                        bS,
+                        rowsB,
+                        rowsC,
+                        query.deterministic(),
+                        "storage divergence",
+                        "primary",
+                        "shadow "
+                );
+                if (storageResult.isFailed()) {
+                    return storageResult;
+                }
+            }
+
+            if (query.hasBind()) {
+                Result bindResult = runBindVariant(query, aJ, bJ);
+                if (bindResult != null && bindResult.isFailed()) {
+                    return bindResult;
+                }
+            }
+
+            return jitResult != null ? jitResult : Result.ok();
+        } finally {
+            executionContext.setJitMode(prevJitMode);
+        }
+    }
+
+    private static final class CursorCheckException extends RuntimeException {
+        CursorCheckException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
