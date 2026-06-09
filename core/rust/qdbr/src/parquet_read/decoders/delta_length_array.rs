@@ -115,14 +115,37 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             }
         }
 
-        let num_bits = self.miniblock.num_bits;
-        let pack_size = 32 * num_bits as usize / 8;
+        let num_bits = self.miniblock.num_bits as usize;
+        // i32 lengths only pack into widths 0..=32; a wider field comes from a
+        // foreign or corrupt page. Without this guard unpack32 hits
+        // unreachable!, panicking and aborting the JVM over JNI. Mirrors the
+        // guard in DeltaBinaryPackedDecoder::unpack_next.
+        if num_bits > 32 {
+            return Err(fmt_err!(
+                Layout,
+                "DELTA_LENGTH_BYTE_ARRAY bit width {} exceeds 32-bit length width",
+                num_bits
+            ));
+        }
+        let pack_size = 32 * num_bits / 8;
         let offset = self.miniblock_pack_index * pack_size;
-        let data_ptr = self.miniblock.data.as_ptr();
-        let data = unsafe { std::slice::from_raw_parts(data_ptr.add(offset), pack_size) };
+        // Bounds-checked slice rather than from_raw_parts: with num_bits <= 32
+        // the pack always lies within the miniblock, but the checked get()
+        // turns any miniblock-size inconsistency into an error instead of
+        // out-of-bounds UB.
+        let data = self
+            .miniblock
+            .data
+            .get(offset..offset + pack_size)
+            .ok_or_else(|| {
+                fmt_err!(
+                    Layout,
+                    "DELTA_LENGTH_BYTE_ARRAY pack exceeds miniblock size"
+                )
+            })?;
         self.miniblock_pack_index += 1;
 
-        unpack32(data, self.values.as_mut_ptr().cast(), num_bits as usize);
+        unpack32(data, self.values.as_mut_ptr().cast(), num_bits);
 
         Ok(())
     }
@@ -1352,5 +1375,101 @@ mod tests {
                 "got: {err}"
             );
         }
+    }
+
+    // --- Bit width overflow ---
+
+    /// Build a malformed DELTA_LENGTH_BYTE_ARRAY page whose first miniblock
+    /// declares the given bit width. With `bit_width > 32` this is a foreign /
+    /// corrupt page: the i32 length unpacker only handles widths 0..=32.
+    ///
+    /// Layout: block_size=32, miniblocks_per_block=1, value_count=2,
+    /// first_value=0, min_delta=0, bitwidth=`bit_width`, then `32*bit_width/8`
+    /// packed bytes.
+    fn bit_width_page(bit_width: u8) -> Vec<u8> {
+        let mut data = vec![0x20u8, 0x01, 0x02, 0x00, 0x00, bit_width];
+        data.extend(std::iter::repeat_n(0u8, 32 * bit_width as usize / 8));
+        data
+    }
+
+    #[test]
+    fn test_bit_width_exceeds_length_width_push() {
+        // A foreign page whose first miniblock declares bitwidth=33 (> 32, the
+        // i32 length width). Without a guard, the 2nd push() reaches
+        // unpack32(.., 33) and panics via unreachable!, which aborts the JVM
+        // over JNI. It must instead surface a clean Layout error.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(33);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        decoder.reserve(2).unwrap();
+        decoder.push().unwrap(); // first value (0) OK
+        let err = decoder.push().err();
+        assert!(err.is_some(), "expected Err for bitwidth>32, not a panic");
+        assert!(
+            format!("{}", err.unwrap()).contains("exceeds 32-bit length width"),
+            "wrong error message"
+        );
+    }
+
+    #[test]
+    fn test_bit_width_exceeds_length_width_push_slice() {
+        // Same malformed page, exercised through the batched push_slice path,
+        // which also routes through unpack_next.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(255);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        decoder.reserve(2).unwrap();
+        let err = decoder.push_slice(2).err();
+        assert!(err.is_some(), "expected Err for bitwidth>32, not a panic");
+        assert!(
+            format!("{}", err.unwrap()).contains("exceeds 32-bit length width"),
+            "wrong error message"
+        );
+    }
+
+    #[test]
+    fn test_bit_width_exceeds_length_width_skip() {
+        // Same malformed page, exercised through the skip path, which also
+        // routes through unpack_next once the initial value is consumed.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(33);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        let err = decoder.skip(2).err();
+        assert!(err.is_some(), "expected Err for bitwidth>32, not a panic");
+        assert!(
+            format!("{}", err.unwrap()).contains("exceeds 32-bit length width"),
+            "wrong error message"
+        );
+    }
+
+    #[test]
+    fn test_bit_width_at_limit_is_accepted() {
+        // bitwidth=32 is the maximum valid width for i32 lengths and must NOT
+        // be rejected by the guard. The packed bytes are all zero, so every
+        // decoded delta is min_delta (0): lengths stay 0 and decode cleanly.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(32);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        decoder.reserve(2).unwrap();
+        decoder.push().unwrap();
+        decoder.push().unwrap();
+
+        let entries = read_aux_entries(&buffers);
+        assert_eq!(entries.len(), 2);
+        // Both lengths are 0 -> empty-string header (flags=3).
+        assert_eq!(entries[0].0, 3);
+        assert_eq!(entries[1].0, 3);
     }
 }
