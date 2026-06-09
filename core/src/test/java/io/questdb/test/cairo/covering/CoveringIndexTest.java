@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -47,6 +48,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -56,6 +58,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -7039,6 +7042,246 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringQueryInListInterleavedAllUnresolvedPageFrame() throws Exception {
+        // All IN-list keys are unresolved; the factory wires the page-frame
+        // cursor with an empty multiKeys list, and nextImpl() must hit
+        // its multiKeys.size() == 0 early return rather than touching the
+        // partition iterator. count() goes through the page-frame path
+        // via CountRecordCursorFactory, so a zero count proves the early
+        // return fires cleanly.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_unres_pf (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_unres_pf VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT count() FROM t_in_unres_pf WHERE sym IN ('XX', 'YY')")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedSampleByEquivalent() throws Exception {
+        // Regression: multi-key heap-merge must yield the same SAMPLE BY
+        // result as the FilterOnValues control. Before the fix the
+        // CoveringIndex multi-key cursor advertised SCAN_DIRECTION_FORWARD
+        // while emitting (partition, key, row-id) order, so SAMPLE BY's
+        // monotonic-ts assumption mis-bucketed rows whose row-ids
+        // interleaved in time.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_sb (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_sb VALUES
+                    ('2024-01-01T00:30:00', 'A', 1.0),
+                    ('2024-01-01T01:30:00', 'B', 2.0),
+                    ('2024-01-01T02:30:00', 'A', 3.0),
+                    ('2024-01-01T03:30:00', 'B', 4.0),
+                    ('2024-01-01T04:30:00', 'A', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSqlCursors(
+                    "SELECT ts, sum(price) AS s FROM t_in_sb WHERE sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
+                    "SELECT ts, sum(price) AS s FROM t_in_sb WHERE /*+ no_covering */ sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION"
+            );
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedSampleByMultiPartition() throws Exception {
+        // Stresses the page-frame multi-partition resume path: SAMPLE BY
+        // consumes via supportsPageFrameCursor() == true, so the heap-merge
+        // page-frame variant must also produce ts-ascending output and
+        // match the FilterOnValues control. Multiple partitions exercise
+        // the partition advance + heap re-population logic.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_sb_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_sb_mp
+                    SELECT
+                        dateadd('m', (x * 30)::INT, '2024-01-01T00:00:00.000000Z')::TIMESTAMP,
+                        rnd_symbol('A', 'B', 'C', 'D'),
+                        x::DOUBLE
+                    FROM long_sequence(200)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSqlCursors(
+                    "SELECT ts, count() AS c, sum(price) AS s FROM t_in_sb_mp "
+                            + "WHERE sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
+                    "SELECT ts, count() AS c, sum(price) AS s FROM t_in_sb_mp "
+                            + "WHERE /*+ no_covering */ sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION"
+            );
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedSkipsEmptyPartition() throws Exception {
+        // A partition in the middle of the time range has no rows for any
+        // IN-list key. The multi-key cursor must drop its empty heap,
+        // advance to the next partition, and resume emit there. This
+        // exercises the openPartitionCursors-returned-false branch of
+        // advancePartition (cursor path) and the matching branch of
+        // nextImpl (page-frame path).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_skip (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_skip VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'C', 99.0),
+                    ('2024-01-02T01:00:00', 'D', 88.0),
+                    ('2024-01-03T00:00:00', 'A', 3.0),
+                    ('2024-01-03T01:00:00', 'B', 4.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Cursor path: ts-ascending across partitions 1 and 3, with
+            // partition 2 silently skipped.
+            assertQuery("SELECT ts, sym, price FROM t_in_skip WHERE sym IN ('A', 'B') ORDER BY ts")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-03T00:00:00.000000Z\tA\t3.0
+                            2024-01-03T01:00:00.000000Z\tB\t4.0
+                            """);
+
+            // Page-frame path via vectorized count + sum: correct totals
+            // prove the middle partition is skipped without producing a
+            // bogus frame.
+            assertQuery("SELECT count() c, sum(price) s FROM t_in_skip WHERE sym IN ('A', 'B')")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("c\ts\n4\t10.0\n");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedTsAscending() throws Exception {
+        // Multi-key IN where the keys' row-ids interleave in time. Before
+        // the fix the CoveringIndex multi-key cursor concatenated per-key
+        // blocks while still advertising SCAN_DIRECTION_FORWARD, so the
+        // optimizer elided ORDER BY ts and the output came back grouped
+        // by key. After the heap-merge fix the stream is ts-ascending and
+        // matches the FilterOnValues control without an explicit sort.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_asc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_asc VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-01T03:00:00', 'B', 4.0),
+                    ('2024-01-01T04:00:00', 'A', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT ts, sym, price FROM t_in_asc WHERE sym IN ('A', 'B') ORDER BY ts")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            2024-01-01T03:00:00.000000Z\tB\t4.0
+                            2024-01-01T04:00:00.000000Z\tA\t5.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedWithUnresolvedKey() throws Exception {
+        // An unresolved literal in the IN list keeps the multi-key code
+        // path but contributes no rows. Output must still be ts-ascending
+        // across the resolved keys.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_unres (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_unres VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CoveringIndex on: sym with: ts, price
+                              filter: sym IN ['A','B','XQCE']
+                            """);
+            assertQuery("SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testCoveringQueryInListMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -9663,6 +9906,62 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctSymKeyAliasPropagatesToMetadata() throws Exception {
+        // Regression: when the DISTINCT->GROUP BY rewrite projects an aliased
+        // symbol key (e.g. `sym AS k`), PostingIndexDistinctRecordCursorFactory
+        // must name its output column after the alias, not the source column.
+        // Naming it `sym` made the enclosing model fail to resolve `k`,
+        // surfacing as "Invalid column: k" or an "wtf? k" assert depending on
+        // the outer query shape.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_alias (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dist_alias VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Bare alias reference through a subquery.
+            assertQuery("SELECT k FROM (SELECT sym AS k, count() AS cnt FROM t_dist_alias) ORDER BY k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k
+                            A
+                            B
+                            """);
+
+            // Qualified alias reference alongside a constant (select-virtual outer model).
+            assertQuery("SELECT t0.k, -45 FROM (SELECT sym AS k, count() AS cnt FROM t_dist_alias) t0 ORDER BY t0.k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tcolumn
+                            A\t-45
+                            B\t-45
+                            """);
+
+            // Alias consumed by an outer expression.
+            assertQuery("SELECT length(k) FROM (SELECT sym AS k, count() AS cnt FROM t_dist_alias) ORDER BY length(k)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            length
+                            1
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testDistinctSymKeyRangeScansAllPaths() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -10687,6 +10986,154 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOnExcludedValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
+        // Regression: FilterOnExcludedValues opens per-symbol index cursors via
+        // HeapRowCursor.of(), whose first hasNext() evaluates the post-filter on each
+        // sub-cursor. When that filter throws (here, a DECIMAL scale-adjustment overflow
+        // on small < big), the singleton HeapRowCursor was left un-closed because
+        // PageFrameRecordCursorImpl.rowCursor never got assigned. The per-symbol index
+        // cursors then stayed outside the PostingIndexFwdReader.freeCursors pool and
+        // their block buffers leaked. The fix closes the row cursor factory from
+        // PageFrameRecordCursorImpl.close() so the singleton always cleans up.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_excl_leak (
+                        sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
+                        small DECIMAL(38, 3),
+                        big DECIMAL(76, 2),
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
+            // match small's scale overflows the 256-bit intermediate at filter time.
+            execute("""
+                    INSERT INTO t_excl_leak
+                    SELECT
+                        rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
+                        '1.000'::DECIMAL(38, 3),
+                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
+                        rnd_double(),
+                        timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+
+            // SELECT v (a column value) forces per-row materialization through the per-symbol
+            // cursors, so HeapRowCursor.of() evaluates the post-filter and throws on it.
+            Throwable caught = null;
+            try (RecordCursorFactory f = select(
+                    "SELECT v FROM t_excl_leak " +
+                            "WHERE NOT ((sym IN ('s7', null) OR small < big))");
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                }
+            } catch (Throwable t) {
+                caught = t;
+            }
+            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+        });
+    }
+
+    @Test
+    public void testFilterOnSubQueryThrowingFilterDoesNotLeakIndexReader() throws Exception {
+        // Regression: FilterOnSubQuery builds a per-symbol index cursor for every key
+        // returned by the sub-query through HeapRowCursorFactory.getCursor, whose call into
+        // HeapRowCursor.of evaluates the post-filter on each sub-cursor. When that filter
+        // throws (here, a DECIMAL scale-adjustment overflow on small < big), the throw fires
+        // inside getCursor before its return assigns PageFrameRecordCursorImpl.rowCursor, so
+        // the singleton HeapRowCursor is left with populated per-symbol SymbolIndexFiltered
+        // RowCursor sub-cursors that each hold an open index reader cursor. The fix frees
+        // FilterOnSubQueryRecordCursorFactory.rowCursorFactory in _close(), which cascades
+        // into HeapRowCursorFactory.close() and returns the per-symbol cursors to the pool.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_sub_leak (
+                        sym SYMBOL INDEX TYPE POSTING DELTA,
+                        small DECIMAL(38, 3),
+                        big DECIMAL(76, 2),
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
+            // match small's scale overflows the 256-bit intermediate at filter time.
+            execute("""
+                    INSERT INTO t_sub_leak
+                    SELECT
+                        rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
+                        '1.000'::DECIMAL(38, 3),
+                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
+                        rnd_double(),
+                        timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+
+            Throwable caught = null;
+            try (RecordCursorFactory f = select(
+                    "SELECT v FROM t_sub_leak " +
+                            "WHERE sym IN (SELECT 's0' UNION SELECT 's1') AND small < big");
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                }
+            } catch (Throwable t) {
+                caught = t;
+            }
+            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+        });
+    }
+
+    @Test
+    public void testFilterOnValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
+        // Regression: FilterOnValues opens a per-symbol index cursor for every IN-list key
+        // through HeapRowCursorFactory.getCursor, whose call into HeapRowCursor.of evaluates
+        // the post-filter on each sub-cursor. When that filter throws (here, a DECIMAL
+        // scale-adjustment overflow on small < big), the throw fires inside getCursor before
+        // its return assigns PageFrameRecordCursorImpl.rowCursor, so the singleton
+        // HeapRowCursor is left with populated per-symbol SymbolIndexFilteredRowCursor
+        // sub-cursors that each hold an open index reader cursor. The fix frees
+        // FilterOnValuesRecordCursorFactory.rowCursorFactory in _close(), which cascades into
+        // HeapRowCursorFactory.close() and returns the per-symbol cursors to the pool.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_val_leak (
+                        sym SYMBOL INDEX TYPE POSTING DELTA,
+                        small DECIMAL(38, 3),
+                        big DECIMAL(76, 2),
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
+            // match small's scale overflows the 256-bit intermediate at filter time.
+            execute("""
+                    INSERT INTO t_val_leak
+                    SELECT
+                        rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
+                        '1.000'::DECIMAL(38, 3),
+                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
+                        rnd_double(),
+                        timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+
+            Throwable caught = null;
+            try (RecordCursorFactory f = select(
+                    "SELECT v FROM t_val_leak " +
+                            "WHERE sym IN ('s0', 's1') AND small < big");
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                }
+            } catch (Throwable t) {
+                caught = t;
+            }
+            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+        });
+    }
+
+    @Test
     public void testFilteredIndexScanWithArrayColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -10994,6 +11441,91 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("sym\tcount\nA\t666\nB\t667\n");
+        });
+    }
+
+    @Test
+    public void testInListWithDuplicateBindVarKeys() throws Exception {
+        // Literal IN-list duplicates are deduped upstream by the WhereClauseParser
+        // (see testInListWithDuplicateKeys), so only bind-variable / runtime-constant
+        // duplicates reach the multi-key covering build loops. Without a contains()
+        // guard there, openPartitionCursors opens one posting cursor per slot and the
+        // heap-merge emits each matching row once per duplicate key: duplicate rows in
+        // the record cursor, inflated count/sum in the page-frame (parallel GROUP BY)
+        // path, and the latest row emitted multiple times in LATEST ON.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_dup_bind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_dup_bind VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'A', 1.0),
+                    ('2024-01-01T00:00:01.000000Z', 'B', 2.0),
+                    ('2024-01-01T00:00:02.000000Z', 'A', 3.0)
+                    """);
+
+            // 1) Plain projection - record cursor (getCursor build loop).
+            final ObjList<BindVarTuple> projection = new ObjList<>();
+            projection.add(BindVarTuple.ok(
+                    "both bind vars resolve to 'A' - each A row appears once",
+                    """
+                            price
+                            1.0
+                            3.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "A");
+                    }
+            ));
+            projection.add(BindVarTuple.ok(
+                    "distinct keys A,B - all matching rows returned",
+                    """
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "B");
+                    }
+            ));
+            assertQuery("SELECT price FROM t_in_dup_bind WHERE sym IN ($1, $2) ORDER BY ts").noLeakCheck().noRandomAccess().assertBinds(projection);
+
+            // 2) Parallel GROUP BY - page-frame cursor (getPageFrameCursor build loop).
+            final ObjList<BindVarTuple> aggregate = new ObjList<>();
+            aggregate.add(BindVarTuple.ok(
+                    "duplicate key 'A' - count/sum not inflated",
+                    """
+                            sym\tc\ts
+                            A\t2\t4.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "A");
+                    }
+            ));
+            assertQuery("SELECT sym, count() c, sum(price) s FROM t_in_dup_bind WHERE sym IN ($1, $2) GROUP BY sym").noLeakCheck().expectSize().assertBinds(aggregate);
+
+            // 3) LATEST ON - multi-key latest-by covering cursor.
+            final ObjList<BindVarTuple> latest = new ObjList<>();
+            latest.add(BindVarTuple.ok(
+                    "duplicate key 'A' - latest row emitted once",
+                    """
+                            sym\tprice
+                            A\t3.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "A");
+                    }
+            ));
+            assertQuery("SELECT sym, price FROM t_in_dup_bind WHERE sym IN ($1, $2) LATEST ON ts PARTITION BY sym").noLeakCheck().noRandomAccess().assertBinds(latest);
         });
     }
 
@@ -12196,6 +12728,41 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             X\t1.0
                             X\t3.0
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiKeyPageFrameMultiPartitionDoesNotLeakIndexReader() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mki_leak (
+                        sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mki_leak
+                    SELECT rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
+                           rnd_double(),
+                           timestamp_sequence(to_timestamp('2024-01-01','yyyy-MM-dd'), 1_800_000_000L)
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_mki_leak CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+
+            // max(const) over a 3-key IN where two literals don't resolve.
+            // Routes through Async Group By -> MultiKeyCoveringPageFrameCursor
+            // and produces one frame per partition that drains the heap.
+            try (RecordCursorFactory f = select(
+                    "SELECT max(112526.51::DECIMAL(9, 2)) AS a0 FROM t_mki_leak " +
+                            "WHERE sym IN ('XQCE', 's5', 'YYYZZ'::VARCHAR)");
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+            }
         });
     }
 
@@ -13483,6 +14050,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPageFrameCursor_SetScanProfileReachesReader() throws Exception {
+        // The covering page-frame cursor now implements TablePageFrameCursor (it was a
+        // bare PageFrameCursor before), so setScanProfile() is no longer a silent no-op:
+        // it delegates to the live TableReader exposed by getTableReader(). Drive the
+        // cursor directly and assert the profile actually lands on the reader.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_profile (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_profile
+                    SELECT '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L, 'A', x * 1.5
+                    FROM long_sequence(10)
+                    """);
+            engine.releaseAllWriters();
+
+            // The query wraps the covering factory in a SelectedRecordCursorFactory;
+            // unwrap to the covering factory so we drive its CoveringPageFrameCursor
+            // directly (that is the cursor whose getTableReader/setScanProfile changed).
+            try (RecordCursorFactory factory = select("SELECT sym, price FROM t_pf_profile WHERE sym = 'A'")) {
+                RecordCursorFactory covering = factory instanceof CoveringIndexRecordCursorFactory ? factory : factory.getBaseFactory();
+                assertTrue("expected a covering-index factory, got " + factory.getClass().getSimpleName(),
+                        covering instanceof CoveringIndexRecordCursorFactory);
+
+                try (PageFrameCursor cursor = covering.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    assertTrue("covering page-frame cursor must be a TablePageFrameCursor",
+                            cursor instanceof TablePageFrameCursor);
+
+                    TableReader reader = ((TablePageFrameCursor) cursor).getTableReader();
+                    assertNotNull("getTableReader must expose the live reader", reader);
+                    assertEquals(ReaderScanProfile.DEFAULT, reader.getScanProfile());
+
+                    // setScanProfile must delegate through to the reader, not no-op.
+                    cursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
+                    assertEquals(ReaderScanProfile.SEQUENTIAL_CACHED, reader.getScanProfile());
+
+                    // A second profile proves the delegation is live, not a one-shot.
+                    cursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
+                    assertEquals(ReaderScanProfile.SEQUENTIAL_EVICT, reader.getScanProfile());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameCursor_SupportsPageFrame() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -13570,6 +14186,64 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("count\n400\n");
+        });
+    }
+
+    @Test
+    public void testParallelKeyedGroupByOverCoveringIndexUnderSelectedRecord() throws Exception {
+        // Regression: a parallel keyed GROUP BY whose base is CoveringIndex wrapped by
+        // SelectedRecord (e.g. via a CTE) crashed with ClassCastException because
+        // CoveringPageFrameCursor was a plain PageFrameCursor while
+        // SelectedRecordCursorFactory casts to TablePageFrameCursor. The fix
+        // promotes CoveringPageFrameCursor to TablePageFrameCursor.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bug9 (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (k, v),
+                        k SYMBOL,
+                        v INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bug9 VALUES
+                        ('a', 'k1', 1, 0),
+                        ('b', 'k2', 2, 1_000_000),
+                        (null, 'k1', 3, 2_000_000),
+                        (null, 'k2', 4, 3_000_000),
+                        (null, 'k1', 5, 4_000_000)
+                    """);
+            drainWalQueue();
+
+            // The CTE introduces a SelectedRecord layer above the WHERE-driven
+            // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
+            // group-by on the Async (parallel) keyed path rather than the
+            // vectorised one.
+            String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
+                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+                    + "ORDER BY e0";
+            assertQuery(q)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Encode sort light
+                              keys: [e0]
+                                Async Group By workers: 1
+                                  keys: [e0]
+                                  values: [avg(-1)]
+                                  filter: null
+                                    SelectedRecord
+                                        SelectedRecord
+                                            CoveringIndex on: sym with: k
+                                              filter: sym=null
+                            """);
+            assertQuery(q)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            e0\ta0
+                            k1\t-1.0
+                            k2\t-1.0
+                            """);
         });
     }
 
@@ -14244,6 +14918,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("price\n");
+        });
+    }
+
+    @Test
+    public void testSampleByFillKeyedIndexedNullScanDoesNotLeak() throws Exception {
+        // Regression: keyed SAMPLE BY FILL(PREV) drives the base twice and calls
+        // baseCursor.toTop() between passes. PageFrameRecordCursorImpl.toTop()
+        // used to drop rowCursor by assigning null instead of closing it, which
+        // stranded the active PostingIndexFwdReader.Cursor outside the reader's
+        // freeCursors pool and leaked the cursor's block buffer.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_leak (
+                        sym SYMBOL INDEX TYPE POSTING,
+                        v BYTE,
+                        k INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Interleaved NULL/'A' sym values: the IS NULL probe has entries to
+            // walk on every sampled hour, so loadDenseGenerationCached allocates.
+            execute("""
+                    INSERT INTO t_leak
+                    SELECT
+                        CASE WHEN x % 2 = 0 THEN cast(NULL as SYMBOL) ELSE cast('A' as SYMBOL) END,
+                        (x % 8)::BYTE,
+                        (x % 3)::INT,
+                        dateadd('m', (x * 30)::INT, '2024-01-01T00:00:00.000000Z')::TIMESTAMP
+                    FROM long_sequence(48)
+                    """);
+            drainWalQueue();
+
+            // The keyed projection forces the keyed SampleByFillPrev path.
+            try (RecordCursorFactory f = select(
+                    "SELECT k, avg(v), ts FROM (SELECT * FROM t_leak WHERE sym IS NULL) "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts ASC"
+            );
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                assertTrue("expected at least one fill-prev row", rows > 0);
+            }
         });
     }
 
