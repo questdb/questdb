@@ -6344,6 +6344,16 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             for (int c = 0; c < coverCount; c++) {
+                // Tombstoned slot (dropped INCLUDE column): mapCoveringColumnsForSeal
+                // encodes it as type=-1/shift=0, openSidecarFiles leaves its sidecar
+                // mem null and creates no .pcN file, so there is nothing to write.
+                // Without this skip the shift=0 sentinel routes into the fixed-stride
+                // writer, which rejects type -1. Same skip as writeSidecarsPerColumn
+                // on the full-seal path; captureCoverEndOffsets publishes end offset
+                // 0 for the slot and covered reads fall back to NULL.
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
                 int colType = coveredColumnTypes.getQuick(c);
                 int shift = coveredColumnShifts.getQuick(c);
 

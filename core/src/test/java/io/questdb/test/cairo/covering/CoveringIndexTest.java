@@ -10479,6 +10479,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // Regression: dropping an INCLUDE column tombstones its cover slot
+    // (coveringColumnIndices entry -1), and the seal maps the slot as
+    // type=-1/shift=0. A pure-append O3 commit keeps the dense gen0 plus
+    // sparse O3 gens, so the reseal takes sealIncremental, whose
+    // writeSidecarStrideData did not skip tombstoned slots and crashed with
+    // "maxCompressedSize: unsupported column type -1". The setup needs more
+    // than DENSE_STRIDE (256) symbol keys with the O3 batch touching only
+    // the first stride: with every stride dirty, sealIncremental falls back
+    // to the tombstone-safe sealFull and the bug stays hidden. Found by
+    // WalWriterFuzzTest#testConvertPartitionToParquetWithCoveringIndex
+    // (seeds 6069995328240L, 1781013513457L).
+    @Test
+    public void testDropCoveredColumnThenO3AppendIncrementalSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // More than DENSE_STRIDE (256) symbol keys, so the sealed index
+            // has at least two strides.
+            execute("""
+                    INSERT INTO t_drop_o3
+                    SELECT timestamp_sequence('2024-01-01', 1_000_000) ts,
+                           ('sym_' || x)::SYMBOL sym,
+                           x::DOUBLE price
+                    FROM long_sequence(300)
+                    """);
+
+            // ALTER ADD INDEX on existing data builds a dense gen0 per
+            // partition, the precondition for the incremental seal.
+            execute("ALTER TABLE t_drop_o3 ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            // Tombstone the covering slot.
+            execute("ALTER TABLE t_drop_o3 DROP COLUMN price");
+
+            // Pure-append O3 into the last partition: the batch is internally
+            // out of order so the writer takes the O3 commit path, but its
+            // min ts is above the committed max, so the partition task runs
+            // with append=true and the seal keeps the dense gen0 + sparse O3
+            // gens. Existing symbol keys from the first stride only, so at
+            // least one stride stays clean and the incremental seal does not
+            // fall back to the (tombstone-safe) full seal.
+            execute("""
+                    INSERT INTO t_drop_o3 VALUES
+                    ('2024-01-01T01:00:00', 'sym_1'),
+                    ('2024-01-01T00:59:00', 'sym_2')
+                    """);
+
+            assertQuery("SELECT ts, sym FROM t_drop_o3 WHERE sym = 'sym_1'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym
+                            2024-01-01T00:00:00.000000Z\tsym_1
+                            2024-01-01T01:00:00.000000Z\tsym_1
+                            """);
+        });
+    }
+
     @Test
     public void testDropIndexRemovesCovering() throws Exception {
         assertMemoryLeak(() -> {
