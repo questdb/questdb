@@ -561,10 +561,13 @@ public class ExpressionParser {
             parseExpr(lexer, windowExprTreeBuilder, sqlParserCallback, decls);
             return windowExprTreeBuilder.getResult();
         } finally {
-            // Restore stack bottoms
-            opStack.setBottom(savedOpStackBottom);
-            paramCountStack.setBottom(savedParamCountStackBottom);
-            argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
+            // Restore stack bottoms. On an error unwind the inner parseExpr's catch already cleared
+            // these stacks (bottom=0), so a saved bottom raised by an enclosing lambda frame can
+            // exceed the emptied stack; clamp to avoid a masking IllegalStateException that would hide
+            // the real positioned error. No-op on the happy path (sizeRaw() >= the saved bottom).
+            opStack.setBottom(Math.min(savedOpStackBottom, opStack.sizeRaw()));
+            paramCountStack.setBottom(Math.min(savedParamCountStackBottom, paramCountStack.sizeRaw()));
+            argStackDepthStack.setBottom(Math.min(savedArgStackDepthStackBottom, argStackDepthStack.sizeRaw()));
         }
     }
 

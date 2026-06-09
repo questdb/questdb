@@ -2176,15 +2176,16 @@ public class JoinTest extends AbstractCairoTest {
 
             // INNER join is the common real-world shape and enters the ON case via the direct arm
             // (not the ASOF/HORIZON fall-through). The hash join in the lambda still filters trades
-            // down to A, B, but it retains >64 KiB of legitimate map RSS after the cursor closes, so
-            // skip assertQuery's post-close memory-usage check (which would flag it as a false leak).
+            // down to A, B, but its slave row chain (eagerly sized to the join page size, >64 KiB) is
+            // held by the IN sub-query factory until factory close, past the outer cursor close, so
+            // skip assertQuery's post-close memory-usage check (which flags the still-owned RSS as a leak).
             assertQuery(
                     "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)"
             ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
 
             // multi-column shorthand ON (a, b) inside the lambda exercises the list-of-columns drain
             // arm (parseJoin's default case), distinct from the single-column ON (col) above; the same
-            // hash-join RSS retention applies, hence noMemoryUsageCheck()
+            // hash-join slave-chain retention applies, hence noMemoryUsageCheck()
             assertQuery(
                     "select * from trades where symbol in (select s.symbol from src s join ref r on (symbol, ts))"
             ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);

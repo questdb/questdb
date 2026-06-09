@@ -8775,6 +8775,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testNestedWindowFrameParseErrorIsPositioned() throws Exception {
+        // The window-expression sibling of testNestedSubQueryParseErrorIsPositioned. A parse error in
+        // a window frame bound, nested inside a lambda sub-query, unwinds through parseWindowExpr's
+        // finally, which restores the op/paramCount/argStackDepth bottoms raised by the enclosing
+        // lambda. Without the clamp those restores ran over the already-cleared stacks and leaked an
+        // internal "Tried to set bottom beyond the top of the stack" IllegalStateException, masking
+        // the real positioned error. The user must still see the original syntax error.
+        assertSyntaxError(
+                "select * from t where a in " +
+                        "(select sum(a) over (order by y rows between (a + ) preceding and current row) from t)",
+                75,
+                "too few arguments for '+'",
+                modelOf("t").col("a", ColumnType.INT).col("y", ColumnType.LONG)
+        );
+    }
+
+    @Test
     public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
                 "select-virtual day(ts) day, isin, last from (select-group-by [ts, isin, last(start_price) last] ts, isin, last(start_price) last from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4') sample by 1d)",
