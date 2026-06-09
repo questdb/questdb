@@ -88,14 +88,23 @@ pub struct DataPageFixedSlicer<'a, const N: usize> {
 impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
     #[inline]
     fn next(&mut self) -> ParquetResult<&[u8]> {
-        let res = &self.data[self.pos..self.pos + N];
+        // Bounds-check the slice: a foreign or corrupt page whose element count
+        // (driven by the definition/repetition levels) exceeds the values buffer
+        // must not index out of bounds and panic, aborting the JVM across JNI.
+        let res = self
+            .data
+            .get(self.pos..self.pos + N)
+            .ok_or_else(|| fmt_err!(Layout, "fixed value exceeds values buffer"))?;
         self.pos += N;
         Ok(res)
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        let res = &self.data[self.pos..self.pos + N];
+        let res = self
+            .data
+            .get(self.pos..self.pos + N)
+            .ok_or_else(|| fmt_err!(Layout, "fixed value exceeds values buffer"))?;
         self.pos += N;
         dest.extend_from_slice(res)
     }
@@ -103,7 +112,10 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
     #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         let len = N * count;
-        let res = &self.data[self.pos..self.pos + len];
+        let res = self
+            .data
+            .get(self.pos..self.pos + len)
+            .ok_or_else(|| fmt_err!(Layout, "fixed value slice exceeds values buffer"))?;
         self.pos += len;
         dest.extend_from_slice(res)
     }
@@ -111,7 +123,10 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
     #[inline]
     fn next_raw_slice(&mut self, count: usize) -> Option<&[u8]> {
         let len = N * count;
-        let res = &self.data[self.pos..self.pos + len];
+        // Returns None (the trait's "cannot provide a borrowed slice" signal)
+        // rather than indexing out of bounds and panicking on a foreign/corrupt
+        // page.
+        let res = self.data.get(self.pos..self.pos + len)?;
         self.pos += len;
         Some(res)
     }

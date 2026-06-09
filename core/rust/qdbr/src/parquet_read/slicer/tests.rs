@@ -666,3 +666,62 @@ fn test_delta_length_array_slicer_next_into_beyond_lengths_errors() {
         "got: {err}"
     );
 }
+
+#[test]
+fn test_rle_dictionary_slicer_empty_buffer_errors() {
+    // A foreign/corrupt dictionary page can arrive with an empty values buffer
+    // (no leading bit-width byte) via read_parquet(). try_new must surface a
+    // clean error rather than indexing buffer[0] out of bounds and aborting the
+    // JVM across the JNI boundary.
+    let dict = TestDictDecoder::new(vec![b"zero".to_vec(), b"one".to_vec()]);
+    // .err().unwrap() rather than .unwrap_err(): the Ok type (RleDictionarySlicer)
+    // is not Debug, which unwrap_err() would require.
+    let err = RleDictionarySlicer::try_new(&[], dict, 5, 5).err().unwrap();
+    assert!(
+        format!("{err}").contains("missing the initial byte with bit width"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_fixed_slicer_oversized_read_errors() {
+    // A foreign/corrupt fixed-width page whose element count (driven by the
+    // definition/repetition levels) exceeds the values buffer must surface a
+    // clean error rather than indexing out of bounds and aborting the JVM. Here
+    // the buffer holds 4 bytes but each element is 8.
+    let data = [0u8; 4];
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert!(slicer.next().is_err());
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_slice_into(1, &mut sink).is_err());
+
+    // next_raw_slice signals "cannot provide a borrowed slice" with None rather
+    // than panicking.
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert!(slicer.next_raw_slice(1).is_none());
+}
+
+#[test]
+fn test_fixed_slicer_exact_buffer_reads_ok() {
+    // Off-by-one guard for the bound above: an exactly-sized buffer (8 bytes,
+    // one 8-byte element) must still read cleanly.
+    let data = [1u8, 2, 3, 4, 5, 6, 7, 8];
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert_eq!(slicer.next().unwrap(), &data[..]);
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    assert_eq!(slicer.next_raw_slice(1), Some(&data[..]));
+
+    let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
+    let mut sink = TestSink::new();
+    slicer.next_slice_into(1, &mut sink).unwrap();
+    assert_eq!(sink.into_inner(), data.to_vec());
+}
