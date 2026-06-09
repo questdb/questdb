@@ -182,7 +182,11 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
 
     public void setSelection(boolean isFirstN, long limit, long skipFirst, long skipLast) {
         this.isFirstN = isFirstN;
-        this.limit = Math.max(limit, 0);
+        // A NULL lo/hi (Numbers.LONG_NULL == Long.MIN_VALUE) survives the negation in
+        // computeLimits() as a negative limit. LimitedSizeLongTreeChain treats negative
+        // limits as unbounded, so map them to Long.MAX_VALUE; clamping to 0 would return
+        // an empty result instead of the full sorted set.
+        this.limit = limit < 0 ? Long.MAX_VALUE : limit;
         this.skipFirst = Math.max(skipFirst, 0);
         this.skipLast = Math.max(skipLast, 0);
     }

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
 import org.junit.Test;
@@ -407,6 +408,97 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         null
                         null
                         """);
+    }
+
+    @Test
+    public void testOrderByLimitNullBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitNullBindVariableRanges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            final String query = "SELECT * FROM x ORDER BY v LIMIT :lo, :hi";
+
+            // NULL lo: keep everything up to 2 rows from the end
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", -2);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            """);
+
+            // NULL hi: keep everything up to 3 rows from the end
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", -3);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            """);
+
+            // NULL lo and hi: lo == hi produces an empty result
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitNullLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT null::long")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Sort light lo: nullL
+                              keys: [v]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """)
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
+        });
     }
 
     @Test
