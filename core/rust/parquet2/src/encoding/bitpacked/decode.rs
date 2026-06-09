@@ -34,6 +34,21 @@ impl<'a, T: Unpackable> Decoder<'a, T> {
             return Err(Error::oos("Bitpacking requires num_bits > 0"));
         }
 
+        // unpack{8,16,32,64} only generate match arms for num_bits in
+        // 0..=size_of::<T>()*8; a wider width falls through to
+        // unreachable!("invalid num_bits ..") (unpack.rs), which panics in
+        // release builds and aborts the JVM across JNI. num_bits derives from
+        // page contents (e.g. the RLE_DICTIONARY bit-width byte), so reject it
+        // here -- this is the single choke point for every bitpacked decode.
+        // Mirrors the num_bits > 64 guard in delta_bitpacked and the
+        // num_bits > 32 guard in delta_length_array.
+        let max_num_bits = std::mem::size_of::<T>() * 8;
+        if num_bits > max_num_bits {
+            return Err(Error::oos(format!(
+                "Bitpacking num_bits {num_bits} exceeds {max_num_bits} for the target type"
+            )));
+        }
+
         // checked_mul: both length and num_bits derive from page contents. An
         // overflow here would wrap in release builds (overflow checks off) and let
         // a too-short buffer slip past the bounds check below; reject it cleanly.
@@ -268,6 +283,30 @@ mod tests {
         // wrapped-small product that accepts a too-short buffer.
         let err = Decoder::<u64>::try_new(&[], 2, usize::MAX).unwrap_err();
         assert!(format!("{err:?}").contains("overflows"), "got: {err:?}");
+    }
+
+    #[test]
+    fn try_new_num_bits_over_target_width_is_error() {
+        // unpack32 only generates arms for num_bits 0..=32 (unpack64: 0..=64).
+        // A wider width would fall through to unreachable!("invalid num_bits ..")
+        // and panic in release, aborting the JVM. try_new must reject it cleanly
+        // *before* eagerly decoding the first pack -- not only for the iterator
+        // but every consumer (RLE_DICTIONARY, hybrid-RLE, delta miniblocks).
+        let data = vec![0u8; 64];
+
+        let err = Decoder::<u32>::try_new(&data, 33, 8).unwrap_err();
+        assert!(format!("{err:?}").contains("exceeds"), "got: {err:?}");
+        let err = Decoder::<u32>::try_new(&data, 40, 8).unwrap_err();
+        assert!(format!("{err:?}").contains("exceeds"), "got: {err:?}");
+        // The maximum num_bits a single byte can carry: still must not panic.
+        let err = Decoder::<u32>::try_new(&data, 255, 8).unwrap_err();
+        assert!(format!("{err:?}").contains("exceeds"), "got: {err:?}");
+        let err = Decoder::<u64>::try_new(&data, 65, 8).unwrap_err();
+        assert!(format!("{err:?}").contains("exceeds"), "got: {err:?}");
+
+        // Boundary: exactly the target width is valid and must not error.
+        assert!(Decoder::<u32>::try_new(&data, 32, 8).is_ok());
+        assert!(Decoder::<u64>::try_new(&data, 64, 8).is_ok());
     }
 
     #[test]

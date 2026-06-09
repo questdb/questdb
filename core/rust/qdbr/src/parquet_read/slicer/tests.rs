@@ -684,6 +684,26 @@ fn test_rle_dictionary_slicer_empty_buffer_errors() {
 }
 
 #[test]
+fn test_rle_dictionary_slicer_bitwidth_over_32_errors() {
+    // A foreign RLE_DICTIONARY page whose index bit width (40) exceeds the 32-bit
+    // u32 the indices unpack into. bitpacked::Decoder::<u32> only generates unpack
+    // arms for 0..=32; a wider width would reach unreachable!("invalid num_bits
+    // 40") and abort the JVM across JNI. next() must surface a clean error
+    // instead. Wire format: [40 = bit width, 0x03 = bitpacked indicator (1 group
+    // of 8 indices), then 40 data bytes = 8 * 40 bits].
+    let dict = TestDictDecoder::new(vec![b"zero".to_vec(), b"one".to_vec()]);
+    let mut encoded = vec![40u8, 0x03];
+    encoded.extend(std::iter::repeat_n(0u8, 40));
+
+    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 8, 8).unwrap();
+    let err = slicer.next().unwrap_err();
+    assert!(
+        format!("{err}").contains("exceeds"),
+        "expected a clean bit-width error, got: {err}"
+    );
+}
+
+#[test]
 fn test_fixed_slicer_oversized_read_errors() {
     // A foreign/corrupt fixed-width page whose element count (driven by the
     // definition/repetition levels) exceeds the values buffer must surface a

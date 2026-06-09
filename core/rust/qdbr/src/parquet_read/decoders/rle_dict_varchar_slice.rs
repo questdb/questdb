@@ -2067,4 +2067,34 @@ mod tests {
         assert_eq!(entries[6][1], 0);
         assert_eq!(entries[7][1], 0);
     }
+
+    #[test]
+    fn test_bitwidth_over_32_errors() {
+        // A foreign RLE_DICTIONARY page whose index bit width (40) exceeds the
+        // 32-bit u32 the indices unpack into. bitpacked::Decoder::<u32> only
+        // generates unpack arms for 0..=32; a wider width would reach
+        // unreachable!("invalid num_bits 40") and abort the JVM across JNI.
+        // The decode must surface a clean error instead. Wire format:
+        // [40 = bit width, 0x03 = bitpacked indicator (1 group of 8 indices),
+        // then 40 data bytes = 8 * 40 bits].
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+
+        let dict_strings: &[&[u8]] = &[b"aaa", b"bbb", b"ccc"];
+        let dict_buf = build_dict_page_buffer(dict_strings);
+        let dict_page = make_dict_page(&dict_buf, dict_strings.len());
+
+        let mut encoded = vec![40u8, 0x03];
+        encoded.extend(std::iter::repeat_n(0u8, 40));
+
+        let mut decoder =
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
+        decoder.reserve(8).unwrap();
+        let err = decoder.push().unwrap_err();
+        assert!(
+            format!("{err}").contains("exceeds"),
+            "expected a clean bit-width error, got: {err}"
+        );
+    }
 }
