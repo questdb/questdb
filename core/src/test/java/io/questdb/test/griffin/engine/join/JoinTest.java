@@ -2097,8 +2097,8 @@ public class JoinTest extends AbstractCairoTest {
         // the IN operand, crashing with an NPE in WhereClauseParser.analyzeIn. The sub-query must
         // compile and filter correctly regardless of join type or how the ON clause is written.
         // ON-clause sub-queries are unsupported and must reject with "query is not allowed here"
-        // at every nesting depth: top level already did, the nested case used to slip through and
-        // either compile with wrong (cross-join) semantics or crash with a second NPE.
+        // at every nesting depth: the top level already did, while on master the nested case
+        // returned a misleading "Column name expected" (the ON drain consumed the enclosing operand).
         assertMemoryLeak(() -> {
             execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
             execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
@@ -2136,6 +2136,11 @@ public class JoinTest extends AbstractCairoTest {
             assertSql(expected,
                     "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)");
 
+            // multi-column shorthand ON (a, b) inside the lambda exercises the list-of-columns drain
+            // arm (parseJoin's default case), distinct from the single-column ON (col) above
+            assertSql(expected,
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on (symbol, ts))");
+
             // NOT IN exercises the same parse path with a negated operator -- expect only C
             assertQuery(
                     "select * from trades where symbol not in " +
@@ -2145,8 +2150,29 @@ public class JoinTest extends AbstractCairoTest {
                             "C\t2020-01-03T00:00:00.000000Z\n"
             );
 
-            // ON-clause sub-queries stay unsupported when nested, just like at top level:
-            // an IN sub-query in ON used to compile with wrong cross-join semantics ...
+            // A scalar sub-query operand (not just IN/NOT IN) hits the same shared arg stack: the "="
+            // left-hand side stays on the stack while the inner join's ON clause is parsed. ASOF is a
+            // merge join (<64 KiB RSS), so assertQuery works here -- max(s.ts) over the join is the
+            // last src timestamp, 2020-01-02, matching trades row B.
+            assertQuery(
+                    "select * from trades where ts = " +
+                            "(select max(s.ts) from src s asof join ref r on (symbol))"
+            ).noLeakCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n"
+            );
+
+            // the same for a scalar ">" with an INNER (hash) join; assert with assertSql for the
+            // >64 KiB RSS reason above. min(s.ts) over the join is 2020-01-01, so trades after it is B, C.
+            assertSql(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n",
+                    "select * from trades where ts > " +
+                            "(select min(s.ts) from src s join ref r on s.symbol = r.symbol)");
+
+            // ON-clause sub-queries stay unsupported when nested, just like at top level. On master
+            // the nested "IN sub-query in ON" form returned a misleading "Column name expected" ...
             assertExceptionNoLeakCheck(
                     "select * from trades where symbol in " +
                             "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
@@ -2154,7 +2180,7 @@ public class JoinTest extends AbstractCairoTest {
                     "query is not allowed here",
                     sqlExecutionContext
             );
-            // ... and a bare sub-query as the ON criteria used to crash with a second NPE.
+            // ... and a bare sub-query as the ON criteria returned the same "Column name expected".
             assertExceptionNoLeakCheck(
                     "select * from trades where symbol in " +
                             "(select s.symbol from src s join ref r on (select symbol from trades))",
@@ -2163,9 +2189,10 @@ public class JoinTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
             // The same rejection must hold two lambda levels deep. The ON-clause reject fires inside
-            // a parseExpr frame whose scope-stack bottom was raised by the outer lambdas; this used
-            // to leak an internal "Tried to set bottom beyond the top of the stack" IllegalStateException
-            // instead of the positioned SqlException.
+            // a parseExpr frame whose scope-stack bottom was raised by the outer lambdas; without the
+            // scope-stack clamp this fix adds, the error-unwind would restore that stale bottom over an
+            // already-cleared stack and surface an internal "Tried to set bottom beyond the top of the
+            // stack" IllegalStateException instead of the positioned SqlException.
             assertExceptionNoLeakCheck(
                     "select * from trades where symbol in " +
                             "(select symbol from src where symbol in " +
