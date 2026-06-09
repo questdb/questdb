@@ -28,6 +28,118 @@ impl ByteSink for TestSink {
 }
 
 #[test]
+fn test_delta_slicers_empty_buffer_construct_without_panic() {
+    // An all-null DELTA varlen page can arrive with an empty values buffer (no
+    // delta header) from a foreign encoder via read_parquet(). Both slicers must
+    // construct cleanly so the page's definition levels can drive push_null.
+    // Without the empty-buffer guard the vendored parquet2 delta decoder divides
+    // block_size/num_mini_blocks = 0/0 and panics, which aborts the JVM across the
+    // JNI boundary (that panic would fail this test).
+    assert!(DeltaLengthArraySlicer::try_new(&[], 10, 10).is_ok());
+    assert!(DeltaBytesArraySlicer::try_new(&[], 10, 10).is_ok());
+}
+
+#[test]
+fn test_delta_slicers_empty_buffer_value_request_errors() {
+    // If a value IS requested from an empty-buffer slicer (a corrupt page whose
+    // definition levels claim a non-null), both slicers must return a clean error
+    // rather than indexing out of bounds and aborting the JVM.
+    let mut length_slicer = DeltaLengthArraySlicer::try_new(&[], 10, 10).unwrap();
+    assert!(length_slicer.next().is_err());
+    let mut bytes_slicer = DeltaBytesArraySlicer::try_new(&[], 10, 10).unwrap();
+    assert!(bytes_slicer.next().is_err());
+}
+
+#[test]
+fn test_delta_length_array_slicer_oversized_length_errors() {
+    // Encode one 4-byte value, then drop the 4 trailing data bytes so the decoded
+    // length (4) exceeds the remaining values buffer. next()/next_into() must
+    // return a clean error rather than slicing out of bounds and aborting the JVM.
+    let strings = ["aaaa"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+    encoded.truncate(encoded.len() - 4);
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    assert!(slicer.next().is_err());
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_oversized_suffix_errors() {
+    // Encode one 5-byte value, then drop the 5 trailing data bytes so the decoded
+    // suffix length (5) exceeds the remaining values buffer.
+    let strings: Vec<&[u8]> = vec![b"Hello"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(strings.into_iter(), &mut encoded);
+    encoded.truncate(encoded.len() - 5);
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    assert!(slicer.next().is_err());
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 1, 1).unwrap();
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+}
+
+#[test]
+fn test_delta_length_array_slicer_negative_length_errors() {
+    // Hand-crafted DELTA_LENGTH header: block_size=128, mini_blocks=1, count=1,
+    // first_value=zigzag(1)=-1. A negative byte length must be rejected at decode.
+    let data = [128u8, 1, 1, 1, 1];
+    assert!(DeltaLengthArraySlicer::try_new(&data, 1, 1).is_err());
+}
+
+#[test]
+fn test_delta_length_array_slicer_out_of_range_length_errors() {
+    // Hand-crafted DELTA_LENGTH header with first_value = 2^31 (> i32::MAX):
+    // zigzag(2^31) = 2^32 -> uleb128 [0x80, 0x80, 0x80, 0x80, 0x10]. A length that
+    // does not fit i32 must be rejected at decode rather than wrapping.
+    let data = [128u8, 1, 1, 1, 0x80, 0x80, 0x80, 0x80, 0x10];
+    assert!(DeltaLengthArraySlicer::try_new(&data, 1, 1).is_err());
+}
+
+#[test]
+fn test_plain_var_slicer_oversized_length_errors() {
+    // Length prefix claims 100 bytes but only 2 follow. next()/next_into() must
+    // return a clean error rather than slicing out of bounds and aborting the JVM.
+    let mut data = Vec::new();
+    data.extend_from_slice(&100u32.to_le_bytes());
+    data.extend_from_slice(b"ab");
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    assert!(slicer.next().is_err());
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+}
+
+#[test]
+fn test_plain_var_slicer_truncated_prefix_errors() {
+    // Fewer than 4 bytes: not even a full length prefix. Every method must reject
+    // it; previously next_into()/skip() read past the buffer (undefined behavior)
+    // because only next() checked the prefix bound.
+    let data = [1u8, 2];
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    assert!(slicer.next().is_err());
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    let mut sink = TestSink::new();
+    assert!(slicer.next_into(&mut sink).is_err());
+
+    let mut slicer = PlainVarSlicer::new(&data, 1);
+    assert!(slicer.skip(1).is_err());
+}
+
+#[test]
 fn test_fixed_slicer_next_into() {
     let data: Vec<u8> = vec![1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0];
     let mut slicer = DataPageFixedSlicer::<4>::new(&data, 4);

@@ -3954,6 +3954,245 @@ mod tests {
         assert_empty_delta_int64_page_all_null(ColumnTypeTag::Decimal64.into_type(), i64::MIN);
     }
 
+    // Decode an all-null V1 ByteArray page (n rows, every definition level 0) whose
+    // values buffer is exactly `values`, through the real decode_page dispatch, and
+    // return its (data_vec, aux_vec). With `values` empty this is the header-less
+    // shape a foreign encoder can emit for an all-null DELTA varlen column and that
+    // read_parquet() hands straight to the slicers.
+    fn decode_all_null_varlen_page(
+        column_type: ColumnType,
+        encoding: Encoding,
+        values: &[u8],
+    ) -> (Vec<u8>, Vec<u8>) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // Definition levels: n rows, all null (level 0), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(0u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        buffer.extend_from_slice(values);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: encoding.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+        (
+            bufs.data_vec.as_slice().to_vec(),
+            bufs.aux_vec.as_slice().to_vec(),
+        )
+    }
+
+    // A compliant zero-value delta header for `encoding` -- the self-describing
+    // shape a spec-following encoder emits for an all-null page. It decodes cleanly
+    // today (block_size/num_mini_blocks are non-zero), so it serves as the golden
+    // reference for what the header-less empty-buffer page must decode to.
+    fn compliant_zero_value_delta_values(encoding: Encoding) -> Vec<u8> {
+        let mut values = Vec::new();
+        match encoding {
+            Encoding::DeltaLengthByteArray => {
+                parquet2::encoding::delta_length_byte_array::encode(
+                    std::iter::empty::<&[u8]>(),
+                    &mut values,
+                );
+            }
+            Encoding::DeltaByteArray => {
+                parquet2::encoding::delta_byte_array::encode(
+                    std::iter::empty::<&[u8]>(),
+                    &mut values,
+                );
+            }
+            other => panic!("unsupported delta encoding {other:?}"),
+        }
+        assert!(
+            !values.is_empty(),
+            "reference zero-value header must be non-empty"
+        );
+        values
+    }
+
+    // An all-null varlen page whose values buffer is EMPTY (no delta header) must
+    // decode byte-identically to the same page carrying a compliant zero-value
+    // delta header. For an all-null page the values buffer is never read, so the
+    // two agree -- but before the slicer empty-buffer guard, the empty buffer drove
+    // the vendored parquet2 delta decoder into a 0/0 division that panicked and
+    // aborted the JVM across the JNI boundary.
+    fn assert_empty_delta_varlen_page_all_null(column_type: ColumnType, encoding: Encoding) {
+        let reference = compliant_zero_value_delta_values(encoding);
+        let (empty_data, empty_aux) = decode_all_null_varlen_page(column_type, encoding, &[]);
+        let (ref_data, ref_aux) = decode_all_null_varlen_page(column_type, encoding, &reference);
+        assert_eq!(
+            empty_data, ref_data,
+            "data_vec from empty buffer must match the compliant zero-value page"
+        );
+        assert_eq!(
+            empty_aux, ref_aux,
+            "aux_vec from empty buffer must match the compliant zero-value page"
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_string_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_varchar_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_binary_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Binary.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_array_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            encode_array_type(ColumnTypeTag::Double, 1).unwrap(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_byte_array_buffer_varchar_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_byte_array_buffer_varchar_slice_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::VarcharSlice.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_string_null_layout() {
+        // Anchors the golden-reference checks above: confirm the all-null result is
+        // genuine, not merely a non-panicking artifact. A QuestDB String column
+        // materializes each null row as a -1 length marker (4 bytes), no payload.
+        let (data, _aux) = decode_all_null_varlen_page(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+            &[],
+        );
+        assert_eq!(data.len(), 10 * size_of::<i32>());
+        let lengths: &[i32] = unsafe { std::slice::from_raw_parts(data.as_ptr().cast(), 10) };
+        assert_eq!(lengths, &[-1i32; 10]);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_partial_null_errors_not_panics() {
+        // A corrupt page that claims a non-null (definition level 1) yet provides
+        // an EMPTY values buffer must surface a clean decode error, never abort the
+        // JVM. The empty-buffer try_new guard alone would relocate the parquet2 0/0
+        // panic into DeltaLengthArraySlicer::next()'s length-index lookup; the
+        // bounds check there turns it into a Layout error instead.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // One non-null followed by nine nulls, RLE-encoded (bit width 1).
+        let levels = [1u32, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, levels.into_iter(), n, 1).unwrap();
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        // values buffer intentionally empty -- contradicts the claimed non-null.
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaLengthByteArray.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::String.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let err = decode_page(&page, None, &mut bufs, col_info, 0, n)
+            .expect_err("a non-null claim over an empty values buffer must be a decode error");
+        assert!(
+            err.to_string().contains("not enough length values"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn test_decode_flba_decimal_sign_extended_filtered() {
         let tas = TestAllocatorState::new();

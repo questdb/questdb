@@ -211,6 +211,20 @@ impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
     }
 }
 
+/// Validates a delta-decoded byte length from a (possibly foreign) page. Lengths
+/// are byte counts, so reject negative or out-of-i32-range values up front rather
+/// than letting `as usize` wrap them into a huge slice bound that panics. The
+/// remaining in-range value is still bounds-checked against the actual buffer at
+/// use, which rejects an oversized-but-positive length.
+#[inline]
+fn checked_len(value: i64) -> ParquetResult<i32> {
+    let len = i32::try_from(value).map_err(|_| fmt_err!(Layout, "delta length out of range"))?;
+    if len < 0 {
+        return Err(fmt_err!(Layout, "negative delta length"));
+    }
+    Ok(len)
+}
+
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
     sliced_row_count: usize,
@@ -222,8 +236,21 @@ pub struct DeltaLengthArraySlicer<'a> {
 impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
     #[inline]
     fn next(&mut self) -> ParquetResult<&[u8]> {
-        let len = self.lengths[self.index] as usize;
-        let res = &self.data[self.pos..self.pos + len];
+        // Bounds-check the length index: an empty-buffer page (lengths is empty)
+        // or a page whose definition levels over-claim non-nulls would otherwise
+        // index out of bounds and panic, aborting the JVM on foreign input.
+        let len = self
+            .lengths
+            .get(self.index)
+            .copied()
+            .ok_or_else(|| fmt_err!(Layout, "not enough length values to iterate"))?
+            as usize;
+        // Bounds-check the slice: a length that exceeds the remaining values
+        // buffer (a corrupt/foreign page) must not index out of bounds and panic.
+        let res = self
+            .data
+            .get(self.pos..self.pos + len)
+            .ok_or_else(|| fmt_err!(Layout, "delta length exceeds values buffer"))?;
         self.pos += len;
         self.index += 1;
         Ok(res)
@@ -231,8 +258,16 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        let len = self.lengths[self.index] as usize;
-        let res = &self.data[self.pos..self.pos + len];
+        let len = self
+            .lengths
+            .get(self.index)
+            .copied()
+            .ok_or_else(|| fmt_err!(Layout, "not enough length values to iterate"))?
+            as usize;
+        let res = self
+            .data
+            .get(self.pos..self.pos + len)
+            .ok_or_else(|| fmt_err!(Layout, "delta length exceeds values buffer"))?;
         self.pos += len;
         self.index += 1;
         dest.extend_from_slice(res)
@@ -248,7 +283,10 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
 
     #[inline]
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        let skip_bytes: usize = self.lengths[self.index..self.index + count]
+        let skip_bytes: usize = self
+            .lengths
+            .get(self.index..self.index + count)
+            .ok_or_else(|| fmt_err!(Layout, "not enough length values to skip"))?
             .iter()
             .map(|&len| len as usize)
             .sum();
@@ -272,13 +310,30 @@ impl<'a> DeltaLengthArraySlicer<'a> {
         row_count: usize,
         sliced_row_count: usize,
     ) -> ParquetResult<Self> {
+        if data.is_empty() {
+            // An all-null DELTA_LENGTH_BYTE_ARRAY page can arrive with an empty
+            // values buffer (no delta header) from a foreign encoder via
+            // read_parquet(). There are no lengths to decode; the page's
+            // definition levels drive push_null, so next() is never called.
+            // Constructing the vendored parquet2 delta decoder on an empty buffer
+            // instead divides block_size/num_mini_blocks = 0/0 and panics, which
+            // aborts the JVM across the JNI boundary, so short-circuit here. This
+            // mirrors MiniblockIterator::try_new's empty-buffer branch.
+            return Ok(Self {
+                data,
+                sliced_row_count,
+                index: 0,
+                lengths: Vec::new(),
+                pos: 0,
+            });
+        }
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
         let lengths: Vec<i32> = decoder
             .by_ref()
             .take(row_count)
             .map(|r| {
-                r.map(|v| v as i32)
-                    .map_err(|_| fmt_err!(Layout, "not enough length values to iterate"))
+                let v = r.map_err(|_| fmt_err!(Layout, "not enough length values to iterate"))?;
+                checked_len(v)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -304,45 +359,47 @@ pub struct DeltaBytesArraySlicer<'a> {
 
 impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
     fn next(&mut self) -> ParquetResult<&[u8]> {
-        match self.prefix.next() {
-            Some(prefix_len) => {
-                let prefix_len = prefix_len as usize;
-                match self.suffix.next() {
-                    Some(suffix_len) => {
-                        let suffix_len = suffix_len as usize;
-                        self.last_value.truncate(prefix_len);
-                        self.last_value.extend_from_slice(
-                            &self.data[self.data_offset..self.data_offset + suffix_len],
-                        );
-                        self.data_offset += suffix_len;
-                        Ok(self.last_value.as_slice())
-                    }
-                    None => Err(fmt_err!(Layout, "not enough suffix values to iterate")),
-                }
-            }
-            None => Err(fmt_err!(Layout, "not enough prefix values to iterate")),
-        }
+        let prefix_len = self
+            .prefix
+            .next()
+            .ok_or_else(|| fmt_err!(Layout, "not enough prefix values to iterate"))?
+            as usize;
+        let suffix_len = self
+            .suffix
+            .next()
+            .ok_or_else(|| fmt_err!(Layout, "not enough suffix values to iterate"))?
+            as usize;
+        // Bounds-check the suffix slice: an oversized suffix length (a corrupt or
+        // foreign page) must not index out of bounds and panic.
+        let data = self.data;
+        let suffix = data
+            .get(self.data_offset..self.data_offset + suffix_len)
+            .ok_or_else(|| fmt_err!(Layout, "suffix length exceeds values buffer"))?;
+        self.last_value.truncate(prefix_len);
+        self.last_value.extend_from_slice(suffix);
+        self.data_offset += suffix_len;
+        Ok(self.last_value.as_slice())
     }
 
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        match self.prefix.next() {
-            Some(prefix_len) => {
-                let prefix_len = prefix_len as usize;
-                match self.suffix.next() {
-                    Some(suffix_len) => {
-                        let suffix_len = suffix_len as usize;
-                        self.last_value.truncate(prefix_len);
-                        self.last_value.extend_from_slice(
-                            &self.data[self.data_offset..self.data_offset + suffix_len],
-                        );
-                        self.data_offset += suffix_len;
-                        dest.extend_from_slice_safe(&self.last_value)
-                    }
-                    None => Err(fmt_err!(Layout, "not enough suffix values to iterate")),
-                }
-            }
-            None => Err(fmt_err!(Layout, "not enough prefix values to iterate")),
-        }
+        let prefix_len = self
+            .prefix
+            .next()
+            .ok_or_else(|| fmt_err!(Layout, "not enough prefix values to iterate"))?
+            as usize;
+        let suffix_len = self
+            .suffix
+            .next()
+            .ok_or_else(|| fmt_err!(Layout, "not enough suffix values to iterate"))?
+            as usize;
+        let data = self.data;
+        let suffix = data
+            .get(self.data_offset..self.data_offset + suffix_len)
+            .ok_or_else(|| fmt_err!(Layout, "suffix length exceeds values buffer"))?;
+        self.last_value.truncate(prefix_len);
+        self.last_value.extend_from_slice(suffix);
+        self.data_offset += suffix_len;
+        dest.extend_from_slice_safe(&self.last_value)
     }
 
     #[inline]
@@ -375,13 +432,28 @@ impl<'a> DeltaBytesArraySlicer<'a> {
         row_count: usize,
         sliced_row_count: usize,
     ) -> ParquetResult<Self> {
+        if data.is_empty() {
+            // All-null DELTA_BYTE_ARRAY page with an empty values buffer (no delta
+            // header): there are no prefix/suffix lengths to decode, the page's
+            // definition levels drive push_null, and next() is never called. Avoids
+            // the vendored parquet2 delta decoder's 0/0 panic on an empty buffer,
+            // mirroring MiniblockIterator::try_new's empty-buffer branch.
+            return Ok(Self {
+                prefix: Vec::new().into_iter(),
+                suffix: Vec::new().into_iter(),
+                data,
+                data_offset: 0,
+                sliced_row_count,
+                last_value: vec![],
+            });
+        }
         let values = data;
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
         let prefix: Vec<i32> = (&mut decoder)
             .take(row_count)
             .map(|r| {
-                r.map(|v| v as i32)
-                    .map_err(|_| fmt_err!(Layout, "not enough prefix values to iterate"))
+                let v = r.map_err(|_| fmt_err!(Layout, "not enough prefix values to iterate"))?;
+                checked_len(v)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -389,8 +461,8 @@ impl<'a> DeltaBytesArraySlicer<'a> {
         let mut decoder = delta_bitpacked::Decoder::try_new(&values[decoder.consumed_bytes()..])?;
         let suffix = (&mut decoder)
             .map(|r| {
-                r.map(|v| v as i32)
-                    .map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))
+                let v = r.map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))?;
+                checked_len(v)
             })
             .collect::<Result<Vec<_>, _>>()?;
         data_offset += decoder.consumed_bytes();
@@ -418,20 +490,33 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
         if self.pos + size_of::<u32>() > self.data.len() {
             return Err(fmt_err!(Layout, "not enough data to read length prefix"));
         }
+        // SAFETY: the check above guarantees self.pos + 4 <= self.data.len().
         let len =
             unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) } as usize;
         self.pos += size_of::<u32>();
-        let res = &self.data[self.pos..self.pos + len];
+        // Bounds-check the slice: an oversized length (a corrupt/foreign page)
+        // must not index out of bounds and panic.
+        let res = self
+            .data
+            .get(self.pos..self.pos + len)
+            .ok_or_else(|| fmt_err!(Layout, "plain length exceeds values buffer"))?;
         self.pos += len;
         Ok(res)
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
+        if self.pos + size_of::<u32>() > self.data.len() {
+            return Err(fmt_err!(Layout, "not enough data to read length prefix"));
+        }
+        // SAFETY: the check above guarantees self.pos + 4 <= self.data.len().
         let len =
             unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) } as usize;
         self.pos += size_of::<u32>();
-        let res = &self.data[self.pos..self.pos + len];
+        let res = self
+            .data
+            .get(self.pos..self.pos + len)
+            .ok_or_else(|| fmt_err!(Layout, "plain length exceeds values buffer"))?;
         self.pos += len;
         dest.extend_from_slice(res)
     }
@@ -447,6 +532,10 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
     #[inline]
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
+            if self.pos + size_of::<u32>() > self.data.len() {
+                return Err(fmt_err!(Layout, "not enough data to read length prefix"));
+            }
+            // SAFETY: the check above guarantees self.pos + 4 <= self.data.len().
             let len =
                 unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) };
             self.pos += len as usize + size_of::<u32>();
