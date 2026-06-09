@@ -1644,6 +1644,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
+                // Clear the runtime hard-suspend entry before resuming so the resume re-notification
+                // is not swallowed. A config-listed table stays suspended until removed from config.
+                engine.removeWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             }
@@ -1743,6 +1746,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
+                engine.addWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             }
@@ -5046,9 +5050,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         if (!engine.isWalTable(tableToken)) {
             throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
-        }
-        if (!configuration.isDevModeEnabled()) {
-            throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
         }
 
         ErrorTag errorTag = ErrorTag.NONE;

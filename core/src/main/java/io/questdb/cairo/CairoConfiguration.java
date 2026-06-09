@@ -39,6 +39,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
@@ -880,6 +881,19 @@ public interface CairoConfiguration {
     VolumeDefinitions getVolumeDefinitions();
 
     int getWalApplyLookAheadTransactionCount();
+
+    /**
+     * Set of logical table names whose WAL transactions must not be applied by the
+     * ApplyWal2Table job ("hard suspended" tables). Configured via
+     * {@code cairo.wal.apply.suspended.tables} (comma-separated) and reloadable. The runtime set
+     * extended through {@code ALTER TABLE ... SUSPEND WAL} is held separately on the engine.
+     *
+     * @return the configured set, or null when none are configured (treated as empty).
+     */
+    @Nullable
+    default ObjHashSet<String> getWalApplySuspendedTables() {
+        return null;
+    }
 
     long getWalApplyTableTimeQuota();
 

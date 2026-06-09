@@ -199,6 +199,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
+    // Tables hard-suspended from WAL apply at runtime via ALTER TABLE ... SUSPEND WAL.
+    // The configured set lives in CairoConfiguration.getWalApplySuspendedTables(); a table is
+    // hard-suspended if it is in either source. Keyed by logical table name.
+    private final ConcurrentHashMap<String> walApplySuspendedTables = new ConcurrentHashMap<>();
     private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
@@ -1369,6 +1373,39 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public boolean isWalPurgeJobLocked() {
         return walPurgeJobLock.isLocked();
+    }
+
+    /**
+     * Adds a table to the runtime hard-suspend set, excluding it from WAL apply until removed.
+     * Called by {@code ALTER TABLE ... SUSPEND WAL}.
+     */
+    public void addWalApplySuspended(TableToken tableToken) {
+        walApplySuspendedTables.put(tableToken.getTableName(), tableToken.getTableName());
+    }
+
+    /**
+     * Removes a table from the runtime hard-suspend set. Called by
+     * {@code ALTER TABLE ... RESUME WAL}. A table configured via
+     * {@code cairo.wal.apply.suspended.tables} stays suspended until also removed from the config.
+     */
+    public void removeWalApplySuspended(TableToken tableToken) {
+        walApplySuspendedTables.remove(tableToken.getTableName());
+    }
+
+    /**
+     * Whether the table is hard-suspended from WAL apply, either by the reloadable
+     * {@code cairo.wal.apply.suspended.tables} config list or by a runtime
+     * {@code ALTER TABLE ... SUSPEND WAL}. The ApplyWal2Table job skips such tables. Resuming
+     * requires removing the table from the config list (and reloading) and running
+     * {@code ALTER TABLE ... RESUME WAL}.
+     */
+    public boolean isWalApplySuspended(TableToken tableToken) {
+        final String tableName = tableToken.getTableName();
+        if (walApplySuspendedTables.containsKey(tableName)) {
+            return true;
+        }
+        final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
+        return configured != null && configured.contains(tableName);
     }
 
     public boolean isWalTable(TableToken tableToken) {
