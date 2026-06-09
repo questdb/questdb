@@ -119,6 +119,82 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeterministicSiblingDependencyOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // a_view reads y_tab and z_tab, both of which sort AFTER a_view; the dependency sort must
+            // emit the two siblings in a stable (name) order, not plan/graph iteration order
+            execute("create table y_tab (k symbol, vy double)");
+            execute("create table z_tab (k symbol, vz double)");
+            execute("create view a_view as (select y_tab.k, y_tab.vy, z_tab.vz from y_tab join z_tab on k)");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            final int yIdx = dump.indexOf("CREATE TABLE 'y_tab'");
+            final int zIdx = dump.indexOf("CREATE TABLE 'z_tab'");
+            final int viewIdx = dump.indexOf("CREATE VIEW 'a_view'");
+            Assert.assertTrue(yIdx >= 0 && zIdx >= 0 && viewIdx >= 0);
+            Assert.assertTrue("dependencies must precede the dependent view", yIdx < viewIdx && zIdx < viewIdx);
+            Assert.assertTrue("sibling dependencies must be emitted in deterministic name order", yIdx < zIdx);
+
+            execute("drop view a_view");
+            execute("drop table y_tab");
+            execute("drop table z_tab");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewMultiJoinDependencyOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // m_mv joins two dimension tables, both sorting AFTER the mat view; the plan walk must
+            // collect both joined tables so they are emitted before the mat view
+            execute("create table a_base (ts timestamp, k symbol, v double) timestamp(ts) partition by day wal");
+            execute("create table y_dim (ts timestamp, k symbol, y string) timestamp(ts) partition by day wal");
+            execute("create table z_dim (ts timestamp, k symbol, z string) timestamp(ts) partition by day wal");
+            execute("create materialized view m_mv with base a_base as " +
+                    "(select a_base.ts, y_dim.y, z_dim.z, avg(a_base.v) v from a_base join y_dim on k join z_dim on k sample by 1h) partition by day");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            final int yIdx = dump.indexOf("CREATE TABLE 'y_dim'");
+            final int zIdx = dump.indexOf("CREATE TABLE 'z_dim'");
+            final int mvIdx = dump.indexOf("CREATE MATERIALIZED VIEW 'm_mv'");
+            Assert.assertTrue(yIdx >= 0 && zIdx >= 0 && mvIdx >= 0);
+            Assert.assertTrue("both joined tables must precede the materialized view", yIdx < mvIdx && zIdx < mvIdx);
+
+            execute("drop materialized view m_mv");
+            execute("drop table z_dim");
+            execute("drop table y_dim");
+            execute("drop table a_base");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
     public void testReplayRecreatesEveryObject() throws Exception {
         assertMemoryLeak(() -> {
             // SHOW CREATE TABLE emits WAL implicitly, so replay needs the WAL default on

@@ -45,6 +45,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -73,6 +75,7 @@ import java.util.Comparator;
  */
 public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
+    private static final Log LOG = LogFactory.getLog(ShowCreateDatabaseRecordCursorFactory.class);
     private static final RecordMetadata METADATA;
     private static final Comparator<TableToken> TABLE_NAME_COMPARATOR =
             (a, b) -> a.getTableName().compareTo(b.getTableName());
@@ -144,6 +147,21 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             }
         } finally {
             Misc.free(factory);
+        }
+    }
+
+    private static void fallBackToBaseTable(
+            TableToken matView,
+            MatViewDefinition definition,
+            CairoEngine engine,
+            ObjList<TableToken> out,
+            CharSequence error
+    ) {
+        LOG.info().$("could not compile materialized view to resolve dependencies, ordering by base table only [view=")
+                .$(matView).$(", error=").$safe(error).I$();
+        final TableToken base = engine.getTableTokenIfExists(definition.getBaseTableName());
+        if (base != null) {
+            out.add(base);
         }
     }
 
@@ -243,11 +261,14 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                     }
                 }
             }
-        } catch (SqlException | CairoException e) {
-            final TableToken base = engine.getTableTokenIfExists(definition.getBaseTableName());
-            if (base != null) {
-                out.add(base);
+        } catch (CairoException e) {
+            // a cancelled or timed-out dump must not be swallowed as a benign compile failure
+            if (e.isInterruption() || e.isCancellation()) {
+                throw e;
             }
+            fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
+        } catch (SqlException e) {
+            fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
         }
     }
 
