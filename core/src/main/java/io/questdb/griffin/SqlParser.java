@@ -5768,6 +5768,10 @@ public class SqlParser {
         aliasSequenceMap.clear();
         pivotAliasMap.clear();
         clearRecordedViews();
+        // Hygiene: parse() always re-derives these from the execution context, but reset them here too so a
+        // reused parser never carries a stale row-expiry gate/timestamp between compilations.
+        rowExpiryReadFilterEnabled = true;
+        expiryTimestampColumnName = null;
     }
 
     ExpressionNode expr(

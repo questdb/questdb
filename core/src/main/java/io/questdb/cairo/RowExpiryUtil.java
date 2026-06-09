@@ -54,12 +54,6 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Renders {@code micros} as a {@code CLEANUP EVERY} stride (e.g. {@code 30m}, {@code 1h},
-     * {@code 2d}) into {@code sink}, picking the largest whole unit that divides it evenly. Shared by
-     * SHOW CREATE TABLE and the {@code tables()}/{@code materialized_views()} catalogue functions so
-     * the rendering cannot drift.
-     */
-    /**
      * Renders the cleanup cadence as a stride string (e.g. {@code 30m}, {@code 1h}, {@code 2d}), or null
      * when there is no policy ({@code micros <= 0}). Shared by the {@code tables()} and
      * {@code materialized_views()} catalogue functions. Allocates a String — acceptable on the cold
@@ -74,6 +68,11 @@ public final class RowExpiryUtil {
         return sink.toString();
     }
 
+    /**
+     * Renders {@code micros} as a {@code CLEANUP EVERY} stride (e.g. {@code 30m}, {@code 1h}, {@code 2d})
+     * into {@code sink}, picking the largest whole unit that divides it evenly. Shared by SHOW CREATE TABLE
+     * and the catalogue functions so the rendering cannot drift.
+     */
     public static void appendCleanupEvery(CharSink<?> sink, long micros) {
         if (micros % 86_400_000_000L == 0) {
             sink.put(micros / 86_400_000_000L).put('d');

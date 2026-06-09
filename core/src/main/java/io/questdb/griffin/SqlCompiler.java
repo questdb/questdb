@@ -71,6 +71,21 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             CharSequence timestampColumn
     );
 
+    /**
+     * Returns true if {@code predicate} (a stored EXPIRE ROWS predicate) references the column at
+     * {@code columnIndex} in {@code metadata}. Used to reject DROP / RENAME / ALTER COLUMN TYPE on a column
+     * the predicate depends on: such a change would leave the stored predicate referencing a missing,
+     * renamed or retyped column and brick every read of the table (the predicate is re-parsed per read).
+     * Column names in the predicate are resolved via {@code metadata} so case and quoting match the
+     * predicate's original bind. Returns true (conservative — block the change) if the stored predicate no
+     * longer parses, so a corrupt predicate can never silently allow a bricking column op.
+     */
+    boolean expiryPredicateReferencesColumn(
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int columnIndex
+    );
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     RecordCursorFactory generateSelectWithRetries(

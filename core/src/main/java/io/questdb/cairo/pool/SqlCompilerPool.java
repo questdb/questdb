@@ -162,6 +162,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public boolean expiryPredicateReferencesColumn(RecordMetadata metadata, CharSequence predicate, int columnIndex) {
+            return delegate.expiryPredicateReferencesColumn(metadata, predicate, columnIndex);
+        }
+
+        @Override
         public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
             return delegate.generateExecutionModel(sqlText, executionContext);
         }

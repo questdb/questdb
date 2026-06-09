@@ -116,6 +116,9 @@ public final class TableUtils {
     public static final String META_FILE_NAME = "_meta";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
+    // Trustworthy inline symbol capacity in _meta was introduced at minor version 1 (#5242); gate the fast
+    // hydration read on THIS, not LATEST, so a later LATEST bump never forces v1 tables onto the slow path.
+    public static final short META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY = 1;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
     public static final short META_FORMAT_MINOR_VERSION_EXPIRE_ROWS = 2;
     public static final long META_OFFSET_COLUMN_TYPES = 128;

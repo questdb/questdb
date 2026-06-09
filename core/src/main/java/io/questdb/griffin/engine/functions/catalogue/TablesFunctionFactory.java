@@ -478,8 +478,8 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("replica_batch_size_max", ColumnType.LONG));         // 43
         metadata.add(new TableColumnMetadata("replica_more_pending", ColumnType.BOOLEAN));        // 44
         // Row-expiry policy (45-46)
-        metadata.add(new TableColumnMetadata("expirePredicate", ColumnType.STRING));              // 45
-        metadata.add(new TableColumnMetadata("expireCleanupEvery", ColumnType.STRING));           // 46
+        metadata.add(new TableColumnMetadata("expire_predicate", ColumnType.STRING));             // 45
+        metadata.add(new TableColumnMetadata("expire_cleanup_every", ColumnType.STRING));         // 46
         METADATA = metadata;
     }
 }

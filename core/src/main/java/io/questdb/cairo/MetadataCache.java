@@ -40,6 +40,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -171,7 +172,7 @@ public class MetadataCache implements QuietCloseable {
             if (current.contains(tableId)) {
                 return;
             }
-            final LongHashSet next = new LongHashSet();
+            final LongHashSet next = new LongHashSet(current.size() + 1);
             for (int i = 0, n = current.size(); i < n; i++) {
                 next.add(current.get(i));
             }
@@ -280,16 +281,36 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
-            final String expiryPredicate = TableUtils.getExpiryPredicate(metaMem, columnCount);
-            table.setExpiry(expiryPredicate, TableUtils.getExpiryCleanupIntervalMicros(metaMem, columnCount));
-            if (expiryPredicate != null && !expiryPredicate.isEmpty()) {
-                addPoliciedTableId(token.getTableId());
-                anyExpiryPolicySeen = true;
+            // Read the trailing row-expiry policy (predicate + cleanup interval) in a SINGLE offset walk;
+            // calling the two TableUtils.getExpiry* helpers separately would walk the column section twice.
+            // Byte-identical to TableReaderMetadata.readExpiryPolicy / TableWriterMetadata, sharing the
+            // offset helper (the only drift-prone part).
+            String expiryPredicate = null;
+            long expiryCleanupIntervalMicros = 0;
+            if (TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
+                long policyOffset = TableUtils.getMetaExpiryPolicyOffset(metaMem, columnCount);
+                if (policyOffset >= 0 && policyOffset + Integer.BYTES <= metaMem.size()) {
+                    CharSequence pred = metaMem.getStrA(policyOffset);
+                    policyOffset += Vm.getStorageLength(pred);
+                    if (pred != null && pred.length() > 0) {
+                        expiryPredicate = Chars.toString(pred);
+                    }
+                    if (policyOffset + Long.BYTES <= metaMem.size()) {
+                        expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                    }
+                }
+            }
+            table.setExpiry(expiryPredicate, expiryCleanupIntervalMicros);
+            if (expiryPredicate != null) {
+                markExpiryPolicyPossible(token.getTableId());
             }
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
-            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
+            // Inline symbol capacity is trustworthy from META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY onward.
+            // Gate on THAT version, not LATEST: a later LATEST bump (TTL, then EXPIRE_ROWS) must not force
+            // every pre-existing table onto the slow per-column loadCapacities() path on each hydration.
+            boolean symbolCapacityInMeta = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY);
             boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
@@ -341,7 +362,7 @@ public class MetadataCache implements QuietCloseable {
                 }
 
                 if (columnType == ColumnType.SYMBOL) {
-                    if (isMetaFormatUpToDate) {
+                    if (symbolCapacityInMeta) {
                         column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
                         column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
                     } else {
@@ -581,6 +602,28 @@ public class MetadataCache implements QuietCloseable {
          * @return CairoTable the table, if present in the cache.
          */
         @Override
+        public void collectPoliciedTables(ObjList<TableToken> tokensOut, ObjList<String> predicatesOut, LongList cleanupIntervalsOut) {
+            for (int i = 0, n = tableMap.size(); i < n; i++) {
+                final CairoTable table = tableMap.getAt(i);
+                if (table == null) {
+                    continue;
+                }
+                final String predicate = table.getExpiryPredicate();
+                if (predicate == null || predicate.isEmpty()) {
+                    continue;
+                }
+                final TableToken token = table.getTableToken();
+                if (token == null || token.isView()) {
+                    // plain (non-materialized) views have no _meta and cannot carry an EXPIRE ROWS policy
+                    continue;
+                }
+                tokensOut.add(token);
+                predicatesOut.add(predicate);
+                cleanupIntervalsOut.add(table.getExpiryCleanupIntervalMicros());
+            }
+        }
+
+        @Override
         public @Nullable CairoTable getTable(@NotNull TableToken tableToken) {
             return tableMap.get(tableToken.getTableName());
         }
@@ -760,8 +803,7 @@ public class MetadataCache implements QuietCloseable {
             final String expiryPredicate = tableMetadata.getExpiryPredicate();
             table.setExpiry(expiryPredicate, tableMetadata.getExpiryCleanupIntervalMicros());
             if (expiryPredicate != null && !expiryPredicate.isEmpty()) {
-                addPoliciedTableId(tableToken.getTableId());
-                anyExpiryPolicySeen = true;
+                markExpiryPolicyPossible(tableToken.getTableId());
             }
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));

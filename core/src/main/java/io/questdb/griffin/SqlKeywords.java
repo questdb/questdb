@@ -2537,14 +2537,6 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 's';
     }
 
-    public static boolean isWhenKeyword(CharSequence tok) {
-        return tok.length() == 4
-                && (tok.charAt(0) | 32) == 'w'
-                && (tok.charAt(1) | 32) == 'h'
-                && (tok.charAt(2) | 32) == 'e'
-                && (tok.charAt(3) | 32) == 'n';
-    }
-
     public static boolean isWhereKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'w'

@@ -45,8 +45,9 @@ import static org.junit.Assert.assertNull;
  * with plain tables (the filter excludes only {@code isView()}, and mat views are {@code isMatView()}).
  * These tests confirm the grammar/threading and that querying a policied mat view hides expired rows.
  * <p>
- * The base table carries NO policy on purpose: the read filter never runs during a mat-view refresh
- * (refresh reads the base, writes the view), so a base-table policy is a separate concern.
+ * The read filter never runs during a mat-view refresh (refresh reads the base, writes the view), so a
+ * base-table policy is a separate concern from the view: {@code testMatViewRefreshIgnores*BasePolicy}
+ * verify a now()-based and a value-based base policy are both ignored by the refresh.
  * <p>
  * {@code now()} is pinned via {@link #setCurrentMicros(long)} so time-based predicates are
  * deterministic. 2024-01-10T00:00:00Z = 1704844800000000 micros; now()-1d = 2024-01-09T00:00:00Z.
@@ -229,6 +230,68 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewRefreshIgnoresNowBasedBasePolicy() throws Exception {
+        // CRITICAL regression guard: a now()-based EXPIRE policy on the BASE table must not leak into the
+        // mat-view refresh. The refresh reads the raw base and writes the view; injecting the read filter
+        // there previously threw "non-deterministic function cannot be used in materialized view: now",
+        // making any mat view over a now()-policied base un-creatable and un-refreshable.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table base (sym symbol, price double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+            // The view carries NO policy of its own; it derives from a now()-policied base.
+            execute("create materialized view mv as (" +
+                    "select sym, last(price) price, ts from base sample by 1h" +
+                    ") partition by day");
+
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // base-expired (old)
+            execute("insert into base values ('BBB', 3.0, '2024-01-09T12:00:00.000000Z')"); // base-live
+            drainWalAndMatViewQueues();
+
+            // The refresh succeeded (no crash) and the view reflects BOTH base rows: the base policy is a
+            // read-time concern on the base, never folded into the refresh that populates the view.
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "AAA\t1.0\t2024-01-05T00:00:00.000000Z\n" +
+                            "BBB\t3.0\t2024-01-09T12:00:00.000000Z\n",
+                    "select sym, price, ts from mv order by ts, sym"
+            );
+            // Sanity: a direct read of the base still applies the base policy (only the live row shows).
+            assertSql(
+                    "sym\tprice\n" +
+                            "BBB\t3.0\n",
+                    "select sym, price from base order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewRefreshIgnoresValueBasedBasePolicy() throws Exception {
+        // A deterministic (value-based) EXPIRE policy on the BASE must not SILENTLY filter rows out of the
+        // refresh. It does not crash, but before the fix the refresh folded the base predicate into the
+        // aggregation, dropping base rows from the view (and inconsistently across incremental refreshes).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // base-expired (v<2)
+            execute("insert into base values ('BBB', 5.0, '2024-01-09T12:00:00.000000Z')"); // base-live
+            drainWalAndMatViewQueues();
+
+            // Passthrough view with no policy of its own.
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            // The view reflects BOTH base rows; the base's v<2 policy did not fold into the refresh.
+            assertSql(
+                    "sym\tv\n" +
+                            "AAA\t1.0\n" +
+                            "BBB\t5.0\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testMatViewExpirePersistsAfterReopen() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
@@ -243,6 +306,31 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 assertEquals("v < 2.0", metadata.getExpiryPredicate());
                 assertEquals(15 * 60_000_000L, metadata.getExpiryCleanupIntervalMicros());
             }
+        });
+    }
+
+    @Test
+    public void testPoliciedMatViewInJoinHidesExpiredRows() throws Exception {
+        // A policied mat view referenced inside a JOIN must still have the read filter applied on its side,
+        // so expired view rows are hidden from the join result.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // v<2 -> expired in mv
+            execute("insert into base values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')"); // v>=2 -> live in mv
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            execute("create table dim (sym symbol, label string)");
+            execute("insert into dim values ('AAA', 'a')");
+            execute("insert into dim values ('BBB', 'b')");
+
+            // Only BBB survives in mv (v>=2), so the join yields only BBB even though dim has AAA.
+            assertSql(
+                    "sym\tv\tlabel\n" +
+                            "BBB\t5.0\tb\n",
+                    "select mv.sym, mv.v, dim.label from mv join dim on mv.sym = dim.sym order by mv.sym"
+            );
         });
     }
 }

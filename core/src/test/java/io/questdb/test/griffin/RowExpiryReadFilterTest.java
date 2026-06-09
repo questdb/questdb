@@ -25,7 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -478,6 +481,178 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
                     "select * from t order by ts"
             );
             assertSql("count\n1\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testChangeTypeOfColumnReferencedByExpirePredicateRejected() throws Exception {
+        // Retyping a predicate-referenced column would leave the stored predicate referring to a column of
+        // an incompatible type; reject it (the guard runs before the type-compatibility check).
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')");
+            drainWalQueue();
+
+            try {
+                execute("alter table t alter column v type float");
+                Assert.fail("expected the column type change to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "referenced by the EXPIRE ROWS predicate");
+            }
+            assertSql("sym\tv\tts\n" +
+                    "BBB\t5.0\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testDropColumnNotReferencedByExpirePredicateAllowed() throws Exception {
+        // Precision guard: a column the predicate does NOT reference can still be dropped.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, extra int, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('BBB', 5.0, 7, '2024-01-06T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("alter table t drop column extra"); // not referenced by 'v < 2.0' -> allowed
+            drainWalQueue();
+
+            assertSql("sym\tv\tts\n" +
+                    "BBB\t5.0\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testDropColumnReferencedByExpirePredicateRejected() throws Exception {
+        // CRITICAL regression guard: dropping a column the EXPIRE predicate references must be rejected. The
+        // predicate is stored text re-parsed on every read, so the drop would otherwise brick EVERY read
+        // ("Invalid column: v"). Also covers a compound predicate so the recursive walk is exercised.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0 AND ts < now()");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 5.0, '2024-01-11T00:00:00.000000Z')"); // live
+            drainWalQueue();
+
+            try {
+                execute("alter table t drop column v");
+                Assert.fail("expected the column drop to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "referenced by the EXPIRE ROWS predicate");
+                TestUtils.assertContains(e.getFlyweightMessage(), "DROP EXPIRE");
+            }
+
+            // The drop was rejected before it could brick reads: the table still reads correctly.
+            assertSql("sym\tv\tts\n" +
+                    "BBB\t5.0\t2024-01-11T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testDropPredicateColumnAllowedAfterDropExpire() throws Exception {
+        // The escape hatch: DROP EXPIRE removes the policy, after which the column can be dropped.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("alter table t drop expire"); // remove the policy first...
+            drainWalQueue();
+            execute("alter table t drop column v"); // ...now the drop is allowed
+            drainWalQueue();
+
+            // No policy and column v gone: both rows visible, only sym + ts remain.
+            assertSql("sym\tts\n" +
+                    "AAA\t2024-01-05T00:00:00.000000Z\n" +
+                    "BBB\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testRenameColumnReferencedByExpirePredicateRejected() throws Exception {
+        // Renaming a predicate-referenced column would leave the predicate referring to a missing name.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')");
+            drainWalQueue();
+
+            try {
+                execute("alter table t rename column v to value");
+                Assert.fail("expected the column rename to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "referenced by the EXPIRE ROWS predicate");
+            }
+            assertSql("sym\tv\tts\n" +
+                    "BBB\t5.0\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
+        });
+    }
+
+    @Test
+    public void testBetweenPredicateHidesExpiredRows() throws Exception {
+        // BETWEEN is a composite boolean (not a flippable ordering comparison), so the CASE keep-filter is
+        // used. A window-expiry predicate: rows whose ts falls inside the range expire; rows before/after
+        // the range survive. (BETWEEN binds to the designated timestamp here, which is never NULL.)
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN ts BETWEEN '2024-01-05T00:00:00.000000Z' AND '2024-01-06T23:59:59.999999Z'");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T12:00:00.000000Z')"); // in range -> expired
+            execute("insert into t values ('BBB', 2.0, '2024-01-06T12:00:00.000000Z')"); // in range -> expired
+            execute("insert into t values ('CCC', 3.0, '2024-01-08T00:00:00.000000Z')"); // after    -> live
+            execute("insert into t values ('DDD', 4.0, '2024-01-04T00:00:00.000000Z')"); // before   -> live
+            drainWalQueue();
+
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "DDD\t4.0\t2024-01-04T00:00:00.000000Z\n" +
+                            "CCC\t3.0\t2024-01-08T00:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testUpdateWithValuePredicateSkipsExpiredAndNullRowsCorrectly() throws Exception {
+        // The UPDATE keep-filter for a non-timestamp predicate uses the CASE form (no flip). An UPDATE must
+        // touch only NON-expired rows: v<2 rows are expired (skip); NULL-v rows are NOT expired (update).
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired (v<2)
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')"); // live
+            execute("insert into t values ('CCC', null, '2024-01-07T00:00:00.000000Z')"); // live (NULL)
+            drainWalQueue();
+
+            execute("update t set sym = 'X'");
+            drainWalQueue();
+
+            // Visible (non-expired) rows were updated to 'X'.
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "X\t5.0\t2024-01-06T00:00:00.000000Z\n" +
+                            "X\tnull\t2024-01-07T00:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
+            // Dropping the policy reveals the expired row was NOT touched by the UPDATE (still 'AAA').
+            execute("alter table t drop expire");
+            drainWalQueue();
+            assertSql(
+                    "sym\tv\tts\n" +
+                            "AAA\t1.0\t2024-01-05T00:00:00.000000Z\n" +
+                            "X\t5.0\t2024-01-06T00:00:00.000000Z\n" +
+                            "X\tnull\t2024-01-07T00:00:00.000000Z\n",
+                    "select * from t order by ts"
+            );
         });
     }
 }

@@ -24,6 +24,9 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoColumn;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -87,6 +90,32 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
                 assertNull(metadata.getExpiryPredicate());
                 assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
             }
+        });
+    }
+
+    @Test
+    public void testSymbolCapacityHydratesInlineOnPreExpireMeta() throws Exception {
+        // The EXPIRE ROWS feature bumped META_FORMAT_MINOR_VERSION_LATEST to 2. The MetadataCache symbol-
+        // capacity fast read must stay gated on META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY (1), NOT LATEST,
+        // so a pre-existing v1 table still hydrates its capacity from _meta correctly (and is not forced
+        // onto the slow per-column loadCapacities() path). This drives MetadataCache.hydrateTableStartup —
+        // the path bug #5242 was about — and asserts the capacity round-trips at v2, v1 and v0.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol capacity 512, v double, ts timestamp) timestamp(ts) partition by day bypass wal");
+            final TableToken token = engine.verifyTableName("t");
+
+            // v2 (LATEST): inline fast read.
+            assertCachedSymbolCapacity(token, "s", 512);
+
+            // v1 (predates EXPIRE ROWS but >= SYMBOL_CAPACITY): MUST still read inline correctly.
+            setMetaFormatMinorVersion(token, (short) 1);
+            reloadMetadata();
+            assertCachedSymbolCapacity(token, "s", 512);
+
+            // v0 (predates inline symbol capacity): slow loadCapacities() path — still correct, no garbage.
+            setMetaFormatMinorVersion(token, (short) 0);
+            reloadMetadata();
+            assertCachedSymbolCapacity(token, "s", 512);
         });
     }
 
@@ -258,6 +287,17 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
                 assertEquals(0, writer.getExpiryCleanupIntervalMicros());
             }
         });
+    }
+
+    // Reads the symbol capacity straight out of the hydrated MetadataCache (the surface bug #5242 fixed).
+    private void assertCachedSymbolCapacity(TableToken token, String columnName, int expectedCapacity) {
+        try (MetadataCacheReader r = engine.getMetadataCache().readLock()) {
+            final CairoTable table = r.getTable(token);
+            assertTrue("table must be hydrated in the cache", table != null);
+            final CairoColumn column = table.getColumnQuiet(columnName);
+            assertTrue("column '" + columnName + "' must be present in the cache", column != null);
+            assertEquals(expectedCapacity, column.getSymbolCapacity());
+        }
     }
 
     // Drops pooled readers/writers and refreshes the metadata cache so the next read re-reads _meta from disk.
