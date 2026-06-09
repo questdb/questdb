@@ -49,7 +49,7 @@ public class SymbolTest extends AbstractCairoTest {
                             """);
             assertQuery("x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts desc")
                     .noLeakCheck()
-                    .timestamp("ts###desc")
+                    .timestampDesc("ts")
                     .returns("""
                             sym\tts\tsym_top
                             EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY

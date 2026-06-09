@@ -1776,16 +1776,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             \tJ\tG\tE\tZ
                             d4\tJ\tR\tS\tS
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x,a,b,c,case([a,c,'Z',b,x,switch(x,'b2',a,'d4',c,null,'Z',b)])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tanc
-                            """
-            );
+                            """);
         });
     }
 
@@ -1813,16 +1812,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             BUY\t1
                             SELL\t-1
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [side,switch(side,'BUY',1,-1)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -2014,16 +2012,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             \tJ\tG\tE\tG
                             d4\tJ\tR\tS\tS
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x,a,b,c,case([a,c,'Z',b,x,switch(x,'b2',a,'d4',c,'a1','Z',b)])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tanc
-                            """
-            );
+                            """);
         });
     }
 
@@ -2118,16 +2115,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             \tJ\tG\tE\tZ
                             d4\tJ\tR\tS\tR
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x,a,b,c,case([a,'Z',b,x,switch(x,'b2',a,null,'Z',b)])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tanc
-                            """
-            );
+                            """);
         });
     }
 
@@ -2200,16 +2196,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             \tJ\tG\tE\tG
                             d4\tJ\tR\tS\tR
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [x,a,b,c,case([a,b,x,switch(x,'b2',a,b)])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tanc
-                            """
-            );
+                            """);
         });
     }
 

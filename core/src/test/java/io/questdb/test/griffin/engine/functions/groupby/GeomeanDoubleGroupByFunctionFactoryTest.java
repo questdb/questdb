@@ -275,7 +275,8 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce("""
+                                .expectSize()
+                                .returns("""
                                         sym\tgeomean
                                         A\tnull
                                         B\tnull
@@ -357,7 +358,8 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
-                                .returnsOnce("""
+                                .expectSize()
+                                .returns("""
                                         sym\tgeomean
                                         A\tnull
                                         B\tnull

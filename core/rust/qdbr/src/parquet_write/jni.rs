@@ -1667,85 +1667,116 @@ fn convert_row_group_buffers_to_partition(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::io::AsRawFd;
 
-    /// Creates a pipe and returns `(observer_read_end, write_end)`.
-    /// The write end is handed to the code under test; the observer end stays
-    /// with the test. When the code closes the write end, reading from the
-    /// observer returns EOF. The kernel tracks closure on the pipe object, so
-    /// this signal is race-free under fd-number reuse by other parallel tests.
+    /// Creates a pipe and returns its (read_end, write_end) as raw fds. The
+    /// caller owns both and must close whatever it still holds.
     fn make_pipe() -> (i32, i32) {
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` is a valid 2-element buffer for pipe(2) to populate.
         let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
         assert_eq!(rc, 0, "pipe() failed");
         (fds[0], fds[1])
     }
 
-    /// Returns true iff reading from `observer` returns 0 bytes (EOF), which
-    /// means the write end has been closed.
-    fn write_end_closed(observer: i32) -> bool {
-        let mut buf = [0u8; 1];
-        let n = unsafe { libc::read(observer, buf.as_mut_ptr() as *mut _, 1) };
-        n == 0
-    }
-
-    fn close_fd(fd: i32) {
-        unsafe { libc::close(fd) };
+    /// Returns true iff the write end of the pipe whose read end is `read_fd`
+    /// has been fully closed (no open fd refers to it).
+    ///
+    /// This observes the kernel pipe's write-side reference count via EOF, NOT
+    /// a global fd number, so it is immune to fd-number recycling by the other
+    /// tests cargo runs in parallel -- a thread reopening the same fd *number*
+    /// for a different file does not add a reference to this pipe. A
+    /// non-blocking read keeps it from hanging while the write end is open.
+    fn pipe_write_end_closed(read_fd: i32) -> bool {
+        // SAFETY: `read_fd` is a pipe read end owned by the caller.
+        unsafe {
+            let flags = libc::fcntl(read_fd, libc::F_GETFL);
+            libc::fcntl(read_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            let mut buf = [0u8; 1];
+            // read() == 0 means EOF: every write end is closed. -1 (EAGAIN)
+            // means the write end is still open with no data buffered.
+            libc::read(read_fd, buf.as_mut_ptr().cast::<libc::c_void>(), 1) == 0
+        }
     }
 
     #[test]
     fn reader_writer_fd_aliased_returns_err_and_closes_fd() {
-        let (observer, fd) = make_pipe();
-
-        let result = take_partition_updater_fds(fd, fd, -1);
+        // Hand the pipe's write end in as an aliased reader==writer fd. The
+        // error path must take ownership and close it (seen as EOF on the read
+        // end), not leak it.
+        let (read_fd, write_fd) = make_pipe();
+        let result = take_partition_updater_fds(write_fd, write_fd, -1);
         assert!(result.is_err(), "expected Err for aliased fds");
         assert!(
-            write_end_closed(observer),
+            pipe_write_end_closed(read_fd),
             "aliased reader/writer fd was not closed by the error path"
         );
-
-        close_fd(observer);
+        // SAFETY: `read_fd` is still owned here.
+        unsafe { libc::close(read_fd) };
     }
 
     #[test]
     fn reader_writer_fd_aliased_also_closes_parquet_meta_fd() {
-        let (shared_observer, shared_fd) = make_pipe();
-        let (meta_observer, parquet_meta_fd_handle) = make_pipe();
+        let (read_shared, write_shared) = make_pipe();
+        let (read_meta, write_meta) = make_pipe();
 
-        let result = take_partition_updater_fds(shared_fd, shared_fd, parquet_meta_fd_handle);
+        let result = take_partition_updater_fds(write_shared, write_shared, write_meta);
         assert!(
             result.is_err(),
             "expected Err for aliased reader/writer fds"
         );
         assert!(
-            write_end_closed(shared_observer),
+            pipe_write_end_closed(read_shared),
             "shared fd was not closed"
         );
         assert!(
-            write_end_closed(meta_observer),
+            pipe_write_end_closed(read_meta),
             "parquet_meta fd was not closed on the error path"
         );
-
-        close_fd(shared_observer);
-        close_fd(meta_observer);
+        // SAFETY: both read ends are still owned here.
+        unsafe {
+            libc::close(read_shared);
+            libc::close(read_meta);
+        }
     }
 
     #[test]
     fn distinct_fds_return_ok_and_retain_ownership() {
-        let (reader_observer, reader_fd) = make_pipe();
-        let (writer_observer, writer_fd) = make_pipe();
+        let (read_r, write_r) = make_pipe();
+        let (read_w, write_w) = make_pipe();
 
-        let result = take_partition_updater_fds(reader_fd, writer_fd, -1);
+        let result = take_partition_updater_fds(write_r, write_w, -1);
         let (reader_file, writer_file, parquet_meta_fd_handle) =
             result.expect("distinct fds must succeed");
         assert!(parquet_meta_fd_handle.is_none());
-        // Drop the returned Files to close the fds; the helper must have
-        // given us ownership.
+        // Ownership transferred: the returned Files wrap exactly our fds...
+        assert_eq!(reader_file.as_raw_fd(), write_r);
+        assert_eq!(writer_file.as_raw_fd(), write_w);
+        // ...and the helper did NOT close them itself -- both write ends stay
+        // open while we hold the Files.
+        assert!(
+            !pipe_write_end_closed(read_r),
+            "reader fd was closed; ownership not retained"
+        );
+        assert!(
+            !pipe_write_end_closed(read_w),
+            "writer fd was closed; ownership not retained"
+        );
+        // Dropping the returned Files closes the fds (OwnedFd guarantee) -> EOF.
         drop(reader_file);
         drop(writer_file);
-        assert!(write_end_closed(reader_observer));
-        assert!(write_end_closed(writer_observer));
-
-        close_fd(reader_observer);
-        close_fd(writer_observer);
+        assert!(
+            pipe_write_end_closed(read_r),
+            "dropping reader File did not close the fd"
+        );
+        assert!(
+            pipe_write_end_closed(read_w),
+            "dropping writer File did not close the fd"
+        );
+        // SAFETY: both read ends are still owned here.
+        unsafe {
+            libc::close(read_r);
+            libc::close(read_w);
+        }
     }
 }

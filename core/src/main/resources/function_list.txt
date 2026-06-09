@@ -551,6 +551,7 @@ io.questdb.griffin.engine.functions.bool.InVarcharVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InCharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory
+io.questdb.griffin.engine.functions.bool.InIPv4FunctionFactory
 io.questdb.griffin.engine.functions.bool.InLongFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory

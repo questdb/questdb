@@ -49,6 +49,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -304,21 +305,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Wait for WAL transactions to be applied
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select wait_wal_table('tracker_test1')",
-                        sink,
-                        "wait_wal_table('tracker_test1')\ntrue\n"
-                );
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select wait_wal_table('tracker_test2')",
-                        sink,
-                        "wait_wal_table('tracker_test2')\ntrue\n"
-                );
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select wait_wal_table('tracker_test1')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("wait_wal_table('tracker_test1')\ntrue\n");
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select wait_wal_table('tracker_test2')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("wait_wal_table('tracker_test2')\ntrue\n");
             }
 
             // Second server: verify tracker is hydrated from existing tables
@@ -703,6 +699,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.window.tree.max.bytes\tQDB_CAIRO_SQL_WINDOW_TREE_MAX_BYTES\t9223372036854775807\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.tree.max.pages\tQDB_CAIRO_SQL_WINDOW_TREE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.legacy.operator.precedence\tQDB_CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.legacy.union.column.propagation\tQDB_CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.tree.page.size\tQDB_CAIRO_SQL_WINDOW_TREE_PAGE_SIZE\t524288\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.with.clause.model.pool.capacity\tQDB_CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.orderby.sort.enabled\tQDB_CAIRO_SQL_ORDERBY_SORT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +

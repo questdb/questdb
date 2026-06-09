@@ -34,10 +34,16 @@ impl<'a, T: Unpackable> Decoder<'a, T> {
             return Err(Error::oos("Bitpacking requires num_bits > 0"));
         }
 
-        if packed.len() * 8 < length * num_bits {
+        // checked_mul: both length and num_bits derive from page contents. An
+        // overflow here would wrap in release builds (overflow checks off) and let
+        // a too-short buffer slip past the bounds check below; reject it cleanly.
+        let required_bits = length
+            .checked_mul(num_bits)
+            .ok_or_else(|| Error::oos("bitpacked length times num_bits overflows"))?;
+        if packed.len() * 8 < required_bits {
             return Err(Error::oos(format!(
                 "Unpacking {length} items with a number of bits {num_bits} requires at least {} bytes.",
-                length * num_bits / 8
+                required_bits / 8
             )));
         }
 
@@ -253,6 +259,15 @@ mod tests {
         assert!(Decoder::<u64>::try_new(&[1], 1, 9).is_err());
         // zero num_bits
         assert!(Decoder::<u64>::try_new(&[1], 0, 1).is_err());
+    }
+
+    #[test]
+    fn try_new_length_times_num_bits_overflow_is_error() {
+        // length * num_bits must not overflow usize and wrap past the bounds
+        // check below it. usize::MAX * 2 overflows -> a clean error, never a
+        // wrapped-small product that accepts a too-short buffer.
+        let err = Decoder::<u64>::try_new(&[], 2, usize::MAX).unwrap_err();
+        assert!(format!("{err:?}").contains("overflows"), "got: {err:?}");
     }
 
     #[test]
