@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -401,9 +400,6 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
             value = v;
         }
 
-        private void setNull() {
-            value = GeoHashes.INT_NULL;
-        }
     }
 
     private static final class GeoLongArg extends GeoLongFunction {
@@ -443,9 +439,6 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
             value = v;
         }
 
-        private void setNull() {
-            value = GeoHashes.SHORT_NULL;
-        }
     }
 
     private static final class IPv4Arg extends IPv4Function {
