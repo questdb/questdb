@@ -47,11 +47,15 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     public void testExcludesSystemTables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, v double) timestamp(ts) partition by day wal");
-            // touch a system table so it materializes in the registry
             execute("create table bar (ts timestamp, v double) timestamp(ts) partition by day wal");
             drainWalQueue();
 
-            final String dump = dumpDatabase().toString();
+            final ObjList<String> statements = dumpDatabase();
+            // exactly the two user tables are dumped; a leaked system/telemetry table would push the count up
+            Assert.assertEquals(2, statements.size());
+            final String dump = statements.toString();
+            Assert.assertTrue(dump.contains("CREATE TABLE 'bar'"));
+            Assert.assertTrue(dump.contains("CREATE TABLE 'foo'"));
             Assert.assertFalse("system tables must not be dumped", dump.contains("sys."));
             Assert.assertFalse("telemetry tables must not be dumped", dump.contains("telemetry"));
         });
@@ -133,6 +137,43 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             execute("drop table plain");
             drainWalQueue();
 
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testViewOnViewDependencyOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            // a_view depends on z_view: a plain alphabetical order (a before z) would be unreplayable
+            execute("create view z_view as (select ts, s, v from base)");
+            execute("create view a_view as (select ts, s from z_view)");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            final int baseIdx = dump.indexOf("CREATE TABLE 'base'");
+            final int zIdx = dump.indexOf("CREATE VIEW 'z_view'");
+            final int aIdx = dump.indexOf("CREATE VIEW 'a_view'");
+            Assert.assertTrue(baseIdx >= 0 && zIdx >= 0 && aIdx >= 0);
+            Assert.assertTrue("base must precede z_view", baseIdx < zIdx);
+            Assert.assertTrue("dependency z_view must precede dependent a_view", zIdx < aIdx);
+
+            // drop in reverse dependency order, then the dump must replay cleanly
+            execute("drop view a_view");
+            execute("drop view z_view");
+            execute("drop table base");
+            drainWalQueue();
             for (int i = 0, n = before.size(); i < n; i++) {
                 execute(before.getQuick(i));
             }
