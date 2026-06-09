@@ -852,7 +852,13 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                         CharSequence query = "select sum(an_int), last(a_string), first(a_varchar), count(a_symbol) from x where filter_col%23=7";
                         engine.print(query, expected, sqlExecutionContext);
                         engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                        assertQuery(query)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
                     },
                     configuration,
                     LOG
@@ -892,7 +898,13 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                         CharSequence query = "select first(a_varchar), last(a_varchar_nullable), sum(an_int) from x where filter_col%19=2";
                         engine.print(query, expected, sqlExecutionContext);
                         engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                        assertQuery(query)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
                     },
                     configuration,
                     LOG
