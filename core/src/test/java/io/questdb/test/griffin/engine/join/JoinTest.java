@@ -5883,6 +5883,46 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinMasterFilterKeepsMatchedRow() throws Exception {
+        // Companion to testOuterJoinMasterFilterStaysPostJoin: that test proves the NULL-master
+        // rows are removed; this one proves a genuine master match survives, so the post-join
+        // filter does not over-filter. The master holds a matching 's2' row (joined to the
+        // slave's 's2') plus an unrelated 'x' row, and the slave holds an unmatched 'zzz' row
+        // that becomes a NULL-master row. WHERE a.sym = 's2' must keep the matched (s2, 300)
+        // row and drop the NULL-master 'zzz' row for both RIGHT and FULL OUTER, with the
+        // constant on either side of the equality (the two analyseEquals branches). The
+        // predicate stays a post-join Filter; pushing it into the master sub-query would also
+        // propagate 's2' to the slave for the literal form, so its leak is only visible in the
+        // bind-variable form, which the plan assertion and the bind arm both guard against.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 4), ('s2', 300, 6)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('zzz', 99, 7)");
+
+            final String expected = "e0\te1\ns2\t300\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                // Constant on the RHS of the equality (a.sym = 's2').
+                final String rhs = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                bindVariableService.clear();
+                assertQuery(rhs).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: a.sym='s2'").returns(expected);
+
+                // Constant on the LHS of the equality ('s2' = a.sym), the mirror analyseEquals branch.
+                final String lhs = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE 's2' = a.sym";
+                bindVariableService.clear();
+                assertQuery(lhs).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: a.sym='s2'").returns(expected);
+
+                // Bind-variable form must produce the identical result.
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                printSql(bind);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testOuterJoinMasterFilterStaysPostJoin() throws Exception {
         // Regression for a query-fuzzer bind-variable divergence. RIGHT and FULL OUTER joins
         // NULL-extend the master (left) table, so a WHERE predicate that references only the
@@ -6475,6 +6515,44 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinFoldedFalseMasterFilterProducesNoRows() throws Exception {
+        // A master-only WHERE on a SPLICE join that folds to FALSE: ((a.c0 + null))::TIMESTAMP
+        // is NULL for every row (AddIntFunctionFactory short-circuits the null), so the
+        // comparison is NULL, hence FALSE, throughout. SPLICE NULL-extends the master, so the
+        // predicate stays a post-join Filter rather than being pushed into the master
+        // sub-query (which would empty the master and pair each slave row with a NULL master,
+        // leaking one row per slave). A WHERE that is always FALSE therefore produces no rows,
+        // and the literal and bind-variable forms must agree. The literal folds to a post-join
+        // "Filter filter: false" over a full Splice Join (no Empty table substitution).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t0 (c0 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t1 VALUES (1::SHORT, '2024-01-01T00:00:00.000000Z'), " +
+                    "(2::SHORT, '2024-01-02T00:00:00.000000Z'), " +
+                    "(3::SHORT, '2024-01-03T00:00:00.000000Z')");
+            execute("INSERT INTO t0 VALUES (10, '2024-01-01T00:00:00.000000Z'), " +
+                    "(20, '2024-01-02T00:00:00.000000Z'), " +
+                    "(30, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expected = "e0\te1\n";
+            final String literalSql = "SELECT (a.c0)::STRING AS e0, true AS e1 " +
+                    "FROM t1 a SPLICE JOIN t0 b " +
+                    "WHERE ((a.c0 + null))::TIMESTAMP < '2024-03-06T20:54:00.000000Z'::TIMESTAMP";
+            bindVariableService.clear();
+            assertQuery(literalSql).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: false").returns(expected);
+
+            // Bind-variable form evaluates the same NULL/FALSE predicate per row and must agree.
+            bindVariableService.clear();
+            bindVariableService.setStr("b1", "2024-03-06T20:54:00.000000Z");
+            printSql("SELECT (a.c0)::STRING AS e0, true AS e1 " +
+                    "FROM t1 a SPLICE JOIN t0 b " +
+                    "WHERE ((a.c0 + null))::TIMESTAMP < :b1::TIMESTAMP");
+            TestUtils.assertEquals(expected, sink);
+        });
+    }
+
+    @Test
     public void testSpliceJoinIndexedSymbolMasterWithOrderByPreservesTimestamp() throws Exception {
         // Regression for a query-fuzzer divergence: a SPLICE JOIN whose master
         // table has an indexed SYMBOL column and an interval WHERE on ts, with
@@ -6888,6 +6966,31 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testStackedNullingJoinsMasterFilterStaysPostJoin() throws Exception {
+        // Two stacked RIGHT OUTER joins both NULL-extend the master mm. masterNullingJoinIndex
+        // must anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not
+        // the inner one: a filter applied after only the inner join would be re-exposed to the
+        // NULL-master rows synthesized by the outer join. Here the inner join (mm..s1) matches
+        // on k=1, so mm.col survives it; the outer join (..s2) then NULL-extends the master for
+        // the unmatched s2 key 2. WHERE mm.col = 1 must drop that NULL-master row, leaving
+        // exactly one row. Anchoring to the inner join instead would leak it (two rows).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mm (k INT, col INT)");
+            execute("INSERT INTO mm VALUES (1, 1)");
+            execute("CREATE TABLE s1 (k INT)");
+            execute("INSERT INTO s1 VALUES (1)");
+            execute("CREATE TABLE s2 (k INT)");
+            execute("INSERT INTO s2 VALUES (1), (2)");
+
+            assertQuery("SELECT mm.col FROM mm RIGHT JOIN s1 ON mm.k = s1.k RIGHT JOIN s2 ON s1.k = s2.k WHERE mm.col = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: mm.col=1")
+                    .returns("col\n1\n");
         });
     }
 
