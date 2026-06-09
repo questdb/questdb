@@ -75,6 +75,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
+    // Pool that owns the parquet buffers this record currently points at, or null.
+    // PageFrameMemoryPool.navigateTo() uses it to early-return only when the record
+    // is still bound to that pool's live buffers for the requested frame.
+    protected PageFrameMemoryPool boundPool;
     protected int columnOffset;
     protected byte frameFormat = -1;
     protected int frameIndex = -1;
@@ -120,6 +124,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
+        boundPool = null;
     }
 
     @Override
@@ -220,6 +225,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return Unsafe.getByte(address + rowIndex) == 1;
         }
         return NullMemoryCMR.INSTANCE.getBool(0);
+    }
+
+    public PageFrameMemoryPool getBoundPool() {
+        return boundPool;
     }
 
     @Override
@@ -551,6 +560,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
+        // Stamp the owning pool so navigateTo() can early-return only while this
+        // record still points at that pool's live buffers. A foreign pool (e.g. a
+        // reduce task's) that later frees its buffers leaves boundPool != the
+        // navigating pool, forcing a safe rebind.
+        this.boundPool = frameMemory.getPool();
     }
 
     @Override
@@ -561,6 +575,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public void of(SymbolTableSource symbolTableSource) {
         close();
         this.symbolTableSource = symbolTableSource;
+    }
+
+    public void setBoundPool(PageFrameMemoryPool boundPool) {
+        this.boundPool = boundPool;
     }
 
     /**

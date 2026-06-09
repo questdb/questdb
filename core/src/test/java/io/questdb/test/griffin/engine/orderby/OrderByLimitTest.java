@@ -91,7 +91,7 @@ public class OrderByLimitTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(2)" +
                         ") timestamp(ts) partition by day")
-                .timestamp("ts###desc")
+                .timestampDesc("ts")
                 .expectSize()
                 .returns("""
                         price\tts

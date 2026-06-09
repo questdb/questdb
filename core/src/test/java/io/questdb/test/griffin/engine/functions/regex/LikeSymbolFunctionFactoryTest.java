@@ -62,10 +62,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                 }
             }
 
-            assertQuery("explain select * from x where name like '%' || :sym || '%'")
+            assertQuery("select * from x where name like '%' || :sym || '%'")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: name ~ concat(['%',:sym::string,'%']) [case-sensitive] [state-shared]
                                 PageFrame
@@ -493,10 +492,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nv\nvv\n", "select * from x where s like '%'");
             assertLike("s\nv\nvv\n", "select * from x where s like 'v%'");
 
-            assertQuery("explain select * from x where s ilike 'v%'")
+            assertQuery("select * from x where s ilike 'v%'")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: s ilike v% [state-shared]
                                 PageFrame
@@ -504,10 +502,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where s like 'v%'")
+            assertQuery("select * from x where s like 'v%'")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: s like v% [state-shared]
                                 PageFrame
@@ -517,10 +514,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
 
             assertLike("s\nv\nvv\n", "select * from x where s like '%v'");
 
-            assertQuery("explain select * from x where s like '%v'")
+            assertQuery("select * from x where s like '%v'")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: s like %v [state-shared]
                                 PageFrame
@@ -528,10 +524,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where s ilike '%v'")
+            assertQuery("select * from x where s ilike '%v'")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: s ilike %v [state-shared]
                                 PageFrame
@@ -540,10 +535,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             """);
 
             assertLike("s\nv\nvv\n", "select * from x where s like '%v%'");
-            assertQuery("explain select * from x where s like '%v%'")
+            assertQuery("select * from x where s like '%v%'")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: s like %v% [state-shared]
                                 PageFrame
@@ -551,10 +545,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """);
 
-            assertQuery("explain select * from x where s ilike '%v%'")
+            assertQuery("select * from x where s ilike '%v%'")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: s ilike %v% [state-shared]
                                 PageFrame

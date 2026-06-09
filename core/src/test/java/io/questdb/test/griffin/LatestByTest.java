@@ -24,22 +24,22 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -208,16 +208,15 @@ public class LatestByTest extends AbstractCairoTest {
                     LATEST ON ts\s
                     PARTITION BY device_id""";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    "LatestByAllIndexed\n" +
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("LatestByAllIndexed\n" +
                             "    Async index backward scan on: device_id workers: 2\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
                             (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"2021-09-02T00:00:00.000000000Z\",\"2021-09-02T23:59:59.999999999Z\")]\n")
-            );
+                                    "      intervals: [(\"2021-09-02T00:00:00.000000000Z\",\"2021-09-02T23:59:59.999999999Z\")]\n"));
 
             // prefix filter is applied AFTER latest on
             assertQuery(query)
@@ -746,53 +745,35 @@ public class LatestByTest extends AbstractCairoTest {
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            // we'll use the global 'bindVariableService' to compile the query
-            bindVariableService.clear();
-            bindVariableService.setStr("sym", "c");
+            final String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // Each case re-executes the held factory under its OWN execution context with its OWN
+            // bind-variable service, verifying the parametrized latest-by re-reads :sym from the
+            // execution context's service - not a value cached at compile time.
+            try (
+                    SqlExecutionContextImpl contextC = new SqlExecutionContextImpl(engine, 1);
+                    SqlExecutionContextImpl contextA = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                contextC.with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(configuration));
+                contextA.with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(configuration));
 
-            String suffix = getTimestampSuffix(timestampType.getTypeName());
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 final RecordCursorFactory factory = CairoEngine.select(compiler, "select ts, s from t " +
-                         "where s = :sym " +
-                         "latest on ts partition by s", sqlExecutionContext)) {
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                // sanity check: same value as compiled with, via a different service
+                cases.add(BindVarTuple.ok(
+                        "different service, sym=c",
+                        "ts\ts\n1970-01-03T00:00:00.000000" + suffix + "\tc\n",
+                        bindVariableService -> bindVariableService.setStr("sym", "c")
+                ).withContext(contextC));
+                // different value via a different service must yield a different result
+                cases.add(BindVarTuple.ok(
+                        "different service, sym=a",
+                        "ts\ts\n1970-01-02T23:00:00.000000" + suffix + "\ta\n",
+                        bindVariableService -> bindVariableService.setStr("sym", "a")
+                ).withContext(contextA));
 
-
-                // sanity check: verify it returns the expected result when using a new binding variable service
-                // with the same value for the parameter as was injected into the global binding variable service
-                try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
-                    BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
-                    localBindings.setStr("sym", "c");
-                    assertFactoryCursor(
-                            "ts\ts\n" +
-                                    "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
-                            "ts",
-                            factory,
-                            true,
-                            localContext,
-                            false,
-                            false
-                    );
-                }
-
-                // re-execute with a different binding variable service and a different value
-                // this must yield a different result
-                try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
-                    BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
-                    localBindings.setStr("sym", "a");
-
-                    assertFactoryCursor(
-                            "ts\ts\n" +
-                                    "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
-                            "ts",
-                            factory,
-                            true,
-                            localContext,
-                            false,
-                            false
-                    );
-                }
+                assertQuery("select ts, s from t where s = :sym latest on ts partition by s")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .assertBinds(cases);
             }
         });
     }
@@ -1587,17 +1568,13 @@ public class LatestByTest extends AbstractCairoTest {
                     select r.symbol, r.v subscribers, t.v followers
                     from r
                     join t on symbol""";
-            try (RecordCursorFactory factory = select(query)) {
-                assertCursor(
-                        """
-                                symbol\tsubscribers\tfollowers
-                                xyz\t1\t42
-                                """,
-                        factory,
-                        false,
-                        false
-                );
-            }
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            symbol\tsubscribers\tfollowers
+                            xyz\t1\t42
+                            """);
         });
     }
 }

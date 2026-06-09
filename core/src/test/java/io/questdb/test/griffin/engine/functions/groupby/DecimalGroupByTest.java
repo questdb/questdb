@@ -1131,7 +1131,10 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                                     .withEngine(engine)
                                     .withContext(sqlExecutionContext)
                                     .noLeakCheck()
-                                    .returnsOnce(expected);
+                                    .inferTimestamp()
+                                    .inferRandomAccess()
+                                    .sizeMayVary()
+                                    .returns(expected);
                         },
                         configuration,
                         LOG
