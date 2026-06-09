@@ -27,18 +27,26 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 
 public final class FuzzColumn {
-    private final boolean isIndexed;
+    private final FuzzIndex index;
     private final String name;
     private final FuzzColumnType type;
 
     public FuzzColumn(String name, FuzzColumnType type) {
-        this(name, type, false);
+        this(name, type, null);
     }
 
-    public FuzzColumn(String name, FuzzColumnType type, boolean isIndexed) {
+    public FuzzColumn(String name, FuzzColumnType type, FuzzIndex index) {
         this.name = name;
         this.type = type;
-        this.isIndexed = isIndexed;
+        this.index = index;
+    }
+
+    /**
+     * Index descriptor for this column, or {@code null} when the column is not
+     * indexed. Only SYMBOL columns ever carry one.
+     */
+    public FuzzIndex getIndex() {
+        return index;
     }
 
     public String getName() {
@@ -50,6 +58,6 @@ public final class FuzzColumn {
     }
 
     public boolean isIndexed() {
-        return isIndexed;
+        return index != null;
     }
 }

@@ -26,8 +26,8 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -42,7 +42,6 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -220,12 +219,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE STRING", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -243,12 +246,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE VARCHAR", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -290,15 +297,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             //   '日' -> '日' (U+65E5)
             // With the pre-fix code, non-ASCII rows stored the first UTF-8 byte as a char
             // (e.g. 'é' -> 'A-tilde'), so the assertion below would fail.
-            assertSql(
+            assertQuery("x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                     """
                             ts\tcol
                             2024-05-14T16:00:00.000000Z\ta
                             2024-05-14T16:00:01.000000Z\té
                             2024-05-14T16:00:02.000000Z\t日
-                            """,
-                    "x"
-            );
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -351,14 +356,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t
-                    2024-05-14T16:00:03.000000Z\t
-                    2024-05-14T16:00:04.000000Z\t
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            2024-05-14T16:00:04.000000Z\t
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -378,14 +387,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t
-                    2024-05-14T16:00:03.000000Z\t
-                    2024-05-14T16:00:04.000000Z\t
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            2024-05-14T16:00:04.000000Z\t
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -403,12 +416,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -427,23 +444,31 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN col TYPE VARCHAR", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             // VARCHAR -> DECIMAL (round trip)
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -466,7 +491,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table x alter column col type float", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tcol
                             2024-05-14T16:00:00.000000Z\t0.0
                             2024-05-14T16:00:01.000000Z\t0.1
@@ -476,23 +505,26 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             2024-05-14T16:00:02.000000Z\t3.4E38
                             2024-05-14T16:00:02.000000Z\tnull
                             2024-05-14T16:00:02.000000Z\tnull
-                            """,
-                    "x");
+                            """);
 
             execute("alter table x alter column col type int", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t0
-                    2024-05-14T16:00:01.000000Z\t0
-                    2024-05-14T16:00:02.000000Z\t3
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0
+                            2024-05-14T16:00:01.000000Z\t0
+                            2024-05-14T16:00:02.000000Z\t3
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            """);
         });
     }
 
@@ -511,28 +543,36 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table x alter column col type double", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t0.0
-                    2024-05-14T16:00:01.000000Z\t0.10000000149011612
-                    2024-05-14T16:00:02.000000Z\t3.0999999046325684
-                    2024-05-14T16:00:02.000000Z\t-9.223372036854776E18
-                    2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38
-                    2024-05-14T16:00:02.000000Z\t3.3999999521443642E38
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0.0
+                            2024-05-14T16:00:01.000000Z\t0.10000000149011612
+                            2024-05-14T16:00:02.000000Z\t3.0999999046325684
+                            2024-05-14T16:00:02.000000Z\t-9.223372036854776E18
+                            2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38
+                            2024-05-14T16:00:02.000000Z\t3.3999999521443642E38
+                            """);
 
             execute("alter table x alter column col type int", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t0
-                    2024-05-14T16:00:01.000000Z\t0
-                    2024-05-14T16:00:02.000000Z\t3
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0
+                            2024-05-14T16:00:01.000000Z\t0
+                            2024-05-14T16:00:02.000000Z\t3
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            """);
         });
     }
 
@@ -554,7 +594,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ik\nabc\n", "select ik from x limit -1");
+            assertQuery("select ik from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ik\nabc\n");
 
             execute("insert into y(ik) values('abc')", sqlExecutionContext);
             assertSqlCursorsConvertedStrings(
@@ -616,7 +659,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ik\nabc\n", "select ik from x limit -1");
+            assertQuery("select ik from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ik\nabc\n");
         });
     }
 
@@ -642,7 +688,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
-            assertSql("c\nabc\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nabc\n");
 
             execute("insert into y(c) values('abc')", sqlExecutionContext);
             assertSqlCursorsConvertedStrings(
@@ -669,7 +718,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
-            assertSql("c\nabc\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nabc\n");
 
             execute("create table z as (select c from x)", sqlExecutionContext);
             execute("alter table x alter column c type string", sqlExecutionContext);
@@ -698,7 +750,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
-            assertSql("c\nabc\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nabc\n");
 
             execute("create table z as (select c from x)", sqlExecutionContext);
             execute("alter table x alter column c type string", sqlExecutionContext);
@@ -739,13 +794,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql(
-                    """
+            assertQuery("(SHOW COLUMNS FROM x) WHERE column = 'ik'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\tBITMAP\t
-                            """,
-                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
-            );
+                            """);
 
             execute("alter table x alter column ik symbol capacity 1000", sqlExecutionContext);
 
@@ -756,13 +811,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql(
-                    """
+            assertQuery("(SHOW COLUMNS FROM x) WHERE column = 'ik'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\tBITMAP\t
-                            """,
-                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
-            );
+                            """);
         });
     }
 
@@ -778,7 +833,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ik\nabc\n", "select ik from x limit -1");
+            assertQuery("select ik from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ik\nabc\n");
         });
     }
 
@@ -815,7 +873,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x values('abc', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("c\nabc\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nabc\n");
 
             execute("alter table x alter column c type string", sqlExecutionContext);
             drainWalQueue();
@@ -823,20 +884,27 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             execute("insert into x values('def', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
             drainWalQueue();
-            assertSql("c\ndef\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\ndef\n");
 
             execute("insert into x select * from x");
             drainWalQueue();
 
-            assertSql("""
-                    c\ttimestamp
-                    TJWCP\t2018-01-01T00:00:07.200000Z
-                    TJWCP\t2018-01-01T00:00:07.200000Z
-                    abc\t2024-06-20T17:18:27.752076Z
-                    abc\t2024-06-20T17:18:27.752076Z
-                    def\t2024-06-20T17:18:27.752076Z
-                    def\t2024-06-20T17:18:27.752076Z
-                    """, "x order by timestamp, c");
+            assertQuery("x order by timestamp, c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
+                            c\ttimestamp
+                            TJWCP\t2018-01-01T00:00:07.200000Z
+                            TJWCP\t2018-01-01T00:00:07.200000Z
+                            abc\t2024-06-20T17:18:27.752076Z
+                            abc\t2024-06-20T17:18:27.752076Z
+                            def\t2024-06-20T17:18:27.752076Z
+                            def\t2024-06-20T17:18:27.752076Z
+                            """);
         });
     }
 
@@ -886,7 +954,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             execute("insert into x(v, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
-            assertSql("v\nabc\n", "select v from x limit -1");
+            assertQuery("select v from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nabc\n");
 
             execute("create table z as (select v from x)", sqlExecutionContext);
             execute("alter table x alter column v type varchar", sqlExecutionContext);
@@ -934,22 +1005,38 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 execute("create table x (arr double[]);");
-                assertException("alter table x alter column arr type uuid", 36, "incompatible column type change [existing=DOUBLE[], new=UUID]", sqlExecutionContext);
-                assertException("alter table x alter column arr type int", 36, "incompatible column type change [existing=DOUBLE[], new=INT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type ipv4", 36, "incompatible column type change [existing=DOUBLE[], new=IPv4]", sqlExecutionContext);
-                assertException("alter table x alter column arr type long", 36, "incompatible column type change [existing=DOUBLE[], new=LONG]", sqlExecutionContext);
-                assertException("alter table x alter column arr type short", 36, "incompatible column type change [existing=DOUBLE[], new=SHORT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type byte", 36, "incompatible column type change [existing=DOUBLE[], new=BYTE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type double", 36, "incompatible column type change [existing=DOUBLE[], new=DOUBLE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type float", 36, "incompatible column type change [existing=DOUBLE[], new=FLOAT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type char", 36, "incompatible column type change [existing=DOUBLE[], new=CHAR]", sqlExecutionContext);
-                assertException("alter table x alter column arr type boolean", 36, "incompatible column type change [existing=DOUBLE[], new=BOOLEAN]", sqlExecutionContext);
-                assertException("alter table x alter column arr type timestamp", 36, "incompatible column type change [existing=DOUBLE[], new=TIMESTAMP]", sqlExecutionContext);
-                assertException("alter table x alter column arr type date", 36, "incompatible column type change [existing=DOUBLE[], new=DATE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type symbol", 36, "incompatible column type change [existing=DOUBLE[], new=SYMBOL]", sqlExecutionContext);
-                assertException("alter table x alter column arr type string", 36, "incompatible column type change [existing=DOUBLE[], new=STRING]", sqlExecutionContext);
-                assertException("alter table x alter column arr type varchar", 36, "incompatible column type change [existing=DOUBLE[], new=VARCHAR]", sqlExecutionContext);
-                assertException("alter table x alter column arr type binary", 36, "incompatible column type change [existing=DOUBLE[], new=BINARY]", sqlExecutionContext);
+                assertQuery("alter table x alter column arr type uuid")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=UUID]");
+                assertQuery("alter table x alter column arr type int")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=INT]");
+                assertQuery("alter table x alter column arr type ipv4")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=IPv4]");
+                assertQuery("alter table x alter column arr type long")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=LONG]");
+                assertQuery("alter table x alter column arr type short")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=SHORT]");
+                assertQuery("alter table x alter column arr type byte")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=BYTE]");
+                assertQuery("alter table x alter column arr type double")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=DOUBLE]");
+                assertQuery("alter table x alter column arr type float")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=FLOAT]");
+                assertQuery("alter table x alter column arr type char")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=CHAR]");
+                assertQuery("alter table x alter column arr type boolean")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=BOOLEAN]");
+                assertQuery("alter table x alter column arr type timestamp")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=TIMESTAMP]");
+                assertQuery("alter table x alter column arr type date")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=DATE]");
+                assertQuery("alter table x alter column arr type symbol")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=SYMBOL]");
+                assertQuery("alter table x alter column arr type string")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=STRING]");
+                assertQuery("alter table x alter column arr type varchar")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=VARCHAR]");
+                assertQuery("alter table x alter column arr type binary")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=BINARY]");
             } finally {
                 execute("drop table if exists x;");
             }
@@ -984,22 +1071,38 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                                 ")"
                 );
 
-                assertException("alter table x alter column guid type DOUBLE[]", 44, "incompatible column type change [existing=UUID, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column rint type DOUBLE[]", 44, "incompatible column type change [existing=INT, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column ip type DOUBLE[]", 42, "incompatible column type change [existing=IPv4, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column i64 type DOUBLE[]", 43, "incompatible column type change [existing=LONG, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column i16 type DOUBLE[]", 43, "incompatible column type change [existing=SHORT, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column i8 type DOUBLE[]", 42, "incompatible column type change [existing=BYTE, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column f64 type DOUBLE[]", 43, "incompatible column type change [existing=DOUBLE, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column f32 type DOUBLE[]", 43, "incompatible column type change [existing=FLOAT, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column ch type DOUBLE[]", 42, "incompatible column type change [existing=CHAR, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column b type DOUBLE[]", 41, "incompatible column type change [existing=BOOLEAN, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column ts type DOUBLE[]", 42, "incompatible column type change [existing=TIMESTAMP, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column dt type DOUBLE[]", 42, "incompatible column type change [existing=DATE, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column sym type DOUBLE[]", 43, "incompatible column type change [existing=SYMBOL, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column str type DOUBLE[]", 43, "incompatible column type change [existing=STRING, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column var type DOUBLE[]", 43, "incompatible column type change [existing=VARCHAR, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column bin type DOUBLE[]", 43, "incompatible column type change [existing=BINARY, new=DOUBLE[]]", sqlExecutionContext);
+                assertQuery("alter table x alter column guid type DOUBLE[]")
+                        .fails(44, "incompatible column type change [existing=UUID, new=DOUBLE[]]");
+                assertQuery("alter table x alter column rint type DOUBLE[]")
+                        .fails(44, "incompatible column type change [existing=INT, new=DOUBLE[]]");
+                assertQuery("alter table x alter column ip type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=IPv4, new=DOUBLE[]]");
+                assertQuery("alter table x alter column i64 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=LONG, new=DOUBLE[]]");
+                assertQuery("alter table x alter column i16 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=SHORT, new=DOUBLE[]]");
+                assertQuery("alter table x alter column i8 type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=BYTE, new=DOUBLE[]]");
+                assertQuery("alter table x alter column f64 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=DOUBLE, new=DOUBLE[]]");
+                assertQuery("alter table x alter column f32 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=FLOAT, new=DOUBLE[]]");
+                assertQuery("alter table x alter column ch type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=CHAR, new=DOUBLE[]]");
+                assertQuery("alter table x alter column b type DOUBLE[]")
+                        .fails(41, "incompatible column type change [existing=BOOLEAN, new=DOUBLE[]]");
+                assertQuery("alter table x alter column ts type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=TIMESTAMP, new=DOUBLE[]]");
+                assertQuery("alter table x alter column dt type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=DATE, new=DOUBLE[]]");
+                assertQuery("alter table x alter column sym type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=SYMBOL, new=DOUBLE[]]");
+                assertQuery("alter table x alter column str type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=STRING, new=DOUBLE[]]");
+                assertQuery("alter table x alter column var type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=VARCHAR, new=DOUBLE[]]");
+                assertQuery("alter table x alter column bin type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=BINARY, new=DOUBLE[]]");
 
             } finally {
                 execute("drop table if exists x;");
@@ -1031,15 +1134,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("select timestamp, d from x order by timestamp, d limit -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
                             timestamp\td
                             2044-02-24T00:00:00.000000Z\t1.0
                             2044-02-25T00:00:00.000000Z\t1.0
                             2044-02-25T00:00:00.000000Z\t1.2
-                            """,
-                    "select timestamp, d from x order by timestamp, d limit -3"
-            );
+                            """);
         });
     }
 
@@ -1050,12 +1154,27 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         AtomicBoolean failRead = new AtomicBoolean();
 
         FilesFacade ff = new TestFilesFacadeImpl() {
+            private int injectedErrno;
+
+            @Override
+            public int errno() {
+                // The injected failures below return -1 without a syscall, so the native
+                // errno is left at whatever the last real syscall set. A writer open
+                // probes for an absent posting-seal-purge file, leaving ENOENT behind,
+                // which would steer TableUtils.openRO into its "file does not exist"
+                // branch. The failures simulate an existing file that cannot be opened,
+                // so report a non-ENOENT errno to keep the intended error messages.
+                return injectedErrno != 0 ? injectedErrno : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 if (failRead.get() && fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
+                    injectedErrno = -1;
                     return -1;
                 }
+                injectedErrno = 0;
                 return super.openRO(name);
             }
 
@@ -1063,8 +1182,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             public long openRW(LPSZ name, int opts) {
                 if (!failRead.get() && fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
+                    injectedErrno = -1;
                     return -1;
                 }
+                injectedErrno = 0;
                 return super.openRW(name, opts);
             }
         };
@@ -1109,7 +1230,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table x alter column c type varchar", sqlExecutionContext);
 
             execute("insert into x(c, timestamp) values('asdfadf', now())", sqlExecutionContext);
-            assertSql("c\nasdfadf\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nasdfadf\n");
         });
     }
 
@@ -1141,12 +1265,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             }
 
             execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
-            assertSql("c\nabc\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nabc\n");
 
             engine.releaseInactive();
 
             execute("insert into x(c, timestamp) values('def', now())", sqlExecutionContext);
-            assertSql("c\ndef\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\ndef\n");
         });
     }
 
@@ -1172,13 +1302,17 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("""
-                    timestamp\td\tik
-                    2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW
-                    2044-02-24T00:00:00.000000Z\t3.0\tabc
-                    2044-02-25T00:00:00.000000Z\t4.0\tabc
-                    2044-02-25T00:00:00.000000Z\t5.0\tdef
-                    """, "select timestamp, d, ik from x limit -4");
+            assertQuery("select timestamp, d, ik from x limit -4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
+                            timestamp\td\tik
+                            2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW
+                            2044-02-24T00:00:00.000000Z\t3.0\tabc
+                            2044-02-25T00:00:00.000000Z\t4.0\tabc
+                            2044-02-25T00:00:00.000000Z\t5.0\tdef
+                            """);
         });
     }
 
@@ -1196,7 +1330,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             }
 
             execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
-            assertSql("c\nabc\n", "select c from x limit -1");
+            assertQuery("select c from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nabc\n");
         });
     }
 
@@ -1220,10 +1357,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table y alter column converted type int", sqlExecutionContext);
             drainWalQueue();
 
-            assertQuery("""
-                    converted\tcasted\toriginal
-                    1316134911\t1316134911\t9999999999999
-                    """, "select * from y", null, true, true);
+            assertQuery("select * from y")
+                    .expectSize()
+                    .returns("""
+                            converted\tcasted\toriginal
+                            1316134911\t1316134911\t9999999999999
+                            """);
 
         });
     }
@@ -1260,10 +1399,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     execute("alter table y alter column converted type " + dstType, sqlExecutionContext);
 
                     try {
-                        assertSql(
-                                "count\n0\n",
-                                "select count(*) from y where converted <> casted"
-                        );
+                        assertQuery("select count(*) from y where converted <> casted")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\n0\n");
                     } catch (AssertionError e) {
                         LOG.error().$("failed, error: ").$(e).$();
                         // if the column wasn't converted
@@ -1271,16 +1411,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             throw e;
                         } else {
                             // dump the difference in data
-                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                            assertQuery("select converted, casted, original from y")
+                                    .noLeakCheck()
+                                    .returnsOnce("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n");
                         }
                     }
-                    assertSql(
-                            "column\ttype\n" +
+                    assertQuery("select \"column\", type from table_columns('y')")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("column\ttype\n" +
                                     "converted\t" + dstType + "\n" +
                                     "casted\t" + dstType + "\n" +
-                                    "original\t" + srcType + "\n",
-                            "select \"column\", type from table_columns('y')"
-                    );
+                                    "original\t" + srcType + "\n");
                     execute("drop table y", sqlExecutionContext);
                     drainWalQueue();
                 }
@@ -1305,21 +1447,27 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntOverflowConversions() throws SqlException {
+    public void testIntOverflowConversions() throws Exception {
         execute("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
         execute("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
         drainWalQueue();
 
         execute("alter table x alter column a type double", sqlExecutionContext);
         drainWalQueue();
-        assertSql("a\n-7.178801693176413E18\n", "select a from x");
+        assertQuery("select a from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("a\n-7.178801693176413E18\n");
 
         execute("alter table x alter column a type int", sqlExecutionContext);
         drainWalQueue();
-        assertSql("""
-                cast\ta
-                null\tnull
-                """, "select cast(-7.178801693176413E18 as int), a from x");
+        assertQuery("select cast(-7.178801693176413E18 as int), a from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        cast\ta
+                        null\tnull
+                        """);
     }
 
     @Test
@@ -1355,19 +1503,35 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             // Test the size isn't ballooned after the conversion, it's no more than 25% larger than the initial size
             execute("alter table x alter column c type varchar", sqlExecutionContext);
-            assertSql("column\ntrue\n", "select sum(diskSize) < " + (initialSize * 1.25) + " from table_partitions('x')");
+            assertQuery("select sum(diskSize) < " + (initialSize * 1.25) + " from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("column\ntrue\n");
 
             // Test the size back to the original
             execute("alter table x alter column c type string", sqlExecutionContext);
-            assertSql("sum\n" + initialSize + "\n", "select sum(diskSize) from table_partitions('x')");
+            assertQuery("select sum(diskSize) from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("sum\n" + initialSize + "\n");
 
             // Test the size isn't ballooned after the conversion, it's no more than 50% larger than the initial size
             execute("alter table x alter column x type string", sqlExecutionContext);
-            assertSql("column\ntrue\n", "select sum(diskSize) < " + (initialSize * 1.5) + " from table_partitions('x')");
+            assertQuery("select sum(diskSize) < " + (initialSize * 1.5) + " from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("column\ntrue\n");
 
             // Test the size back to the original
             execute("alter table x alter column x type int", sqlExecutionContext);
-            assertSql("sum\n" + initialSize + "\n", "select sum(diskSize) from table_partitions('x')");
+            assertQuery("select sum(diskSize) from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("sum\n" + initialSize + "\n");
         });
     }
 
@@ -1408,7 +1572,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x(s, timestamp) values(1, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("s\n1\n", "select s from x limit -1");
+            assertQuery("select s from x limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\n1\n");
         });
     }
 
@@ -1578,8 +1745,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tcol\n" +
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("drop table x");
         });
@@ -1598,8 +1769,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
             }
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tcol\n" +
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("drop table x");
         });
@@ -1614,8 +1789,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tcol\n" +
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("drop table x");
         });
@@ -1630,8 +1809,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute(String.format("ALTER TABLE x ALTER COLUMN col TYPE %s", toType), sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tcol\n" +
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("DROP TABLE x");
         });
@@ -1646,8 +1829,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute(String.format("ALTER TABLE x ALTER COLUMN col TYPE %s", toType), sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tcol\n" +
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("DROP TABLE x");
         });
@@ -1734,10 +1921,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     execute("alter table y alter column converted type " + dstType, sqlExecutionContext);
 
                     try {
-                        assertSql(
-                                "count\n0\n",
-                                "select count(*) from y where converted <> casted"
-                        );
+                        assertQuery("select count(*) from y where converted <> casted")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\n0\n");
                     } catch (AssertionError e) {
                         LOG.error().$("failed, error: ").$(e).$();
                         // if the column wasn't converted
@@ -1745,16 +1933,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             throw e;
                         } else {
                             // dump the difference in data
-                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                            assertQuery("select converted, casted, original from y")
+                                    .noLeakCheck()
+                                    .returnsOnce("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n");
                         }
                     }
-                    assertSql(
-                            "column\ttype\n" +
+                    assertQuery("select \"column\", type from table_columns('y')")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("column\ttype\n" +
                                     "converted\t" + dstType + "\n" +
                                     "casted\t" + dstType + "\n" +
-                                    "original\t" + srcType + "\n",
-                            "select \"column\", type from table_columns('y')"
-                    );
+                                    "original\t" + srcType + "\n");
                     execute("drop table y", sqlExecutionContext);
                     drainWalQueue();
 
@@ -1764,7 +1954,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
-    private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws SqlException, NumericException {
+    private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws Exception {
         assumeWal();
         execute(
                 "create table x as (" +
@@ -1796,7 +1986,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
         drainWalQueue();
 
-        assertSql("c\nabc\n", "select c from x limit -1");
+        assertQuery("select c from x limit -1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("c\nabc\n");
     }
 
     protected static void assertSqlCursorsConvertedStrings(CharSequence expectedSql, CharSequence actualSql) throws SqlException {

@@ -108,6 +108,16 @@ public interface PageFrameMemory {
     DirectLongList getPageSizes();
 
     /**
+     * Returns the pool that owns this frame memory's parquet decode buffers, or
+     * {@code null} when the memory is not owned by a {@link PageFrameMemoryPool}.
+     * A {@link PageFrameMemoryRecord} stamps this on bind so that
+     * {@link PageFrameMemoryPool#navigateTo(int, PageFrameMemoryRecord)} can tell
+     * "still bound to this pool's live buffers" from "bound to another (possibly
+     * freed) pool's buffers" and rebind only when necessary.
+     */
+    PageFrameMemoryPool getPool();
+
+    /**
      * Returns row ID offset used to compute real row IDs.
      */
     long getRowIdOffset();

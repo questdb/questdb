@@ -56,6 +56,11 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void close() {
+        Misc.free(cursor);
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         Misc.freeObjListAndClear(cursors);
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {

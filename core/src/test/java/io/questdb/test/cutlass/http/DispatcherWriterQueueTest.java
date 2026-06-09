@@ -267,18 +267,24 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             String right = "\t128\t0\tfalse\tfalse\t\t\n";
 
             // check its true by default
-            assertSql(header + left + "true" + right, "table_columns('foo')");
+            assertQuery("table_columns('foo')")
+                    .noLeakCheck()
+                    .returnsOnce(header + left + "true" + right);
 
             execute("ALTER TABLE foo ALTER COLUMN a NOCACHE");
             drainWalQueue();
             // check its false now
-            assertSql(header + left + "false" + right, "table_columns('foo')");
+            assertQuery("table_columns('foo')")
+                    .noLeakCheck()
+                    .returnsOnce(header + left + "false" + right);
 
             execute("ALTER TABLE foo ALTER COLUMN a CACHE");
             drainWalQueue();
 
             // check its true again
-            assertSql(header + left + "true" + right, "table_columns('foo')");
+            assertQuery("table_columns('foo')")
+                    .noLeakCheck()
+                    .returnsOnce(header + left + "true" + right);
         });
     }
 

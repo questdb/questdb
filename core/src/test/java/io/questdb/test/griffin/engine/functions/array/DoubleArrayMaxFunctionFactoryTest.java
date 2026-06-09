@@ -119,15 +119,17 @@ public class DoubleArrayMaxFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWithTable() throws SqlException {
+    public void testWithTable() throws Exception {
         execute(
                 "CREATE TABLE tango as (SELECT ARRAY[" +
                         "rnd_double(0)*100, rnd_double(0)*100, rnd_double(0)*100" +
                         "] arr FROM long_sequence(5))");
 
         // Just verify that the function works with table data
-        assertSql(
-                "count\n5\n",
-                "SELECT count(*) FROM (SELECT array_max(arr) FROM tango WHERE array_max(arr) IS NOT NULL)");
+        assertQuery("SELECT count(*) FROM (SELECT array_max(arr) FROM tango WHERE array_max(arr) IS NOT NULL)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n5\n");
     }
 }

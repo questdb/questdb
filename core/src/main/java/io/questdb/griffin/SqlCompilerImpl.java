@@ -1198,28 +1198,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
 
-        // Auto-append the designated timestamp on POSTING indexes, even
-        // when the user gave no INCLUDE clause. This is the bare
-        // ALTER TABLE ... ADD INDEX TYPE POSTING case; without the
-        // append the default config's covering benefit silently
-        // disappears.
-        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()) {
+        // Auto-append the designated timestamp on POSTING indexes, but only
+        // when the user gave an INCLUDE clause with at least one column. A bare
+        // ALTER TABLE ... ADD INDEX TYPE POSTING (no INCLUDE) is a plain,
+        // non-covering posting index; the timestamp is auto-added only to round
+        // out an explicit covering set, never to turn a non-covering index into
+        // a covering one on its own.
+        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()
+                && coveringColumnNames != null && coveringColumnNames.size() > 0) {
             int tsIndex = metadata.getTimestampIndex();
             if (tsIndex >= 0 && tsIndex != columnIndex) {
                 CharSequence tsName = metadata.getColumnName(tsIndex);
                 boolean isTimestampAlreadyIncluded = false;
-                if (coveringColumnNames != null) {
-                    for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
-                        if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
-                            isTimestampAlreadyIncluded = true;
-                            break;
-                        }
+                for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                        isTimestampAlreadyIncluded = true;
+                        break;
                     }
                 }
                 if (!isTimestampAlreadyIncluded) {
-                    if (coveringColumnNames == null) {
-                        coveringColumnNames = new ObjList<>(1);
-                    }
                     coveringColumnNames.add(tsName);
                 }
             }

@@ -35,50 +35,54 @@ public class MaxDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
-        assertQuery("""
-                avg
-                5261.376146789
-                """, "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b date", """
-                avg
-                5261.376146789
-                """, false, true, false);
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b date")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        avg
+                        5261.376146789
+                        """, """
+                        avg
+                        5261.376146789
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),6) avg, max(b) max from tab")
+                .ddl("insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg\tmax
                         14.792007\t1970-01-01T00:01:28.964Z
-                        """,
-                "select round(avg(f),6) avg, max(b) max from tab",
-                "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("""
-                max
-                
-                """, "select max(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", """
-                max
-                5138-11-16T09:46:39.995Z
-                """, false, true, false);
+        assertQuery("select max(f) from tab")
+                .ddl("create table tab as (select cast(null as date) f from long_sequence(33))")
+                .mutateWith("insert into tab select 99999999999995L from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        max
+                        
+                        """, """
+                        max
+                        5138-11-16T09:46:39.995Z
+                        """);
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select max(f) from tab")
+                .ddl("create table tab as (select cast(rnd_long(-55, 9009, 2) as date) f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         max
                         1970-01-01T00:00:08.826Z
-                        """,
-                "select max(f) from tab",
-                "create table tab as (select cast(rnd_long(-55, 9009, 2) as date) f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

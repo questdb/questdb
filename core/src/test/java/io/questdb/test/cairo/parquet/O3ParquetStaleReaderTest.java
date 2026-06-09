@@ -165,6 +165,120 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3MergeAfterDropColumnStampsDenseSortColumn() throws Exception {
+        // A column sits BEFORE the designated timestamp, so in the converted
+        // parquet the timestamp is at dense column 1. Dropping that leading
+        // column and then running an O3 merge rewrites the partition with the
+        // dense target schema [ts], shifting the timestamp to dense column 0.
+        // The _pm sort column must follow to 0. The table's raw timestamp slot
+        // stays 1 (DROP COLUMN leaves a tombstone), so reusing that slot would
+        // declare an out-of-range sort column.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            // Converted with the leading column present: ts is the dense column 1.
+            assertParquetSortColumn("x", 1);
+
+            execute("ALTER TABLE x DROP COLUMN a");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:30:00.000Z'),
+                            ('2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // After the rewrite the dense schema is [ts]: the sort column is 0.
+            assertParquetSortColumn("x", 0);
+        });
+    }
+
+    @Test
+    public void testO3MergeNoSchemaChangePreservesDenseSortColumn() throws Exception {
+        // The leading column is dropped BEFORE conversion, so the partition is
+        // already dense [ts] when it becomes parquet and the encoder writes the
+        // sort column at 0. The table's raw timestamp slot is nonetheless 1 (the
+        // dropped column leaves a tombstone). A later O3 merge rewrites the
+        // partition with NO schema change; the rewrite must keep the dense sort
+        // column 0 rather than re-stamping the stale slot 1.
+        //
+        // The single-row-group partition makes O3PartitionJob choose the rewrite
+        // path (rowGroupCount == 1) even without a schema change, so the merge
+        // runs through ParquetUpdater rather than the append path.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // Drop the leading column BEFORE conversion: the partition becomes
+            // dense [ts] when encoded.
+            execute("ALTER TABLE x DROP COLUMN a");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            // The encoder already writes the dense sort column 0.
+            assertParquetSortColumn("x", 0);
+
+            // O3 merge with no schema change rewrites the single-row-group partition.
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:30:00.000Z'),
+                            ('2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Still the dense sort column 0, not the stale raw slot 1.
+            assertParquetSortColumn("x", 0);
+        });
+    }
+
+    @Test
     public void testO3MergePreservesAddColumnSchemaInPm() throws Exception {
         // ADD COLUMN fires AFTER the partition is already parquet. On the
         // subsequent O3 merge, the target-schema loop in O3PartitionJob
@@ -199,7 +313,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             // written with only (a, ts).
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertParquetColumnCount("x", 2);
+            assertParquetColumnCount(2);
 
             execute("ALTER TABLE x ADD COLUMN newcol DOUBLE");
             drainWalQueue();
@@ -215,7 +329,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertParquetColumnCount("x", 3);
+            assertParquetColumnCount(3);
         });
     }
 
@@ -252,7 +366,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertParquetColumnCount("x", 3);
+            assertParquetColumnCount(3);
 
             execute("ALTER TABLE x DROP COLUMN b");
             drainWalQueue();
@@ -266,7 +380,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertParquetColumnCount("x", 2);
+            assertParquetColumnCount(2);
         });
     }
 
@@ -360,12 +474,16 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
             // A fresh reader sees the post-merge state with the new rows
             // merged in.
-            assertSql(
-                    "count\n14\n",
-                    "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'"
-            );
-            assertSql(
-                    """
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n14\n");
+            assertQuery("SELECT a, newcol, ts FROM x ORDER BY ts, a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tnewcol\tts
                             1\tnull\t2020-01-01T00:00:00.000000Z
                             50\t7.5\t2020-01-01T00:30:00.000000Z
@@ -382,9 +500,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             11\tnull\t2020-01-01T10:00:00.000000Z
                             12\tnull\t2020-01-01T11:00:00.000000Z
                             99\tnull\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT a, newcol, ts FROM x ORDER BY ts, a"
-            );
+                            """);
         });
     }
 
@@ -397,8 +513,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         return -1;
     }
 
-    private void assertParquetColumnCount(String tableName, int expectedColumnCount) {
-        try (TableReader reader = getReader(tableName)) {
+    private void assertParquetColumnCount(int expectedColumnCount) {
+        try (TableReader reader = getReader("x")) {
             int parquetCount = 0;
             for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
                 if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
@@ -411,6 +527,35 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 Assert.assertEquals("column count on parquet partition " + i,
                         expectedColumnCount, meta.getColumnCount());
                 Assert.assertTrue("row group count > 0", meta.getRowGroupCount() > 0);
+                parquetCount++;
+            }
+            Assert.assertTrue("expected at least one parquet partition", parquetCount > 0);
+        }
+    }
+
+    private void assertParquetSortColumn(String tableName, int expectedSortColumnIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            int parquetCount = 0;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                ParquetMetaFileReader meta = reader
+                        .getAndInitParquetPartitionDecoder(i)
+                        .metadata();
+                Assert.assertEquals("sort column count on parquet partition " + i,
+                        1, meta.getSortingColumnCount());
+                Assert.assertEquals("sort column index on parquet partition " + i,
+                        expectedSortColumnIndex, meta.getSortingColumnIndex(0));
+                // The sole sort key is the designated timestamp, so the
+                // designated-timestamp index must independently equal the
+                // expected dense position. Asserting it against
+                // getSortingColumnIndex(0) would be tautological: that getter
+                // returns getDesignatedTimestampColumnIndex() whenever the
+                // SORTING_IS_DTS_ASC flag is set (which it always is here).
+                Assert.assertEquals("designated timestamp index on parquet partition " + i,
+                        expectedSortColumnIndex, meta.getDesignatedTimestampColumnIndex());
                 parquetCount++;
             }
             Assert.assertTrue("expected at least one parquet partition", parquetCount > 0);

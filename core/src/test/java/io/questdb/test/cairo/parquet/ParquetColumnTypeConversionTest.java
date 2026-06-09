@@ -743,7 +743,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
             drainWalQueue();
             // Out-of-range floats must read back as the target type's NULL sentinel.
-            assertSql("val\n" + nullRendering + "\n", "SELECT val FROM pt");
+            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n" + nullRendering + "\n");
         } finally {
             tryDrop("pt");
         }
@@ -759,7 +759,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
             drainWalQueue();
             // CursorPrinter renders Decimal*_NULL as an empty cell.
-            assertSql("val\n\n", "SELECT val FROM pt");
+            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
         } finally {
             tryDrop("pt");
         }
@@ -851,7 +851,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                     drainWalQueue();
 
-                    assertSql(
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                             """
                                     val\tts
                                     1\t2024-01-01T00:00:01.000000Z
@@ -866,9 +866,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                                     10\t2024-01-01T00:00:10.000000Z
                                     11\t2024-01-01T00:00:11.000000Z
                                     \t2024-01-01T00:00:12.000000Z
-                                    """,
-                            "SELECT val, ts FROM pt"
-                    );
+                                    """);
                 } finally {
                     tryDrop("pt");
                 }
@@ -966,15 +964,13 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 // The VARCHAR-to-CHAR materializer must decode UTF-8 before taking
                 // the first code unit; treating the leading UTF-8 byte as a char
                 // would map U+00E9 to U+00C3 (the C3 byte of the C3 A9 sequence).
-                assertSql(
+                assertQuery("SELECT val FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                         """
                                 val
                                 a
                                 é
                                 日
-                                """,
-                        "SELECT val FROM pt ORDER BY ts"
-                );
+                                """);
             } finally {
                 tryDrop("pt");
             }
@@ -1016,10 +1012,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                 drainWalQueue();
 
-                assertSql(
-                        "val\na\né\n日\n\n",
-                        "SELECT val FROM pt ORDER BY ts"
-                );
+                assertQuery("SELECT val FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                        "val\na\né\n日\n\n");
             } finally {
                 tryDrop("pt");
             }
@@ -1053,16 +1047,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 // Expected: the stored UTF-8 bytes decoded as UTF-16 code points.
                 // With asAsciiCharSequence(), each UTF-8 byte becomes a char and the
                 // output is mojibake (e.g. 'é' -> 'Ã©').
-                assertSql(
+                assertQuery("SELECT val FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                         """
                                 val
                                 hello
                                 café naïve
                                 日本語
                                 emoji 🦆
-                                """,
-                        "SELECT val FROM pt ORDER BY ts"
-                );
+                                """);
             } finally {
                 tryDrop("pt");
             }
@@ -1286,19 +1278,15 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                     drainWalQueue();
 
-                    assertSql(
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                             """
                                     val\tts
                                     192.168.1.1\t2024-01-01T00:00:01.000000Z
                                     10.0.0.1\t2024-01-01T00:00:02.000000Z
                                     \t2024-01-01T00:00:03.000000Z
-                                    """,
-                            "SELECT val, ts FROM pt"
-                    );
-                    assertSql(
-                            "c\n1\n",
-                            "SELECT count() c FROM pt WHERE val IS NULL"
-                    );
+                                    """);
+                    assertQuery("SELECT count() c FROM pt WHERE val IS NULL").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                            "c\n1\n");
                 } finally {
                     tryDrop("pt");
                 }
@@ -1337,7 +1325,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                     drainWalQueue();
 
-                    assertSql(
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                             """
                                     val\tts
                                     a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t2024-01-01T00:00:01.000000Z
@@ -1348,13 +1336,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                                     \t2024-01-01T00:00:06.000000Z
                                     \t2024-01-01T00:00:07.000000Z
                                     \t2024-01-01T00:00:08.000000Z
-                                    """,
-                            "SELECT val, ts FROM pt"
-                    );
-                    assertSql(
-                            "c\n6\n",
-                            "SELECT count() c FROM pt WHERE val IS NULL"
-                    );
+                                    """);
+                    assertQuery("SELECT count() c FROM pt WHERE val IS NULL").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                            "c\n6\n");
                 } finally {
                     tryDrop("pt");
                 }
@@ -1387,15 +1371,13 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     execute("ALTER TABLE pt ALTER COLUMN val TYPE TIMESTAMP_NS");
                     drainWalQueue();
 
-                    assertSql(
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                             """
                                     val\tts
                                     2020-06-15T12:30:00.123456789Z\t2024-01-01T00:00:01.000000Z
                                     1970-01-01T00:00:00.000000001Z\t2024-01-01T00:00:02.000000Z
                                     \t2024-01-01T00:00:03.000000Z
-                                    """,
-                            "SELECT val, ts FROM pt"
-                    );
+                                    """);
                 } finally {
                     tryDrop("pt");
                 }
@@ -1475,16 +1457,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
 
                 // Final state: original microsecond values, round-trip lossless.
-                assertSql(
+                assertQuery("SELECT val, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                         """
                                 val\tts
                                 2020-06-15T12:30:00.123456Z\t2024-01-01T00:00:01.000000Z
                                 1970-01-01T00:00:00.000000Z\t2024-01-01T00:00:02.000000Z
                                 2020-06-15T12:30:00.999999Z\t2024-01-01T00:00:03.000000Z
                                 \t2024-01-01T00:00:04.000000Z
-                                """,
-                        "SELECT val, ts FROM pt ORDER BY ts"
-                );
+                                """);
             } finally {
                 tryDrop("nt");
                 tryDrop("pt");
@@ -1545,15 +1525,13 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 // field_id, so every row reads NULL. If the bug were real, pt would be
                 // all-NULL for c while nt keeps the values.
                 assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
-                assertSql(
+                assertQuery("SELECT c, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                         """
                                 c\tts
                                 10\t2024-01-01T00:00:01.000000Z
                                 \t2024-01-01T00:00:02.000000Z
                                 30\t2024-01-01T00:00:03.000000Z
-                                """,
-                        "SELECT c, ts FROM pt ORDER BY ts"
-                );
+                                """);
 
                 // Eager rewrite to native must also preserve the values (exercises the
                 // ConvertOperatorImpl pre-pass / getParquetColumnType path the claim
@@ -1661,16 +1639,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 Assert.assertEquals(ColumnType.LONG, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
             }
 
-            assertSql(
+            assertQuery("SELECT val, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
                     """
                             val\tts
                             10\t2024-01-01T00:00:01.000000Z
                             99\t2024-01-01T00:00:02.000000Z
                             20\t2024-01-01T00:00:03.000000Z
                             null\t2024-01-01T00:00:05.000000Z
-                            """,
-                    "SELECT val, ts FROM pt ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -1807,10 +1783,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 // Baseline: a straight SELECT must see the correctly-converted strings on both partitions.
-                assertSql(
-                        "val\tts\n42\t2024-01-01T00:00:00.000000Z\nhello-from-p2\t2024-01-02T00:00:00.000000Z\n",
-                        "SELECT * FROM pt ORDER BY ts"
-                );
+                assertQuery("SELECT * FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                        "val\tts\n42\t2024-01-01T00:00:00.000000Z\nhello-from-p2\t2024-01-02T00:00:00.000000Z\n");
 
                 // Now manually drive the cursor so we can interleave Record A iteration with
                 // a Record B recordAt() on a different frame. This exercises the case where
@@ -2016,16 +1990,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
                 // Lazy read: the parquet file has no 'extra' column, so all
                 // rows must surface as NULL through the column-top fallback.
-                assertQueryNoLeakCheck(
+                assertQuery("SELECT * FROM pt ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(
                         "id\tts\textra\n" +
                                 "1\t2024-01-01T00:00:01.000000Z\tnull\n" +
                                 "2\t2024-01-01T00:00:02.000000Z\tnull\n" +
-                                "3\t2024-01-01T00:00:03.000000Z\tnull\n",
-                        "SELECT * FROM pt ORDER BY ts",
-                        "ts",
-                        true,
-                        true
-                );
+                                "3\t2024-01-01T00:00:03.000000Z\tnull\n");
 
                 assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
 
@@ -2146,8 +2115,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 // pick the vectorized Rosti GroupBy. The parquet-converted-column guard must
                 // force the safe Async path instead (note: NOT "vectorized: true").
                 String query = "SELECT sym, sum(val) s FROM pt GROUP BY sym ORDER BY sym";
-                assertPlanNoLeakCheck(
-                        query,
+                assertQuery(query).noLeakCheck().assertsPlan(
                         """
                                 Encode sort light
                                   keys: [sym]
@@ -2158,8 +2126,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: pt
-                                """
-                );
+                                """);
 
                 assertSqlCursors(
                         "SELECT sym, sum(val) s FROM nt GROUP BY sym ORDER BY sym",

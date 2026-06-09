@@ -26,6 +26,7 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -116,6 +117,12 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     @Override
     public DirectLongList getPageSizes() {
         return pageSizes;
+    }
+
+    @Override
+    public PageFrameMemoryPool getPool() {
+        // Not backed by a PageFrameMemoryPool; records bound from here always rebind.
+        return null;
     }
 
     @Override
