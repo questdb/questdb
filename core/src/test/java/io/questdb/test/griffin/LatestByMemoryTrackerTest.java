@@ -108,8 +108,9 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 'b', 4)"
             );
             drainWalQueue();
-            // Single-pass: returns() re-executes the query, and LATEST BY frees its row lists only
-            // at factory close, so a second pass would breach this class's tight 128 KiB limit.
+            // returnsOnce() not returns(): this class's tight 128 KiB per-query limit cannot fit
+            // returns()'s extra re-execution passes (the ORDER BY sort reopens a 128 KiB key buffer
+            // that alone sits at the limit). The result is deterministic, so no coverage is lost.
             assertQuery("SELECT sym, v FROM tab_idx_small LATEST ON ts PARTITION BY sym ORDER BY sym")
                     .noLeakCheck()
                     .returnsOnce("sym\tv\n" +
@@ -146,8 +147,8 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 2, 40)"
             );
             drainWalQueue();
-            // Single-pass: returns() re-executes the query, and LATEST BY frees its row lists only
-            // at factory close, so a second pass would breach this class's tight 128 KiB limit.
+            // returnsOnce() not returns(): see testLatestByIndexedSucceedsOnLowCardinality. The tight
+            // 128 KiB limit cannot fit returns()'s extra re-execution passes; the result is deterministic.
             assertQuery("SELECT k, v FROM tab_noidx_small LATEST ON ts PARTITION BY k ORDER BY k")
                     .noLeakCheck()
                     .returnsOnce("k\tv\n" +
@@ -189,8 +190,8 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 2, 40)"
             );
             drainWalQueue();
-            // Single-pass: returns() re-executes the query, and LATEST BY frees its row lists only
-            // at factory close, so a second pass would breach this class's tight 128 KiB limit.
+            // returnsOnce() not returns(): see testLatestByIndexedSucceedsOnLowCardinality. The tight
+            // 128 KiB limit cannot fit returns()'s extra re-execution passes; the result is deterministic.
             assertQuery("WITH yy AS (SELECT ts, k, max(v) v FROM tab_sub_small SAMPLE BY 1s ALIGN TO FIRST OBSERVATION) " +
                     "SELECT k, v FROM yy LATEST ON ts PARTITION BY k ORDER BY k")
                     .noLeakCheck()

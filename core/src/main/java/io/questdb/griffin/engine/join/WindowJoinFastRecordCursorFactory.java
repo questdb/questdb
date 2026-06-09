@@ -240,6 +240,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker and reopens the allocators before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw ex;
         }
         return cursor;
@@ -423,7 +426,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.crossIndex = columnIndex;
             this.columnSplit = columnSplit;
             this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.value = value;
             this.masterTimestampIndex = masterTimestampIndex;
@@ -449,7 +452,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 this.record = joinRecord;
             }
 
-            this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             this.slaveTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
             this.slaveTimestamps.setAllocator(slaveAllocator);
             this.slaveRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
@@ -621,7 +624,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             if (!isOpen) {
                 isOpen = true;
                 slaveData.reopen();
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
+                slaveAllocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
@@ -693,7 +698,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 this.crossIndex = columnIndex;
                 this.columnSplit = columnSplit;
                 this.groupByFunctions = groupByFunctions;
-                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
                 this.value = value;
                 this.masterTimestampIndex = masterTimestampIndex;
@@ -720,7 +725,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     this.record = joinRecord;
                 }
 
-                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 this.columnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
                 this.columnSink.setAllocator(slaveAllocator);
                 this.timestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
@@ -745,10 +750,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         public void close() {
             super.close();
             Misc.free(prevailingCache);
-            Misc.free(allocator);
-            Misc.free(slaveAllocator);
             if (isOpen) {
                 isOpen = false;
+                Misc.free(allocator);
+                Misc.free(slaveAllocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
@@ -965,7 +970,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 isOpen = true;
                 slaveData.reopen();
                 prevailingCache.reopen();
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
+                slaveAllocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }

@@ -164,17 +164,17 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        TimeFrameCursor slaveCursor = null;
         try {
-            TimeFrameCursor slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            try {
-                cursor.of(masterCursor, slaveCursor, executionContext);
-                return cursor;
-            } catch (Throwable th) {
-                Misc.free(slaveCursor);
-                throw th;
-            }
+            slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            cursor.of(masterCursor, slaveCursor, executionContext);
+            return cursor;
         } catch (Throwable th) {
+            Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the maps and allocator before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw th;
         }
     }
@@ -276,11 +276,11 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
             Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, groupByFunctions.size());
             this.groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, groupByFunctions);
-            this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, groupByAllocator);
 
             // Create data map for GROUP BY keys
-            this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
             // Create group by key copier with key functions
             Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
@@ -306,7 +306,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
             if (asOfJoinKeyTypes != null) {
                 SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
-                this.asOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
+                this.asOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes, false, false);
             } else {
                 this.asOfJoinMap = null;
             }
@@ -323,7 +323,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     configuration.getSqlHorizonJoinBwdScanMinGap(),
                     configuration.getSqlHorizonJoinBwdScanSwitchFactor()
             );
-            this.isOpen = true;
+            this.isOpen = false;
         }
 
         @Override
@@ -480,9 +480,12 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                groupByAllocator.setMemoryTracker(executionContext.getMemoryTracker());
                 groupByAllocator.reopen();
+                dataMap.setMemoryTracker(executionContext.getMemoryTracker());
                 dataMap.reopen();
                 if (asOfJoinMap != null) {
+                    asOfJoinMap.setMemoryTracker(executionContext.getMemoryTracker());
                     asOfJoinMap.reopen();
                 }
             }

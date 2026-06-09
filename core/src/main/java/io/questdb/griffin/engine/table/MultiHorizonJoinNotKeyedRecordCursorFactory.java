@@ -143,6 +143,9 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         } catch (Throwable th) {
             Misc.freeObjList(cursor.slaveCursors);
             Misc.free(masterCursor);
+            // of() reopens the allocator and ASOF maps under the per-query tracker before it can throw;
+            // close() frees them and resets isOpen. The slave slots are nulled above, so close() never double-frees.
+            Misc.free(cursor);
             throw th;
         }
     }
@@ -242,7 +245,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             this.timeFrameHelpers = new ObjList<>(slaveCount);
             this.isOpen = true;
             try {
-                this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, groupByAllocator);
 
                 // Create per-slave maps, symbol translating records, and time frame helpers
@@ -253,7 +256,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 for (int s = 0; s < slaveCount; s++) {
                     HorizonJoinSlaveState ss = slaveStates.getQuick(s);
                     if (ss.getAsOfJoinKeyTypes() != null) {
-                        asOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, ss.getAsOfJoinKeyTypes(), new SingleColumnType(ColumnType.LONG)));
+                        asOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, ss.getAsOfJoinKeyTypes(), new SingleColumnType(ColumnType.LONG), false, false));
                     } else {
                         asOfJoinMaps.add(null);
                     }
@@ -270,6 +273,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                             bwdScanSwitchFactor
                     ));
                 }
+                this.isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -412,9 +416,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         void of(RecordCursor masterCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                groupByAllocator.setMemoryTracker(executionContext.getMemoryTracker());
                 groupByAllocator.reopen();
                 for (int s = 0; s < slaveCount; s++) {
                     if (asOfJoinMaps.getQuick(s) != null) {
+                        asOfJoinMaps.getQuick(s).setMemoryTracker(executionContext.getMemoryTracker());
                         asOfJoinMaps.getQuick(s).reopen();
                     }
                 }
