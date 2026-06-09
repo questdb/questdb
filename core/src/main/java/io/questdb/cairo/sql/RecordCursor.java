@@ -41,7 +41,7 @@ import java.io.Closeable;
  * <li>Sequential record iteration with {@link #hasNext()} and {@link #getRecord()}</li>
  * <li>Dual record access with {@link #getRecord()} and {@link #getRecordB()} for comparisons</li>
  * <li>Random access positioning with {@link #recordAt(Record, long)}</li>
- * <li>Efficient row skipping with {@link #skipRows(Counter)}</li>
+ * <li>Efficient row skipping with {@link #skipRows(Counter, long)}</li>
  * <li>Size calculation with circuit breaker support</li>
  * <li>Symbol table access for symbol columns</li>
  * <li>Optimized top-K operations for ORDER BY + LIMIT queries</li>
@@ -58,6 +58,13 @@ import java.io.Closeable;
  * access, use {@link #newSymbolTable(int)} to create thread-local symbol table instances.
  */
 public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTableSource {
+
+    /**
+     * Sentinel for {@link #skipRows(Counter, long)}'s {@code maxRowsAfterSkip}
+     * parameter that indicates the caller has no upper bound on subsequent
+     * consumption. Implementations treat this as "do not clamp".
+     */
+    long UNBOUNDED_ROW_COUNT = Long.MAX_VALUE;
 
     /**
      * Utility method to convert a boolean value to its long representation.
@@ -83,7 +90,7 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @param cursor   the record cursor to skip rows in
      * @param rowCount a counter indicating how many rows to skip; this value is
      *                 decremented as rows are actually skipped
-     * @see #skipRows(Counter)
+     * @see #skipRows(Counter, long)
      */
     static void skipRows(RecordCursor cursor, Counter rowCount) {
         while (rowCount.get() > 0 && cursor.hasNext()) {
@@ -319,12 +326,22 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * This optimization is supported by some record cursors that provide random access
      * capabilities, such as tables ordered by a designated timestamp. For cursors that
      * don't support efficient skipping, this method falls back to iterative advancement.
+     * <p>
+     * The {@code maxRowsAfterSkip} parameter is an <em>advisory</em> upper bound on
+     * the number of rows the consumer plans to read after the skip completes.
+     * Implementations may use it to reduce work (e.g., clamp the decode window of
+     * underlying page frames). Iteration MUST remain correct if it is ignored.
+     * Callers without a known upper bound pass {@link #UNBOUNDED_ROW_COUNT}.
      *
-     * @param rowCount a counter containing the number of rows to skip; this value is
-     *                 decremented by the number of rows actually skipped
+     * @param rowCount         a counter containing the number of rows to skip; this
+     *                         value is decremented by the number of rows actually
+     *                         skipped
+     * @param maxRowsAfterSkip advisory upper bound on the number of rows the consumer
+     *                         intends to read after the skip; {@link #UNBOUNDED_ROW_COUNT}
+     *                         when unknown
      * @see #skipRows(RecordCursor, Counter)
      */
-    default void skipRows(Counter rowCount) {
+    default void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         while (rowCount.get() > 0 && hasNext()) {
             rowCount.dec();
         }

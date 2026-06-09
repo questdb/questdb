@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -100,8 +101,14 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private long fileSize = 0;
     private long filterBufEnd;
     private boolean isFilterListPrepared;
+    // true while inside skipRows(): defeats the post-skip clamp so the
+    // skip loop's switchToNextRowGroup decodes full row groups, since
+    // skipping inside a row group relies on rowGroupRowCount == full size.
+    private boolean isInSkipRows;
+    private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
     private int rowGroupIndex;
     private long rowGroupRowCount;
+    private long rowsProducedSinceSkip;
 
     public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         try {
@@ -241,11 +248,16 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public boolean hasNext() {
         if (++currentRowInRowGroup < rowGroupRowCount) {
+            rowsProducedSinceSkip++;
             return true;
         }
 
         try {
-            return switchToNextRowGroup();
+            if (switchToNextRowGroup()) {
+                rowsProducedSinceSkip++;
+                return true;
+            }
+            return false;
         } catch (CairoException ex) {
             throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
         }
@@ -297,30 +309,37 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
-        long toSkip = rowCount.get();
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        this.maxRowsAfterSkip = maxRowsAfterSkip;
+        this.rowsProducedSinceSkip = 0;
+        this.isInSkipRows = true;
+        try {
+            long toSkip = rowCount.get();
 
-        while (toSkip > 0) {
-            if (currentRowInRowGroup + 1 >= rowGroupRowCount) {
-                try {
-                    if (!switchToNextRowGroup()) {
+            while (toSkip > 0) {
+                if (currentRowInRowGroup + 1 >= rowGroupRowCount) {
+                    try {
+                        if (!switchToNextRowGroup()) {
+                            return;
+                        }
+                    } catch (CairoException ex) {
+                        throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
+                    }
+                    toSkip--;
+                    rowCount.dec();
+                    if (toSkip == 0) {
                         return;
                     }
-                } catch (CairoException ex) {
-                    throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
                 }
-                toSkip--;
-                rowCount.dec();
-                if (toSkip == 0) {
-                    return;
-                }
-            }
 
-            long availableToSkip = rowGroupRowCount - currentRowInRowGroup - 1;
-            long skipNow = Math.min(toSkip, availableToSkip);
-            currentRowInRowGroup += (int) skipNow;
-            toSkip -= skipNow;
-            rowCount.dec(skipNow);
+                long availableToSkip = rowGroupRowCount - currentRowInRowGroup - 1;
+                long skipNow = Math.min(toSkip, availableToSkip);
+                currentRowInRowGroup += (int) skipNow;
+                toSkip -= skipNow;
+                rowCount.dec(skipNow);
+            }
+        } finally {
+            this.isInSkipRows = false;
         }
     }
 
@@ -329,6 +348,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         rowGroupIndex = -1;
         rowGroupRowCount = -1;
         currentRowInRowGroup = -1;
+        maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
     }
 
     private long getStrAddr(int col) {
@@ -352,7 +373,17 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
 
             final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
-            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
+            final int decodeHi;
+            if (isInSkipRows) {
+                decodeHi = rowGroupSize;
+            } else {
+                final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
+                if (remaining <= 0) {
+                    return false;
+                }
+                decodeHi = (int) Math.min(rowGroupSize, remaining);
+            }
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, decodeHi);
 
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));

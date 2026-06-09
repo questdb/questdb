@@ -214,12 +214,12 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (baseCursor != null) {
                 buildSymbolKeys();
                 baseCursor = Misc.free(baseCursor);
             }
-            delegate.skipRows(rowCount);
+            delegate.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override

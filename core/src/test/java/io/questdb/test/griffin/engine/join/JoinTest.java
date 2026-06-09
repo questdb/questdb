@@ -2001,10 +2001,10 @@ public class JoinTest extends AbstractCairoTest {
                             for (long skip2 = 0; skip2 <= total - skip1; skip2++) {
                                 cursor.toTop();
                                 counter.set(skip1);
-                                cursor.skipRows(counter);
+                                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                                 Assert.assertEquals("first skip should fully apply", 0, counter.get());
                                 counter.set(skip2);
-                                cursor.skipRows(counter);
+                                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                                 Assert.assertEquals("second skip should fully apply", 0, counter.get());
                                 long remaining = 0;
                                 while (cursor.hasNext()) {
@@ -7112,7 +7112,7 @@ public class JoinTest extends AbstractCairoTest {
                 for (int i = 0; i < size + 2; i++) {
                     cursor.toTop();
                     counter.set(i);
-                    cursor.skipRows(counter);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
 
                     Assert.assertEquals(Math.max(i - size, 0), counter.get());
 

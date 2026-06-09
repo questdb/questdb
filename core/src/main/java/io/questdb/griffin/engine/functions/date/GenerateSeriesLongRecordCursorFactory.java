@@ -118,7 +118,7 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             long currentRowId = recordA.getRowId()
                     - 1  // one-indexed
                     - 1; // we increment at the start of hasNext()

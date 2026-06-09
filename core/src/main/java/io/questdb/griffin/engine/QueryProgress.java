@@ -633,8 +633,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
-            base.skipRows(rowCount);
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+            base.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override

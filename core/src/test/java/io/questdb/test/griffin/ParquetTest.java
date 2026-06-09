@@ -1621,6 +1621,37 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOffsetOverParquetAfterReaderEviction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0, '2024-01-01T00:00:00.000000Z'), " +
+                    "(1, '2024-01-02T00:00:00.000000Z'), " +
+                    "(2, '2024-01-02T00:00:01.000000Z'), " +
+                    "(3, '2024-01-02T00:00:02.000000Z'), " +
+                    "(4, '2024-01-02T00:00:03.000000Z'), " +
+                    "(5, '2024-01-02T00:00:04.000000Z'), " +
+                    "(6, '2024-01-03T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in ('2024-01-01', '2024-01-02')");
+            try (RecordCursorFactory factory = select("SELECT a FROM x LIMIT 1, 4")) {
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        1
+                        2
+                        3
+                        """);
+                engine.releaseAllReaders();
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        1
+                        2
+                        3
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testLimitRightFrameFormat() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1672,13 +1703,6 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testLong256LateMaterializationOverParquet() throws Exception {
-        // PageFrameFilteredMemoryRecord routes column reads through getRowIndex(columnIndex), which
-        // returns the absolute row index for filter columns and the compacted index for late-
-        // materialized columns. Most overrides are wired up correctly, but getLong256A / getLong256B
-        // fell through to a private parent helper that read with the absolute rowIndex. For a query
-        // that filters on a non-LONG256 column and groups by a LONG256, every late-materialized
-        // LONG256 read returned the wrong row's value, and reads beyond the compacted slice spilled
-        // into adjacent buffer memory.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x SELECT " +

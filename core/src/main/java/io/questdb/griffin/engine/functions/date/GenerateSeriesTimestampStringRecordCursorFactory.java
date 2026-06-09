@@ -200,7 +200,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (supportsRandomAccess()) {
                 long currentRowId = recordA.getRowId()
                         - 1 // one-indexed
@@ -211,7 +211,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
                 recordAt(recordA, newRowId);
                 rowCount.dec(rowsToSkip);
             } else {
-                super.skipRows(rowCount);
+                super.skipRows(rowCount, maxRowsAfterSkip);
             }
         }
 

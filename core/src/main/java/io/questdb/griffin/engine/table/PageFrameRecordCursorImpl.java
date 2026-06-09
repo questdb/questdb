@@ -47,6 +47,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
     private boolean isExhausted;
+    private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+    private long rowsProducedSinceSkip;
     private RowCursor rowCursor;
 
     public PageFrameRecordCursorImpl(
@@ -110,18 +112,27 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 final long rowIndex = rowCursor.next();
                 frameMemoryPool.navigateTo(frameIndex, recordA);
                 recordA.setRowIndex(rowIndex);
+                rowsProducedSinceSkip++;
                 return true;
             }
 
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 frameAddressCache.add(frameCount, frame);
-                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
+                final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
+                if (remaining <= 0) {
+                    isExhausted = true;
+                    return false;
+                }
+                final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
+                final int inFrameHi = (int) Math.min(frameSize, remaining);
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, 0, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
                     recordA.init(frameMemory);
                     recordA.setRowIndex(rowCursor.next());
+                    rowsProducedSinceSkip++;
                     return true;
                 }
             }
@@ -166,8 +177,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         prepareRowCursorFactory();
+
+        final boolean canClamp = filter == null && !rowCursorFactory.isUsingIndex();
+        this.maxRowsAfterSkip = canClamp ? maxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
+        this.rowsProducedSinceSkip = 0;
 
         // Use slow path when:
         // - filter is present (need to evaluate each row)
@@ -176,6 +191,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
+            this.rowsProducedSinceSkip = 0;
             return;
         }
 
@@ -209,7 +225,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         final int frameIndex = frameCount - 1;
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            final long roomInFrame = frameSize - skipTarget;
+            final long takeFromFrame = Math.min(roomInFrame, this.maxRowsAfterSkip);
+            final int inFrameLo = (int) skipTarget;
+            final int inFrameHi = (int) (skipTarget + takeFromFrame);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameLo, inFrameHi);
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
@@ -233,6 +254,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
         rowCursor = Misc.free(rowCursor);
         isExhausted = false;
+        maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
         super.toTop();
     }
 

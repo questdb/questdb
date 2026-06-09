@@ -220,13 +220,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (baseCursor != null) {
                 buildFactories();
                 baseCursor = Misc.free(baseCursor);
             }
 
-            delegate.skipRows(rowCount);
+            delegate.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override

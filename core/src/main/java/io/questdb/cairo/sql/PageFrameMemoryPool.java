@@ -196,6 +196,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * {@link #navigateTo(int, PageFrameMemoryRecord)} method.
      */
     public PageFrameMemory navigateTo(int frameIndex) {
+        return navigateTo(frameIndex, 0, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Navigates to the given frame with an in-frame row window clamp. For Parquet
+     * partitions, only rows in {@code [inFrameRowLo, inFrameRowHi)} of the frame
+     * are decoded; for native partitions the bounds are ignored. The caller must
+     * not access rows outside the clamp window via the returned memory.
+     * <p>
+     * Caller contract: within a single cursor lifecycle, calls for the same
+     * {@code frameIndex} must use a consistent clamp window. Mixed bounds would
+     * collide with the in-pool buffer cache and yield stale data.
+     */
+    public PageFrameMemory navigateTo(int frameIndex, int inFrameRowLo, int inFrameRowHi) {
         if (frameMemory.frameIndex == frameIndex) {
             return frameMemory;
         }
@@ -216,7 +230,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
                 final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
                 final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-                parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+                final int decodeLo = (int) Math.min(rowGroupHi, (long) rowGroupLo + inFrameRowLo);
+                final int decodeHi = (int) Math.min(rowGroupHi, (long) rowGroupLo + inFrameRowHi);
+                parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, decodeLo, decodeHi);
             }
 
             frameMemory.currentRowGroupBuffer = parquetBuffers;
@@ -224,7 +240,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
+            frameMemory.columnOffset = 0;
         }
 
         frameMemory.frameIndex = frameIndex;
