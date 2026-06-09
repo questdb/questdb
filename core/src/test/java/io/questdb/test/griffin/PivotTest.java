@@ -556,23 +556,23 @@ public class PivotTest extends AbstractSqlParserTest {
                     sell\t101502.1\t101502.1\t101497.0\t101497.0
                     """;
 
-            assertPlanNoLeakCheck(pivotQuery, """
-                    Encode sort light
-                      keys: [side]
-                        GroupBy vectorized: false
-                          keys: [side]
-                          values: [first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
-                            Async JIT Group By workers: 1
-                              keys: [side,symbol]
-                              values: [first(price),max(price),min(price),last(price)]
-                              filter: symbol in [BTC-USD]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trades
-                    """);
             assertQuery(pivotQuery)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [side]
+                                GroupBy vectorized: false
+                                  keys: [side]
+                                  values: [first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
+                                    Async JIT Group By workers: 1
+                                      keys: [side,symbol]
+                                      values: [first(price),max(price),min(price),last(price)]
+                                      filter: symbol in [BTC-USD]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """)
                     .returns(result);
         });
     }
@@ -1588,22 +1588,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .noRandomAccess()
-                    .returns("""
-                            timestamp	vehicle_id	i000	i001	i002	i003	i004	i005	i006	i007	i008	i009	timestamp1	vehicle_id1	s000	s001	s002	s003	s004	s005	s006	s007	s008	s009
-                            2025-01-01T00:00:00.000000Z	AAA000	null	856.0	366.0	25.0	-475.0	29.0	373.0	-998.0	-881.0	-6.0	2025-01-01T00:00:00.000000Z	AAA000	val_-48	val_-516	val_-972	val_-714	val_-703	val_481	val_512	val_116	val_97	val_-405
-                            2025-01-01T00:00:00.000000Z	AAA001	698.0	859.0	-893.0	716.0	51.0	-57.0	-16.0	886.0	-904.0	-727.0	2025-01-01T00:00:00.000000Z	AAA001	val_-964	val_-305	val_-171	val_-104	val_-279	val_198	val_-769	val_-127	val_228	val_-723
-                            2025-01-01T00:00:00.000000Z	AAA002	388.0	86.0	339.0	697.0	-508.0	57.0	518.0	3.0	504.0	-951.0	2025-01-01T00:00:00.000000Z	AAA002	val_-914	val_-752	val_-747	val_-973	val_-842	val_-300	val_928	val_-463	val_-319	val_638
-                            2025-01-01T00:00:00.000000Z	AAA003	64.0	717.0	-360.0	-248.0	694.0	10.0	778.0	-602.0	-476.0	-364.0	2025-01-01T00:00:00.000000Z	AAA003	val_394	val_-835	val_263	val_-54	val_-908	val_705	val_-703	val_-393	val_-933	val_841
-                            2025-01-01T00:00:00.000000Z	AAA004	3.0	-517.0	-123.0	290.0	374.0	-840.0	-155.0	-711.0	841.0	203.0	2025-01-01T00:00:00.000000Z	AAA004	val_-136	val_-781	val_380	val_763	val_138	val_524	val_624	val_-195	val_-352	val_-574
-                            2025-01-01T00:00:00.000000Z	AAA005	-909.0	-943.0	422.0	747.0	-687.0	-663.0	150.0	514.0	932.0	93.0	2025-01-01T00:00:00.000000Z	AAA005	val_-682	val_-76	val_-121	val_-128	val_-59	val_930	val_681	val_-445	val_-819	val_695
-                            2025-01-01T00:00:00.000000Z	AAA006	598.0	-866.0	-728.0	59.0	3.0	-311.0	-842.0	469.0	25.0	575.0	2025-01-01T00:00:00.000000Z	AAA006	val_468	val_-330	val_-740	val_-113	val_535	val_-473	val_272	val_-671	val_926	val_-184
-                            2025-01-01T00:00:00.000000Z	AAA007	191.0	868.0	87.0	-820.0	-934.0	485.0	31.0	-147.0	-168.0	627.0	2025-01-01T00:00:00.000000Z	AAA007	val_242	val_-531	val_-138	val_60	val_37	val_-995	val_43	val_782	val_640	val_75
-                            2025-01-01T00:00:00.000000Z	AAA008	-693.0	-721.0	-472.0	-964.0	-42.0	-64.0	483.0	-509.0	-412.0	-942.0	2025-01-01T00:00:00.000000Z	AAA008	val_-67	val_17	val_444	val_-190	val_692	val_941	val_385	val_468	val_-384	val_795
-                            2025-01-01T00:00:00.000000Z	AAA009	910.0	276.0	451.0	293.0	-333.0	827.0	834.0	-242.0	-199.0	-336.0	2025-01-01T00:00:00.000000Z	AAA009	val_889	val_407	val_-806	val_895	val_460	val_-743	val_988	val_-320	val_435	val_583
-                            """);
-
-            assertPlanNoLeakCheck(query,
-                    """
+                    .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 SelectedRecord
                                     AsOf Join Light
@@ -1632,6 +1617,19 @@ public class PivotTest extends AbstractSqlParserTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: sensors
+                            """)
+                    .returns("""
+                            timestamp	vehicle_id	i000	i001	i002	i003	i004	i005	i006	i007	i008	i009	timestamp1	vehicle_id1	s000	s001	s002	s003	s004	s005	s006	s007	s008	s009
+                            2025-01-01T00:00:00.000000Z	AAA000	null	856.0	366.0	25.0	-475.0	29.0	373.0	-998.0	-881.0	-6.0	2025-01-01T00:00:00.000000Z	AAA000	val_-48	val_-516	val_-972	val_-714	val_-703	val_481	val_512	val_116	val_97	val_-405
+                            2025-01-01T00:00:00.000000Z	AAA001	698.0	859.0	-893.0	716.0	51.0	-57.0	-16.0	886.0	-904.0	-727.0	2025-01-01T00:00:00.000000Z	AAA001	val_-964	val_-305	val_-171	val_-104	val_-279	val_198	val_-769	val_-127	val_228	val_-723
+                            2025-01-01T00:00:00.000000Z	AAA002	388.0	86.0	339.0	697.0	-508.0	57.0	518.0	3.0	504.0	-951.0	2025-01-01T00:00:00.000000Z	AAA002	val_-914	val_-752	val_-747	val_-973	val_-842	val_-300	val_928	val_-463	val_-319	val_638
+                            2025-01-01T00:00:00.000000Z	AAA003	64.0	717.0	-360.0	-248.0	694.0	10.0	778.0	-602.0	-476.0	-364.0	2025-01-01T00:00:00.000000Z	AAA003	val_394	val_-835	val_263	val_-54	val_-908	val_705	val_-703	val_-393	val_-933	val_841
+                            2025-01-01T00:00:00.000000Z	AAA004	3.0	-517.0	-123.0	290.0	374.0	-840.0	-155.0	-711.0	841.0	203.0	2025-01-01T00:00:00.000000Z	AAA004	val_-136	val_-781	val_380	val_763	val_138	val_524	val_624	val_-195	val_-352	val_-574
+                            2025-01-01T00:00:00.000000Z	AAA005	-909.0	-943.0	422.0	747.0	-687.0	-663.0	150.0	514.0	932.0	93.0	2025-01-01T00:00:00.000000Z	AAA005	val_-682	val_-76	val_-121	val_-128	val_-59	val_930	val_681	val_-445	val_-819	val_695
+                            2025-01-01T00:00:00.000000Z	AAA006	598.0	-866.0	-728.0	59.0	3.0	-311.0	-842.0	469.0	25.0	575.0	2025-01-01T00:00:00.000000Z	AAA006	val_468	val_-330	val_-740	val_-113	val_535	val_-473	val_272	val_-671	val_926	val_-184
+                            2025-01-01T00:00:00.000000Z	AAA007	191.0	868.0	87.0	-820.0	-934.0	485.0	31.0	-147.0	-168.0	627.0	2025-01-01T00:00:00.000000Z	AAA007	val_242	val_-531	val_-138	val_60	val_37	val_-995	val_43	val_782	val_640	val_75
+                            2025-01-01T00:00:00.000000Z	AAA008	-693.0	-721.0	-472.0	-964.0	-42.0	-64.0	483.0	-509.0	-412.0	-942.0	2025-01-01T00:00:00.000000Z	AAA008	val_-67	val_17	val_444	val_-190	val_692	val_941	val_385	val_468	val_-384	val_795
+                            2025-01-01T00:00:00.000000Z	AAA009	910.0	276.0	451.0	293.0	-333.0	827.0	834.0	-242.0	-199.0	-336.0	2025-01-01T00:00:00.000000Z	AAA009	val_889	val_407	val_-806	val_895	val_460	val_-743	val_988	val_-320	val_435	val_583
                             """);
         });
     }
@@ -1904,14 +1902,7 @@ public class PivotTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
-                    .returns("""
-                            country\t2000\t2010\t2020
-                            NL\t1005\t1065\t1158
-                            US\t8579\t8783\t9510
-                            """);
-
-            assertPlanNoLeakCheck(query,
-                    """
+                    .withPlan("""
                             Sort light
                               keys: [country]
                                 GroupBy vectorized: false
@@ -1924,6 +1915,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: cities
+                            """)
+                    .returns("""
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
                             """);
         });
     }
@@ -1953,13 +1949,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("""
-                            2000_Amsterdam\t2000_New York City\t2000_Seattle\t2010_Amsterdam\t2010_New York City\t2010_Seattle\t2020_Amsterdam\t2020_New York City\t2020_Seattle
-                            1005\t8015\t564\t1065\t8175\t608\t1158\t8772\t738
-                            """);
-
-            assertPlanNoLeakCheck(query,
-                    """
+                    .withPlan("""
                             GroupBy vectorized: false
                               values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null]))]
                                 Async Group By workers: 1
@@ -1969,6 +1959,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                            """)
+                    .returns("""
+                            2000_Amsterdam\t2000_New York City\t2000_Seattle\t2010_Amsterdam\t2010_New York City\t2010_Seattle\t2020_Amsterdam\t2020_New York City\t2020_Seattle
+                            1005\t8015\t564\t1065\t8175\t608\t1158\t8772\t738
                             """);
         });
     }
@@ -1999,13 +1993,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("""
-                            2000_Amsterdam_SUM(population)	2000_Amsterdam_AVG(population)	2000_New York City_SUM(population)	2000_New York City_AVG(population)	2000_Seattle_SUM(population)	2000_Seattle_AVG(population)	2010_Amsterdam_SUM(population)	2010_Amsterdam_AVG(population)	2010_New York City_SUM(population)	2010_New York City_AVG(population)	2010_Seattle_SUM(population)	2010_Seattle_AVG(population)	2020_Amsterdam_SUM(population)	2020_Amsterdam_AVG(population)	2020_New York City_SUM(population)	2020_New York City_AVG(population)	2020_Seattle_SUM(population)	2020_Seattle_AVG(population)
-                            1005	1005.0	8015	8015.0	564	564.0	1065	1065.0	8175	8175.0	608	608.0	1158	1158.0	8772	8772.0	738	738.0
-                            """);
-
-            assertPlanNoLeakCheck(query,
-                    """
+                    .withPlan("""
                             GroupBy vectorized: false
                               values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),AVG(population),null]))]
                                 Async Group By workers: 1
@@ -2015,6 +2003,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: cities
+                            """)
+                    .returns("""
+                            2000_Amsterdam_SUM(population)	2000_Amsterdam_AVG(population)	2000_New York City_SUM(population)	2000_New York City_AVG(population)	2000_Seattle_SUM(population)	2000_Seattle_AVG(population)	2010_Amsterdam_SUM(population)	2010_Amsterdam_AVG(population)	2010_New York City_SUM(population)	2010_New York City_AVG(population)	2010_Seattle_SUM(population)	2010_Seattle_AVG(population)	2020_Amsterdam_SUM(population)	2020_Amsterdam_AVG(population)	2020_New York City_SUM(population)	2020_New York City_AVG(population)	2020_Seattle_SUM(population)	2020_Seattle_AVG(population)
+                            1005	1005.0	8015	8015.0	564	564.0	1065	1065.0	8175	8175.0	608	608.0	1158	1158.0	8772	8772.0	738	738.0
                             """);
         });
     }
@@ -2679,20 +2671,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .expectSize()
-                    .returns("""
-                            timestamp	ADA-USD_buy	ADA-USD_sell	ADA-USDT_buy	ADA-USDT_sell	BTC-USD_buy	BTC-USD_sell
-                            2024-12-19T08:10:00.000000Z	null	0.9716	null	0.9716	null	null
-                            2024-12-19T08:10:00.100000Z	null	null	null	null	101502.2	101502.1
-                            2024-12-19T08:10:00.200000Z	null	null	null	null	101502.2	null
-                            2024-12-19T08:10:00.400000Z	null	null	null	null	101502.2	null
-                            2024-12-19T08:10:00.500000Z	null	0.9716	null	0.9716	null	null
-                            2024-12-19T08:10:00.600000Z	null	null	null	null	101502.2	null
-                            2024-12-19T08:10:00.700000Z	null	null	null	null	101500.66666666667	101500.57777777778
-                            2024-12-19T08:10:00.900000Z	null	null	null	null	101497.6	101497.25
-                            """);
-
-            assertPlanNoLeakCheck(query,
-                    """
+                    .withPlan("""
                             Encode sort light
                               keys: [timestamp]
                                 GroupBy vectorized: false
@@ -2711,6 +2690,17 @@ public class PivotTest extends AbstractSqlParserTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            timestamp	ADA-USD_buy	ADA-USD_sell	ADA-USDT_buy	ADA-USDT_sell	BTC-USD_buy	BTC-USD_sell
+                            2024-12-19T08:10:00.000000Z	null	0.9716	null	0.9716	null	null
+                            2024-12-19T08:10:00.100000Z	null	null	null	null	101502.2	101502.1
+                            2024-12-19T08:10:00.200000Z	null	null	null	null	101502.2	null
+                            2024-12-19T08:10:00.400000Z	null	null	null	null	101502.2	null
+                            2024-12-19T08:10:00.500000Z	null	0.9716	null	0.9716	null	null
+                            2024-12-19T08:10:00.600000Z	null	null	null	null	101502.2	null
+                            2024-12-19T08:10:00.700000Z	null	null	null	null	101500.66666666667	101500.57777777778
+                            2024-12-19T08:10:00.900000Z	null	null	null	null	101497.6	101497.25
                             """);
         });
     }
@@ -3081,7 +3071,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     GROUP BY timestamp
                   ) ORDER BY timestamp ASC;""")
                 .ddl(ddlTrades)
-                .timestamp("timestamp###ASC")
+                .timestampAsc("timestamp")
                 .mutateWith(dmlTrades)
                 .expectSize()
                 .withPlan("""
@@ -3120,7 +3110,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     GROUP BY timestamp
                   ) ORDER BY timestamp DESC;""")
                 .ddl(ddlTrades)
-                .timestamp("timestamp###DESC")
+                .timestampDesc("timestamp")
                 .mutateWith(dmlTrades)
                 .expectSize()
                 .withPlan("""
@@ -3390,32 +3380,7 @@ public class PivotTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("""
-                            timestamp	vehicle_id	i000
-                            2025-01-01T00:00:00.000000Z	AAA001	698.0
-                            2025-01-01T00:00:00.000000Z	AAA002	388.0
-                            2025-01-01T00:00:00.000000Z	AAA003	64.0
-                            2025-01-01T00:00:00.000000Z	AAA004	3.0
-                            2025-01-01T00:00:00.000000Z	AAA005	-909.0
-                            2025-01-01T00:00:00.000000Z	AAA006	598.0
-                            2025-01-01T00:00:00.000000Z	AAA007	191.0
-                            2025-01-01T00:00:00.000000Z	AAA008	-693.0
-                            2025-01-01T00:00:00.000000Z	AAA009	910.0
-                            2025-01-01T00:00:00.000000Z	AAA010	-270.0
-                            2025-01-01T00:00:00.009000Z	AAA058	-746.0
-                            2025-01-01T00:00:00.009000Z	AAA057	-791.0
-                            2025-01-01T00:00:00.009000Z	AAA056	282.0
-                            2025-01-01T00:00:00.009000Z	AAA055	332.0
-                            2025-01-01T00:00:00.009000Z	AAA054	-547.0
-                            2025-01-01T00:00:00.009000Z	AAA053	-965.0
-                            2025-01-01T00:00:00.009000Z	AAA052	-800.0
-                            2025-01-01T00:00:00.009000Z	AAA051	-461.0
-                            2025-01-01T00:00:00.009000Z	AAA050	-753.0
-                            2025-01-01T00:00:00.010000Z	AAA000	-636.0
-                            """);
-
-            assertPlanNoLeakCheck(query,
-                    """
+                    .withPlan("""
                             Union
                                 Long Top K lo: 10
                                   keys: [timestamp asc]
@@ -3441,6 +3406,29 @@ public class PivotTest extends AbstractSqlParserTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: sensors
+                            """)
+                    .returns("""
+                            timestamp	vehicle_id	i000
+                            2025-01-01T00:00:00.000000Z	AAA001	698.0
+                            2025-01-01T00:00:00.000000Z	AAA002	388.0
+                            2025-01-01T00:00:00.000000Z	AAA003	64.0
+                            2025-01-01T00:00:00.000000Z	AAA004	3.0
+                            2025-01-01T00:00:00.000000Z	AAA005	-909.0
+                            2025-01-01T00:00:00.000000Z	AAA006	598.0
+                            2025-01-01T00:00:00.000000Z	AAA007	191.0
+                            2025-01-01T00:00:00.000000Z	AAA008	-693.0
+                            2025-01-01T00:00:00.000000Z	AAA009	910.0
+                            2025-01-01T00:00:00.000000Z	AAA010	-270.0
+                            2025-01-01T00:00:00.009000Z	AAA058	-746.0
+                            2025-01-01T00:00:00.009000Z	AAA057	-791.0
+                            2025-01-01T00:00:00.009000Z	AAA056	282.0
+                            2025-01-01T00:00:00.009000Z	AAA055	332.0
+                            2025-01-01T00:00:00.009000Z	AAA054	-547.0
+                            2025-01-01T00:00:00.009000Z	AAA053	-965.0
+                            2025-01-01T00:00:00.009000Z	AAA052	-800.0
+                            2025-01-01T00:00:00.009000Z	AAA051	-461.0
+                            2025-01-01T00:00:00.009000Z	AAA050	-753.0
+                            2025-01-01T00:00:00.010000Z	AAA000	-636.0
                             """);
         });
     }

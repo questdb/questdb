@@ -230,13 +230,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * any row within the frame.
      */
     public void navigateTo(int frameIndex, PageFrameMemoryRecord record) {
-        if (record.getFrameIndex() == frameIndex) {
-            return;
-        }
-
         final byte format = addressCache.getFrameFormat(frameIndex);
         final int columnOffset = addressCache.toColumnOffset(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            // Native page addresses come from the address cache and stay valid for the whole
+            // query, so a matching frame index proves the record is already positioned here.
+            if (record.getFrameIndex() == frameIndex) {
+                return;
+            }
             record.init(
                     frameIndex,
                     format,
@@ -248,6 +249,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     columnOffset
             );
         } else if (format == PartitionFormat.PARQUET) {
+            // Fast path: the record already points at THIS pool's live buffers for this frame,
+            // so there is nothing to rebind. A matching frame index ALONE is not sufficient: a
+            // foreign record bound to another pool's frame memory (e.g. a reduce task's, via
+            // record.init(task.getFrameMemory())) can carry a matching frame index while that
+            // pool already freed the buffers in releaseParquetBuffers() -- reading through it
+            // would dereference freed memory. The boundPool identity check distinguishes "still
+            // ours and live" from "bound elsewhere and possibly freed", so it restores the cheap
+            // per-row repeat visit for sequential scans (PageFrameRecordCursorImpl.hasNext())
+            // without reopening the parquet use-after-free on the random-access path.
+            if (record.getFrameIndex() == frameIndex && record.getBoundPool() == this) {
+                return;
+            }
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             ParquetBuffers parquetBuffers = tryHit(frameIndex, usageBit);
             if (parquetBuffers == null) {
@@ -265,6 +278,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.auxPageSizes,
                     0
             );
+            record.setBoundPool(this);
         }
     }
 
@@ -1294,6 +1308,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public DirectLongList getPageSizes() {
             return pageSizes;
+        }
+
+        @Override
+        public PageFrameMemoryPool getPool() {
+            return PageFrameMemoryPool.this;
         }
 
         @Override

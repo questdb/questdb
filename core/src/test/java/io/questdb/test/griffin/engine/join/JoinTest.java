@@ -1977,6 +1977,51 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinSkipRowsIsReentrant() throws Exception {
+        // Regression test: CrossJoinRecordCursor.skipRows() used to be correct only when called from a
+        // master-row boundary. A second skipRows() call (e.g. the one a wrapping LIMIT cursor issues from
+        // calculateSize()) re-skipped the already-consumed master cursor and silently dropped the
+        // remaining rows of the partially iterated master row. A single master row is the cleanest
+        // trigger: after the first skip consumes it, the second skip would find the master exhausted and
+        // skip nothing. The original failure (testOrderByAdviceWorksWithCrossJoin1a) was seed-dependent;
+        // the exhaustive skip split below reproduces it deterministically.
+        assertMemoryLeak(() -> {
+            final long[][] shapes = {{1, 9}, {3, 4}, {1, 1}, {5, 1}};
+            for (int s = 0; s < shapes.length; s++) {
+                final long masterRows = shapes[s][0];
+                final long slaveRows = shapes[s][1];
+                final long total = masterRows * slaveRows;
+                final String query = "select * from long_sequence(" + masterRows
+                        + ") a cross join long_sequence(" + slaveRows + ") b";
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        // Split the skip across two skipRows() calls so the second one lands mid-stream.
+                        for (long skip1 = 0; skip1 <= total; skip1++) {
+                            for (long skip2 = 0; skip2 <= total - skip1; skip2++) {
+                                cursor.toTop();
+                                counter.set(skip1);
+                                cursor.skipRows(counter);
+                                Assert.assertEquals("first skip should fully apply", 0, counter.get());
+                                counter.set(skip2);
+                                cursor.skipRows(counter);
+                                Assert.assertEquals("second skip should fully apply", 0, counter.get());
+                                long remaining = 0;
+                                while (cursor.hasNext()) {
+                                    remaining++;
+                                }
+                                Assert.assertEquals(
+                                        query + " skip1=" + skip1 + " skip2=" + skip2,
+                                        total - skip1 - skip2, remaining);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2904,19 +2949,21 @@ public class JoinTest extends AbstractCairoTest {
                             """);
             // Verify: no Empty table (1 < 10 folded as constant true), and
             // now()=now() merged from constWhereClause into a post-join filter.
-            assertPlanNoLeakCheck(query, """
-                    SelectedRecord
-                        Filter filter: (T1.ts<T2.ts and now()=now())
-                            Cross Join
-                                Async JIT Filter workers: 1
-                                  filter: 0<val
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Filter filter: (T1.ts<T2.ts and now()=now())
+                                    Cross Join
+                                        Async JIT Filter workers: 1
+                                          filter: 0<val
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -4098,7 +4145,7 @@ public class JoinTest extends AbstractCairoTest {
                             1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z
                             1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
 
             assertHashJoinSql(
@@ -4111,7 +4158,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z
                             null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
             assertHashJoinSql(
                     "select * from t1 full join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
@@ -4124,7 +4171,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z
                             null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
         });
     }
@@ -4148,6 +4195,7 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """,
                     null,
+                    false,
                     false
             );
             assertHashJoinSql(
@@ -4161,6 +4209,7 @@ public class JoinTest extends AbstractCairoTest {
                             3\tc\t3\tc
                             """,
                     null,
+                    false,
                     true
             );
             assertHashJoinSql(
@@ -4177,6 +4226,7 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """,
                     null,
+                    false,
                     true
             );
         });
@@ -5400,9 +5450,9 @@ public class JoinTest extends AbstractCairoTest {
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5416,8 +5466,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
 
             query = """
                     SELECT
@@ -5436,9 +5485,9 @@ public class JoinTest extends AbstractCairoTest {
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5452,8 +5501,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
 
             query = """
                     SELECT
@@ -5472,9 +5520,9 @@ public class JoinTest extends AbstractCairoTest {
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5488,8 +5536,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
         });
     }
 
@@ -7016,22 +7063,28 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void assertHashJoinSql(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, false);
+        assertHashJoinSql(query, expected, null, false, false);
     }
 
-    private void assertHashJoinSql(String query, String expected, String ts, boolean supportRandom) throws Exception {
-        assertQuery(query)
+    private void assertHashJoinSql(String query, String expected, String tsColumn, boolean tsDescending, boolean supportRandom) throws Exception {
+        var qa = assertQuery(query)
                 .noLeakCheck()
-                .fullFatJoins()
-                .timestamp(ts)
-                .supportsRandomAccess(supportRandom)
+                .fullFatJoins();
+        if (tsColumn != null) {
+            if (tsDescending) {
+                qa.timestampDesc(tsColumn);
+            } else {
+                qa.timestampAsc(tsColumn);
+            }
+        }
+        qa.supportsRandomAccess(supportRandom)
                 .returns(expected);
         printSql(query, true);
         TestUtils.assertEquals("full fat join", expected, sink);
     }
 
     private void assertHashJoinSqlWithRandomAccess(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, true);
+        assertHashJoinSql(query, expected, null, false, true);
     }
 
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {

@@ -285,6 +285,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             fwdScanKeyToRowId.clear();
             bwdScanKeyToRowId.reopen();
             bwdScanKeyToRowId.clear();
+            resetScanState();
         }
 
         @Override
@@ -296,8 +297,13 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             if (bwdScanKeyToRowId.isOpen()) {
                 bwdScanKeyToRowId.clear();
             }
+            resetScanState();
+        }
+
+        private void resetScanState() {
             slaveCursorReadyForForwardScan = false;
             forwardScanExhausted = false;
+            backwardScanExhausted = false;
             backwardRowId = -1;
             forwardRowId = -1;
         }

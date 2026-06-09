@@ -284,43 +284,40 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000009Z
                             1970-01-01T00:00:00.000010Z
                             """);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in yesterday()",
-                    """
+            assertQuery("select * from x where ts in yesterday()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PageFrame
                                 Row forward scan
                                 Interval forward scan on: x
                                   intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
-                            """
-            );
+                            """);
 
             assertQuery("select * from x where ts in today()")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("ts\n");
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in today()",
-                    """
+            assertQuery("select * from x where ts in today()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PageFrame
                                 Row forward scan
                                 Interval forward scan on: x
                                   intervals: [("1970-01-02T00:00:00.000000Z","1970-01-02T23:59:59.999999Z")]
-                            """
-            );
+                            """);
 
             assertQuery("select * from x where ts in tomorrow()")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("ts\n");
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in tomorrow()",
-                    """
+            assertQuery("select * from x where ts in tomorrow()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PageFrame
                                 Row forward scan
                                 Interval forward scan on: x
                                   intervals: [("1970-01-03T00:00:00.000000Z","1970-01-03T23:59:59.999999Z")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -347,43 +344,40 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000009Z
                             1970-01-01T00:00:00.000000010Z
                             """);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in yesterday()",
-                    """
+            assertQuery("select * from x where ts in yesterday()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PageFrame
                                 Row forward scan
                                 Interval forward scan on: x
                                   intervals: [("1970-01-01T00:00:00.000000000Z","1970-01-01T23:59:59.999999999Z")]
-                            """
-            );
+                            """);
 
             assertQuery("select * from x where ts in today()")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("ts\n");
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in today()",
-                    """
+            assertQuery("select * from x where ts in today()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PageFrame
                                 Row forward scan
                                 Interval forward scan on: x
                                   intervals: [("1970-01-02T00:00:00.000000000Z","1970-01-02T23:59:59.999999999Z")]
-                            """
-            );
+                            """);
 
             assertQuery("select * from x where ts in tomorrow()")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("ts\n");
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in tomorrow()",
-                    """
+            assertQuery("select * from x where ts in tomorrow()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PageFrame
                                 Row forward scan
                                 Interval forward scan on: x
                                   intervals: [("1970-01-03T00:00:00.000000000Z","1970-01-03T23:59:59.999999999Z")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -397,15 +391,14 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             true
                             """);
             // no interval scan with now()
-            assertPlanNoLeakCheck(
-                    "select true as bool from long_sequence(1) where now() in today()",
-                    """
+            assertQuery("select true as bool from long_sequence(1) where now() in today()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [true]
                                 Filter filter: now() in today()
                                     long_sequence count: 1
-                            """
-            );
+                            """);
         });
     }
 
@@ -413,28 +406,26 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testIntrinsicsNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (k int, ts timestamp);");
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
-                    """
+            assertQuery("select * from x where ts in today() or ts in tomorrow() or ts in yesterday();")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ((ts in today() or ts in tomorrow()) or ts in yesterday())
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             execute("create table x1 (k int, ts timestamp_ns);");
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
-                    """
+            assertQuery("select * from x where ts in today() or ts in tomorrow() or ts in yesterday();")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ((ts in today() or ts in tomorrow()) or ts in yesterday())
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -912,55 +903,49 @@ public class IntervalFunctionTest extends AbstractCairoTest {
 
             StringSink sink = new StringSink();
             buildInPlan(driver, sink, today, tomorrow - 1);
-            assertPlanNoLeakCheck(
-                    "select true as bool from x where ts in today()",
-                    sink.toString()
-            );
+            assertQuery("select true as bool from x where ts in today()")
+                    .noLeakCheck()
+                    .assertsPlan(sink.toString());
 
             sink.clear();
             buildInPlan(driver, sink, tomorrow, tomorrowAndOne - 1);
-            assertPlanNoLeakCheck(
-                    "select true as bool from x where ts in tomorrow()",
-                    sink.toString()
-            );
+            assertQuery("select true as bool from x where ts in tomorrow()")
+                    .noLeakCheck()
+                    .assertsPlan(sink.toString());
 
             sink.clear();
             buildInPlan(driver, sink, yesterday, today - 1);
-            assertPlanNoLeakCheck(
-                    "select true as bool from x where ts in yesterday()",
-                    sink.toString()
-            );
+            assertQuery("select true as bool from x where ts in yesterday()")
+                    .noLeakCheck()
+                    .assertsPlan(sink.toString());
 
             sink.clear();
             buildNotInPlan(driver, sink, today, todayAndOne);
-            assertPlanNoLeakCheck(
-                    "select true as bool from x where ts not in today()",
-                    sink.toString()
-            );
+            assertQuery("select true as bool from x where ts not in today()")
+                    .noLeakCheck()
+                    .assertsPlan(sink.toString());
 
-            assertPlanNoLeakCheck(
-                    "select true as bool from x where ts in yesterday() and ts in today() and ts in tomorrow()",
-                    """
+            assertQuery("select true as bool from x where ts in yesterday() and ts in today() and ts in tomorrow()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [true]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: x
                                       intervals: []
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select true as bool from x where ts in null::interval",
-                    """
+            assertQuery("select true as bool from x where ts in null::interval")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [true]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: x
                                       intervals: [("MIN","MIN")]
-                            """
-            );
+                            """);
         });
     }
 

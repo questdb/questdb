@@ -1548,6 +1548,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return getDelegate().isCairoSqlLegacyUnionColumnPropagation();
+    }
+
+    @Override
     public boolean isCheckpointRecoveryEnabled() {
         return getDelegate().isCheckpointRecoveryEnabled();
     }
