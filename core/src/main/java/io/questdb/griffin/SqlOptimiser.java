@@ -582,6 +582,32 @@ public class SqlOptimiser implements Mutable {
         model.getJoinModels().getQuick(parent).addDependency(child);
     }
 
+    /**
+     * Returns the join-model index of the outermost SPLICE, FULL OUTER or RIGHT OUTER join
+     * that NULL-extends the master (left) side table at {@code tableIndex}, or -1 when no
+     * such join follows it. Each of these joins emits rows in which the master table's
+     * columns are all NULL: slave-only timestamps for SPLICE, unmatched right rows for FULL
+     * and RIGHT OUTER. A WHERE predicate that references only such a table must therefore be
+     * applied as a post-join filter rather than pushed into the table's own sub-query.
+     * Pushing it leaves those NULL-master rows unfiltered (e.g. {@code a RIGHT JOIN b WHERE
+     * a.k = 'v'} would keep unmatched b rows whose a.k is NULL); for SPLICE it also changes
+     * which master row prevails at each slave timestamp. LEFT OUTER, ASOF and LT keep every
+     * master row, so their master-side predicates remain safe to push down and are excluded.
+     */
+    private static int masterNullingJoinIndex(IQueryModel parent, int tableIndex) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        int result = -1;
+        for (int i = tableIndex + 1, n = joinModels.size(); i < n; i++) {
+            final int joinType = joinModels.getQuick(i).getJoinType();
+            if (joinType == IQueryModel.JOIN_SPLICE
+                    || joinType == IQueryModel.JOIN_FULL_OUTER
+                    || joinType == IQueryModel.JOIN_RIGHT_OUTER) {
+                result = i;
+            }
+        }
+        return result;
+    }
+
     private static boolean matchesModelAlias(CharSequence prefix, IQueryModel model) {
         if (model.getAlias() != null && Chars.equalsIgnoreCase(model.getAlias().token, prefix)) {
             return true;
@@ -1632,6 +1658,8 @@ public class SqlOptimiser implements Mutable {
                         && literalCollector.nullCount == 0
                         // the table must not be OUTER or ASOF joined
                         && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.get(0)).getJoinType())
+                        // and must not sit on the master side of a downstream SPLICE/FULL/RIGHT OUTER join
+                        && masterNullingJoinIndex(parent, literalCollectorBIndexes.get(0)) < 0
                 ) {
                     // single table reference + constant
                     jc = contextPool.next();
@@ -1710,7 +1738,9 @@ public class SqlOptimiser implements Mutable {
                     }
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
-                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())) {
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())
+                        // and must not sit on the master side of a downstream SPLICE/FULL/RIGHT OUTER join
+                        && masterNullingJoinIndex(parent, literalCollectorAIndexes.get(0)) < 0) {
                     // single table reference + constant
                     if (!canMovePredicate) {
                         addOuterJoinExpression(parent, joinModel, joinIndex, node);
@@ -1829,9 +1859,17 @@ public class SqlOptimiser implements Mutable {
                     parent.setConstWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, parent.getConstWhereClause(), node));
                 } else if (rs == 1 && // single table reference and this table is not joined via OUTER or ASOF
                         joinBarriers.excludes(parent.getJoinModels().getQuick(refs.get(0)).getJoinType())) {
-                    // get single table reference out of the way right away
-                    // we don't have to wait until "our" table comes along
-                    addWhereNode(parent, refs.get(0), node);
+                    final int nullingJoinIndex = masterNullingJoinIndex(parent, refs.get(0));
+                    if (nullingJoinIndex < 0) {
+                        // get single table reference out of the way right away
+                        // we don't have to wait until "our" table comes along
+                        addWhereNode(parent, refs.get(0), node);
+                    } else {
+                        // the table sits on the master side of a downstream SPLICE/FULL/RIGHT OUTER
+                        // join, which NULL-extends it; keep the predicate as a post-join filter so
+                        // NULL-master rows are removed rather than pushing it into the sub-query
+                        addPostJoinWhereClause(parent.getJoinModels().getQuick(nullingJoinIndex), node);
+                    }
                     postFilterRemoved.add(k);
                 } else {
                     boolean qualifies = true;

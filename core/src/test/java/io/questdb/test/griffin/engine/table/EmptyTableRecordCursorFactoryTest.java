@@ -54,13 +54,14 @@ public class EmptyTableRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFoldedFalseFilterAllowsSpliceJoin() throws Exception {
-        // The literal filter ((c0 + null))::TIMESTAMP < '2024-...'::TIMESTAMP folds
-        // through AddIntFunctionFactory's null short-circuit and the timestamp
-        // comparator to constant FALSE. SqlCodeGenerator then substitutes the master
-        // side of the splice join with EmptyTableRecordCursorFactory. The splice join
-        // must compile because the empty cursor supports random access; the bind-form
-        // equivalent compiles via a regular filter, and both forms must agree on the
-        // row count produced.
+        // The filter ((c0 + null))::TIMESTAMP < '2024-...'::TIMESTAMP evaluates to NULL,
+        // hence FALSE, for every row: AddIntFunctionFactory short-circuits the null and the
+        // timestamp comparator yields NULL. The filter references only the master (left)
+        // side of the SPLICE join, which is a full outer temporal join that NULL-extends the
+        // master, so the optimiser keeps it as a post-join filter rather than pushing it into
+        // the master sub-query (which would empty the master and leak one NULL-master row per
+        // slave row). A WHERE that is always FALSE therefore produces no rows, and the
+        // literal and bind-variable forms must agree.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE t0 (c0 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -85,8 +86,8 @@ public class EmptyTableRecordCursorFactoryTest extends AbstractCairoTest {
             int bindRows = countRows(bindSql);
 
             Assert.assertEquals("literal and bind splice forms must agree", bindRows, literalRows);
-            // SPLICE JOIN with empty master pairs each slave row with a null master.
-            Assert.assertEquals(3, literalRows);
+            // The post-join WHERE folds to FALSE, so the splice produces no rows.
+            Assert.assertEquals(0, literalRows);
         });
     }
 

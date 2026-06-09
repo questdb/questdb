@@ -1444,21 +1444,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [1]
-                                Hash Right Outer Join Light
-                                  condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
-                                  filter: ep.ActionTypeId=8
+                                Filter filter: ((el.UserId=19 and el.TenantId=24024 and el.EventTypeId=1 and el.CreateDate>=) and >=el.CreateDate)
                                     Hash Right Outer Join Light
-                                      condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
-                                      filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                        Empty table
+                                      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                      filter: ep.ActionTypeId=8
+                                        Hash Right Outer Join Light
+                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                          filter: (ep0.ActionTypeId=13 and ep0.Message='2')
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: WorkflowEvent
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: WorkflowEventAction
                                         Hash
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: WorkflowEventAction
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: WorkflowEventAction
                             """);
 
             assertQuery("""
@@ -1485,21 +1488,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [1]
-                                Hash Full Outer Join Light
-                                  condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
-                                  filter: ep.ActionTypeId=8
+                                Filter filter: ((el.UserId=19 and el.TenantId=24024 and el.EventTypeId=1 and el.CreateDate>=) and >=el.CreateDate)
                                     Hash Full Outer Join Light
-                                      condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
-                                      filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                        Empty table
+                                      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                      filter: ep.ActionTypeId=8
+                                        Hash Full Outer Join Light
+                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                          filter: (ep0.ActionTypeId=13 and ep0.Message='2')
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: WorkflowEvent
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: WorkflowEventAction
                                         Hash
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: WorkflowEventAction
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: WorkflowEventAction
                             """);
 
             assertQuery("select-virtual 1 1 from (select [Id, CreateDate, UserId, TenantId, EventTypeId] from WorkflowEvent el timestamp (CreateDate) join (select [WorkflowEventId, CreateDate, ActionTypeId, Message] from WorkflowEventAction ep0 timestamp (CreateDate) where ActionTypeId = 13 and Message = '2') ep0 on ep0.WorkflowEventId = el.Id and ep0.CreateDate = el.CreateDate join (select [WorkflowEventId, CreateDate, ActionTypeId] from WorkflowEventAction ep timestamp (CreateDate) where ActionTypeId = 8) ep on ep.WorkflowEventId = el.Id and ep.CreateDate = el.CreateDate where UserId = 19 and TenantId = 24024 and EventTypeId = 1 and CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ') and CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')) el", """

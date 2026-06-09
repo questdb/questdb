@@ -5851,6 +5851,37 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinMasterFilterStaysPostJoin() throws Exception {
+        // Regression for a query-fuzzer bind-variable divergence. RIGHT and FULL OUTER joins
+        // NULL-extend the master (left) table, so a WHERE predicate that references only the
+        // master used to be pushed into the master sub-query, leaving the unmatched right
+        // rows (with a NULL master) unfiltered. Here the master has no 's2' row, so the
+        // slave's 's2' row has no match; WHERE a.sym = 's2' must return no rows because the
+        // master symbol is NULL. The literal form leaked one such row and the bind-variable
+        // form two; both now correctly return nothing because the predicate stays post-join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 5)");
+
+            final String empty = "e0\te1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().noRandomAccess().returns(empty);
+
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                printSql(bind);
+                TestUtils.assertEquals(empty, sink);
+            }
+        });
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -6448,6 +6479,46 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym")
                     .noLeakCheck()
                     .fails(93, "left");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinMasterFilterStaysPostJoin() throws Exception {
+        // Regression for a query-fuzzer bind-variable divergence. A WHERE predicate that
+        // references only the master (left) table of a SPLICE join used to be pushed into
+        // the master sub-query. SPLICE is a full outer temporal join, so it emits rows in
+        // which the master columns are all NULL (slave-only timestamps); pushing the
+        // predicate left those NULL-master rows unfiltered, and for the literal form it was
+        // also propagated to the slave through the join key, so the literal and
+        // bind-variable forms of the same query diverged (here 3 vs 4 rows). The predicate
+        // now stays a post-join filter, so both forms agree and NULL-master rows are removed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s2@1 leads the first master row (would be a NULL-master splice row); x@3 never
+            // has a master match (another NULL-master splice row). Both must be filtered out.
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 3)");
+
+            final String query = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = 's2' ORDER BY e1";
+            final String expected = """
+                    e0\te1
+                    s2\t100
+                    s2\t200
+                    """;
+
+            // Literal form: correct result and a post-join Filter over a full master scan
+            // (no predicate pushed into the master sub-query).
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: a.sym='s2'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result.
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "s2");
+            printSql("SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = :sym::SYMBOL ORDER BY e1");
+            TestUtils.assertEquals(expected, sink);
         });
     }
 
