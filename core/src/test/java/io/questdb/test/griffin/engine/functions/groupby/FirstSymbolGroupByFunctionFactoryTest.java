@@ -55,6 +55,21 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotKeyedConstantOverEmpty() throws Exception {
+        // first(constant) over a WHERE-folded empty table must return NULL: setEmpty
+        // stores VALUE_IS_NULL on the group-by state, and SymbolConstant.valueOf must
+        // honour that key. Before the fix the constant was returned verbatim.
+        assertQuery("select first(('0.83055')::symbol) a0 from tab where 1 = 0")
+                .ddl("create table tab as (select rnd_int() a from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        a0
+                        
+                        """);
+    }
+
+    @Test
     public void testSampleFill() throws Exception {
         assertQuery("select b, first(a) a, k from x sample by 3h align to first observation")
                 .ddl("create table x as " +

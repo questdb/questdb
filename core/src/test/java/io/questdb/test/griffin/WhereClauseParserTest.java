@@ -4235,25 +4235,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "testVarcharPracticalParsing_" + timestampType.getTypeName();
             executeWithRewriteTimestamp("create table " + tableName + " ( a string, ts #TIMESTAMP) timestamp(ts)", timestampType.getTypeName());
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "ts = '2024-02-29' or ts <= '2024-03-01'",
-                    "Async JIT Filter workers: 1\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "ts = '2024-02-29' or ts <= '2024-03-01'")
+                    .noLeakCheck()
+                    .assertsPlan("Async JIT Filter workers: 1\n" +
                             "  filter: (2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
 
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
-                    "Async Filter workers: 1\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar")
+                    .noLeakCheck()
+                    .assertsPlan("Async Filter workers: 1\n" +
                             "  filter: ((2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts) or 2024-05-01T00:00:00.000000Z=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
         });
     }
 

@@ -360,9 +360,12 @@ public class ParquetTest extends AbstractCairoTest {
             // CountRecordCursorFactory (whose plan is just "Count"), no frame would
             // decode and the test would pass trivially on broken code. The PageFrame
             // node below is what guarantees the parquet frame is actually visited.
-            assertPlanNoLeakCheck(
-                    "select count(*) from x group by 1+2",
-                    """
+            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
+            // so it also exercises parquet decode re-entry (assertSql reads once).
+            assertQuery("select count(*) from x group by 1+2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
                             VirtualRecord
                               functions: [count]
                                 Async Group By workers: 1
@@ -373,14 +376,7 @@ public class ParquetTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
-
-            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
-            // so it also exercises parquet decode re-entry (assertSql reads once).
-            assertQuery("select count(*) from x group by 1+2")
-                    .noLeakCheck()
-                    .expectSize()
+                            """)
                     .returns("""
                             count
                             2
@@ -1215,18 +1211,14 @@ public class ParquetTest extends AbstractCairoTest {
             // reason. The "id=0" filter is the NULL key for an indexed
             // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
             // The bug manifests when this index path returns no rows.
-            assertQuery("explain select * from x where id = null")
+            assertQuery("x where id = null")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .withPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: id
                                   filter: id=0
                                 Frame forward scan on: x
-                            """);
-
-            assertQuery("x where id = null")
-                    .noLeakCheck()
+                            """)
                     .timestamp("ts")
                     .returns("""
                             id\tts
@@ -1278,18 +1270,14 @@ public class ParquetTest extends AbstractCairoTest {
             // broken index by returning the right answer for the wrong
             // reason. The "id=0" filter is the NULL key for an indexed
             // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
-            assertQuery("explain select * from x where id = null")
+            assertQuery("x where id = null")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .withPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: id
                                   filter: id=0
                                 Frame forward scan on: x
-                            """);
-
-            assertQuery("x where id = null")
-                    .noLeakCheck()
+                            """)
                     .timestamp("ts")
                     .returns("""
                             id\tts
@@ -2697,7 +2685,8 @@ public class ParquetTest extends AbstractCairoTest {
             // fwd
             assertQuery("x where ts in '1970-01-01T01'")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             5\t1970-01-01T01:06:40.000000Z
                             6\t1970-01-01T01:23:20.000000Z
@@ -2706,14 +2695,16 @@ public class ParquetTest extends AbstractCairoTest {
                             """);
             assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2'")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             25\t1970-01-01T06:40:00.000000Z
                             26\t1970-01-01T06:56:40.000000Z
                             """);
             assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4'")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             25\t1970-01-01T06:40:00.000000Z
                             26\t1970-01-01T06:56:40.000000Z
@@ -2727,7 +2718,8 @@ public class ParquetTest extends AbstractCairoTest {
             // bwd
             assertQuery("x where ts in '1970-01-01T01' order by ts desc")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestampDesc("ts")
+                    .returns("""
                             id\tts
                             8\t1970-01-01T01:56:40.000000Z
                             7\t1970-01-01T01:40:00.000000Z
@@ -2736,14 +2728,16 @@ public class ParquetTest extends AbstractCairoTest {
                             """);
             assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2' order by ts desc")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestampDesc("ts")
+                    .returns("""
                             id\tts
                             26\t1970-01-01T06:56:40.000000Z
                             25\t1970-01-01T06:40:00.000000Z
                             """);
             assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4' order by ts desc")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestampDesc("ts")
+                    .returns("""
                             id\tts
                             36\t1970-01-01T09:43:20.000000Z
                             33\t1970-01-01T08:53:20.000000Z
