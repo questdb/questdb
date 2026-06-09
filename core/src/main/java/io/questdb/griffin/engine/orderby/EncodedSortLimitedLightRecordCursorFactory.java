@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursor;
@@ -58,15 +57,13 @@ import org.jetbrains.annotations.Nullable;
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final CairoConfiguration configuration;
     private final EncodedSortLimitedLightRecordCursor genericCursor;
     private final Function hiFunction;
     private final Function loFunction;
     private final EncodedSortLimitedPartiallySortedLightRecordCursor partiallySortedCursor;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
-    private DelegatingRecordCursor activeCursor;
-    private EncodedSortLightRecordCursor fallbackCursor;
+    private EncodedSortLimitedLightRecordCursor activeCursor;
     private boolean isFirstN;
     private long limit;
     private long skipFirst;
@@ -83,7 +80,6 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
     ) {
         super(metadata);
         this.base = base;
-        this.configuration = configuration;
         this.loFunction = loFunction;
         this.hiFunction = hiFunction;
         this.sortColumnFilter = sortColumnFilter;
@@ -169,10 +165,6 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         return base.usesIndex();
     }
 
-    private boolean canBeOptimized() {
-        return !(loFunction.getLong(null) >= 0 && hiFunction != null && hiFunction.getLong(null) < 0);
-    }
-
     private void computeLimits() {
         this.skipFirst = 0;
         this.skipLast = 0;
@@ -216,18 +208,16 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             hiFunction.init(baseCursor, executionContext);
         }
         computeLimits();
-        if (canBeOptimized()) {
-            final EncodedSortLimitedLightRecordCursor next = (timestampIndex != -1 && isFirstN)
-                    ? partiallySortedCursor
-                    : genericCursor;
-            next.setSelection(isFirstN, limit, skipFirst, skipLast);
-            activeCursor = next;
-            return;
-        }
-        if (fallbackCursor == null) {
-            fallbackCursor = new EncodedSortLightRecordCursor(configuration, getMetadata(), sortColumnFilter);
-        }
-        activeCursor = fallbackCursor;
+        // The lo >= 0, hi < 0 shape ("all rows except the first lo and last -hi") arrives
+        // here as limit = -1 with both skips set. setSelection() maps the negative limit
+        // to unbounded, so the emit slice [skipFirst, count - skipLast) implements the
+        // shape on the generic cursor (isFirstN is false, so it is always selected);
+        // no separate fallback cursor is needed.
+        final EncodedSortLimitedLightRecordCursor next = (timestampIndex != -1 && isFirstN)
+                ? partiallySortedCursor
+                : genericCursor;
+        next.setSelection(isFirstN, limit, skipFirst, skipLast);
+        activeCursor = next;
     }
 
     @Override
@@ -235,6 +225,5 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         Misc.free(base);
         Misc.free(genericCursor);
         Misc.free(partiallySortedCursor);
-        Misc.free(fallbackCursor);
     }
 }

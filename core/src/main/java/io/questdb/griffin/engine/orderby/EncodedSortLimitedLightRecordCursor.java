@@ -219,6 +219,17 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
     private void buildAndSort() {
         try {
             if (limit > 0) {
+                if (limit == Long.MAX_VALUE) {
+                    // Unbounded build keeps every scanned row, so pre-size the buffer the
+                    // way EncodedSortLightRecordCursor does instead of growing per row.
+                    final long estimatedSize = baseCursor.size();
+                    if (estimatedSize > 0) {
+                        if (estimatedSize > maxEntries) {
+                            throwLimitOverflow();
+                        }
+                        entryMem.setCapacity(estimatedSize * longsPerEntry);
+                    }
+                }
                 runBuild();
             }
         } finally {
@@ -232,9 +243,13 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     private long emitCount() {
+        // Mirrors toTop()'s window math. The stepwise min/max stays exact when both
+        // skips carry large user-supplied values; a plain subtraction chain can wrap.
         final long sliceStart = isFirstN ? 0 : Math.max(count - limit, 0);
         final long sliceEnd = isFirstN ? Math.min(limit, count) : count;
-        return Math.max(sliceEnd - sliceStart - skipFirst - skipLast, 0);
+        final long start = Math.min(sliceStart + skipFirst, sliceEnd);
+        final long end = Math.max(sliceEnd - skipLast, start);
+        return end - start;
     }
 
     private void throwLimitOverflow() {

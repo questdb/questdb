@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
@@ -408,6 +410,70 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         null
                         null
                         """);
+    }
+
+    @Test
+    public void testOrderByLimitLoPosHiNegBindVariableFirstExecution() throws Exception {
+        // The legacy tree-chain factory keeps a pre-existing bug on this shape: a fresh
+        // factory returns all rows instead of the slice (it only slices correctly on
+        // re-execution), so the first-execution expectation is asserted encoded-only.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", -1);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            2
+                            3
+                            4
+                            """);
+
+            // NULL hi with non-negative lo: skip lo rows, keep the rest
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 2);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitLoPosHiNegBindVariableReExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 3);
+            try (RecordCursorFactory factory = select("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("v\n2\n3\n", cursor, factory.getMetadata());
+                }
+
+                // same factory, lo >= 0 / hi < 0: slice off one row at each end
+                bindVariableService.setLong("hi", -1);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("v\n2\n3\n4\n", cursor, factory.getMetadata());
+                }
+
+                // and back to the top-K shape
+                bindVariableService.setLong("hi", 3);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("v\n2\n3\n", cursor, factory.getMetadata());
+                }
+            }
+        });
     }
 
     @Test
