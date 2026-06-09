@@ -562,6 +562,58 @@ fn test_delta_bytes_slicer_empty_suffix_errors() {
     assert!(DeltaBytesArraySlicer::try_new(&[128, 1, 1, 0], 1, 1).is_err());
 }
 
+// A foreign DELTA page whose first miniblock declares a bitwidth wider than the
+// 64-bit values it unpacks into. The vendored parquet2 Block::advance_miniblock
+// builds the first miniblock during Decoder::try_new (total_count >= 2); without
+// its num_bits > 64 guard the bitpacked u64 unpacker hits unreachable!() and
+// aborts the JVM over JNI. Header: block_size=128, mini_blocks=1, total_count=2,
+// first_value=0, min_delta=0, bitwidth=65, then a 1040-byte miniblock.
+fn delta_bitwidth_over_64_page() -> Vec<u8> {
+    let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, 65];
+    data.extend(std::iter::repeat_n(0u8, 1040));
+    data
+}
+
+// A foreign DELTA page with block_size = 2^63: it passes the %128 header guard
+// (2^63 % 128 == 0), so values_per_mini_block = 2^63. Without the checked_mul in
+// advance_miniblock, values_per_mini_block * num_bits overflows usize and aborts
+// the JVM (debug: the multiply; release: a wrapped short miniblock then a panic
+// in the bitpacked decoder). Header: block_size=2^63, mini_blocks=1,
+// total_count=2, first_value=0, min_delta=0, bitwidth=2, then a 64-byte tail.
+fn delta_oversized_block_size_page() -> Vec<u8> {
+    let mut data = vec![
+        0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01, // block_size = 2^63
+        0x01, // num_mini_blocks
+        0x02, // total_count
+        0x00, // first_value
+        0x00, // min_delta
+        0x02, // bitwidth
+    ];
+    data.extend(std::iter::repeat_n(0u8, 64));
+    data
+}
+
+#[test]
+fn test_delta_length_slicer_miniblock_bitwidth_over_64_errors() {
+    assert!(DeltaLengthArraySlicer::try_new(&delta_bitwidth_over_64_page(), 2, 2).is_err());
+}
+
+#[test]
+fn test_delta_length_slicer_oversized_block_size_errors() {
+    assert!(DeltaLengthArraySlicer::try_new(&delta_oversized_block_size_page(), 2, 2).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_miniblock_bitwidth_over_64_errors() {
+    // Same malformed page through DeltaBytesArraySlicer's prefix decoder (:451).
+    assert!(DeltaBytesArraySlicer::try_new(&delta_bitwidth_over_64_page(), 2, 2).is_err());
+}
+
+#[test]
+fn test_delta_bytes_slicer_oversized_block_size_errors() {
+    assert!(DeltaBytesArraySlicer::try_new(&delta_oversized_block_size_page(), 2, 2).is_err());
+}
+
 #[test]
 fn test_delta_length_array_slicer_skip_beyond_lengths_errors() {
     // skip() must reject a count that runs past the decoded lengths via its

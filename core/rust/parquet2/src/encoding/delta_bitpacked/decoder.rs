@@ -68,10 +68,30 @@ impl<'a> Block<'a> {
         // unwrap is ok: we sliced it by num_mini_blocks in try_new
         let num_bits = self.bitwidths.next().copied().unwrap() as usize;
 
+        // A foreign or corrupt page can declare a per-miniblock bitwidth wider
+        // than the 64-bit values it unpacks into (the byte is unchecked, range
+        // 0..=255). The bitpacked u64 unpacker only handles widths 0..=64; a wider
+        // one reaches unpack64's unreachable!() and panics, which aborts the whole
+        // JVM across the JNI boundary. Reject it with a clean error instead.
+        if num_bits > 64 {
+            return Err(Error::oos(format!(
+                "delta binary packed miniblock bit width {num_bits} exceeds 64"
+            )));
+        }
+
         self.current_miniblock = if num_bits > 0 {
             let length = std::cmp::min(self.remaining, self.values_per_mini_block);
 
-            let miniblock_length = ceil8(self.values_per_mini_block * num_bits);
+            // checked_mul: a corrupt values_per_mini_block (e.g. derived from a
+            // 2^63 block size that still passes the %128 header guard) overflows
+            // this product. Release builds disable overflow checks, so an unchecked
+            // multiply would wrap to a short miniblock and then panic on the
+            // bitpacked decoder below; reject it with a clean error instead.
+            let miniblock_bits = self
+                .values_per_mini_block
+                .checked_mul(num_bits)
+                .ok_or_else(|| Error::oos("delta binary packed miniblock length overflows"))?;
+            let miniblock_length = ceil8(miniblock_bits);
             if miniblock_length > self.values.len() {
                 return Err(Error::oos(
                     "block must contain at least miniblock_length bytes (the mini block)",
@@ -82,7 +102,7 @@ impl<'a> Block<'a> {
             self.values = remainder;
             self.consumed_bytes += miniblock_length;
 
-            Some(bitpacked::Decoder::try_new(miniblock, num_bits, length).unwrap())
+            Some(bitpacked::Decoder::try_new(miniblock, num_bits, length)?)
         } else {
             None
         };
@@ -411,6 +431,47 @@ mod tests {
         assert!(
             format!("{err:?}").contains("not a multiple of 8"),
             "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_miniblock_bitwidth_over_64_is_error() {
+        // A foreign/corrupt DELTA_BINARY_PACKED page can declare a per-miniblock
+        // bitwidth > 64 (the byte is read from page contents, range 0..=255). The
+        // vendored bitpacked u64 unpacker only handles widths 0..=64; without the
+        // guard in advance_miniblock a wider width would reach unpack64's
+        // unreachable!() and panic, aborting the JVM across the JNI boundary.
+        // advance_miniblock must instead surface a clean error. Header:
+        // block_size=128, num_mini_blocks=1, total_count=2, first_value=0,
+        // min_delta=0, bitwidth=65, then a 1040-byte miniblock.
+        let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, 65];
+        data.extend(std::iter::repeat_n(0u8, 1040));
+        assert!(
+            Decoder::try_new(&data).is_err(),
+            "bitwidth>64 must be a clean error, not a panic"
+        );
+    }
+
+    #[test]
+    fn malformed_block_size_overflows_miniblock_length() {
+        // block_size = 2^63 passes the %128 guard (2^63 % 128 == 0), giving
+        // values_per_mini_block = 2^63. Without the checked_mul in
+        // advance_miniblock, values_per_mini_block * num_bits overflows usize:
+        // debug would panic on the multiply, release would wrap to a short
+        // miniblock and panic on the bitpacked try_new().unwrap(). Either way a
+        // foreign page aborts the JVM; it must surface a clean error.
+        let mut data = vec![
+            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01, // block_size = 2^63
+            0x01, // num_mini_blocks
+            0x02, // total_count
+            0x00, // first_value
+            0x00, // min_delta
+            0x02, // bitwidth
+        ];
+        data.extend(std::iter::repeat_n(0u8, 64));
+        assert!(
+            Decoder::try_new(&data).is_err(),
+            "oversized block_size must be a clean error, not a panic/overflow"
         );
     }
 }
