@@ -615,6 +615,19 @@ fn test_delta_bytes_slicer_oversized_block_size_errors() {
 }
 
 #[test]
+fn test_delta_bytes_slicer_suffix_bitwidth_over_64_errors() {
+    // A valid prefix block followed by a malformed suffix block drives the SECOND
+    // parquet2 decoder in DeltaBytesArraySlicer::try_new (slicer/mod.rs:461, the
+    // suffix lengths), which the prefix-malformed tests above never reach because
+    // the prefix decoder fails first. The suffix declares miniblock bitwidth 65
+    // and must surface a clean error, not abort the JVM. Prefix: block_size=128,
+    // mini_blocks=1, total_count=1, first_value=0 (one length, no block).
+    let mut data = vec![0x80u8, 0x01, 0x01, 0x01, 0x00];
+    data.extend(delta_bitwidth_over_64_page());
+    assert!(DeltaBytesArraySlicer::try_new(&data, 1, 1).is_err());
+}
+
+#[test]
 fn test_delta_length_array_slicer_skip_beyond_lengths_errors() {
     // skip() must reject a count that runs past the decoded lengths via its
     // .get(index..index + count) bound, rather than panicking on the slice.

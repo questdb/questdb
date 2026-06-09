@@ -452,6 +452,14 @@ impl SimdEncodable for i64 {
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
+        if non_null_count == 0 {
+            // All-null page: emit the value_count=0 header directly. This is
+            // byte-identical to encoding the filtered iterator (which yields
+            // nothing) but skips the O(n) scan of the whole slice for non-null
+            // values that do not exist.
+            encode(std::iter::empty::<i64>(), buffer);
+            return true;
+        }
         let iterator = slice.iter().filter(|&&x| x != nulls::LONG).copied();
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
@@ -484,6 +492,12 @@ impl SimdEncodable for i32 {
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
+        if non_null_count == 0 {
+            // See the i64 impl: byte-identical to the empty filtered iterator,
+            // without scanning the all-null slice.
+            encode_i32(std::iter::empty::<i64>(), buffer);
+            return true;
+        }
         let iterator = slice
             .iter()
             .filter(|&&x| x != nulls::INT)

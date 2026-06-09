@@ -262,6 +262,15 @@ mod tests {
     }
 
     #[test]
+    fn try_new_length_times_num_bits_overflow_is_error() {
+        // length * num_bits must not overflow usize and wrap past the bounds
+        // check below it. usize::MAX * 2 overflows -> a clean error, never a
+        // wrapped-small product that accepts a too-short buffer.
+        let err = Decoder::<u64>::try_new(&[], 2, usize::MAX).unwrap_err();
+        assert!(format!("{err:?}").contains("overflows"), "got: {err:?}");
+    }
+
+    #[test]
     fn test_advance_within_pack() {
         let num_bits = 3;
         let length = 8;

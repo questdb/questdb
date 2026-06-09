@@ -474,4 +474,45 @@ mod tests {
             "oversized block_size must be a clean error, not a panic/overflow"
         );
     }
+
+    #[test]
+    fn bitwidth_exactly_64_is_accepted() {
+        // 64 is the maximum width the bitpacked u64 unpacker handles and must NOT
+        // be rejected by the num_bits > 64 guard (guards against a > 64 -> >= 64
+        // off-by-one regression). Header: block_size=128, num_mini_blocks=1,
+        // total_count=2, first_value=0, min_delta=0, bitwidth=64, then a
+        // ceil8(128*64)=1024-byte all-zero miniblock. Every delta unpacks to 0, so
+        // both values decode to 0.
+        let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, 64];
+        data.extend(std::iter::repeat_n(0u8, 1024));
+        let decoded = Decoder::try_new(&data)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(decoded, vec![0, 0]);
+    }
+
+    #[test]
+    fn malformed_second_miniblock_bitwidth_is_error() {
+        // The first miniblock is valid (bitwidth 0) but the second declares
+        // bitwidth 65. advance_miniblock is called again from Block::next when
+        // iteration crosses the miniblock boundary, so the guard must hold on that
+        // path too -- here the error surfaces during iteration, not construction.
+        // Header: block_size=128, num_mini_blocks=2 (values_per_mini_block=64),
+        // total_count=66, first_value=0, min_delta=0, bitwidths=[0, 65].
+        let data = vec![
+            0x80, 0x01, // block_size = 128
+            0x02, // num_mini_blocks
+            0x42, // total_count = 66
+            0x00, // first_value
+            0x00, // min_delta
+            0x00, 0x41, // bitwidths: miniblock 1 = 0, miniblock 2 = 65
+        ];
+        let mut decoder = Decoder::try_new(&data).unwrap(); // first miniblock is fine
+        let result: Result<Vec<_>, _> = decoder.by_ref().collect();
+        assert!(
+            result.is_err(),
+            "bad 2nd-miniblock bitwidth must surface as an iteration error"
+        );
+    }
 }
