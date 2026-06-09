@@ -470,6 +470,45 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotKeyedMultiHorizonJoinArrayAggFailsOnLargeSet() throws Exception {
+        // Non-keyed array_agg over a multi-slave HORIZON JOIN routes through
+        // AsyncMultiHorizonJoinNotKeyedRecordCursorFactory. Its per-worker FastGroupByAllocators back the
+        // single growing array_agg(p0.px0) list; the combined per-worker reduce growth trips the limit and
+        // surfaces with isOutOfMemory() set. Without the binding it escapes and the query completes, firing
+        // Assert.fail below. The drain-to-breach companion the non-keyed multi-slave variant previously lacked.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 200_000);
+                        final String query = "SELECT array_agg(p0.px0), count(p1.px1) " +
+                                "FROM trades t " +
+                                "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
+                                "HORIZON JOIN prices1 p1 " +
+                                "RANGE FROM -15s TO 15s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                    // drain until breach
+                                }
+                                Assert.fail("expected per-query memory breach");
+                            } catch (CairoException e) {
+                                Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testNotKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
         // Multi-slave non-keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations;
         // dropping the GROUP BY key routes to the non-keyed multi-horizon factory.
@@ -493,6 +532,42 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 } catch (CairoException e) {
                                     Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testNotKeyedMultiHorizonJoinReleasesAllocations() throws Exception {
+        // A small non-keyed multi-slave array_agg fits the per-query limit; the per-worker allocators and
+        // the per-worker x per-slave ASOF maps are bound on each open and must release every byte on close.
+        // Repeated getCursor/close cycles, wrapped by assertMemoryLeak, would expose a malloc/free asymmetry
+        // in the non-keyed multi-slave atom (the variant the multi-horizon leak loop previously skipped).
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 5_000);
+                        final String query = "SELECT array_agg(p0.px0), count(p1.px1) " +
+                                "FROM trades t " +
+                                "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
+                                "HORIZON JOIN prices1 p1 " +
+                                "RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            for (int i = 0; i < 10; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    long rows = 0;
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.assertEquals("iteration " + i, 1, rows);
                                 }
                             }
                         }

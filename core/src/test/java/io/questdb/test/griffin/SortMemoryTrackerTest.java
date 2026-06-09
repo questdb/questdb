@@ -78,6 +78,36 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncTopKFailsOnLargeTopN() throws Exception {
+        // A parallel ORDER BY ... LIMIT N over a large input routes through AsyncTopKRecordCursorFactory,
+        // which builds one LimitedSizeLongTreeChain per worker plus the owner chain. reopen() allocates the
+        // chains' initial heaps (the open-failure test covers a breach there); here the key/value heaps
+        // grow as the dispatch that hasNext() drives feeds records into them, crossing the per-query limit
+        // mid-sort - the runaway a user actually hits while draining. The growth surfaces with
+        // isOutOfMemory() set; without the binding the chains escape the limit and the query completes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x, x::timestamp ts FROM long_sequence(200_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT * FROM tab WHERE x > 0 ORDER BY x LIMIT 50_000";
+            try (SqlExecutionContext parallelCtx = TestUtils.createSqlExecutionCtx(engine, 4);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, parallelCtx).getRecordCursorFactory()) {
+                assertInTree(factory, AsyncTopKRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(parallelCtx)) {
+                    while (cursor.hasNext()) {
+                        // drain until breach
+                    }
+                    Assert.fail("expected per-query memory breach");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsyncTopKOpenFailureReleasesAllocations() throws Exception {
         // Inflate the sort key page above the limit so AsyncTopKAtom.reopen() breaches on the
         // owner chain's key heap during the cursor's of(). A parallel execution context routes

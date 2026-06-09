@@ -64,12 +64,17 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             // sink will be storing record columns to map key
             columnFilter.of(metadata.getColumnCount());
             RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter);
+            // Lazy variant (openOnInit=false): the map allocates no native backing until the first
+            // cursor's of() binds a MemoryTracker and calls reopen(), keeping malloc/free symmetric on
+            // the per-query counter from the very first cursor.
             Map dataMap = new OrderedMap(
                     configuration.getSqlSmallMapPageSize(),
                     metadata,
+                    null,
                     configuration.getSqlDistinctTimestampKeyCapacity(),
                     configuration.getSqlDistinctTimestampLoadFactor(),
-                    Integer.MAX_VALUE
+                    Integer.MAX_VALUE,
+                    false
             );
             this.cursor = new DistinctTimeSeriesRecordCursor(
                     getMetadata().getTimestampIndex(),
@@ -138,7 +143,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             this.timestampIndex = timestampIndex;
             this.dataMap = dataMap;
             this.recordSink = recordSink;
-            this.isOpen = true;
+            // Start closed so the first of() binds the tracker and reopens the lazy map.
+            this.isOpen = false;
         }
 
         @Override
@@ -204,6 +210,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             recordB = baseCursor.getRecordB();
             if (!isOpen) {
                 isOpen = true;
+                dataMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 dataMap.reopen();
             }
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();

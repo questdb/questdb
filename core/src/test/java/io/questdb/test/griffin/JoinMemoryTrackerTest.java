@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
@@ -530,6 +531,106 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMarkoutHorizonCompileWithoutOpenDoesNotLeak() throws Exception {
+        // The markout cross-join optimization holds a RecordArray for the slave offset grid. It is
+        // lazy (no native backing until the first of() materializes the slave), so a factory compiled
+        // but never opened frees nothing on close(). assertMemoryLeak catches a regression that makes
+        // the RecordArray allocate eagerly in the constructor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("INSERT INTO orders VALUES (1, 0::timestamp), (2, 1_000_000::timestamp)");
+            final String sql = "SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts " +
+                    "FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(100)) offsets " +
+                    "ORDER BY order_ts + usec_offs";
+            assertUsesMarkoutHorizon(sql);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                // intentionally never call getCursor()
+            }
+        });
+    }
+
+    @Test
+    public void testMarkoutHorizonFailsOnLargeSlave() throws Exception {
+        // The markout cross-join optimization materializes the entire slave (the long_sequence offset
+        // grid) into a RecordArray during the cursor's of(). A huge offset grid grows that RecordArray
+        // (now tracker-bound) past the limit, so getCursor() breaches with isOutOfMemory() set. Without
+        // the binding the RecordArray escapes the limit and the open completes, firing Assert.fail.
+        // assertMemoryLeak additionally guards the of()-throw path: the partial RecordArray must be freed.
+        // Shrink the RecordArray page so the breach comes from accumulating ~32K offset rows under the
+        // 512 KiB limit rather than from the default 16 MiB first page.
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("INSERT INTO orders VALUES (1, 0::timestamp), (2, 1_000_000::timestamp)");
+            final String sql = "SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts " +
+                    "FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(5_000_000)) offsets " +
+                    "ORDER BY order_ts + usec_offs";
+            // No assertUsesMarkoutHorizon here: EXPLAIN opens the underlying cursor and would
+            // materialize the whole 5M-row slave. Routing is proven by the small-slave sibling tests.
+            assertQueryBreaches(sql);
+        });
+    }
+
+    @Test
+    public void testMarkoutHorizonOpenFailureReleasesAllocations() throws Exception {
+        // A tiny limit breaches the markout cursor's of() on the first slave RecordArray page (the
+        // materialization runs before the cursor adopts master/slave). Reusing the factory across opens
+        // asserts the open-error path frees the partial RecordArray once and leaves the factory reusable;
+        // assertMemoryLeak guards leaks across the reuse loop.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("INSERT INTO orders VALUES (1, 0::timestamp), (2, 1_000_000::timestamp)");
+            // Tiny limit set after table creation so the populating INSERT does not breach it.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
+            final String sql = "SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts " +
+                    "FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(100)) offsets " +
+                    "ORDER BY order_ts + usec_offs";
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMarkoutHorizonRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // The reuse loop cycles the markout cursor's slave RecordArray (now tracker-bound) across
+        // of()/close(); assertMemoryLeak is the load-bearing check that its malloc/free stays symmetric
+        // on the per-query counter.
+        // Shrink the RecordArray page so the small offset grid stays well under the 512 KiB limit
+        // (the default 16 MiB first page would breach on the first row).
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("INSERT INTO orders VALUES (1, 0::timestamp), (2, 1_000_000::timestamp), (3, 2_000_000::timestamp)");
+            final String sql = "SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts " +
+                    "FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(100)) offsets " +
+                    "ORDER BY order_ts + usec_offs";
+            assertUsesMarkoutHorizon(sql);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(300, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNestedLoopFullJoinFailsOnLargeInput() throws Exception {
         // A one-row master keeps the nested loop cheap while the non-equi FULL
         // OUTER condition matches nearly every slave row, growing the matched-id
@@ -657,6 +758,17 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             if (!isFactoryInChain(factory, factoryClass)) {
                 Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
             }
+        }
+    }
+
+    private void assertUsesMarkoutHorizon(String sql) throws Exception {
+        // MarkoutHorizonRecordCursorFactory is wrapped by the projection, so check the plan text
+        // (as MarkoutHorizonCrossJoinTest does) rather than walking the base-factory chain.
+        try (RecordCursorFactory factory = select("EXPLAIN " + sql);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            sink.clear();
+            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+            TestUtils.assertContains(sink, "Markout Horizon Join");
         }
     }
 
