@@ -593,6 +593,13 @@ public class SqlOptimiser implements Mutable {
      * a.k = 'v'} would keep unmatched b rows whose a.k is NULL); for SPLICE it also changes
      * which master row prevails at each slave timestamp. LEFT OUTER, ASOF and LT keep every
      * master row, so their master-side predicates remain safe to push down and are excluded.
+     * <p>
+     * {@code homogenizeCrossJoins} rewrites a RIGHT/FULL OUTER join whose ON clause produced
+     * no equi-join context (a non-equi condition such as {@code ON a.x > b.y}) into
+     * JOIN_CROSS_RIGHT / JOIN_CROSS_FULL before {@code assignFilters} runs. Those CROSS
+     * variants still NULL-extend the master (NestedLoopRight/FullJoin build the null record
+     * from the master metadata), so they are matched here too. JOIN_CROSS_LEFT keeps every
+     * master row and is excluded for the same reason as LEFT OUTER.
      */
     private static int masterNullingJoinIndex(IQueryModel parent, int tableIndex) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -601,7 +608,9 @@ public class SqlOptimiser implements Mutable {
             final int joinType = joinModels.getQuick(i).getJoinType();
             if (joinType == IQueryModel.JOIN_SPLICE
                     || joinType == IQueryModel.JOIN_FULL_OUTER
-                    || joinType == IQueryModel.JOIN_RIGHT_OUTER) {
+                    || joinType == IQueryModel.JOIN_RIGHT_OUTER
+                    || joinType == IQueryModel.JOIN_CROSS_RIGHT
+                    || joinType == IQueryModel.JOIN_CROSS_FULL) {
                 result = i;
             }
         }

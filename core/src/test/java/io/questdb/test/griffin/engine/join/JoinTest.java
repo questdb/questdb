@@ -5800,6 +5800,38 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
+        // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
+        // homogenizeCrossJoins (which runs before assignFilters) rewrites it to
+        // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL. Those CROSS variants still NULL-extend the
+        // master (NestedLoopRight/FullJoin), so a master-only WHERE must stay a post-join
+        // filter. With the predicate pushed into the master sub-query the unmatched
+        // (NULL-master) slave rows leaked. i=5 is a non-NULL predicate, so the result must
+        // equal the INNER ground truth (5|-5, 5|-4).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (i INT)");
+            execute("INSERT INTO t1 VALUES (1),(2),(3),(4),(5)");
+            execute("CREATE TABLE t2 (j INT)");
+            execute("INSERT INTO t2 VALUES (-5),(-4),(-3),(-2),(-1)");
+
+            final String expected = "i\tj\n5\t-5\n5\t-4\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT i, j FROM t1 " + joinType + " JOIN t2 ON i > 4 AND j < -3 WHERE i = 5 ORDER BY j";
+
+                // i=5 must stay above the join as a post-join Filter, not be pushed into t1.
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: t1.i=5").returns(expected);
+
+                final String bind = "SELECT i, j FROM t1 " + joinType + " JOIN t2 ON i > 4 AND j < -3 WHERE i = :v::INT ORDER BY j";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 5);
+                printSql(bind);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testOuterHashJoinOnFunctionCondition12() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int, s1 string)");
