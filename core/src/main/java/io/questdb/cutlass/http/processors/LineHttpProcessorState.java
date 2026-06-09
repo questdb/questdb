@@ -49,6 +49,7 @@ import io.questdb.std.Zip;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -398,10 +399,28 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             case INVALID_TIMESTAMP:
                 error.put(": Could not parse timestamp: ").put(parser.getErrorTimestampValue());
                 break;
-            case INVALID_FIELD_VALUE:
+            case INVALID_FIELD_VALUE: {
+                DirectUtf8Sequence val = parser.getErrorFieldValue();
+                DirectUtf8Sequence name = parser.getLastEntityName();
+                // Provide more specific guidance when possible, e.g. trailing 'u' (unsigned)
+                if (val != null && val.size() > 0) {
+                    byte last = val.byteAt(val.size() - 1);
+                    if (last == 'u' || last == 'U') {
+                        error.put(": Invalid integer value: ");
+                        error.put(val);
+                        error.put("; Expected signed integer, long, double, boolean, or string");
+                        if (name != null) {
+                            error.put(". Field: ").put(name);
+                        }
+                        break;
+                    }
+                }
+
+                // Fallback: keep the original informative message
                 error.put(": Could not parse entire line, field value is invalid. Field: ")
-                        .put(parser.getLastEntityName()).put("; value: ").put(parser.getErrorFieldValue());
+                        .put(name).put("; value: ").put(val);
                 break;
+            }
             case INVALID_TAG_VALUE:
                 error.put(": Could not parse entire line, tag value is invalid. Tag: ")
                         .put(parser.getLastEntityName()).put("; value: ").put(parser.getErrorFieldValue());
