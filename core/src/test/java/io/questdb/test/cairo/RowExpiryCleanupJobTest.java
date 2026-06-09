@@ -204,6 +204,36 @@ public class RowExpiryCleanupJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJobDefersReplaceWhenTableNotCaughtUp() throws Exception {
+        // Concurrency gate: a REPLACE must not run while the table has committed-but-unapplied WAL txns —
+        // the survivor scan reads only applied state and could otherwise delete a non-expired back-fill.
+        // With a pending (undrained) write the racy REPLACE is deferred; once applied + quiescent, the next
+        // sweep compacts. (Custom predicate -> the survivor-scan REPLACE path, not the always-safe bounds-DROP.)
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
+                    "EXPIRE ROWS WHEN v < 2.0");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // expired
+            execute("insert into t values ('BBB', 5.0, '2024-01-05T12:00:00.000000Z')"); // kept -> partial partition
+            execute("insert into t values ('DDD', 9.0, '2024-01-10T00:00:00.000000Z')"); // active partition
+            drainWalQueue();
+            assertEquals(2, rawRowCountWhere("t", "2024-01-05"));
+
+            // A pending (unapplied) WAL write leaves the table not caught up.
+            execute("insert into t values ('EEE', 9.0, '2024-01-10T06:00:00.000000Z')"); // NOT drained yet
+            runCleanup();
+            drainWalQueue(); // applies EEE; the cleanup committed nothing (it deferred)
+            // REPLACE was deferred: the partial 2024-01-05 partition is untouched.
+            assertEquals(2, rawRowCountWhere("t", "2024-01-05"));
+
+            // Caught up + quiescent now: the next sweep compacts the partial partition to its survivor.
+            runCleanup();
+            drainWalQueue();
+            assertEquals(1, rawRowCountWhere("t", "2024-01-05"));
+        });
+    }
+
+    @Test
     public void testJobSkipsActivePartition() throws Exception {
         // Expired rows in the active (newest) partition must remain PHYSICALLY present after the job
         // (they stay hidden by the read filter). All rows live in a single day-partition, which is

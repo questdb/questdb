@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -653,6 +654,42 @@ public class RowExpiryReadFilterTest extends AbstractCairoTest {
                             "X\tnull\t2024-01-07T00:00:00.000000Z\n",
                     "select * from t order by ts"
             );
+        });
+    }
+
+    @Test
+    public void testDropExpireRecoversTableBrickedByOrphanedPredicate() throws Exception {
+        // Safety net for the (recoverable) residual where a stored predicate references a missing column —
+        // e.g. a concurrent SET EXPIRE + DROP COLUMN race in the WAL apply-lag window. Here the bad
+        // predicate is manufactured directly via the writer (bypassing the compile-time guards that prevent
+        // it via SQL). Reads then brick, and ALTER ... DROP EXPIRE must recover the table — it clears the
+        // policy without reading table data, so no data is lost.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_MICROS);
+            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into t values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            execute("insert into t values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')");
+
+            // Manufacture the orphaned-predicate brick (references a column that does not exist).
+            try (TableWriter w = getWriter("t")) {
+                w.setMetaExpiry("no_such_col < 2.0", 3_600_000_000L);
+            }
+
+            // Reads are bricked: the read filter re-parses the predicate; the missing column fails to bind.
+            try {
+                printSql("select * from t", sink);
+                Assert.fail("expected reads to be bricked by the orphaned predicate");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "no_such_col");
+            }
+
+            // Recovery: DROP EXPIRE clears the orphaned policy without touching table data.
+            execute("alter table t drop expire");
+
+            // Reads work again; no data was lost.
+            assertSql("sym\tv\tts\n" +
+                    "AAA\t1.0\t2024-01-05T00:00:00.000000Z\n" +
+                    "BBB\t5.0\t2024-01-06T00:00:00.000000Z\n", "select * from t order by ts");
         });
     }
 

@@ -5491,6 +5491,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * so it works uniformly for WAL tables (whose ALTER-time metadata is a SequencerMetadata that does NOT
      * carry the policy) and non-WAL tables. A borrowed compiler parses the predicate so the in-flight
      * ALTER's lexer/parser state is untouched.
+     * <p>
+     * Together with the symmetric check in ALTER SET EXPIRE ({@link #validateExpiryPredicate}, which rejects
+     * a predicate that no longer binds to the table's columns) this prevents a predicate from ever
+     * referencing a missing column for sequentially-issued DDL. The ONE residual is a WAL apply-lag race:
+     * two conflicting ALTERs on the same table — SET EXPIRE referencing column X and DROP/RENAME/retype X —
+     * issued so close that the second compiles while the first is sequenced-but-not-yet-applied, so neither
+     * compile-time check sees the other. Both then apply and reads brick. This requires concurrent
+     * conflicting DDL (an anti-pattern) within the apply-lag window and is fully recoverable: {@code ALTER
+     * TABLE t DROP EXPIRE} clears the orphaned predicate without reading table data (no data is lost). A
+     * complete close would require apply-time conflict detection on the WAL apply path (a deliberate,
+     * feature-level change rather than a compile-time guard).
      */
     private void validateColumnNotInExpiryPredicate(
             TableToken tableToken,
