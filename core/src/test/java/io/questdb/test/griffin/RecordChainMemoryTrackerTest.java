@@ -363,7 +363,7 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testRepeatedHashJoinCursorRunsReleaseAllocations() throws Exception {
         // Many close/reopen cycles through HashJoinRecordCursorFactory must
-        // release every byte they allocated -- both the join map and the
+        // release every byte they allocated: both the join map and the
         // slave RecordChain. The load-bearing
         // check is assertMemoryLeak: any malloc/free asymmetry would show up
         // as a residual allocation count.
@@ -437,7 +437,7 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
     public void testSampleByFullSortSucceedsOnSmallInput() throws Exception {
         // Same SAMPLE BY full-sort path on a small input fits the per-query
         // limit; the RecordTreeChain's children stay well below it. We
-        // don't assert exact contents -- the goal is malloc/free symmetry
+        // don't assert exact contents; the goal is malloc/free symmetry
         // through the lazy MemoryPages / RecordChain pair, which
         // assertMemoryLeak verifies.
         setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");

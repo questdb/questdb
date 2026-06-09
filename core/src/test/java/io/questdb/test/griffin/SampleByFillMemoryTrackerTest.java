@@ -101,7 +101,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
     public void testFastPathFillNullFailsOnHighCardinality() throws Exception {
         // Default alignment (ALIGN TO CALENDAR) routes to the GROUP BY fast-path
         // SampleByFillRecordCursorFactory. A high-cardinality key trips the per-query
-        // limit while the keyed maps grow during the build pass -- usually at the base
+        // limit while the keyed maps grow during the build pass, usually at the base
         // GROUP BY's key-by-bucket map, but the fill cursor's keysMap is now
         // charged too. Either way the breach carries the per-query message.
         assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR", SampleByFillRecordCursorFactory.class);
@@ -254,7 +254,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         // The GROUP BY fast-path (default / ALIGN TO CALENDAR) reuses a single fill
         // cursor across getCursor(); its lazy keysMap reopens on open and frees on
         // close. Mixing full and partial fetches is the exact case the per-query
-        // wiring had to get right -- a malloc/free asymmetry on the reused-cursor
+        // wiring had to get right: a malloc/free asymmetry on the reused-cursor
         // streaming lifecycle would surface here as a residual native allocation.
         // The routing guard inside the helper asserts we are actually on the fast
         // path rather than silently testing a legacy cursor.

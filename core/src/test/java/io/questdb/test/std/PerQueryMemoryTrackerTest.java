@@ -197,7 +197,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testMallocNullTrackerDegradesToGlobal() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            // No tracker -- behaves exactly like the existing two-arg malloc.
+            // No tracker: behaves exactly like the existing two-arg malloc.
             long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT, null);
             Assert.assertNotEquals(0, ptr);
             Unsafe.free(ptr, 64, MemoryTag.NATIVE_DEFAULT, null);

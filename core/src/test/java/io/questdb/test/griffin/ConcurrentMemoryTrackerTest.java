@@ -112,7 +112,7 @@ public class ConcurrentMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE small AS (SELECT x % 10 AS k, x AS v FROM long_sequence(100))");
 
             // Pin the synchronous GROUP BY path so each query allocates on its own
-            // thread under its own tracker -- the parallel path would dispatch to a
+            // thread under its own tracker; the parallel path would dispatch to a
             // shared worker pool and is covered by ParallelGroupByMemoryTrackerTest.
             sqlExecutionContext.setParallelGroupByEnabled(false);
             final RecordCursorFactory[] bigFactories = new RecordCursorFactory[threadCount];
@@ -243,7 +243,7 @@ public class ConcurrentMemoryTrackerTest extends AbstractCairoTest {
             TestUtils.await(started);
             try {
                 // MAT_VIEW_REFRESH: refresh the same 50,000-key aggregation that breaches a
-                // 512 KiB budget (see WorkloadMemoryTrackerTest) -- under its own far larger
+                // 512 KiB budget (see WorkloadMemoryTrackerTest), under its own far larger
                 // budget it must complete despite the concurrent QUERY breaches.
                 execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 execute(
@@ -253,7 +253,7 @@ public class ConcurrentMemoryTrackerTest extends AbstractCairoTest {
                 execute("CREATE MATERIALIZED VIEW mv AS (SELECT k, last(v) AS v, ts FROM base SAMPLE BY 1h) PARTITION BY DAY");
                 drainWalAndMatViewQueues();
 
-                // WAL_APPLY: a 1 MiB allocation -- above the 512 KiB QUERY budget -- must apply
+                // WAL_APPLY: a 1 MiB allocation (above the 512 KiB QUERY budget) must apply
                 // cleanly under the far larger WAL budget rather than suspend the table.
                 execute("CREATE TABLE wt (k INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 execute("INSERT INTO wt SELECT x::int, x::long, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
@@ -262,7 +262,7 @@ public class ConcurrentMemoryTrackerTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 // QUERY: the identical aggregation, run as a user query under the live storm,
-                // still breaches the 512 KiB QUERY budget -- the high background-workload
+                // still breaches the 512 KiB QUERY budget; the high background-workload
                 // budgets did not raise it.
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     final CompiledQuery cq = compiler.compile("SELECT k, sum(v) FROM qtab GROUP BY k", sqlExecutionContext);

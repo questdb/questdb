@@ -40,9 +40,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case where
@@ -144,7 +146,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
-        // Scan maps are created eagerly, so free the cursor for the never-opened case (close() is idempotent).
         Misc.free(cursor);
     }
 
@@ -292,6 +293,13 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             bwdScanKeyToRowId.reopen();
             bwdScanKeyToRowId.clear();
             super.of(masterCursor, slaveCursor, circuitBreaker);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Bound lazily before of() reopens them; map malloc/free nets on the per-query counter.
+            fwdScanKeyToRowId.setMemoryTracker(tracker);
+            bwdScanKeyToRowId.setMemoryTracker(tracker);
         }
 
         @Override

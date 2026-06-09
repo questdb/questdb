@@ -77,8 +77,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         try {
             long maxSinkTargetHeapSize = (long)
                     configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
-            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE, false, false);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE, false, false);
             this.cursor = new AsOfJoinDenseRecordCursor(
                     columnSplit,
                     fwdScanKeyToRowId,
@@ -175,10 +175,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            // Factory binds the tracker just before of(); both sinks are then
-            // reopened lazily under it. Their close() in the cursor's close
-            // path frees against the same tracker, keeping the per-query
-            // counter balanced across cursor cycles.
+            // Scan maps (via super) and sinks bind lazily before of() reopens them; malloc/free nets on the per-query counter.
+            super.setMemoryTracker(tracker);
             masterSinkTarget.setMemoryTracker(tracker);
             slaveSinkTarget.setMemoryTracker(tracker);
         }

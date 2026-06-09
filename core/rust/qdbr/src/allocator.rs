@@ -771,7 +771,7 @@ mod tests {
         assert_eq!(tas.tracker_used(), 0);
         assert_eq!(tas.rss_mem_used(), 0);
 
-        // 64 bytes -- both counters update.
+        // 64 bytes: both counters update.
         {
             let layout = std::alloc::Layout::from_size_align(64, 16).unwrap();
             let allocation = allocator.allocate(layout).unwrap();
@@ -785,7 +785,7 @@ mod tests {
             assert_eq!(tas.rss_mem_used(), 0);
         }
 
-        // Over the per-query limit -- discriminator must be `Query`.
+        // Over the per-query limit: discriminator must be `Query`.
         {
             let layout = std::alloc::Layout::from_size_align(2048, 16).unwrap();
             let result = allocator.allocate(layout);
@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn test_alloc_at_per_query_limit_succeeds() {
-        // Exactly at the limit boundary -- must succeed.
+        // Exactly at the limit boundary: must succeed.
         let tas = TestAllocatorState::new().with_memory_tracker();
         let allocator = tas.allocator();
         tas.set_tracker_limit(1024);
@@ -869,7 +869,7 @@ mod tests {
         let allocation3 = unsafe { allocator.shrink(allocation2, layout2, layout3).unwrap() };
         assert!(tas.tracker_used() < used_after_grow);
 
-        // Try to grow well past the limit -- must reject and leave the block intact.
+        // Try to grow well past the limit: must reject and leave the block intact.
         let allocation3 = NonNull::new(allocation3.as_ptr() as *mut u8).unwrap();
         let layout_huge = std::alloc::Layout::from_size_align(4096, 16).unwrap();
         let used_before_breach = tas.tracker_used();
@@ -885,7 +885,7 @@ mod tests {
         assert_eq!(tas.tracker_used(), used_before_breach);
         assert_eq!(tas.rss_mem_used(), rss_before_breach);
 
-        // Original allocation is still valid -- the caller still owns it.
+        // Original allocation is still valid: the caller still owns it.
         unsafe { allocator.deallocate(allocation3, layout3) };
         assert_eq!(tas.tracker_used(), 0);
         assert_eq!(tas.rss_mem_used(), 0);

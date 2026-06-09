@@ -155,7 +155,7 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
 
             // alloc_tracked() allocates through the tracker bound while the UPDATE is
-            // applied -- the WAL_APPLY one. 1 MiB exceeds the 512 KiB WAL_APPLY limit,
+            // applied: the WAL_APPLY one. 1 MiB exceeds the 512 KiB WAL_APPLY limit,
             // so apply fails and the table is suspended with the per-query message.
             execute("UPDATE t SET v = alloc_tracked(1_048_576)");
             drainWalQueue();

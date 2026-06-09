@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -58,11 +59,68 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        // 256 KiB clears the light hash join's 128 KiB LongChain initial page --
-        // now tracker-charged -- for the small-build success case, while the
+        // 256 KiB clears the light hash join's 128 KiB LongChain initial page
+        // (now tracker-charged) for the small-build success case, while the
         // large-workload breach tests (tens of thousands of keys / rows) still
         // exceed it.
         node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+    }
+
+    @Test
+    public void testDistinctFailsOnLargeKeySet() throws Exception {
+        // Plain SELECT DISTINCT rewrites to GROUP BY; DISTINCT over a window does not, so it routes to
+        // DistinctRecordCursorFactory. row_number() OVER () is a streaming O(1)-state window, so its 100k
+        // distinct values grow the factory's dataMap (the only growing structure here) past the limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(100_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("SELECT DISTINCT row_number() OVER () AS rn FROM tab", sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    Assert.assertTrue(
+                            "expected DistinctRecordCursorFactory in chain, got: " + factory.getClass().getSimpleName(),
+                            isFactoryInChain(factory, DistinctRecordCursorFactory.class)
+                    );
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDistinctRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // Cycle a small DISTINCT-over-window query (which routes to DistinctRecordCursorFactory) through
+        // close/reopen; assertMemoryLeak is the load-bearing check that the factory's dataMap releases
+        // every byte it allocated. row_number() OVER () yields one distinct value per row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(100))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT DISTINCT row_number() OVER () AS rn FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                Assert.assertTrue(
+                        "expected DistinctRecordCursorFactory in chain, got: " + factory.getClass().getSimpleName(),
+                        isFactoryInChain(factory, DistinctRecordCursorFactory.class)
+                );
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(100, rows);
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -205,5 +263,20 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private boolean isFactoryInChain(RecordCursorFactory factory, Class<?> factoryClass) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (factoryClass.isInstance(cur)) {
+                return true;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        return false;
     }
 }

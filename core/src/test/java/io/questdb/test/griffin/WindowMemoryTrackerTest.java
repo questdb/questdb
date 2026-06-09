@@ -112,7 +112,7 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
         // cursor. Its per-partition map (now lazy/openOnInit=false) and its deferred-offsets
         // ring must free symmetrically across getCursor/close cycles. The (x%20, x%10) shape
         // puts every row of a partition into one peer group, so the ring accumulates the
-        // whole partition before flushing -- exercising both structures. With the per-query
+        // whole partition before flushing, exercising both structures. With the per-query
         // limit active, an asymmetric alloc/free would leak or drive the counter negative;
         // assertMemoryLeak around the loop is the load-bearing check.
         assertMemoryLeak(() -> {

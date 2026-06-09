@@ -30,8 +30,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
@@ -72,6 +74,20 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinDenseFailsOnLargeInput() throws Exception {
+        // asof_dense + multi-key routes to AsOfJoinDenseRecordCursorFactory. Its scan maps memorize every
+        // distinct join key (no eviction without TOLERANCE), so a high-cardinality join grows them past the limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
+            assertUsesFactory(sql, AsOfJoinDenseRecordCursorFactory.class);
+            assertQueryBreaches(sql);
+        });
+    }
+
+    @Test
     public void testAsOfJoinDenseOpenFailureReleasesAllocations() throws Exception {
         // asof_dense + multi-key routes to AsOfJoinDenseRecordCursorFactory, whose of() reopens two
         // tracker-bound SingleRecordSinks; a tiny limit breaches that reopen. The reuse loop asserts the
@@ -99,6 +115,63 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
             assertUsesFactory(sql, AsOfJoinDenseRecordCursorFactory.class);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(50, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinDenseSingleSymbolFailsOnLargeInput() throws Exception {
+        // asof_dense + single SYMBOL routes to AsOfJoinDenseSingleSymbolRecordCursorFactory (no sinks; scan
+        // maps bound via the base setMemoryTracker). A high-cardinality join grows the maps past the limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT /*+ asof_dense(m s) */ m.k FROM m ASOF JOIN s ON k";
+            assertUsesFactory(sql, AsOfJoinDenseSingleSymbolRecordCursorFactory.class);
+            assertQueryBreaches(sql);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinDenseSingleSymbolOpenFailureReleasesAllocations() throws Exception {
+        // Single-symbol dense has no sinks, so of() breaches on the first scan-map reopen() under a tiny
+        // limit. The reuse loop asserts the open-error path frees each cursor once (the map reopen runs
+        // before super.of() adopts the cursors, so close() finds null cursors) and leaves the factory reusable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            // Tiny limit set after table creation so the populating SELECT does not breach it.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
+            assertOpenFailureReleasesAllocations(
+                    "SELECT /*+ asof_dense(m s) */ m.k FROM m ASOF JOIN s ON k",
+                    AsOfJoinDenseSingleSymbolRecordCursorFactory.class
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinDenseSingleSymbolRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // The reuse loop cycles the single-symbol dense cursor's scan maps; assertMemoryLeak is the
+        // load-bearing check that their malloc/free stays symmetric on the per-query counter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT /*+ asof_dense(m s) */ m.k FROM m ASOF JOIN s ON k";
+            assertUsesFactory(sql, AsOfJoinDenseSingleSymbolRecordCursorFactory.class);
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 for (int i = 0; i < 20; i++) {
@@ -187,6 +260,63 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                     "SELECT /*+ asof_linear(m s) */ m.k FROM m ASOF JOIN s ON k",
                     AsOfJoinLightRecordCursorFactory.class
             );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinMemoizedFailsOnLargeInput() throws Exception {
+        // asof_memoized + single SYMBOL routes to AsOfJoinMemoizedRecordCursorFactory. Its rememberedSymbols
+        // map caches one entry per distinct symbol (no eviction), so a high-cardinality join grows it past the limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT /*+ asof_memoized(m s) */ m.k FROM m ASOF JOIN s ON k";
+            assertUsesFactory(sql, AsOfJoinMemoizedRecordCursorFactory.class);
+            assertQueryBreaches(sql);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinMemoizedOpenFailureReleasesAllocations() throws Exception {
+        // Memoized has no sinks, so of() breaches on rememberedSymbols.reopen() under a tiny limit. The
+        // reuse loop asserts the open-error path frees each cursor once (the reopen runs before super.of()
+        // adopts the cursors, so close() finds null cursors) and leaves the factory reusable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            // Tiny limit set after table creation so the populating SELECT does not breach it.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
+            assertOpenFailureReleasesAllocations(
+                    "SELECT /*+ asof_memoized(m s) */ m.k FROM m ASOF JOIN s ON k",
+                    AsOfJoinMemoizedRecordCursorFactory.class
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinMemoizedRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // The reuse loop cycles the memoized cursor's rememberedSymbols map; assertMemoryLeak is the
+        // load-bearing check that its malloc/free stays symmetric on the per-query counter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT /*+ asof_memoized(m s) */ m.k FROM m ASOF JOIN s ON k";
+            assertUsesFactory(sql, AsOfJoinMemoizedRecordCursorFactory.class);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 20; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(50, rows);
+                    }
+                }
+            }
         });
     }
 
