@@ -853,8 +853,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             coverCount = count;
         } catch (Throwable e) {
+            // The covered read path has no base-table fallback, so degrading here
+            // would leave a covered read walking an absent sidecar. Propagate so
+            // the caller fails the query and closes the reader.
             LOG.error().$("failed to open sidecar files").$(e).$();
             closeSidecarMems();
+            throw e;
         } finally {
             Misc.free(infoMem);
             path.trimTo(plen);
