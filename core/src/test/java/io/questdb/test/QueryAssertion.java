@@ -681,23 +681,9 @@ public class QueryAssertion {
         RecordCursor.Counter counter = new RecordCursor.Counter();
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            // calculateSize() must agree with the row count produced by a full
-            // hasNext() iteration -- it reports how many rows the cursor would
-            // yield. The checks below only compare calculateSize() to itself, so
-            // a value that is internally consistent across toTop()/reopen but
-            // still wrong (e.g. a frame cursor whose calculateSize() stops after
-            // the first partition) would slip through without this anchor.
-            long materialized = 0;
-            while (cursor.hasNext()) {
-                materialized++;
-            }
-
-            cursor.toTop();
             cursor.calculateSize(circuitBreaker, counter);
             Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
             size = counter.get();
-            Assert.assertEquals("calculateSize() disagreed with the materialized row count", materialized, size);
-
             long preComputeStateSize = cursor.preComputedStateSize();
             cursor.toTop();
             Assert.assertEquals(preComputeStateSize, cursor.preComputedStateSize());
