@@ -83,7 +83,7 @@ public interface SqlParserCallback {
     }
 
     default RecordCursorFactory generateShowCreateDatabaseFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
-        return new ShowCreateDatabaseRecordCursorFactory();
+        return new ShowCreateDatabaseRecordCursorFactory(model.getShowCreateDatabaseInclude());
     }
 
     default RecordCursorFactory generateShowCreateMatViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {

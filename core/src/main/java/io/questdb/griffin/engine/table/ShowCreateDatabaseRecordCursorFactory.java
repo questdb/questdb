@@ -74,16 +74,29 @@ import java.util.Comparator;
  * could not otherwise see.
  */
 public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
+    // category bits selected by the INCLUDE/EXCLUDE clause
+    public static final int INCLUDE_TABLES = 1;
+    public static final int INCLUDE_VIEWS = 1 << 1;
+    public static final int INCLUDE_MATERIALIZED_VIEWS = 1 << 2;
+    public static final int INCLUDE_USERS = 1 << 3;
+    public static final int INCLUDE_GROUPS = 1 << 4;
+    public static final int INCLUDE_SERVICE_ACCOUNTS = 1 << 5;
+    public static final int INCLUDE_PERMISSIONS = 1 << 6;
+    public static final int INCLUDE_SCHEMA = INCLUDE_TABLES | INCLUDE_VIEWS | INCLUDE_MATERIALIZED_VIEWS;
+    public static final int INCLUDE_ACL = INCLUDE_USERS | INCLUDE_GROUPS | INCLUDE_SERVICE_ACCOUNTS | INCLUDE_PERMISSIONS;
+    public static final int INCLUDE_ALL = INCLUDE_SCHEMA | INCLUDE_ACL;
     public static final int N_DDL_COL = 0;
     private static final Log LOG = LogFactory.getLog(ShowCreateDatabaseRecordCursorFactory.class);
     private static final RecordMetadata METADATA;
     private static final Comparator<TableToken> TABLE_NAME_COMPARATOR =
             (a, b) -> a.getTableName().compareTo(b.getTableName());
+    protected final int includeMask;
     private final ShowCreateDatabaseCursor cursor = new ShowCreateDatabaseCursor();
     private final TableTokenCollector tableTokenCollector = new TableTokenCollector();
 
-    public ShowCreateDatabaseRecordCursorFactory() {
+    public ShowCreateDatabaseRecordCursorFactory(int includeMask) {
         super(METADATA);
+        this.includeMask = includeMask;
     }
 
     @Override
@@ -122,6 +135,11 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         appendAclGrants(out, executionContext);
     }
 
+    // inline OWNED BY follows the USERS category: a schema-only dump stays free of ACL identities
+    protected boolean isOwnedByIncluded() {
+        return (includeMask & INCLUDE_USERS) != 0;
+    }
+
     protected RecordCursorFactory matViewFactory(TableToken token) {
         return new ShowCreateMatViewRecordCursorFactory(token, 0);
     }
@@ -148,6 +166,16 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         } finally {
             Misc.free(factory);
         }
+    }
+
+    private static int categoryBit(TableToken token) {
+        if (token.isMatView()) {
+            return INCLUDE_MATERIALIZED_VIEWS;
+        }
+        if (token.isView()) {
+            return INCLUDE_VIEWS;
+        }
+        return INCLUDE_TABLES;
     }
 
     private static void fallBackToBaseTable(
@@ -180,18 +208,21 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     }
 
     private void appendObjects(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
+        if ((includeMask & INCLUDE_SCHEMA) == 0) {
+            return;
+        }
         final CairoEngine engine = executionContext.getCairoEngine();
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         final ObjHashSet<TableToken> tokens = new ObjHashSet<>();
         engine.getTableTokens(tokens, false);
 
-        // collect the non-system objects the caller is allowed to see
+        // collect the non-system objects in a requested category that the caller is allowed to see
         final ObjList<TableToken> objects = new ObjList<>();
         final ObjHashSet<TableToken> visible = new ObjHashSet<>();
         for (int i = 0, n = tokens.size(); i < n; i++) {
             final TableToken token = tokens.get(i);
-            if (token.isSystem() || !isVisible(securityContext, token)) {
+            if (token.isSystem() || (includeMask & categoryBit(token)) == 0 || !isVisible(securityContext, token)) {
                 continue;
             }
             objects.add(token);

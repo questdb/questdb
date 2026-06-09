@@ -83,6 +83,44 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncludeAndExcludeFilterCategories() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select ts, s, avg(v) v from base sample by 1d) partition by day");
+            execute("create view v as (select ts, s from base)");
+            drainWalQueue();
+
+            final String tablesOnly = dump("SHOW CREATE DATABASE INCLUDE (TABLES)");
+            Assert.assertTrue(tablesOnly, tablesOnly.contains("CREATE TABLE 'base'"));
+            Assert.assertFalse(tablesOnly, tablesOnly.contains("CREATE MATERIALIZED VIEW"));
+            Assert.assertFalse(tablesOnly, tablesOnly.contains("CREATE VIEW 'v'"));
+
+            final String schema = dump("SHOW CREATE DATABASE INCLUDE (SCHEMA)");
+            Assert.assertTrue(schema, schema.contains("CREATE TABLE 'base'"));
+            Assert.assertTrue(schema, schema.contains("CREATE MATERIALIZED VIEW 'mv'"));
+            Assert.assertTrue(schema, schema.contains("CREATE VIEW 'v'"));
+
+            final String noViews = dump("SHOW CREATE DATABASE EXCLUDE (VIEWS)");
+            Assert.assertTrue(noViews, noViews.contains("CREATE TABLE 'base'"));
+            Assert.assertTrue(noViews, noViews.contains("CREATE MATERIALIZED VIEW 'mv'"));
+            Assert.assertFalse(noViews, noViews.contains("CREATE VIEW 'v'"));
+
+            // default is INCLUDE ALL
+            Assert.assertEquals(dump("SHOW CREATE DATABASE"), dump("SHOW CREATE DATABASE INCLUDE ALL"));
+        });
+    }
+
+    @Test
+    public void testIncludeRejectsUnknownCategory() throws Exception {
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "SHOW CREATE DATABASE INCLUDE (BOGUS)",
+                30,
+                "unexpected category"
+        ));
+    }
+
+    @Test
     public void testMatViewJoinDependencyOrdering() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
@@ -305,9 +343,17 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         return sink.toString();
     }
 
+    private static String dump(String sql) throws Exception {
+        return dumpDatabase(sql).toString();
+    }
+
     private static ObjList<String> dumpDatabase() throws Exception {
+        return dumpDatabase("SHOW CREATE DATABASE");
+    }
+
+    private static ObjList<String> dumpDatabase(String sql) throws Exception {
         final ObjList<String> statements = new ObjList<>();
-        try (RecordCursorFactory factory = select("SHOW CREATE DATABASE")) {
+        try (RecordCursorFactory factory = select(sql)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {

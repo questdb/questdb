@@ -401,6 +401,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<QueryModelWrapper> getSharedRefs();
 
+    int getShowCreateDatabaseInclude();
+
     int getShowKind();
 
     int getTableId();
@@ -634,6 +636,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setSelectTranslation(boolean isSelectTranslation);
 
     void setSetOperationType(int setOperationType);
+
+    void setShowCreateDatabaseInclude(int includeMask);
 
     void setShowKind(int showKind);
 
