@@ -36,13 +36,17 @@ public final class FuzzConfig {
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
+    public static final String FAULTS_PROP = "questdb.fuzz.faults";
+    public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
 
     private final boolean isDiffJitEnabled;
     private final boolean isDiffShadowEnabled;
+    private final boolean isFaultInjectionEnabled;
     private final boolean isVerifyCursorEnabled;
     private final String dumpPath;
+    private final int faultProbabilityPct;
     private final int maxColumnsPerTable;
     private final int minColumnsPerTable;
     private final int numQueries;
@@ -64,10 +68,16 @@ public final class FuzzConfig {
         this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
         this.isDiffShadowEnabled = Boolean.parseBoolean(System.getProperty(DIFF_SHADOW_PROP, "true"));
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
+        this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
+        this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
     }
 
     public String getDumpPath() {
         return dumpPath;
+    }
+
+    public int getFaultProbabilityPct() {
+        return faultProbabilityPct;
     }
 
     public int getMaxColumnsPerTable() {
@@ -104,6 +114,10 @@ public final class FuzzConfig {
 
     public boolean isDiffShadowEnabled() {
         return isDiffShadowEnabled;
+    }
+
+    public boolean isFaultInjectionEnabled() {
+        return isFaultInjectionEnabled;
     }
 
     public boolean isVerifyCursorEnabled() {

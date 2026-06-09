@@ -45,10 +45,15 @@ import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
 
 import java.util.Arrays;
@@ -132,6 +137,16 @@ public final class QueryRunner {
     // to fail with "column not found", which the caller treats as "candidate
     // is not a constant arithmetic subtree" and skips.
     private static final GenericRecordMetadata EMPTY_METADATA = new GenericRecordMetadata();
+    // Fault-injection tuning. The malloc fault arms the RSS limit at the current
+    // usage plus a small random slack so the query's next sizeable native
+    // allocation trips the real out-of-memory path; the file fault fails one of
+    // the first N filesystem ops; and the per-query leak slack absorbs pooled
+    // growth that survives a releaseInactive() drain (the compiler cache is
+    // excluded separately, see stableMemUsed).
+    private static final long FAULT_MALLOC_SLACK_MIN = 4 * 1024;
+    private static final int FAULT_MALLOC_SLACK_RANGE = 256 * 1024;
+    private static final int FAULT_MAX_FILE_OPS = 48;
+    private static final long FAULT_MEM_LEAK_SLACK = 256 * 1024;
     // Matches LONG, FLOAT, DOUBLE, DECIMAL, TIMESTAMP, or DATE type hints in a
     // candidate subexpression. The presence of any such hint means the bind
     // form keeps the same type as the literal form, so a fold-to-LongConstant
@@ -144,6 +159,11 @@ public final class QueryRunner {
     private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
+    // The engine's FilesFacade when it is a FailureFileFacade, which enables FILE
+    // faults; null otherwise (then FILE is dropped from faultTypes).
+    private final FailureFileFacade failureFf;
+    // Fault kinds available this run; FILE is present only when failureFf != null.
+    private final FaultType[] faultTypes;
     // Reused per parseFunction call. Stateful (metadataStack, function stacks)
     // but parseFunction is contractually re-entrant: it pushes/pops its own
     // state in try/finally, so a single instance is safe across the runner's
@@ -177,6 +197,10 @@ public final class QueryRunner {
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
         this.verifyCursor = verifyCursor;
+        this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
+        this.faultTypes = failureFf != null
+                ? new FaultType[]{FaultType.FILE, FaultType.MALLOC}
+                : new FaultType[]{FaultType.MALLOC};
         if (diffShadow) {
             int n = tables.size();
             primaryPatterns = new Pattern[n];
@@ -204,6 +228,16 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * Picks a fault kind for an injected query, uniformly among the kinds available
+     * this run (see {@link #faultTypes}). Called before query generation so a
+     * {@link FaultType#FUNCTION} pick can ask the generator to emit the fault
+     * function; draws once from {@code rnd} so replay reproduces the choice.
+     */
+    public FaultType chooseFaultType(Rnd rnd) {
+        return faultTypes[rnd.nextInt(faultTypes.length)];
+    }
+
     public Result run(GeneratedQuery query) {
         // A per-cursor self-consistency violation detected by any runOnce pass
         // surfaces as a CursorCheckException so it can short-circuit the
@@ -214,6 +248,103 @@ public final class QueryRunner {
         } catch (CursorCheckException e) {
             return Result.failed(query.sql(), e);
         }
+    }
+
+    /**
+     * Runs one query with a fault injected, applying a crash-and-recover oracle
+     * instead of the differential one (a faulting query is not comparable). The
+     * fault is armed at a random trigger point, the query runs once, and then:
+     * <ol>
+     *   <li>a fired fault must not be swallowed -- the query must throw (except a
+     *       FILE op failure, which the engine may legitimately handle);</li>
+     *   <li>after the cursor closes, native memory and open file descriptors must
+     *       return to their pre-fault baseline (a drained-pool delta), proving the
+     *       factory freed its resources on the error path;</li>
+     *   <li>with the fault removed, the same query must run cleanly.</li>
+     * </ol>
+     * A query that throws without the fault firing is a benign skip when the error
+     * is user-facing, or a failure otherwise. {@code rnd} supplies the trigger
+     * point so replay reproduces the run.
+     */
+    public Result runFault(GeneratedQuery query, FaultType type, Rnd rnd) {
+        String sql = query.sql();
+        // Drain pooled readers/writers so the post-fault delta reflects this query
+        // alone, not state a pool legitimately retains across queries.
+        engine.releaseInactive();
+        long memBefore = stableMemUsed();
+        long fdBefore = Files.getOpenFileCount();
+
+        int fileFailBaseline = failureFf != null ? failureFf.failureGenerated() : 0;
+        long savedRssLimit = 0;
+        switch (type) {
+            case FILE -> failureFf.setToFailAfter(1 + rnd.nextInt(FAULT_MAX_FILE_OPS));
+            case MALLOC -> {
+                savedRssLimit = Unsafe.getRssMemLimit();
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + FAULT_MALLOC_SLACK_MIN + rnd.nextInt(FAULT_MALLOC_SLACK_RANGE));
+            }
+            case FUNCTION -> {
+                // Stage B: the generator has emitted test_fault() into the SQL; arm
+                // its per-row counter here.
+            }
+        }
+        Outcome outcome;
+        // Read the file-failure count before disarming: clearFailures() resets it.
+        int fileFiredAfter = fileFailBaseline;
+        try {
+            outcome = runRaw(sql, rowsA);
+            if (failureFf != null) {
+                fileFiredAfter = failureFf.failureGenerated();
+            }
+        } finally {
+            switch (type) {
+                case FILE -> failureFf.clearFailures();
+                case MALLOC -> Unsafe.setRssMemLimit(savedRssLimit);
+                case FUNCTION -> {
+                    // Stage B: disarm the function counter.
+                }
+            }
+        }
+        boolean faultFired = switch (type) {
+            case FILE -> fileFiredAfter > fileFailBaseline;
+            case MALLOC -> outcome.failure instanceof CairoException ce && ce.isOutOfMemory();
+            case FUNCTION -> false; // Stage B
+        };
+        // Oracle 1: the fault must not be swallowed. A FILE op failure may be
+        // handled gracefully (a non-fatal -1 return), so only the deterministic
+        // throws (MALLOC OOM, FUNCTION throw) are required to surface.
+        if (outcome.failure == null) {
+            if (faultFired && type != FaultType.FILE) {
+                return Result.failed(sql, new AssertionError(
+                        "fault " + type + " fired but the query returned a result (swallowed): " + sql));
+            }
+        } else if (!faultFired) {
+            // The query threw, but not because of our fault: a user-facing error is
+            // a legitimate skip, anything else is a real crash surfaced incidentally.
+            if (isAcceptedSkip(outcome.failure)) {
+                return Result.skipped("fault " + type + " not reached, query rejected: " + outcome.exceptionClass);
+            }
+            return Result.failed(sql, outcome.failure);
+        }
+        // Oracle 2: the factory must have freed its resources on the error path.
+        engine.releaseInactive();
+        long memLeak = stableMemUsed() - memBefore;
+        if (memLeak > FAULT_MEM_LEAK_SLACK) {
+            return Result.failed(sql, new AssertionError(
+                    "fault " + type + " leaked " + memLeak + " bytes of native memory: " + sql));
+        }
+        long fdLeak = Files.getOpenFileCount() - fdBefore;
+        if (fdLeak > 0) {
+            return Result.failed(sql, new AssertionError(
+                    "fault " + type + " leaked " + fdLeak + " file descriptor(s): " + sql));
+        }
+        // Oracle 3: with the fault removed, the same query must run cleanly.
+        Outcome recovery = runRaw(sql, rowsB);
+        if (recovery.failure != null && !isAcceptedSkip(recovery.failure)) {
+            return Result.failed(sql, new AssertionError(
+                    "query did not recover after " + type + " fault: "
+                            + recovery.exceptionClass + ": " + recovery.exceptionMessage, recovery.failure));
+        }
+        return Result.ok();
     }
 
     /**
@@ -668,6 +799,15 @@ public final class QueryRunner {
             }
         }
         return true;
+    }
+
+    /**
+     * Native memory in use excluding the SQL compiler pool, which legitimately
+     * caches compiled factories across queries -- the same exemption the
+     * assertMemoryLeak battery makes. Used as the fault oracle's leak baseline.
+     */
+    private static long stableMemUsed() {
+        return Unsafe.getMemUsed() - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
     }
 
     private static Result toResult(String sql, Outcome outcome) {
@@ -1190,6 +1330,34 @@ public final class QueryRunner {
             return jitResult != null ? jitResult : Result.ok();
         } finally {
             executionContext.setJitMode(prevJitMode);
+        }
+    }
+
+    /**
+     * Compiles and fully materializes {@code sql}, returning an {@link Outcome}
+     * that captures success or the thrown exception. Unlike {@link #runOnce} it
+     * runs no cursor self-checks and ignores the plan/parquet metadata, so the
+     * fault oracle sees exactly one clean execution attempt. Errors (OOME, etc.)
+     * propagate as elsewhere.
+     */
+    private Outcome runRaw(String sql, StringSink rows) {
+        rows.clear();
+        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            int rowsRead;
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                RecordMetadata metadata = factory.getMetadata();
+                rowsRead = materialize(cursor, metadata, metadata.getColumnCount(), rows);
+            }
+            return Outcome.ok(rowsRead, false, false);
+        } catch (SqlException e) {
+            return Outcome.error(e, e.getFlyweightMessage().toString(), false);
+        } catch (ImplicitCastException e) {
+            return Outcome.error(e, e.getFlyweightMessage().toString(), false);
+        } catch (NumericException e) {
+            return Outcome.error(e, "", false);
+        } catch (Exception t) {
+            String msg = t.getMessage();
+            return Outcome.error(t, msg == null ? "" : msg, false);
         }
     }
 

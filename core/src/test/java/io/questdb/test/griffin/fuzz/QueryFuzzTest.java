@@ -32,6 +32,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -114,7 +115,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testQueryFuzz() throws Exception {
-        assertMemoryLeak(() -> {
+        // Install a FailureFileFacade as the engine's files facade so the runner can
+        // arm file-I/O faults; it is a transparent passthrough until armed.
+        final FailureFileFacade faultFf = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
+        engine.clear();
+        assertMemoryLeak(faultFf, () -> {
             // Run queries through a 4-thread shared worker pool so parallel filter,
             // GROUP BY, top-K, window/horizon join and parquet read paths are exercised.
             // The default test sqlExecutionContext reports getSharedQueryWorkerCount()=1,
@@ -193,6 +198,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", diffJit=").$(config.isDiffJitEnabled())
                 .$(", diffShadow=").$(config.isDiffShadowEnabled())
                 .$(", verifyCursor=").$(config.isVerifyCursorEnabled())
+                .$(", faults=").$(config.isFaultInjectionEnabled())
+                .$(", faultPct=").$(config.getFaultProbabilityPct())
                 .$();
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
@@ -220,63 +227,98 @@ public class QueryFuzzTest extends AbstractCairoTest {
         final boolean savedParallelReadParquet = sqlExecutionContext.isParallelReadParquetEnabled();
         final boolean savedParallelTopK = sqlExecutionContext.isParallelTopKEnabled();
         int bindGen = 0;
+        int faultGen = 0;
         int skipped = 0;
         int serial = 0;
         ObjList<QueryRunner.Result> failures = new ObjList<>();
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < config.getNumQueries(); q++) {
+                // Decide fault injection before generation so a FUNCTION fault can
+                // ask the generator to emit the fault function. Drawn from the
+                // seeded rnd, so replay reproduces the choice.
+                FaultType faultType = (config.isFaultInjectionEnabled() && rnd.nextInt(100) < config.getFaultProbabilityPct())
+                        ? runner.chooseFaultType(rnd)
+                        : null;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
                 GeneratedQuery query = QueryGenerator.generate(rnd, tables, null);
-                // With small probability, regenerate the same query with a
-                // BindContext threaded through so a fraction of bindable
-                // typed constants emit as ?::TYPE bind variables. The Rnd
-                // is rewound to the pre-literal state so the tree shape
-                // matches; the BindContext gets its own derived Rnd so the
-                // bind/no-bind decisions are deterministic per seed.
-                //
-                // Determinism invariant: the second QueryGenerator.generate()
-                // call must draw the same number and order of rnd ops as the
-                // first. The two calls only differ in whether they consult
-                // the BindContext (which uses its own seeded Rnd), so adding
-                // any rnd operation to the bind path -- or skipping one on
-                // the literal path -- desynchronises the two trees and the
-                // shapes will diverge. Take care when modifying any code
-                // reachable from QueryGenerator.generate().
-                if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
-                    long bindS0 = rnd.nextLong();
-                    long bindS1 = rnd.nextLong();
-                    rnd.reset(preGenS0, preGenS1);
-                    BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                    GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx);
-                    if (ctx.getBindValues().size() > 0) {
-                        query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
-                        bindGen++;
-                        LOG.info().$("fuzz bind: ").$safe(query.bindSql()).$();
+                QueryRunner.Result result;
+                if (faultType != null) {
+                    // Fault queries use a crash-and-recover oracle, not the
+                    // differential one, so they skip the bind/serial variants.
+                    faultGen++;
+                    if (dump != null) {
+                        dump.write(query.sql());
+                        dump.newLine();
                     }
-                }
-                if (dump != null) {
-                    dump.write(query.sql());
-                    dump.newLine();
-                }
-                boolean disableParallel = rnd.nextInt(100) < SERIAL_PROBABILITY_PCT;
-                if (disableParallel) {
-                    serial++;
+                    LOG.info().$("fuzz fault (").$(faultType.name()).$("): ").$safe(query.sql()).$();
+                    // Run faults with parallel execution disabled. A fault thrown
+                    // mid-parallel-execution can leave a pooled page-frame reduce
+                    // task holding an un-released buffer, which then corrupts a
+                    // later query that reuses the task. Serial execution exercises
+                    // the resource-cleanup path without that shared-state hazard.
                     sqlExecutionContext.setParallelFilterEnabled(false);
                     sqlExecutionContext.setParallelGroupByEnabled(false);
                     sqlExecutionContext.setParallelReadParquetEnabled(false);
                     sqlExecutionContext.setParallelTopKEnabled(false);
-                    LOG.info().$("fuzz serial: ").$safe(query.sql()).$();
-                }
-                QueryRunner.Result result;
-                try {
-                    result = runner.run(query);
-                } finally {
-                    if (disableParallel) {
+                    try {
+                        result = runner.runFault(query, faultType, rnd);
+                    } finally {
                         sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                         sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
                         sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
                         sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
+                    }
+                } else {
+                    // With small probability, regenerate the same query with a
+                    // BindContext threaded through so a fraction of bindable
+                    // typed constants emit as ?::TYPE bind variables. The Rnd
+                    // is rewound to the pre-literal state so the tree shape
+                    // matches; the BindContext gets its own derived Rnd so the
+                    // bind/no-bind decisions are deterministic per seed.
+                    //
+                    // Determinism invariant: the second QueryGenerator.generate()
+                    // call must draw the same number and order of rnd ops as the
+                    // first. The two calls only differ in whether they consult
+                    // the BindContext (which uses its own seeded Rnd), so adding
+                    // any rnd operation to the bind path -- or skipping one on
+                    // the literal path -- desynchronises the two trees and the
+                    // shapes will diverge. Take care when modifying any code
+                    // reachable from QueryGenerator.generate().
+                    if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
+                        long bindS0 = rnd.nextLong();
+                        long bindS1 = rnd.nextLong();
+                        rnd.reset(preGenS0, preGenS1);
+                        BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx);
+                        if (ctx.getBindValues().size() > 0) {
+                            query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
+                            bindGen++;
+                            LOG.info().$("fuzz bind: ").$safe(query.bindSql()).$();
+                        }
+                    }
+                    if (dump != null) {
+                        dump.write(query.sql());
+                        dump.newLine();
+                    }
+                    boolean disableParallel = rnd.nextInt(100) < SERIAL_PROBABILITY_PCT;
+                    if (disableParallel) {
+                        serial++;
+                        sqlExecutionContext.setParallelFilterEnabled(false);
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelReadParquetEnabled(false);
+                        sqlExecutionContext.setParallelTopKEnabled(false);
+                        LOG.info().$("fuzz serial: ").$safe(query.sql()).$();
+                    }
+                    try {
+                        result = runner.run(query);
+                    } finally {
+                        if (disableParallel) {
+                            sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
+                            sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
+                            sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
+                        }
                     }
                 }
                 if (result.isSkipped()) {
@@ -293,6 +335,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         LOG.info().$("fuzz done: ").$(config.getNumQueries()).$(" queries, ")
                 .$(serial).$(" serial, ")
+                .$(faultGen).$(" with fault injection, ")
                 .$(bindGen).$(" with bind variant, ")
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")
