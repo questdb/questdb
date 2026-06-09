@@ -1162,13 +1162,27 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
             setupStmt.execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 1)");
         }
         // Settle this table's writerTxn against its seqTxn before suspending.
-        // The fuzz's background drainer thread keeps calling drainWalQueue;
-        // if we leave a pending INSERT here, that drain advances writerTxn,
-        // and updateWriterTxns flips suspendedState back to 1 (un-suspended),
-        // racing the waiters back to PENDING before they can throw. With nothing
-        // left to apply, subsequent drainer ticks are no-ops for this table and
-        // setSuspended sticks.
-        TestUtils.drainWalQueue(serverMain.getEngine());
+        // The fuzz's background drainer thread keeps calling drainWalQueue; if
+        // any txn is still pending when setSuspended runs, a racing apply calls
+        // updateWriterTxns, which flips suspendedState back to 1 (un-suspended)
+        // on writerTxn progress. A just-fired waiter then resumes, observes a
+        // healthy table, re-parks, and only unwinds on the query timeout -- well
+        // past the helpersDone budget below. A single drainWalQueue is not
+        // enough: it can lose this table's writer to the background drainer
+        // (EntryUnavailableException) and return before the pending INSERT is
+        // applied. Drive drains until writerTxn == seqTxn; no further inserts
+        // target this table, so that equality is a stable terminal state that
+        // makes setSuspended stick.
+        final SeqTxnTracker tracker = serverMain.getEngine().getTableSequencerAPI()
+                .getTxnTracker(serverMain.getEngine().verifyTableName(table));
+        TestUtils.assertEventually(() -> {
+            TestUtils.drainWalQueue(serverMain.getEngine());
+            Assert.assertTrue(
+                    "doomed table not fully applied before suspend [writerTxn="
+                            + tracker.getWriterTxn() + ", seqTxn=" + tracker.getSeqTxn() + "]",
+                    tracker.isInitialised() && tracker.getWriterTxn() == tracker.getSeqTxn()
+            );
+        }, 20);
 
         final int helperCount = 4;
         final CountDownLatch helpersStarted = new CountDownLatch(helperCount);
@@ -1203,8 +1217,6 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
         );
         awaitWaiterRegistered(serverMain, table, helperCount);
 
-        SeqTxnTracker tracker = serverMain.getEngine().getTableSequencerAPI()
-                .getTxnTracker(serverMain.getEngine().verifyTableName(table));
         tracker.setSuspended(ErrorTag.NONE, "fuzz-induced");
 
         Assert.assertTrue(
