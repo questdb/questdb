@@ -1639,14 +1639,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
-        if (engine.isReadOnlyMode()) {
-            // RESUME WAL mutates sequencer state through resumeTable(), so a read-only replica
-            // must refuse it. Check isReadOnlyMode() first: the flag flips at the start of a
-            // demote while a connection's security context may still be the PRIMARY one that
-            // would otherwise accept the statement, so the read-only refusal must precede the
-            // mutation (and any auth) to close that demote window. A primary is unaffected.
-            throw CairoException.authorization().put("replica access is read-only");
-        }
         try {
             if (!executionContext.isValidationOnly()) {
                 engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
