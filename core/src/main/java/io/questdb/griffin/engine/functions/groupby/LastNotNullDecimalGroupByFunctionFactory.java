@@ -81,8 +81,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal128(record, decimal128);
             if (!decimal128.isNull()) {
-                mapValue.putLong(valueIndex, rowId);
-                mapValue.putDecimal128(valueIndex + 1, decimal128);
+                mapValue.getDecimal128(valueIndex + 1, decimal128);
+                if (decimal128.isNull() || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -115,8 +117,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final short value = arg.getDecimal16(record);
             if (value != Decimals.DECIMAL16_NULL) {
-                mapValue.putLong(valueIndex, rowId);
-                mapValue.putShort(valueIndex + 1, value);
+                if (mapValue.getDecimal16(valueIndex + 1) == Decimals.DECIMAL16_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putShort(valueIndex + 1, value);
+                }
             }
         }
 
@@ -150,8 +154,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal256(record, decimal256);
             if (!decimal256.isNull()) {
-                mapValue.putLong(valueIndex, rowId);
-                mapValue.putDecimal256(valueIndex + 1, decimal256);
+                mapValue.getDecimal256(valueIndex + 1, decimal256);
+                if (decimal256.isNull() || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -184,8 +190,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final int value = arg.getDecimal32(record);
             if (value != Decimals.DECIMAL32_NULL) {
-                mapValue.putLong(valueIndex, rowId);
-                mapValue.putInt(valueIndex + 1, value);
+                if (mapValue.getDecimal32(valueIndex + 1) == Decimals.DECIMAL32_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putInt(valueIndex + 1, value);
+                }
             }
         }
 
@@ -218,8 +226,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final long value = arg.getDecimal64(record);
             if (!Decimal64.isNull(value)) {
-                mapValue.putLong(valueIndex, rowId);
-                mapValue.putLong(valueIndex + 1, value);
+                if (Decimal64.isNull(mapValue.getDecimal64(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putLong(valueIndex + 1, value);
+                }
             }
         }
 
@@ -252,8 +262,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final byte value = arg.getDecimal8(record);
             if (value != Decimals.DECIMAL8_NULL) {
-                mapValue.putLong(valueIndex, rowId);
-                mapValue.putByte(valueIndex + 1, value);
+                if (mapValue.getDecimal8(valueIndex + 1) == Decimals.DECIMAL8_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putByte(valueIndex + 1, value);
+                }
             }
         }
 

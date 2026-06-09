@@ -93,7 +93,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoByte(record) != GeoHashes.BYTE_NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -146,7 +148,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoInt(record) != GeoHashes.INT_NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -199,7 +203,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoLong(record) != GeoHashes.NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -252,7 +258,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoShort(record) != GeoHashes.SHORT_NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 

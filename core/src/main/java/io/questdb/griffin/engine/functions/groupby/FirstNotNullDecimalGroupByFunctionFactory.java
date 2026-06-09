@@ -77,9 +77,12 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            mapValue.getDecimal128(valueIndex + 1, decimal128);
-            if (decimal128.isNull()) {
-                computeFirst(mapValue, record, rowId);
+            arg.getDecimal128(record, decimal128);
+            if (!decimal128.isNull()) {
+                mapValue.getDecimal128(valueIndex + 1, decimal128);
+                if (decimal128.isNull() || rowId < mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -113,8 +116,12 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getDecimal16(valueIndex + 1) == Decimals.DECIMAL16_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final short value = arg.getDecimal16(record);
+            if (value != Decimals.DECIMAL16_NULL) {
+                if (mapValue.getDecimal16(valueIndex + 1) == Decimals.DECIMAL16_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putShort(valueIndex + 1, value);
+                }
             }
         }
 
@@ -146,9 +153,12 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            mapValue.getDecimal256(valueIndex + 1, decimal256);
-            if (decimal256.isNull()) {
-                computeFirst(mapValue, record, rowId);
+            arg.getDecimal256(record, decimal256);
+            if (!decimal256.isNull()) {
+                mapValue.getDecimal256(valueIndex + 1, decimal256);
+                if (decimal256.isNull() || rowId < mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -182,8 +192,12 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getDecimal32(valueIndex + 1) == Decimals.DECIMAL32_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final int value = arg.getDecimal32(record);
+            if (value != Decimals.DECIMAL32_NULL) {
+                if (mapValue.getDecimal32(valueIndex + 1) == Decimals.DECIMAL32_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putInt(valueIndex + 1, value);
+                }
             }
         }
 
@@ -215,8 +229,12 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (Decimal64.isNull(mapValue.getDecimal64(valueIndex + 1))) {
-                computeFirst(mapValue, record, rowId);
+            final long value = arg.getDecimal64(record);
+            if (!Decimal64.isNull(value)) {
+                if (Decimal64.isNull(mapValue.getDecimal64(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putLong(valueIndex + 1, value);
+                }
             }
         }
 
@@ -248,8 +266,12 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getDecimal8(valueIndex + 1) == Decimals.DECIMAL8_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final byte value = arg.getDecimal8(record);
+            if (value != Decimals.DECIMAL8_NULL) {
+                if (mapValue.getDecimal8(valueIndex + 1) == Decimals.DECIMAL8_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putByte(valueIndex + 1, value);
+                }
             }
         }
 
