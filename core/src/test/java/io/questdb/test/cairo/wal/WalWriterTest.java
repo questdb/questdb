@@ -4878,6 +4878,97 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // Every non-structural change must force-apply on a hard-suspended table (no tableSuspended).
+            final String[] nonStructural = {
+                    "alter table %s drop partition list '2024-01-01'",
+                    "alter table %s force drop partition list '2024-01-01'",
+                    "alter table %s detach partition list '2024-01-01'",
+                    "alter table %s squash partitions",
+                    "alter table %s alter column sym drop index",
+                    "alter table %s alter column sym2 add index",
+                    "alter table %s alter column sym nocache",
+                    "alter table %s alter column sym2 cache",
+                    "alter table %s alter column sym2 symbol capacity 1024",
+                    "alter table %s set param maxUncommittedRows = 1000",
+                    "alter table %s set param o3MaxLag = 10s",
+                    "alter table %s set ttl 4 weeks",
+                    "alter table %s convert partition to parquet list '2024-01-01'",
+            };
+            int n = 0;
+            for (String alter : nonStructural) {
+                final String table = "tns_" + (n++);
+                createSuspendableTable(table);
+                execute("alter table " + table + " suspend wal");
+                execute(String.format(alter, table)); // force-applied; must not throw
+            }
+
+            // CONVERT ... TO NATIVE needs a parquet partition first (done before suspending).
+            createSuspendableTable("tns_native");
+            execute("alter table tns_native convert partition to parquet list '2024-01-01'");
+            drainWalQueue();
+            execute("alter table tns_native suspend wal");
+            execute("alter table tns_native convert partition to native list '2024-01-01'"); // must not throw
+
+            // Every structural change stays denied on a hard-suspended table.
+            final String[] structural = {
+                    "alter table %s add column y int",
+                    "alter table %s drop column x",
+                    "alter table %s rename column x to z",
+                    "alter table %s alter column x type long",
+                    "alter table %s dedup enable upsert keys(ts)",
+            };
+            int s = 0;
+            for (String alter : structural) {
+                final String table = "ts_" + (s++);
+                createSuspendableTable(table);
+                execute("alter table " + table + " suspend wal");
+                try {
+                    execute(String.format(alter, table));
+                    Assert.fail("expected the structural change to be denied: " + alter);
+                } catch (CairoException e) {
+                    Assert.assertTrue(alter + " -> " + e.getMessage(), e.isTableSuspended());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendForcesNonStructuralAlter() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, sym symbol index, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 'A', 1)");
+            drainWalQueue();
+            assertSql("count\n1\n", "select count() from t");
+
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertTrue(reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("sym")));
+            }
+
+            execute("alter table t suspend wal");
+
+            // Non-structural change is force-applied directly to the suspended table (WAL bypass),
+            // even though WAL writes are denied.
+            execute("alter table t alter column sym drop index");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertFalse(reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("sym")));
+            }
+
+            // A structural change is not forced; it stays denied on the hard-suspended table.
+            try {
+                execute("alter table t add column y int");
+                Assert.fail("expected the structural change to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+        });
+    }
+
+    @Test
     public void testWalApplySuspendViaConfigDeniesWrites() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
@@ -5548,6 +5639,15 @@ public class WalWriterTest extends AbstractCairoTest {
             }
         }
         return tableToken;
+    }
+
+    private void createSuspendableTable(String table) throws Exception {
+        execute("create table " + table + " (ts timestamp, sym symbol index, sym2 symbol nocache, x int) timestamp(ts) partition by day wal");
+        execute("insert into " + table + " values" +
+                " ('2024-01-01T00:00:00.000000Z', 'A', 'a', 1)," +
+                " ('2024-01-02T00:00:00.000000Z', 'B', 'b', 2)," +
+                " ('2024-01-03T00:00:00.000000Z', 'C', 'c', 3)");
+        drainWalQueue();
     }
 
     private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {

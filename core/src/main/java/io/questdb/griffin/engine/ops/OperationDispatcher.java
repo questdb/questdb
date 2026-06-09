@@ -60,7 +60,14 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         operation.withContext(sqlExecutionContext);
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
-        try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
+        // When a table is hard-suspended with write-denial on, it rejects WAL writes. Route eligible
+        // non-structural changes through the force/WAL-bypass path (direct TableWriter) so maintenance
+        // still works, mirroring FORCE DROP PARTITION. Structural changes stay denied (versioned only).
+        final boolean forceWalBypass = operation.isForceWalBypass()
+                || (operation.isForceableWhenSuspended()
+                && engine.getConfiguration().isWalApplySuspendedWriteDenied()
+                && engine.isWalApplySuspended(tableToken));
+        try (TableWriterAPI writer = !forceWalBypass ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
             final long result = apply(operation, writer);
             isDone = true;
             return doneFuture.of(result);
