@@ -607,7 +607,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
     QWP_EGRESS_COMPRESSION_FORCE_LEVEL("qwp.egress.compression.force.level"),
-    QWP_MAX_SCHEMAS_PER_CONNECTION("qwp.max.schemas.per.connection"),
     QWP_MAX_ROWS_PER_TABLE("qwp.max.rows.per.table"),
     QWP_MAX_TABLES_PER_CONNECTION("qwp.max.tables.per.connection"),
     QWP_MAX_UNCOMMITTED_ROWS("qwp.max.uncommitted.rows"),

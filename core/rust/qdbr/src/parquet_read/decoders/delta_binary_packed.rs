@@ -36,6 +36,11 @@ pub(crate) struct MiniblockIterator<'a, U> {
     // index of the next miniblock to decode
     miniblock_index: usize,
     pub(crate) min_delta: U,
+    // Whether the page declares at least one value (value_count >= 1). When
+    // false -- an empty values buffer or a value_count=0 header -- the page's
+    // first value is a phantom default; the decoder must reject a value request
+    // rather than emit it.
+    pub(crate) has_values: bool,
 }
 
 impl<'a, U> MiniblockIterator<'a, U>
@@ -44,6 +49,32 @@ where
     i64: AsPrimitive<U>,
 {
     pub fn try_new(page_data: &'a [u8]) -> ParquetResult<(Self, U)> {
+        if page_data.is_empty() {
+            // A DELTA_BINARY_PACKED page with no non-null values can be written
+            // as an empty values buffer (no header at all). QuestDB's current
+            // writer does not do this -- since the all-null fix it emits a
+            // self-describing value_count=0 header, which the normal path below
+            // parses -- but pre-fix QuestDB files and foreign encoders can, so
+            // this branch keeps them readable. The page's definition levels drive
+            // null filling, so the value decoder is only asked for nulls and
+            // never reads this iterator. `has_values` is false: if a value IS
+            // requested anyway (a corrupt/truncated page whose definition levels
+            // claim a non-null), the decoder rejects it on the first request with
+            // "not enough values to iterate" rather than silently decoding the
+            // phantom first value as 0.
+            let iterator = Self {
+                page_data,
+                miniblocks_per_block: 0,
+                blocks_remaining: 0,
+                block_bitwidths_offset: 0,
+                miniblock_size: 0,
+                miniblock_offset: 0,
+                miniblock_index: 0,
+                min_delta: U::default(),
+                has_values: false,
+            };
+            return Ok((iterator, U::default()));
+        }
         let (block_size, offset) = uleb128::decode(page_data)
             .map_err(|_| fmt_err!(Layout, "failed to decode block size"))?;
         if block_size == 0 {
@@ -110,6 +141,9 @@ where
                 miniblocks_per_block
             }, // if there are no blocks, we want next_miniblock to return None, so we set the index to the end.
             min_delta: U::default(),
+            // A value_count=0 header still parses, but its first_value is a
+            // phantom default rather than a real value.
+            has_values: value_count > 0,
         };
         s.advance_block(0)?;
         Ok((s, first_value.as_()))
@@ -309,6 +343,13 @@ where
             }
         };
 
+        // A zero-value page (empty values buffer or a value_count=0 header) has
+        // no real first value -- `current_value` is a phantom default. Mark it
+        // already consumed so the first value request goes straight to the empty
+        // miniblock iterator and fails with "not enough values to iterate"
+        // instead of silently decoding 0. All-null pages are unaffected: their
+        // definition levels drive only push_nulls.
+        let consumed_initial_value = !miniblock_iterator.has_values;
         Ok(Self {
             buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
             buffers_offset: buffers.data_vec.len() / std::mem::size_of::<T>(),
@@ -317,7 +358,7 @@ where
             current_value: first_value,
             values: [U::default(); 32],
             iterator: miniblock_iterator,
-            consumed_initial_value: false,
+            consumed_initial_value,
             value_index: 32,
             miniblock,
             // Index of the current pack in the miniblock
@@ -1013,13 +1054,102 @@ mod tests {
     // ─── Unhappy path tests ───
 
     #[test]
-    fn empty_data() {
-        let err = MiniblockIterator::<i64>::try_new(&[]).err().unwrap();
-        let msg = format!("{err}");
-        // Empty input decodes block_size as 0, triggering the zero check.
+    fn empty_data_yields_no_values() {
+        // An empty values buffer (an all-null data page) is treated as zero
+        // values, not an error: try_new succeeds and yields no miniblocks.
+        let (mut iter, first) = MiniblockIterator::<i64>::try_new(&[]).unwrap();
+        assert_eq!(first, 0);
+        assert!(!iter.has_values, "empty buffer declares no values");
+        assert!(iter.next_miniblock().unwrap().is_none());
+        let end = iter.get_end_pointer().unwrap();
+        assert_eq!(end, iter.page_data.as_ptr());
+    }
+
+    #[test]
+    fn all_null_page_pushes_nulls() {
+        // Simulates decoding an all-null data page: the values buffer is empty
+        // and the decoder is only ever asked to emit nulls (definition levels
+        // are all zero). Regression for the suspended-table fuzz failure.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let null_val: i64 = i64::MIN;
+        let count = 10;
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&[], &mut buffers, null_val).unwrap();
+            decoder.reserve(count).unwrap();
+            decoder.push_nulls(count).unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
+        assert_eq!(out, &[null_val; 10]);
+    }
+
+    #[test]
+    fn empty_page_value_request_errors() {
+        // Companion to `all_null_page_pushes_nulls`: an all-null page only ever
+        // fills nulls, but if a value is requested anyway (a corrupt page whose
+        // definition levels claim a non-null), the FIRST request fails with
+        // "not enough values to iterate" and writes nothing -- the phantom first
+        // value of 0 is never emitted. The value_count=0 header variant is
+        // covered by `value_count_zero_header_value_request_errors`.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // push(): the first value request errors.
+        let mut buffers = create_buffers(&allocator);
+        let err = {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&[], &mut buffers, i64::MIN).unwrap();
+            decoder.reserve(2).unwrap();
+            decoder.push().unwrap_err()
+        };
         assert!(
-            msg.contains("block size must be greater than zero"),
-            "got: {msg}"
+            format!("{err}").contains("not enough values to iterate"),
+            "got: {err}"
+        );
+
+        // push_slice(1): same contract via the batched path.
+        let mut buffers = create_buffers(&allocator);
+        let err = {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&[], &mut buffers, i64::MIN).unwrap();
+            decoder.reserve(2).unwrap();
+            decoder.push_slice(1).unwrap_err()
+        };
+        assert!(
+            format!("{err}").contains("not enough values to iterate"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn value_count_zero_header_value_request_errors() {
+        // A real value_count=0 header (what QuestDB's writer now emits for an
+        // all-null page) behaves like the empty buffer: a value request fails
+        // rather than decoding the phantom first value as 0.
+        let mut header = Vec::new();
+        parquet2::encoding::delta_bitpacked::encode(std::iter::empty::<i64>(), &mut header);
+        assert!(!header.is_empty(), "value_count=0 header must carry bytes");
+
+        let (iter, first) = MiniblockIterator::<i64>::try_new(&header).unwrap();
+        assert_eq!(first, 0);
+        assert!(!iter.has_values, "value_count=0 header has no values");
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let err = {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&header, &mut buffers, i64::MIN)
+                    .unwrap();
+            decoder.reserve(1).unwrap();
+            decoder.push().unwrap_err()
+        };
+        assert!(
+            format!("{err}").contains("not enough values to iterate"),
+            "got: {err}"
         );
     }
 

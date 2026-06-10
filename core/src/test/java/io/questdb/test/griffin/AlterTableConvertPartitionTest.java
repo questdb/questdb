@@ -85,6 +85,42 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllNullDeltaDataPageRoundTrips() throws Exception {
+        // Regression for the all-null DELTA_BINARY_PACKED page bug (questdb#7212).
+        // The bug needs a real, delta-encoded data page that is entirely null,
+        // read EAGERLY: a lazy SELECT fills nulls from definition levels without
+        // decoding the values page, and a column top is written without the delta
+        // value encoder, so neither reproduces. Here 'b' has column_top=0 plus a
+        // leading null run that fills one whole delta page (page size set small),
+        // and converting the parquet partition back to native decodes every page
+        // eagerly -- the same read WAL apply performs.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 64); // 8 LONG rows per page
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, b LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            // Partition 1970-01-01: b is null for the first full page (8 rows), then 99.
+            execute("INSERT INTO x SELECT (x * 1000000)::timestamp, CASE WHEN x <= 8 THEN NULL ELSE 99 END FROM long_sequence(9)");
+            // 1970-01-02 keeps the active partition out of the conversion.
+            execute("INSERT INTO x VALUES ('1970-01-02T00:00:00.000000Z', 7)");
+            execute("ALTER TABLE x ALTER COLUMN b SET PARQUET(DELTA_BINARY_PACKED)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+
+            // Lazy read over the parquet partition returns nulls (no eager decode).
+            assertQuery("SELECT b FROM x WHERE ts = '1970-01-01T00:00:01.000000Z'")
+                    .noLeakCheck()
+                    .returns("b\nnull\n");
+
+            // Eager full-page decode: pre-fix this fails with
+            // "delta binary packed block size must be greater than zero".
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '1970-01-01'");
+
+            // Data survived the parquet round trip.
+            assertQuery("SELECT b FROM x WHERE ts = '1970-01-01T00:00:09.000000Z'")
+                    .noLeakCheck()
+                    .returns("b\n99\n");
+        });
+    }
+
+    @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
