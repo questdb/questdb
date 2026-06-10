@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Provides addresses for page frames in both native and Parquet formats.
@@ -163,6 +164,26 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         releaseParquetBuffers();
         Misc.freeObjListAndClear(freeParquetBufferShells);
         addressCache = null;
+    }
+
+    @TestOnly
+    public long getCachedBytes() {
+        return cachedBytes;
+    }
+
+    @TestOnly
+    public int getCachedFrameCount() {
+        return byFrameIndex.size();
+    }
+
+    @TestOnly
+    public ParquetDecodeHint getDecodeHint() {
+        return decodeHint;
+    }
+
+    @TestOnly
+    public long getEffectiveBudgetBytes() {
+        return effectiveBudgetBytes;
     }
 
     /**
