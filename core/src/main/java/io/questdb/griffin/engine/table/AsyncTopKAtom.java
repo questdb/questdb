@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.Reopenable;
@@ -104,9 +105,11 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             this.ownerRecordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
             this.ownerChain = new LimitedSizeLongTreeChain(
                     configuration.getSqlSortKeyPageSize(),
-                    configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes(),
                     configuration.getSqlSortLightValuePageSize(),
-                    configuration.getSqlSortLightValueMaxPages()
+                    configuration.getSqlSortLightValueMaxBytes(),
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
             );
             ownerChain.updateLimits(true, lo);
 
@@ -121,9 +124,11 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
                 final LimitedSizeLongTreeChain chain = new LimitedSizeLongTreeChain(
                         configuration.getSqlSortKeyPageSize(),
-                        configuration.getSqlSortKeyMaxPages(),
+                        configuration.getSqlSortKeyMaxBytes(),
                         configuration.getSqlSortLightValuePageSize(),
-                        configuration.getSqlSortLightValueMaxPages()
+                        configuration.getSqlSortLightValueMaxBytes(),
+                        PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                        PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
                 );
                 chain.updateLimits(true, lo);
                 perWorkerChains.extendAndSet(i, chain);

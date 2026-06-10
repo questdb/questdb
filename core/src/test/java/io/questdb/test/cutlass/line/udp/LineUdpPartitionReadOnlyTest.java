@@ -28,12 +28,11 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.client.cutlass.line.LineUdpSender;
 import io.questdb.client.network.NetworkFacadeImpl;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.test.tools.TestUtils;
@@ -58,7 +57,6 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -98,13 +96,10 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 // check read only state
                 checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
 
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalSink(),
-                        TABLE_START_CONTENT
-                );
+                new QueryAssertion(engine, context, () -> {
+                }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .returnsOnce(TABLE_START_CONTENT);
 
                 // run the test
                 test.run();
@@ -140,12 +135,10 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
 
                 if (finallyExpected != null) {
-                    assertSql(
-                            compiler,
-                            context,
-                            "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                            Misc.getThreadLocalSink(),
-                            finallyExpected);
+                    new QueryAssertion(engine, context, () -> {
+                    }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
+                            .noLeakCheck()
+                            .returnsOnce(finallyExpected);
                 }
 
                 engine.unlockTableName(tableToken);

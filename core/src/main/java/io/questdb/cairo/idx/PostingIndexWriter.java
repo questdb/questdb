@@ -55,6 +55,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
@@ -70,7 +71,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
 /**
- * Delta + FoR64 BitPacking bitmap index writer.
+ * Delta + FoR64 BitPacking posting index writer.
  * <p>
  * Each commit appends one generation (covering all keys) to the value file.
  * No symbol table needed — encoding is purely arithmetic.
@@ -105,12 +106,22 @@ public class PostingIndexWriter implements IndexWriter {
     // reused across reopens via resetState().
     private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
     private final CairoConfiguration configuration;
+    // Last-known valid byte extent of each cover column's .pcN, indexed by cover
+    // slot. Updated from the live sidecar handle's append offset whenever it is
+    // open (see captureCoverEndOffsets). Reused when the handle is closed so a
+    // chain-head republish (extendHead) that runs after closeSidecarMems does not
+    // clobber the entry's cover-end with 0 and make the on-disk .pc unreadable.
+    private final LongList coverEndOffsetsCache = new LongList();
     // Reusable scratch list passed to PostingIndexChainWriter.appendNewEntry /
     // extendHead, built once per chain publish from each cover column's
     // current sidecar append offset. Reused across calls to avoid allocations.
     private final LongList coverEndOffsetsScratch = new LongList();
-    // O3 addr-based covering: caller-provided native memory addresses
+    // O3 addr-based covering: caller-provided native memory addresses, plus the
+    // mapped byte length of each (the *AddrSizes lists bound the addr-based
+    // covered data/aux reads under -ea).
+    private final LongList coveredColumnAddrSizes = new LongList();
     private final LongList coveredColumnAddrs = new LongList();
+    private final LongList coveredColumnAuxAddrSizes = new LongList();
     private final LongList coveredColumnAuxAddrs = new LongList();
     private final IntList coveredColumnIndices = new IntList();
     private final LongList coveredColumnNameTxns = new LongList();
@@ -386,6 +397,11 @@ public class PostingIndexWriter implements IndexWriter {
                 hasPendingData = false;
                 activeKeyCount = 0;
                 coverCount = 0;
+                // Drop the cover-extent cache so a pooled reopen for a different
+                // column/partition starts clean. No live read depends on this
+                // (publishToChain rewrites the cache before every captureCoverEndOffsets),
+                // but clearing it keeps the cache's safety structural, not ordering-bound.
+                coverEndOffsetsCache.clear();
                 sealTarget = null;
                 releasePendingPurges();
                 pendingDiscardOldSealTxn = -1L;
@@ -476,7 +492,30 @@ public class PostingIndexWriter implements IndexWriter {
     // bytes on disk in non-assert builds.
     public void commitDense() {
         assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
-        flushAllPendingDense();
+        if (genCount > 0) {
+            // flushAllPendingDense assumes it writes the first and only gen at
+            // offset 0. That precondition breaks when the caller's preceding
+            // add()-loop (a full index() rebuild over a large/squashed
+            // partition) tripped the spill budget: compactIfOverBudget then ran
+            // flushAllPending, persisting one or more sparse gens to this .pv.
+            // A standalone flushAllPendingDense would extendHead(newGenCount=1),
+            // overwriting gen-dir slot 0 to point at the freshly appended dense
+            // gen -- orphaning those sparse gens (silently dropping the rows
+            // they hold) and leaving the surviving gen-0 at a non-zero file
+            // offset. The covering rebuildSidecars by-copy path reads gen-0 from
+            // valueMem.addressOf(0) and SIGSEGVs on the layout mismatch; the
+            // non-covering path returns short counts. Consolidate every gen into
+            // a single dense gen-0 at offset 0 via the seal path instead: seal()
+            // first runs flushAllPending to drain the final pending batch, then
+            // re-encodes all gens into one dense gen-0 at offset 0 -- exactly the
+            // shape the by-copy rebuild and the fast path both expect. (Whether
+            // seal takes the full or incremental re-encode, gen-0 lands at offset
+            // 0.) coverCount == 0 keeps seal() sidecar-free, matching
+            // commitDense's contract; rebuildSidecars writes the sidecars after.
+            seal();
+        } else {
+            flushAllPendingDense();
+        }
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             boolean async = commitMode == CommitMode.ASYNC;
@@ -508,7 +547,9 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
+        this.coveredColumnAuxAddrSizes.clear();
         this.coveredColumnTops.clear();
         this.coveredColumnShifts.clear();
         this.coveredColumnIndices.clear();
@@ -538,7 +579,9 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
+        this.coveredColumnAuxAddrSizes.clear();
         this.coveredColumnTops.clear();
         this.coveredColumnShifts.clear();
         this.coveredColumnIndices.clear();
@@ -694,6 +737,50 @@ public class PostingIndexWriter implements IndexWriter {
             pendingDiscardOldSealTxn = oldSealTxn;
         }
         allocateNativeBuffers();
+    }
+
+    @Override
+    public void drainPendingFuturePurges(
+            ObjList<PostingSealPurgeTask> sink,
+            ObjectStackPool<PostingSealPurgeTask> pool,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
+        if (pendingPurges.size() == 0 || partitionPath.size() == 0 || tableToken == null) {
+            return;
+        }
+        int writePos = 0;
+        for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
+            PendingSealPurge entry = pendingPurges.getQuick(readPos);
+            if (entry.partitionTimestamp != Long.MIN_VALUE
+                    && entry.toTableTxn != Long.MAX_VALUE
+                    && entry.toTableTxn > currentTableTxn) {
+                PostingSealPurgeTask task = pool.next();
+                task.of(
+                        tableToken,
+                        indexName,
+                        entry.postingColumnNameTxn,
+                        entry.sealTxn,
+                        entry.partitionTimestamp,
+                        entry.partitionNameTxn,
+                        partitionBy,
+                        timestampType,
+                        entry.fromTableTxn,
+                        entry.toTableTxn
+                );
+                assert task.getToTableTxn() != Long.MAX_VALUE && task.getToTableTxn() > currentTableTxn;
+                sink.add(task);
+                entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
+                pendingPurgePool.add(entry);
+            } else {
+                pendingPurges.setQuick(writePos++, entry);
+            }
+        }
+        for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
+            pendingPurges.remove(i);
+        }
     }
 
     @TestOnly
@@ -1036,12 +1123,6 @@ public class PostingIndexWriter implements IndexWriter {
                 pendingPurges.setQuick(writePos++, entry);
                 continue;
             }
-            long cursor = pubSeq.next();
-            if (cursor < 0) {
-                // Queue full or contended — keep entry for retry on next commit.
-                pendingPurges.setQuick(writePos++, entry);
-                continue;
-            }
             // Chain-derived intervals are meaningful: {@code entry.toTableTxn}
             // is the {@code txnAtSeal} of the new head that superseded this
             // file. The empty-chain branch in recordPostingSealPurge and the
@@ -1054,8 +1135,25 @@ public class PostingIndexWriter implements IndexWriter {
             // open until the next reset. Clamp to {@code currentTableTxn},
             // which is a safe upper bound: no reader pinned right now can
             // hold a txn beyond it, so dropping the file at this txn is
-            // already protected by the regular reader-pin check.
-            long toTableTxn = Math.min(entry.toTableTxn, currentTableTxn);
+            // already protected by the regular reader-pin check. For finite
+            // chain intervals, never clamp a future upper bound down to the
+            // current committed txn: until that future txn is durable, the
+            // superseded file is still the committed reader/recovery view.
+            long toTableTxn;
+            if (entry.toTableTxn == Long.MAX_VALUE) {
+                toTableTxn = currentTableTxn;
+            } else if (entry.toTableTxn > currentTableTxn) {
+                pendingPurges.setQuick(writePos++, entry);
+                continue;
+            } else {
+                toTableTxn = entry.toTableTxn;
+            }
+            long cursor = pubSeq.next();
+            if (cursor < 0) {
+                // Queue full or contended — keep entry for retry on next commit.
+                pendingPurges.setQuick(writePos++, entry);
+                continue;
+            }
             try {
                 PostingSealPurgeTask task = queue.get(cursor);
                 task.of(
@@ -1140,7 +1238,9 @@ public class PostingIndexWriter implements IndexWriter {
     public void releaseCoveredColumnReadMappings() {
         unmapCoveredColumnReads();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
+        this.coveredColumnAuxAddrSizes.clear();
     }
 
     @Override
@@ -1338,6 +1438,17 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    public void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+        coveredColumnAddrSizes.clear();
+        coveredColumnAuxAddrSizes.clear();
+        if (dataSizes != null) {
+            coveredColumnAddrSizes.addAll(dataSizes);
+        }
+        if (auxSizes != null) {
+            coveredColumnAuxAddrSizes.addAll(auxSizes);
+        }
+    }
+
     public void setCoveredColumnNameTxns(LongList txns) {
         coveredColumnNameTxns.clear();
         coveredColumnNameTxns.addAll(txns);
@@ -1392,6 +1503,17 @@ public class PostingIndexWriter implements IndexWriter {
         o3CtxName.put(name);
         o3CtxColumnNameTxn = columnNameTxn;
         o3CtxUpcomingTxn = upcomingTxn;
+    }
+
+    @Override
+    public void setPartitionContext(long partitionTimestamp, long partitionNameTxn) {
+        // The path-based of(...) overloads used by the parquet rebuild do not
+        // carry the partition timestamp / name-txn, but a deferred seal-purge
+        // task needs them to reconstruct the .pv directory after this writer is
+        // freed. recordPostingSealPurge stamps each outbox entry with these, so
+        // the caller sets them before commitDense seals.
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionNameTxn = partitionNameTxn;
     }
 
     @Override
@@ -1784,17 +1906,43 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void captureCoverEndOffsets() {
         coverEndOffsetsScratch.clear();
-        if (coverCount <= 0) {
+        // The transient coverCount field is reset to 0 mid-reseal (clearCovering
+        // before the next configureCovering), and the sidecar handles are closed
+        // after each seal -- but the index is still covering on disk. Republishing
+        // the chain head in that window with an empty footer (coverCount==0) makes
+        // PostingIndexChainWriter.extendHead shrink the entry LEN to exclude the
+        // cover footer, so a concurrent covered read of the republished entry sees
+        // sidecarFileEndOffsets==0, fails to map the existing .pc and returns NULL
+        // for the whole partition -- the native in-place reseal covered-read race.
+        // Fall back to the last-known cover layout so the entry keeps its footer.
+        int effectiveCoverCount = coverCount > 0 ? coverCount : coverEndOffsetsCache.size();
+        if (effectiveCoverCount <= 0) {
             return;
         }
-        coverEndOffsetsScratch.setPos(coverCount);
-        for (int c = 0; c < coverCount; c++) {
-            long endOffset = 0L;
-            if (c < sidecarMems.size()) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    endOffset = mem.getAppendOffset();
-                }
+        // Keep the cache sized to the live cover count when it is known, so a later
+        // transient coverCount==0 republish reuses exactly the right layout (and a
+        // covering reconfigure that shrinks the cover set cannot over-report).
+        if (coverCount > 0 && coverEndOffsetsCache.size() != coverCount) {
+            int old = coverEndOffsetsCache.size();
+            coverEndOffsetsCache.setPos(coverCount);
+            for (int c = old; c < coverCount; c++) {
+                coverEndOffsetsCache.setQuick(c, 0L);
+            }
+        }
+        coverEndOffsetsScratch.setPos(effectiveCoverCount);
+        for (int c = 0; c < effectiveCoverCount; c++) {
+            long endOffset;
+            MemoryMARW mem = c < sidecarMems.size() ? sidecarMems.getQuick(c) : null;
+            if (mem != null && mem.isOpen()) {
+                // Handle open: its append offset is the authoritative valid extent
+                // of this .pcN. Remember it so a later republish can reuse it.
+                endOffset = mem.getAppendOffset();
+                coverEndOffsetsCache.setQuick(c, endOffset);
+            } else {
+                // Handle closed / transient coverCount==0: reuse the last-known
+                // extent. The .pc on disk for this head's sealTxn is unchanged. A
+                // genuinely never-written slot keeps its cached 0 and publishes 0.
+                endOffset = coverEndOffsetsCache.getQuick(c);
             }
             coverEndOffsetsScratch.setQuick(c, endOffset);
         }
@@ -3072,7 +3220,14 @@ public class PostingIndexWriter implements IndexWriter {
         if (addr == 0) {
             return 0;
         }
+        // size == 0: addr-based caller-owned aux mapping (see getCoveredDataReadAddr).
         if (size == 0) {
+            assert covIdx >= coveredColumnAuxAddrSizes.size()
+                    || coveredColumnAuxAddrSizes.getQuick(covIdx) == 0
+                    || offset + needed <= coveredColumnAuxAddrSizes.getQuick(covIdx)
+                    : "addr-based covered aux read out of bounds [covIdx=" + covIdx
+                    + ", offset=" + offset + ", needed=" + needed
+                    + ", mapped=" + coveredColumnAuxAddrSizes.getQuick(covIdx) + ']';
             return addr + offset;
         }
         if (offset + needed > size) {
@@ -3105,8 +3260,18 @@ public class PostingIndexWriter implements IndexWriter {
         if (addr == 0) {
             return 0;
         }
-        // size == 0 means addr-based (O3): caller-provided buffer, no bounds check or remap
+        // size == 0 means addr-based (O3 seal / fast-lag): the mapping is owned by
+        // the caller (TableWriter), so we never munmap/remap it -- coveredColReadSizes
+        // stays 0 precisely so unmapCoveredColumnReads leaves caller memory alone.
+        // When the caller supplied the mapped length via setCoveredColumnAddrSizes,
+        // assert the read stays inside it (an empty list -- test/parquet -- skips it).
         if (size == 0) {
+            assert covIdx >= coveredColumnAddrSizes.size()
+                    || coveredColumnAddrSizes.getQuick(covIdx) == 0
+                    || offset + needed <= coveredColumnAddrSizes.getQuick(covIdx)
+                    : "addr-based covered data read out of bounds [covIdx=" + covIdx
+                    + ", offset=" + offset + ", needed=" + needed
+                    + ", mapped=" + coveredColumnAddrSizes.getQuick(covIdx) + ']';
             return addr + offset;
         }
         // size > 0 means name-based: writer-owned mmap, remap if file grew
@@ -3554,6 +3719,23 @@ public class PostingIndexWriter implements IndexWriter {
         // tripping the appendNewEntry monotonicity assertion.
         boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getHeadSealTxn();
         long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
+
+        // For a same-sealTxn head extension the new gen-dir written below
+        // overwrites the head entry's cover footer. Snapshot it into the cache
+        // first so captureCoverEndOffsets can republish the existing extents even
+        // when the writer's live coverCount is transiently 0 (between
+        // clearCovering and configureCovering) or its sidecar handles are closed.
+        // Without this the footer is dropped and a concurrent covered read of the
+        // just-republished entry returns NULL for the whole partition.
+        if (!newEntry) {
+            chain.readHeadCoverEndOffsets(keyMem, coverEndOffsetsCache);
+        } else {
+            // New sealTxn: the cached extents belong to the superseded sealTxn's
+            // .pc (a different file), so drop them. The new entry publishes an
+            // empty footer until rebuildSidecars writes the new .pc and
+            // repopulates the cache from the live sidecar handle.
+            coverEndOffsetsCache.clear();
+        }
 
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
@@ -5073,6 +5255,16 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
+            // writeSidecarFixedStrideForColumn assembles one key's raw values
+            // into the shared scratch at (1 << shift) bytes per value -- 16
+            // for UUID/LONG128/DECIMAL128, 32 for LONG256/DECIMAL256 -- so
+            // the scratch must be sized by the widest live fixed-size cover
+            // column, not by Long.BYTES: with an 8-bytes-per-value allocation,
+            // a single key holding more than half (16B types) or a quarter
+            // (32B types) of a dirty stride's merged values writes past the
+            // allocation. The full-seal twins already size by value width.
+            final long sidecarValueSize = Math.max(Long.BYTES, peakCoverColumnValueSize());
+
             for (int s = 0; s < sc; s++) {
                 long strideOff = sealValueMem.getAppendOffset() - sealOffset - siSize;
                 Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
@@ -5124,7 +5316,7 @@ public class PostingIndexWriter implements IndexWriter {
                             totalStrideVals += strideKeyCounts[j];
                         }
                         if (totalStrideVals > 0) {
-                            long neededBuf = (long) totalStrideVals * Long.BYTES;
+                            long neededBuf = totalStrideVals * sidecarValueSize;
                             if (neededBuf > incrSidecarBufSize) {
                                 incrSidecarBuf = Unsafe.realloc(incrSidecarBuf, incrSidecarBufSize, neededBuf, MemoryTag.NATIVE_INDEX_READER);
                                 incrSidecarBufSize = neededBuf;
@@ -6162,6 +6354,16 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             for (int c = 0; c < coverCount; c++) {
+                // Tombstoned slot (dropped INCLUDE column): mapCoveringColumnsForSeal
+                // encodes it as type=-1/shift=0, openSidecarFiles leaves its sidecar
+                // mem null and creates no .pcN file, so there is nothing to write.
+                // Without this skip the shift=0 sentinel routes into the fixed-stride
+                // writer, which rejects type -1. Same skip as writeSidecarsPerColumn
+                // on the full-seal path; captureCoverEndOffsets publishes end offset
+                // 0 for the slot and covered reads fall back to NULL.
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
                 int colType = coveredColumnTypes.getQuick(c);
                 int shift = coveredColumnShifts.getQuick(c);
 

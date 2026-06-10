@@ -38,16 +38,14 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 c\t1
                 """;
 
-        assertQuery(
-                expected,
-                "select a, count_distinct(42) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(42) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
 
-        assertSql(expected, "select a, count(distinct 42) from x order by a");
+        assertQuery("select a, count(distinct 42) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -56,31 +54,25 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 count_distinct
                 1
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(l) from x",
-                "create table x as (select -1::int as l from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(l) from x")
+                .ddl("create table x as (select -1::int as l from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
 
-        assertSql(expected, "select count(distinct l) from x");
+        assertQuery("select count(distinct l) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
     public void testCountDistinctMultipleColNotSupported() throws Exception {
-        assertException(
-                "select count(distinct(x::varchar, x+1::varchar)) from long_sequence(1)",
-                46,
-                "count distinct aggregation supports a single column only"
-        );
+        assertQuery("select count(distinct(x::varchar, x+1::varchar)) from long_sequence(1)")
+                .fails(46, "count distinct aggregation supports a single column only");
 
-        assertException(
-                "select count(distinct(x::varchar, foo(bar))) from long_sequence(1)",
-                42,
-                "count distinct aggregation supports a single column only"
-        );
+        assertQuery("select count(distinct(x::varchar, foo(bar))) from long_sequence(1)")
+                .fails(42, "count distinct aggregation supports a single column only");
     }
 
     @Test
@@ -92,20 +84,26 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                     b\t4
                     c\t4
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select a, count_distinct(s * 42) from x order by a",
-                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_int(1, 8, 0) s from long_sequence(20)))",
-                    null,
-                    true,
-                    true
-            );
-            assertSql(expected, "select a, count(distinct s * 42) from x order by a");
+            assertQuery("select a, count_distinct(s * 42) from x order by a")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_int(1, 8, 0) s from long_sequence(20)))")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select a, count(distinct s * 42) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // multiplication shouldn't affect the number of distinct values,
             // so the result should stay the same
-            assertSql(expected, "select a, count_distinct(s) from x order by a");
-            assertSql(expected, "select a, count(distinct s) from x order by a");
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select a, count(distinct s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
         });
     }
@@ -122,16 +120,14 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 f\t4
                 """;
 
-        assertQuery(
-                expected,
-                "select a, count_distinct(s) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(s) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))")
+                .expectSize()
+                .returns(expected);
 
-        assertSql(expected, "select a, count(distinct s) from x order by a");
+        assertQuery("select a, count(distinct s) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -141,16 +137,16 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 6
                 """;
 
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(s) from x")
+                .ddl("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
 
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -160,20 +156,30 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                     count_distinct
                     6
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select count_distinct(s) from x",
-                    "create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                    null,
-                    false,
-                    true
-            );
-            assertSql(expected, "select count(distinct s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count(distinct s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("insert into x values(cast(null as INT), '2021-05-21')");
             execute("insert into x values(cast(null as INT), '1970-01-01')");
-            assertSql(expected, "select count_distinct(s) from x");
-            assertSql(expected, "select count(distinct s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count(distinct s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -185,16 +191,14 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 b\t0
                 c\t0
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(cast(null as INT)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(cast(null as INT)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
 
-        assertSql(expected, "select a, count(distinct cast(null as INT)) from x order by a");
+        assertQuery("select a, count(distinct cast(null as INT)) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -212,15 +216,15 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 1970-01-01T00:00:08.000000Z\t8
                 1970-01-01T00:00:09.000000Z\t7
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
-                "create table x as (select * from (select rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                true
-        );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(linear)");
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(linear)")
+                .ddl("create table x as (select * from (select rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(linear)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -231,17 +235,19 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                     1970-01-01T00:00:00.050000Z\t8
                     1970-01-01T00:00:02.050000Z\t8
                     """;
-            assertSql(
-                    expected,
-                    "with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
-                            "select ts, count_distinct(s) from x sample by 2s align to first observation"
-            );
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
+            assertQuery("with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
+                    "select ts, count_distinct(s) from x sample by 2s align to first observation")
+                    .noLeakCheck()
+                    .returnsOnce(expected);
 
-            assertSql(
-                    expected,
-                    "with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
-                            "select ts, count(distinct s) from x sample by 2s align to first observation"
-            );
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
+            assertQuery("with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
+                    "select ts, count(distinct s) from x sample by 2s align to first observation")
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         });
     }
 
@@ -260,14 +266,15 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 1970-01-01T00:00:08.000000Z\t7
                 1970-01-01T00:00:09.000000Z\t5
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(99)");
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(99)")
+                .ddl("create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(99)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -287,13 +294,14 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 d\t7\t1970-01-01T00:00:05.000000Z
                 a\t4\t1970-01-01T00:00:05.000000Z
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s), ts from x sample by 5s align to first observation",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
-        assertSql(expected, "select a, count(distinct s), ts from x sample by 5s align to first observation");
+        assertQuery("select a, count_distinct(s), ts from x sample by 5s align to first observation")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("select a, count(distinct s), ts from x sample by 5s align to first observation")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 }
