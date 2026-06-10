@@ -248,13 +248,13 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putLong(destAddr + keyType.rowIdOffset(), rowId);
     }
 
-    public SortKeyType init(RecordCursor baseCursor) {
+    public SortKeyType init(SymbolTableSource symbolTableSource) {
         int totalBytes = 0;
 
         for (int i = 0; i < columnIndices.length; i++) {
             offsets[i] = totalBytes;
             if (isSymbol[i]) {
-                StaticSymbolTable sst = getStaticSymbolTable(baseCursor.getSymbolTable(columnIndices[i]));
+                StaticSymbolTable sst = getStaticSymbolTable(symbolTableSource.getSymbolTable(columnIndices[i]));
                 int symbolCount = sst.getSymbolCount();
                 buildRankMap(sst, rankMaps.getQuick(i));
                 rankMapSizes[i] = symbolCount;

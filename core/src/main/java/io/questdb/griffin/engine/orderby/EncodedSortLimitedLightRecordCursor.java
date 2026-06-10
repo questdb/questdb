@@ -39,11 +39,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 /**
  * Encoded-key top-K cursor. The build phase encodes each scanned row's sort key
@@ -58,37 +56,22 @@ import io.questdb.std.Vect;
  * cumulative row count past the limit.
  */
 class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
-    // Compacting every `limit` rows would sort tiny batches for small limits;
-    // batch at least this many entries between compactions.
-    private static final long MIN_COMPACTION_TRIGGER = 4096;
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
-    private final DirectLongList entryMem;
-    private final long keyCapBytes;
-    private final long parallelThreshold;
-    // A copy, not a buffer address: entryMem may reallocate on growth.
-    private final long[] thresholdEntry = new long[SortKeyType.MAX_ENTRY_LONGS];
+    private final EncodedTopKBuffer entries;
     private final int timestampIndex;
-    private final long valueCapBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private long compactionTrigger;
-    private long count;
     private long currentAddr;
     private long emitEndAddr;
     private long emitStartAddr;
     private int entrySize;
-    private boolean hasThreshold;
     private boolean isBuilt;
     private boolean isEarlyStopEnabled;
     private boolean isFirstN;
     private boolean isOpen;
-    private int keyLongs;
     private long limit;
-    private int longsPerEntry;
-    private long maxEntries;
-    private long maxEntryMemBytes;
     private int rowIdOffset;
     private long skipFirst;
     private long skipLast;
@@ -99,23 +82,10 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             IntList sortColumnFilter,
             int timestampIndex
     ) {
-        SortKeyEncoder encoderInit = null;
-        DirectLongList entryMemInit = null;
-        try {
-            encoderInit = new SortKeyEncoder(metadata, sortColumnFilter);
-            entryMemInit = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true);
-        } catch (Throwable th) {
-            Misc.free(encoderInit);
-            Misc.free(entryMemInit);
-            throw th;
-        }
-        this.encoder = encoderInit;
-        this.entryMem = entryMemInit;
+        this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
+        this.entries = new EncodedTopKBuffer(configuration);
         this.timestampIndex = timestampIndex;
         this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
-        this.keyCapBytes = configuration.getSqlSortKeyMaxBytes();
-        this.valueCapBytes = configuration.getSqlSortLightValueMaxBytes();
-        this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
         this.isOpen = true;
     }
 
@@ -123,7 +93,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(entryMem);
+            Misc.free(entries);
             Misc.free(encoder);
             baseCursor = Misc.free(baseCursor);
             baseRecord = null;
@@ -194,7 +164,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         this.baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;
-            entryMem.reopen();
+            entries.reopen();
         }
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (isEarlyStopEnabled) {
@@ -205,22 +175,12 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         assert keyType != SortKeyType.UNSUPPORTED;
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
-        keyLongs = keyType.keyLength() / Long.BYTES;
-        longsPerEntry = entrySize / Long.BYTES;
-        maxEntries = SortKeyEncoder.maxEntries(keyCapBytes, valueCapBytes, keyType);
-        maxEntryMemBytes = maxEntries * entrySize;
-        // The trigger stays within maxEntries so compaction fires before the overflow check can.
-        compactionTrigger = limit > 0 && limit < maxEntries
-                ? Math.min(Math.max(limit << 1, MIN_COMPACTION_TRIGGER), maxEntries)
-                : Long.MAX_VALUE;
-        hasThreshold = false;
+        entries.of(keyType, isFirstN, limit);
         circuitBreaker = executionContext.getCircuitBreaker();
         isBuilt = false;
-        count = 0;
         currentAddr = 0;
         emitStartAddr = 0;
         emitEndAddr = 0;
-        entryMem.clear();
     }
 
     @Override
@@ -260,39 +220,21 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         currentAddr = emitStartAddr;
     }
 
-    private void acceptEncoded(long addr) {
-        if (hasThreshold && isBeyondThreshold(addr)) {
-            // The next candidate overwrites the rejected entry.
-            return;
-        }
-        entryMem.skip(longsPerEntry);
-        if (++count == compactionTrigger) {
-            compact();
-        }
-    }
-
     private void buildAndSort() {
-        entryMem.clear();
-        count = 0;
-        hasThreshold = false;
+        entries.clear();
         if (limit > 0) {
             if (limit == Long.MAX_VALUE) {
                 // Unbounded build keeps every scanned row, so pre-size the buffer the
                 // way EncodedSortLightRecordCursor does instead of growing per row.
                 final long estimatedSize = baseCursor.size();
                 if (estimatedSize > 0) {
-                    if (estimatedSize > maxEntries) {
-                        SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
-                    }
-                    entryMem.setCapacity(estimatedSize * longsPerEntry);
+                    entries.presize(estimatedSize);
                 }
             }
             runBuild();
         }
-        if (count > 1) {
-            Vect.sortEncodedEntries(entryMem.getAddress(), count, keyLongs, parallelThreshold);
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-        }
+        entries.sort();
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         computeEmitWindow();
         toTop();
         if (emitStartAddr < emitEndAddr) {
@@ -302,29 +244,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         Misc.free(encoder);
     }
 
-    /**
-     * Sorts the buffer, keeps the {@code limit} entries the emit window selects,
-     * and captures the boundary entry so that subsequent rows can be rejected
-     * with a key compare instead of growing the buffer. This bounds build memory
-     * at O(limit) instead of O(scanned rows).
-     */
-    private void compact() {
-        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyLongs, parallelThreshold);
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-        if (!isFirstN) {
-            // LAST N keeps the tail of the sorted buffer.
-            Vect.memmove(entryMem.getAddress(), entryMem.getAddress() + (count - limit) * entrySize, limit * entrySize);
-        }
-        count = limit;
-        entryMem.setPos(limit * longsPerEntry);
-        final long boundaryAddr = entryMem.getAddress() + (isFirstN ? limit - 1 : 0) * entrySize;
-        for (int i = 0; i < longsPerEntry; i++) {
-            thresholdEntry[i] = Unsafe.getLong(boundaryAddr + 8L * i);
-        }
-        hasThreshold = true;
-    }
-
     private void computeEmitWindow() {
+        final long count = entries.getCount();
         // The slice the LIMIT selects before skips: head for FIRST N, tail for LAST N.
         final long sliceStart = isFirstN ? 0 : Math.max(count - limit, 0);
         final long sliceEnd = isFirstN ? Math.min(limit, count) : count;
@@ -332,30 +253,14 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         // user-supplied values; a plain subtraction chain can wrap.
         final long start = Math.min(sliceStart + skipFirst, sliceEnd);
         final long end = Math.max(sliceEnd - skipLast, start);
-        emitStartAddr = entryMem.getAddress() + rowIdOffset + start * entrySize;
-        emitEndAddr = entryMem.getAddress() + rowIdOffset + end * entrySize;
+        emitStartAddr = entries.getAddress() + rowIdOffset + start * entrySize;
+        emitEndAddr = entries.getAddress() + rowIdOffset + end * entrySize;
     }
 
     private long encodeCurrentRow() {
-        if (count >= maxEntries) {
-            SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
-        }
-        entryMem.ensureCapacity(longsPerEntry);
-        final long addr = entryMem.getAppendAddress();
+        final long addr = entries.beginAppend();
         encoder.encode(baseRecord, addr, baseRecord.getRowId());
         return addr;
-    }
-
-    // Entries are unique by their trailing rowId word, so word-wise unsigned
-    // comparison is a strict total order matching Vect.sortEncodedEntries.
-    private boolean isBeyondThreshold(long entryAddr) {
-        for (int i = 0; i < longsPerEntry; i++) {
-            final int cmp = Long.compareUnsigned(Unsafe.getLong(entryAddr + 8L * i), thresholdEntry[i]);
-            if (cmp != 0) {
-                return isFirstN ? cmp > 0 : cmp < 0;
-            }
-        }
-        return true;
     }
 
     private void runBuild() {
@@ -365,7 +270,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            acceptEncoded(encodeCurrentRow());
+            encodeCurrentRow();
+            entries.endAppend();
         }
     }
 
@@ -386,7 +292,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
         long addr = encodeCurrentRow();
         long groupKey = Unsafe.getLong(addr);
-        acceptEncoded(addr);
+        entries.endAppend();
         long rowsInGroup = 1;
         long rowsSoFar = 0;
         while (baseCursor.hasNext()) {
@@ -403,7 +309,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
                 groupKey = currentKey;
                 rowsInGroup = 1;
             }
-            acceptEncoded(addr);
+            entries.endAppend();
         }
     }
 }
