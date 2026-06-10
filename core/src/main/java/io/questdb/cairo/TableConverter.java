@@ -112,45 +112,32 @@ public class TableConverter {
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
-                                final int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-                                final int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-                                final int timestampType = timestampIndex > -1 ? TableUtils.getColumnType(metaMem, timestampIndex) : ColumnType.TIMESTAMP;
-                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
+                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
+                                txWriter.resetLagValuesUnsafe();
 
-                                if (!walEnabled && hasParquetFormatOrLastPartition(metaMem, txWriter)) {
-                                    // The non-WAL TableWriter append path cannot write parquet
-                                    // partitions; converting would produce a table that fails
-                                    // every in-order insert. Leave the table as WAL. The
-                                    // _convert file is still removed below, so the refused
-                                    // conversion does not retry on every restart.
-                                    LOG.error().$("skipping conversion to non-WAL, FORMAT PARQUET is only supported on WAL tables [dirName=").$(dirNameSink).I$();
+                                if (walEnabled) {
+                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
+                                        metadata.reload(metaPath, metaMem);
+                                        tableSequencerAPI.registerTable(tableId, metadata, token);
+                                    }
+
+                                    // Reset structure version in _meta and _txn files
+                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                                    path.trimTo(rootLen).concat(dirNameSink);
+                                    txWriter.resetStructureVersionUnsafe();
                                 } else {
-                                    txWriter.resetLagValuesUnsafe();
-
-                                    if (walEnabled) {
-                                        try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
-                                            metadata.reload(metaPath, metaMem);
-                                            tableSequencerAPI.registerTable(tableId, metadata, token);
-                                        }
-
-                                        // Reset structure version in _meta and _txn files
-                                        metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
-                                        path.trimTo(rootLen).concat(dirNameSink);
-                                        txWriter.resetStructureVersionUnsafe();
+                                    if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
+                                        removeWalPersistence(path, rootLen, ff, dirNameSink);
                                     } else {
-                                        if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
-                                            removeWalPersistence(path, rootLen, ff, dirNameSink);
-                                        } else {
-                                            LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
-                                            continue;
-                                        }
+                                        LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
+                                        continue;
                                     }
-                                    metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
-                                    convertedTables.add(token);
+                                }
+                                metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
+                                convertedTables.add(token);
 
-                                    try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                                        metadataRW.hydrateTable(token);
-                                    }
+                                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                                    metadataRW.hydrateTable(token);
                                 }
                             }
 
@@ -172,14 +159,6 @@ public class TableConverter {
             ff.findClose(findPtr);
         }
         return convertedTables;
-    }
-
-    private static boolean hasParquetFormatOrLastPartition(MemoryMARW metaMem, TxWriter txWriter) {
-        if (TableUtils.getTableFormat(metaMem) == TableUtils.TABLE_FORMAT_PARQUET) {
-            return true;
-        }
-        final int partitionCount = txWriter.getPartitionCount();
-        return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
     }
 
     private static boolean readWalEnabled(LPSZ path, FilesFacade ff) {

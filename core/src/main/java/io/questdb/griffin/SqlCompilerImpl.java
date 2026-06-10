@@ -52,7 +52,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -1756,23 +1755,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
             try (TableReader reader = engine.getReader(tableToken)) {
-                if (reader != null) {
-                    if (!PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
-                        throw SqlException.$(pos, "Cannot convert non-partitioned table");
-                    }
-                    if (walFlag == TableUtils.TABLE_TYPE_NON_WAL) {
-                        // The non-WAL TableWriter append path cannot write parquet
-                        // partitions; parquet ingestion relies on the WAL apply path.
-                        if (reader.getMetadata().getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET) {
-                            throw SqlException.$(pos, "Cannot convert table to non-WAL, FORMAT PARQUET is only supported on WAL tables");
-                        }
-                        final TxReader txFile = reader.getTxFile();
-                        final int partitionCount = txFile.getPartitionCount();
-                        if (partitionCount > 0 && txFile.isPartitionParquet(partitionCount - 1)) {
-                            throw SqlException.$(pos, "Cannot convert table to non-WAL, the last partition is in parquet format");
-                        }
-                    }
+                if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
+                    throw SqlException.$(pos, "Cannot convert non-partitioned table");
                 }
+                // Converting a WAL table to non-WAL is intentionally allowed even when the
+                // table is FORMAT PARQUET or has parquet partitions. This is a very useful
+                // operational workaround for a "poison pill" WAL transaction (one that keeps
+                // failing to apply and suspends the whole table): convert the table to non-WAL
+                // to discard the WAL and its sequencer, then convert it back to WAL. Blocking
+                // the conversion would take that escape hatch away. Parquet partitions stay
+                // parquet and remain readable; converting back to WAL restores normal parquet
+                // ingestion.
             }
 
             if (!executionContext.isValidationOnly()) {

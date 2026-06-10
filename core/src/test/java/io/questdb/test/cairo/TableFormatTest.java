@@ -45,10 +45,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 public class TableFormatTest extends AbstractCairoTest {
 
@@ -128,19 +125,6 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterTableSetFormatParquetRejectedOnNonPartitioned() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts)");
-            try {
-                execute("ALTER TABLE tango SET FORMAT PARQUET");
-                fail("FORMAT PARQUET should be rejected on non-partitioned table");
-            } catch (SqlException e) {
-                assertEquals("[29] FORMAT PARQUET is only supported on partitioned tables", e.getMessage());
-            }
-        });
-    }
-
-    @Test
     public void testAlterTableSetFormatParquetRejectedOnMatView() throws Exception {
         // compileAlterTable runs checkMatViewModification before dispatching to
         // alterTableSetFormat, so ALTER TABLE on a matview never reaches the
@@ -159,6 +143,19 @@ public class TableFormatTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "cannot modify materialized view [view=mv]");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableSetFormatParquetRejectedOnNonPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts)");
+            try {
+                execute("ALTER TABLE tango SET FORMAT PARQUET");
+                fail("FORMAT PARQUET should be rejected on non-partitioned table");
+            } catch (SqlException e) {
+                assertEquals("[29] FORMAT PARQUET is only supported on partitioned tables", e.getMessage());
             }
         });
     }
@@ -316,83 +313,29 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNewPartitionLandsAsParquetWithVarSizeColumns() throws Exception {
+    public void testFlippingFormatToParquetLeavesOldPartitionsNative() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP, s STRING, v VARCHAR, b BINARY) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-            // rnd_bin(lo, hi, nullRate=0) guarantees non-null binary values of
-            // length in [lo, hi]; pinning lo == hi == 4 gives a deterministic
-            // round-tripped length to assert.
-            execute("INSERT INTO tango " +
-                    "SELECT '2024-01-01T00:00:00.000000Z'::timestamp, 'hello', 'world'::varchar, rnd_bin(4, 4, 0) " +
-                    "UNION ALL " +
-                    "SELECT '2024-01-02T00:00:00.000000Z'::timestamp, 'foo', 'bar'::varchar, rnd_bin(4, 4, 0)");
-            drainWalQueue();
-            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("name\tisParquet\n" +
-                            "2024-01-01\ttrue\n" +
-                            "2024-01-02\ttrue\n");
-            // BINARY prints as empty in the text sink, so round-trip is asserted
-            // via length(): non-null bytes survive the parquet write/read path.
-            assertQuery("SELECT ts, s, v, length(b) AS len FROM tango")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("ts\ts\tv\tlen\n" +
-                            "2024-01-01T00:00:00.000000Z\thello\tworld\t4\n" +
-                            "2024-01-02T00:00:00.000000Z\tfoo\tbar\t4\n");
-        });
-    }
-
-    @Test
-    public void testNewPartitionLandsAsParquetWithSymbol() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP, sym SYMBOL, n LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Three native partitions.
             execute("INSERT INTO tango VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', 'a', 1), " +
-                    "('2024-01-02T00:00:00.000000Z', 'b', 2), " +
-                    "('2024-01-03T00:00:00.000000Z', 'a', 3)");
+                    "('2024-01-01T00:00:00.000000Z', 1), " +
+                    "('2024-01-02T00:00:00.000000Z', 2), " +
+                    "('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            // Flip default format to parquet, then add a fourth partition.
+            execute("ALTER TABLE tango SET FORMAT PARQUET");
+            drainWalQueue();
+            execute("INSERT INTO tango VALUES ('2024-01-04T00:00:00.000000Z', 4)");
             drainWalQueue();
             assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
                     .returns("name\tisParquet\n" +
-                            "2024-01-01\ttrue\n" +
-                            "2024-01-02\ttrue\n" +
-                            "2024-01-03\ttrue\n");
-            // Symbol values must round-trip through the parquet file.
-            assertQuery("tango")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("ts\tsym\tn\n" +
-                            "2024-01-01T00:00:00.000000Z\ta\t1\n" +
-                            "2024-01-02T00:00:00.000000Z\tb\t2\n" +
-                            "2024-01-03T00:00:00.000000Z\ta\t3\n");
-        });
-    }
-
-    @Test
-    public void testNewPartitionLandsAsParquet() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-            execute("INSERT INTO tango VALUES " +
-                    "('2024-01-01T00:00:00.000000Z'), " +
-                    "('2024-01-02T00:00:00.000000Z'), " +
-                    "('2024-01-03T00:00:00.000000Z')");
-            drainWalQueue();
-            // Every partition must be parquet because the table is FORMAT PARQUET.
-            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("name\tisParquet\n" +
-                            "2024-01-01\ttrue\n" +
-                            "2024-01-02\ttrue\n" +
-                            "2024-01-03\ttrue\n");
+                            "2024-01-01\tfalse\n" +
+                            "2024-01-02\tfalse\n" +
+                            "2024-01-03\tfalse\n" +
+                            "2024-01-04\ttrue\n");
         });
     }
 
@@ -535,69 +478,6 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     /**
-     * Exercises both `writeFreshParquetFromO3` (first insert into each
-     * partition) and `copyO3ToRowGroup` (second insert into the same partition
-     * at a later timestamp) for a designated-timestamp column whose PARQUET
-     * encoding has been explicitly set. Catches any regression where the
-     * strided merge-index layout is mishandled on the Rust side for a given
-     * encoding.
-     */
-    private void assertParquetTimestampRoundTrip(String encoding) throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (" +
-                    "  ts TIMESTAMP PARQUET(" + encoding + "), " +
-                    "  v LONG" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-
-            // First commit: three partitions, each lands via
-            // writeFreshParquetFromO3.
-            execute("INSERT INTO tango VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', 1), " +
-                    "('2024-01-02T00:00:00.000000Z', 2), " +
-                    "('2024-01-03T00:00:00.000000Z', 3)");
-            drainWalQueue();
-            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("name\tisParquet\n" +
-                            "2024-01-01\ttrue\n" +
-                            "2024-01-02\ttrue\n" +
-                            "2024-01-03\ttrue\n");
-
-            // Second commit: each partition gets a later timestamp. With no
-            // overlap to the existing row group, the merge strategy picks
-            // COPY_O3 — exercising copyO3ToRowGroup.
-            execute("INSERT INTO tango VALUES " +
-                    "('2024-01-01T12:00:00.000000Z', 4), " +
-                    "('2024-01-02T12:00:00.000000Z', 5), " +
-                    "('2024-01-03T12:00:00.000000Z', 6)");
-            drainWalQueue();
-
-            assertQuery("tango")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("ts\tv\n" +
-                            "2024-01-01T00:00:00.000000Z\t1\n" +
-                            "2024-01-01T12:00:00.000000Z\t4\n" +
-                            "2024-01-02T00:00:00.000000Z\t2\n" +
-                            "2024-01-02T12:00:00.000000Z\t5\n" +
-                            "2024-01-03T00:00:00.000000Z\t3\n" +
-                            "2024-01-03T12:00:00.000000Z\t6\n");
-
-            // Min/max round-trip — sensitive to off-by-one or wrong-stride
-            // reads of the merge index.
-            assertQuery("SELECT min(ts), max(ts), count() FROM tango")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("min\tmax\tcount\n" +
-                            "2024-01-01T00:00:00.000000Z\t2024-01-03T12:00:00.000000Z\t6\n");
-        });
-    }
-
-    /**
      * Inject a failure in writeFreshParquetFromO3 by failing the _pm file open
      * and assert (a) the WAL apply surfaces the error by suspending the table,
      * (b) the partition is not registered, (c) no malloc'd buffers are leaked
@@ -686,6 +566,87 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNewPartitionLandsAsParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T00:00:00.000000Z'), " +
+                    "('2024-01-02T00:00:00.000000Z'), " +
+                    "('2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+            // Every partition must be parquet because the table is FORMAT PARQUET.
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n" +
+                            "2024-01-02\ttrue\n" +
+                            "2024-01-03\ttrue\n");
+        });
+    }
+
+    @Test
+    public void testNewPartitionLandsAsParquetWithSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, sym SYMBOL, n LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 'a', 1), " +
+                    "('2024-01-02T00:00:00.000000Z', 'b', 2), " +
+                    "('2024-01-03T00:00:00.000000Z', 'a', 3)");
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n" +
+                            "2024-01-02\ttrue\n" +
+                            "2024-01-03\ttrue\n");
+            // Symbol values must round-trip through the parquet file.
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tsym\tn\n" +
+                            "2024-01-01T00:00:00.000000Z\ta\t1\n" +
+                            "2024-01-02T00:00:00.000000Z\tb\t2\n" +
+                            "2024-01-03T00:00:00.000000Z\ta\t3\n");
+        });
+    }
+
+    @Test
+    public void testNewPartitionLandsAsParquetWithVarSizeColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, s STRING, v VARCHAR, b BINARY) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            // rnd_bin(lo, hi, nullRate=0) guarantees non-null binary values of
+            // length in [lo, hi]; pinning lo == hi == 4 gives a deterministic
+            // round-tripped length to assert.
+            execute("INSERT INTO tango " +
+                    "SELECT '2024-01-01T00:00:00.000000Z'::timestamp, 'hello', 'world'::varchar, rnd_bin(4, 4, 0) " +
+                    "UNION ALL " +
+                    "SELECT '2024-01-02T00:00:00.000000Z'::timestamp, 'foo', 'bar'::varchar, rnd_bin(4, 4, 0)");
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n" +
+                            "2024-01-02\ttrue\n");
+            // BINARY prints as empty in the text sink, so round-trip is asserted
+            // via length(): non-null bytes survive the parquet write/read path.
+            assertQuery("SELECT ts, s, v, length(b) AS len FROM tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\tv\tlen\n" +
+                            "2024-01-01T00:00:00.000000Z\thello\tworld\t4\n" +
+                            "2024-01-02T00:00:00.000000Z\tfoo\tbar\t4\n");
+        });
+    }
+
+    @Test
     public void testO3InsertCreatesParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
@@ -733,52 +694,56 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFlippingFormatToParquetLeavesOldPartitionsNative() throws Exception {
+    public void testSetTypeBypassWalConvertsFormatParquetTable() throws Exception {
+        // Converting a FORMAT PARQUET WAL table to non-WAL is allowed: it is a
+        // useful workaround for a poison pill WAL transaction. The born-parquet
+        // partition stays parquet and the table stays readable; the table-level
+        // FORMAT PARQUET flag is preserved across the conversion.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Three native partitions.
-            execute("INSERT INTO tango VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', 1), " +
-                    "('2024-01-02T00:00:00.000000Z', 2), " +
-                    "('2024-01-03T00:00:00.000000Z', 3)");
+            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
-            // Flip default format to parquet, then add a fourth partition.
-            execute("ALTER TABLE tango SET FORMAT PARQUET");
-            drainWalQueue();
-            execute("INSERT INTO tango VALUES ('2024-01-04T00:00:00.000000Z', 4)");
-            drainWalQueue();
+            // The new partition was born parquet.
             assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
                     .returns("name\tisParquet\n" +
-                            "2024-01-01\tfalse\n" +
-                            "2024-01-02\tfalse\n" +
-                            "2024-01-03\tfalse\n" +
-                            "2024-01-04\ttrue\n");
+                            "2024-01-01\ttrue\n");
+
+            execute("ALTER TABLE tango SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            TableToken token = engine.verifyTableName("tango");
+            assertFalse("table must be non-WAL after conversion", token.isWal());
+            // Format flag is preserved across the conversion.
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+            // The parquet partition is intact and the table reads back correctly.
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n");
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n");
+
+            execute("ALTER TABLE tango SET FORMAT NATIVE");
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_NATIVE);
         });
     }
 
     @Test
-    public void testSetTypeBypassWalRejectedOnFormatParquetTable() throws Exception {
+    public void testSetTypeBypassWalConvertsParquetLastPartition() throws Exception {
+        // A NATIVE-format WAL table whose last (active) partition was converted
+        // to parquet can also be converted to non-WAL. The partition stays
+        // parquet and the table reads back correctly.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-            try {
-                execute("ALTER TABLE tango SET TYPE BYPASS WAL");
-                fail("SET TYPE BYPASS WAL should be rejected on a FORMAT PARQUET table");
-            } catch (SqlException e) {
-                assertEquals("[12] Cannot convert table to non-WAL, FORMAT PARQUET is only supported on WAL tables", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testSetTypeBypassWalRejectedOnParquetLastPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            // NATIVE-format WAL table whose only (active) partition is converted to
-            // parquet: partition-level conversion of the active partition is allowed
-            // on WAL tables, so the SET TYPE guard must look at the partitions, not
-            // just the table format flag.
             execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
@@ -790,22 +755,81 @@ public class TableFormatTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("name\tisParquet\n" +
                             "2024-01-01\ttrue\n");
-            try {
-                execute("ALTER TABLE tango SET TYPE BYPASS WAL");
-                fail("SET TYPE BYPASS WAL should be rejected when the last partition is parquet");
-            } catch (SqlException e) {
-                assertEquals("[12] Cannot convert table to non-WAL, the last partition is in parquet format", e.getMessage());
-            }
+
+            execute("ALTER TABLE tango SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            TableToken token = engine.verifyTableName("tango");
+            assertFalse("table must be non-WAL after conversion", token.isWal());
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_NATIVE);
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n");
         });
     }
 
     @Test
-    public void testSetTypeConversionSkippedAtLoadOnFormatParquetTable() throws Exception {
+    public void testSetTypeBypassWalRoundTripPreservesFormat() throws Exception {
+        // The poison pill workaround round-trip: take a FORMAT PARQUET WAL table
+        // non-WAL (dropping the WAL and sequencer), then back to WAL. The format
+        // flag and the parquet data are preserved across both conversions.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n");
+
+            // Drop the WAL: convert to non-WAL.
+            execute("ALTER TABLE tango SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+            assertFalse("table must be non-WAL", engine.verifyTableName("tango").isWal());
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n");
+
+            // Back to WAL: the format flag and the data are still intact.
+            execute("ALTER TABLE tango SET TYPE WAL");
+            engine.releaseInactive();
+            engine.load();
+            assertTrue("table must be WAL again", engine.verifyTableName("tango").isWal());
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n");
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n");
+        });
+    }
+
+    @Test
+    public void testSetTypeConversionProceedsAtLoadOnFormatParquetTable() throws Exception {
         // SET TYPE BYPASS WAL only schedules the conversion in a _convert file; the
-        // table stays WAL until the next engine load. SET FORMAT PARQUET issued
-        // after the scheduling passes its own WAL check, so the compile-time SET
-        // TYPE guard cannot see it. TableConverter must refuse the conversion at
-        // load time and leave the table as WAL.
+        // table stays WAL until the next engine load. A SET FORMAT PARQUET issued
+        // after the scheduling does not block the conversion: TableConverter
+        // proceeds at load time, the table becomes non-WAL, and the format flag is
+        // preserved. (The existing partition predates SET FORMAT PARQUET, so it is
+        // native; only new partitions would be born parquet.)
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
@@ -818,22 +842,18 @@ public class TableFormatTest extends AbstractCairoTest {
             engine.load();
 
             TableToken token = engine.verifyTableName("tango");
-            assertTrue("table must stay WAL", token.isWal());
+            assertFalse("conversion must proceed, table is non-WAL", token.isWal());
             assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
-            // The converter consumes the _convert file so the refused conversion
-            // does not retry on every restart.
+            // The converter consumes the _convert file.
             Path convertPath = Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
             assertFalse(configuration.getFilesFacade().exists(convertPath.$()));
-            // The table remains fully usable through the WAL path.
-            execute("INSERT INTO tango VALUES ('2024-01-01T01:00:00.000000Z', 2)");
-            drainWalQueue();
+            // The table reads back correctly after the conversion.
             assertQuery("tango")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
                     .returns("ts\tv\n" +
-                            "2024-01-01T00:00:00.000000Z\t1\n" +
-                            "2024-01-01T01:00:00.000000Z\t2\n");
+                            "2024-01-01T00:00:00.000000Z\t1\n");
         });
     }
 
@@ -951,6 +971,69 @@ public class TableFormatTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .expectSize()
                     .returns("ts\tn\n2024-01-03T00:00:00.000000Z\t3\n");
+        });
+    }
+
+    /**
+     * Exercises both `writeFreshParquetFromO3` (first insert into each
+     * partition) and `copyO3ToRowGroup` (second insert into the same partition
+     * at a later timestamp) for a designated-timestamp column whose PARQUET
+     * encoding has been explicitly set. Catches any regression where the
+     * strided merge-index layout is mishandled on the Rust side for a given
+     * encoding.
+     */
+    private void assertParquetTimestampRoundTrip(String encoding) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (" +
+                    "  ts TIMESTAMP PARQUET(" + encoding + "), " +
+                    "  v LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+
+            // First commit: three partitions, each lands via
+            // writeFreshParquetFromO3.
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 1), " +
+                    "('2024-01-02T00:00:00.000000Z', 2), " +
+                    "('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n" +
+                            "2024-01-02\ttrue\n" +
+                            "2024-01-03\ttrue\n");
+
+            // Second commit: each partition gets a later timestamp. With no
+            // overlap to the existing row group, the merge strategy picks
+            // COPY_O3 — exercising copyO3ToRowGroup.
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 4), " +
+                    "('2024-01-02T12:00:00.000000Z', 5), " +
+                    "('2024-01-03T12:00:00.000000Z', 6)");
+            drainWalQueue();
+
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n" +
+                            "2024-01-01T12:00:00.000000Z\t4\n" +
+                            "2024-01-02T00:00:00.000000Z\t2\n" +
+                            "2024-01-02T12:00:00.000000Z\t5\n" +
+                            "2024-01-03T00:00:00.000000Z\t3\n" +
+                            "2024-01-03T12:00:00.000000Z\t6\n");
+
+            // Min/max round-trip — sensitive to off-by-one or wrong-stride
+            // reads of the merge index.
+            assertQuery("SELECT min(ts), max(ts), count() FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("min\tmax\tcount\n" +
+                            "2024-01-01T00:00:00.000000Z\t2024-01-03T12:00:00.000000Z\t6\n");
         });
     }
 
