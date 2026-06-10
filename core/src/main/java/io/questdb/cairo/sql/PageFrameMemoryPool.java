@@ -105,7 +105,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntIntHashMap parquetIdxToDecodeSlot;
     private final ParquetPartitionDecoder parquetMetaDecoder;
     private final IntList queryToSlot = new IntList(16);
-    private ParquetDecodeHint accessPattern = ParquetDecodeHint.MONOTONIC;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
     // Tracks which cached buffer currently holds each usage bit. Used to clear
@@ -114,6 +113,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers boundForRecordA;
     private ParquetBuffers boundForRecordB;
     private long cachedBytes;
+    private ParquetDecodeHint decodeHint = ParquetDecodeHint.MONOTONIC;
     private long effectiveBudgetBytes;
     private ParquetBuffers lruHead;
     private ParquetBuffers lruTail;
@@ -121,7 +121,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public PageFrameMemoryPool(long maxCacheBytes) {
         try {
             this.maxCacheBytes = Math.max(maxCacheBytes, 0L);
-            this.effectiveBudgetBytes = accessPattern.applyTo(this.maxCacheBytes);
+            this.effectiveBudgetBytes = decodeHint.applyTo(this.maxCacheBytes);
             // Sized for the MONOTONIC cap; SCATTERED cursors rehash up on demand
             // rather than every pool (incl. all-native scans) paying for 256 slots.
             byFrameIndex = new IntObjHashMap<>(ParquetDecodeHint.MONOTONIC.maxCachedBuffers);
@@ -307,7 +307,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint) {
         releaseParquetBuffers();
         this.addressCache = addressCache;
-        this.accessPattern = hint;
+        this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
         Misc.free(parquetMetaDecoder);
         Misc.free(legacyDecoder);
@@ -359,13 +359,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
-        this.accessPattern = hint;
+        this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
     }
 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
         assert getBound(usageBit) == null : "acquireBuffer requires the prior pin to have been cleared by tryHit";
-        if (cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= accessPattern.maxCachedBuffers) {
+        if (cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= decodeHint.maxCachedBuffers) {
             for (ParquetBuffers victim = lruHead; victim != null; victim = victim.next) {
                 if (victim.usageFlags != 0) {
                     continue;
@@ -475,7 +475,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             case RECORD_A_MASK -> boundForRecordA;
             case RECORD_B_MASK -> boundForRecordB;
             case FRAME_MEMORY_MASK -> boundForFrameMemory;
-            default -> null;
+            default -> {
+                assert false : "unknown usage bit";
+                yield null;
+            }
         };
     }
 
@@ -607,7 +610,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers tryHit(int frameIndex, byte usageBit) {
         final ParquetBuffers previousBound = getBound(usageBit);
         if (previousBound != null && previousBound.frameIndex == frameIndex) {
-            if (accessPattern == ParquetDecodeHint.SCATTERED) {
+            if (decodeHint == ParquetDecodeHint.SCATTERED) {
                 lruMoveToTail(previousBound);
             }
             return previousBound;
@@ -625,7 +628,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         hit.usageFlags |= usageBit;
         setBound(usageBit, hit);
-        if (accessPattern == ParquetDecodeHint.SCATTERED) {
+        if (decodeHint == ParquetDecodeHint.SCATTERED) {
             lruMoveToTail(hit);
         }
         return hit;
