@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -37,14 +39,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
+class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
     private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
+    private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
@@ -70,6 +75,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     ) {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
+            this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
             // Clamp each operand to MAX_HEAP_SIZE_LIMIT before adding so an unset (Long.MAX_VALUE)
             // cap does not overflow into a negative budget.
@@ -90,6 +96,17 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         if (isOpen) {
             isOpen = false;
             forceClose();
+        }
+    }
+
+    @Override
+    public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
+        target.ensureCapacity(count);
+        for (long addr = currentAddr; addr < endAddr; addr += entrySize) {
+            final long rowId = Unsafe.getLong(addr);
+            if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
+                target.add(rowId);
+            }
         }
     }
 
@@ -137,6 +154,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             isOpen = true;
             entryMem.reopen();
         }
+        baseCursor.setParentUsedColumns(buildReadColumns);
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
         entrySize = keyType.entrySize();
@@ -216,6 +234,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         if (count <= 1) {
             startAddr = entryMem.getAddress() + rowIdOffset;
             toTop();
+            if (count > 0) {
+                baseCursor.setRecordAtRows(this);
+            }
             return;
         }
 
@@ -223,6 +244,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
+        baseCursor.setRecordAtRows(this);
     }
 
     private void forceClose() {

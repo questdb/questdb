@@ -93,6 +93,11 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setRecordAtRows(RowIdSource source) {
+        base.setRecordAtRows(source);
+    }
+
+    @Override
     public long size() {
         return -1;
     }

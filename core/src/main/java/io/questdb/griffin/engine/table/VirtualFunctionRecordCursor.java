@@ -180,6 +180,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setRecordAtRows(RowIdSource source) {
+        baseCursor.setRecordAtRows(source);
+    }
+
+    @Override
     public long size() {
         assert baseCursor != null;
         return baseCursor.size();

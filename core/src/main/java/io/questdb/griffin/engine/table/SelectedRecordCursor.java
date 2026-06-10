@@ -132,6 +132,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setRecordAtRows(RowIdSource source) {
+        baseCursor.setRecordAtRows(source);
+    }
+
+    @Override
     public long size() {
         return baseCursor.size();
     }

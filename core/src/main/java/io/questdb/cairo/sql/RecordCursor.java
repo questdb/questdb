@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
 
@@ -316,6 +317,17 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     }
 
     /**
+     * Declares the complete set of row ids the caller will pass to subsequent
+     * {@link #recordAt(Record, long)} calls. Parquet-backed cursors pull the row ids from
+     * the source and then decode only the declared rows of a row group instead of the
+     * whole row group; cursors that cannot benefit never pull, so the caller pays nothing.
+     * Null restores full-frame decoding. Wrappers that hold a delegate cursor must
+     * forward the call.
+     */
+    default void setRecordAtRows(RowIdSource source) {
+    }
+
+    /**
      * Returns the total number of records available in this cursor.
      * <p>
      * Not all record cursor implementations can determine their size efficiently.
@@ -371,6 +383,16 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @see #preComputedStateSize()
      */
     void toTop();
+
+    interface RowIdSource {
+
+        /**
+         * Appends the declared row ids that lie in Parquet frames to the target list,
+         * skipping rows of native frames. The implementation must size the target via
+         * {@link DirectLongList#ensureCapacity(long)} before appending.
+         */
+        void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache);
+    }
 
     /**
      * A simple counter utility class for tracking numeric values in RecordCursor operations.

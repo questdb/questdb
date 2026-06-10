@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -41,10 +43,11 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
+class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
     private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     protected final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
@@ -87,7 +90,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
         }
         this.encoder = encoderInit;
         this.entryMem = entryMemInit;
-        this.buildReadColumns = extractSortKeyColumnIndexes(sortColumnFilter);
+        this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
         final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), MAX_HEAP_SIZE_LIMIT);
         final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_HEAP_SIZE_LIMIT);
         this.maxEntryMemBytes = Math.min(keyCap + valueCap, MAX_HEAP_SIZE_LIMIT);
@@ -103,6 +106,17 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
             Misc.free(encoder);
             baseCursor = Misc.free(baseCursor);
             baseRecord = null;
+        }
+    }
+
+    @Override
+    public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
+        target.ensureCapacity(rowsLeft);
+        for (long addr = currentAddr; addr < endAddr; addr += entrySize) {
+            final long rowId = Unsafe.getLong(addr);
+            if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
+                target.add(rowId);
+            }
         }
     }
 
@@ -207,15 +221,6 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
         rowsLeft = end - start;
     }
 
-    private static IntHashSet extractSortKeyColumnIndexes(IntList sortColumnFilter) {
-        final IntHashSet indexes = new IntHashSet(sortColumnFilter.size());
-        for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
-            final int encoded = sortColumnFilter.getQuick(i);
-            indexes.add((encoded > 0 ? encoded : -encoded) - 1);
-        }
-        return indexes;
-    }
-
     private void buildAndSort() {
         try {
             if (limit > 0) {
@@ -240,6 +245,9 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor {
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
         toTop();
+        if (rowsLeft > 0) {
+            baseCursor.setRecordAtRows(this);
+        }
     }
 
     private long emitCount() {

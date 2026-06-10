@@ -45,7 +45,6 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
@@ -246,9 +245,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+        frameMemoryPool.recordAt(record, atRowId);
     }
 
     @Override
@@ -259,6 +256,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         frameMemoryPool.setParquetDecodeHint(hint);
+    }
+
+    @Override
+    public void setRecordAtRows(RowIdSource source) {
+        frameMemoryPool.setRecordAtRows(source);
     }
 
     @Override

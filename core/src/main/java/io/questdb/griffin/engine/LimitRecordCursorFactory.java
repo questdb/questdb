@@ -245,6 +245,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void setRecordAtRows(RowIdSource source) {
+            base.setRecordAtRows(source);
+        }
+
+        @Override
         public long size() {
             return size;
         }

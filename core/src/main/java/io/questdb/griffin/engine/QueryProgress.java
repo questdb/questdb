@@ -640,6 +640,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public void setRecordAtRows(RowIdSource source) {
+            base.setRecordAtRows(source);
+        }
+
+        @Override
         public long size() {
             return base.size();
         }

@@ -38,6 +38,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -168,6 +169,15 @@ public class SortKeyEncoder implements QuietCloseable {
         }
 
         return rankMaps;
+    }
+
+    public static IntHashSet extractSortKeyColumnIndexes(IntList sortColumnFilter) {
+        final IntHashSet indexes = new IntHashSet(sortColumnFilter.size());
+        for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
+            final int encoded = sortColumnFilter.getQuick(i);
+            indexes.add((encoded > 0 ? encoded : -encoded) - 1);
+        }
+        return indexes;
     }
 
     /**

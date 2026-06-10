@@ -128,6 +128,30 @@ public interface ParquetDecoder {
     );
 
     /**
+     * Same as {@link #decodeRowGroupWithRowFilterFillNulls(RowGroupBuffers, int, DirectIntList, int, int, int, DirectLongList)},
+     * but takes the filtered rows as a raw memory range.
+     *
+     * @param buffers           target buffers
+     * @param columnOffset      starting offset in the columns list
+     * @param columns           {@code [parquet_column_index, column_type]} pairs
+     * @param rowGroup          zero-based row group index
+     * @param rowLo             first row within the row group (inclusive)
+     * @param rowHi             last row within the row group (exclusive)
+     * @param filteredRowsAddr  address of the sorted row indices to decode
+     * @param filteredRowsCount number of row indices at the address
+     */
+    void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers buffers,
+            int columnOffset,
+            DirectIntList columns,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long filteredRowsAddr,
+            long filteredRowsCount
+    );
+
+    /**
      * Returns the number of columns described in the parquet metadata.
      * Used to build the column-ID-to-index map during {@code openParquet()}.
      */
