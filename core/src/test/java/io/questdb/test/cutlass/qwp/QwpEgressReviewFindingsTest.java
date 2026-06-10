@@ -89,6 +89,87 @@ public class QwpEgressReviewFindingsTest {
         });
     }
 
+    /**
+     * The first batch of a query (batch_seq == 0) carries the schema inline
+     * (col_count varint + one descriptor per column); every continuation batch
+     * (batch_seq > 0) drops it and ships rows only. This pins that wire
+     * invariant directly on the buffer rather than leaning on the e2e client
+     * decoder: emitting the same buffered content as a continuation batch must
+     * yield exactly the first-batch bytes with the schema block excised --
+     * nothing more, nothing less.
+     */
+    @Test
+    public void testContinuationBatchOmitsSchema() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Varied name lengths so a varint off-by-one in the schema-size math
+            // would surface in the delta below.
+            String[] names = {"a", "temperature", repeat('x', 100)};
+            int[] columnTypes = {ColumnType.INT, ColumnType.DOUBLE, ColumnType.LONG};
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            for (int i = 0; i < names.length; i++) {
+                QwpEgressColumnDef def = new QwpEgressColumnDef();
+                def.of(names[i], columnTypes[i]);
+                cols.add(def);
+            }
+
+            // The exact bytes a first batch adds over a continuation batch:
+            // col_count varint + per column (name_len varint + UTF-8 name + type byte).
+            int schemaBytes = QwpVarint.encodedLength(names.length);
+            for (String name : names) {
+                int nameLen = name.getBytes(StandardCharsets.UTF_8).length;
+                schemaBytes += QwpVarint.encodedLength(nameLen) + nameLen + 1;
+            }
+
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, null, dict);
+                int rows = batch.getRowCount();
+                int prefix = 1 + QwpVarint.encodedLength(rows); // table_name (0x00) + row_count varint
+
+                int firstSize = batch.computeTableBlockSize(rows, true);
+                int contSize = batch.computeTableBlockSize(rows, false);
+                Assert.assertEquals(
+                        "first batch must exceed a continuation batch by exactly the inline schema",
+                        schemaBytes, firstSize - contSize);
+
+                long buf = Unsafe.malloc(firstSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    int wFirst = batch.emitTableBlock(buf, buf + firstSize, true);
+                    Assert.assertEquals("first-batch emit must match its computed size", firstSize, wFirst);
+                    byte[] first = new byte[wFirst];
+                    for (int i = 0; i < wFirst; i++) {
+                        first[i] = Unsafe.getByte(buf + i);
+                    }
+
+                    // Re-emit the same buffered content as a continuation batch.
+                    // emitTableBlock writes only -- it does not advance row/delta
+                    // state -- so this is a faithful isFirstBatch=false comparison.
+                    int wCont = batch.emitTableBlock(buf, buf + firstSize, false);
+                    Assert.assertEquals("continuation emit must match its computed size", contSize, wCont);
+                    byte[] cont = new byte[wCont];
+                    for (int i = 0; i < wCont; i++) {
+                        cont[i] = Unsafe.getByte(buf + i);
+                    }
+
+                    // table_name + row_count prefix is identical on both batches.
+                    for (int i = 0; i < prefix; i++) {
+                        Assert.assertEquals("prefix byte " + i + " must match", first[i], cont[i]);
+                    }
+                    // The continuation drops exactly the schema block; everything
+                    // after it (the column data) is byte-identical to the first batch.
+                    Assert.assertEquals("continuation length = first length - schema bytes",
+                            first.length - schemaBytes, cont.length);
+                    for (int i = prefix; i < cont.length; i++) {
+                        Assert.assertEquals("column-data byte " + i + " must match the first batch",
+                                first[i + schemaBytes], cont[i]);
+                    }
+                } finally {
+                    Unsafe.free(buf, firstSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
     @Test
     public void testCurrentBatchDeltaWireBytesMatchesComputeDeltaSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -160,14 +241,12 @@ public class QwpEgressReviewFindingsTest {
     }
 
     /**
-     * Finding #4: {@code emitTableBlock} only guards the single name byte
-     * ({@code p >= wireLimit}) before writing two varints, each up to
-     * {@link QwpVarint#MAX_VARINT_BYTES} bytes. On a tight wireLimit the
-     * varint encode walks past the declared limit.
+     * Finding #4: {@code emitTableBlock} must preflight the table-block prelude
+     * (name byte + rowCount varint, plus col_count varint and inline columns on
+     * the first batch) against {@code wireLimit} rather than walking past it.
      *
      * <p>Test setup: place a guard byte at the wireLimit boundary. A correct
-     * preflight returns -1 and leaves the guard intact. The current code
-     * returns a positive byte count and overwrites the guard.
+     * preflight returns -1 and leaves the guard intact.
      */
     @Test
     public void testEmitTableBlockRespectsTightWireLimit() throws Exception {
@@ -190,20 +269,21 @@ public class QwpEgressReviewFindingsTest {
                     final byte guard = (byte) 0xAB;
                     // Leave 2 bytes of usable wire ([wireBuf .. wireLimit)):
                     //   byte 0: name length  (written unconditionally)
-                    //   byte 1: rowCount varint (written without any preflight)
-                    //   byte 2: columnCount varint   <-- must not be written
+                    //   byte 1: rowCount varint
+                    //   byte 2: col_count varint   <-- must not be written
                     long wireLimit = buf + 2;
                     Unsafe.putByte(wireLimit, guard);
 
-                    // writeFullSchema=false isolates the bug: the reference-mode
-                    // branch has its own preflight, the prelude (name + row + col
-                    // varints) does not.
-                    int written = batch.emitTableBlock(buf, wireLimit, 0L, false);
+                    // isFirstBatch=true makes the block carry col_count + inline
+                    // columns after the name + rowCount prelude. With only two
+                    // usable bytes the schema preflight must return -1 and leave
+                    // the guard byte at wireLimit untouched.
+                    int written = batch.emitTableBlock(buf, wireLimit, true);
                     byte guardAfter = Unsafe.getByte(wireLimit);
                     Assert.assertEquals(
                             "emitTableBlock returned " + written + " on a wireLimit that"
-                                    + " cannot fit the name byte + both varints; it should"
-                                    + " return -1.",
+                                    + " cannot fit the name byte + rowCount + col_count"
+                                    + " varints; it should return -1.",
                             -1, written
                     );
                     Assert.assertEquals(
