@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.TableWriterMetrics;
-import io.questdb.cairo.sql.ParquetDecodeMetrics;
 import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.cutlass.http.processors.HttpMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
@@ -56,7 +55,6 @@ public class Metrics implements Target, Mutable {
     private final JsonQueryMetrics jsonQueryMetrics;
     private final LineMetrics lineMetrics;
     private final MetricsRegistry metricsRegistry;
-    private final ParquetDecodeMetrics parquetDecodeMetrics;
     private final PGMetrics pgMetrics;
     private final QwpEgressMetrics qwpEgressMetrics;
     private final Runtime runtime = Runtime.getRuntime();
@@ -77,7 +75,6 @@ public class Metrics implements Target, Mutable {
         this.qwpEgressMetrics = new QwpEgressMetrics(metricsRegistry);
         this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
-        this.parquetDecodeMetrics = new ParquetDecodeMetrics(metricsRegistry);
         this.tableWriterMetrics = new TableWriterMetrics(metricsRegistry);
         this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
@@ -93,7 +90,6 @@ public class Metrics implements Target, Mutable {
         qwpEgressMetrics.clear();
         lineMetrics.clear();
         healthCheck.clear();
-        parquetDecodeMetrics.clear();
         tableWriterMetrics.clear();
         walMetrics.clear();
         workerMetrics.clear();
@@ -127,10 +123,6 @@ public class Metrics implements Target, Mutable {
 
     public LineMetrics lineMetrics() {
         return lineMetrics;
-    }
-
-    public ParquetDecodeMetrics parquetDecodeMetrics() {
-        return parquetDecodeMetrics;
     }
 
     public PGMetrics pgWireMetrics() {

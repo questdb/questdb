@@ -72,7 +72,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final String installRoot;
     private final CharSequence legacyCheckpointRoot;
-    private final String sqlParquetCacheDiskDir;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
@@ -89,7 +88,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
         this.checkpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.CHECKPOINT_DIRECTORY);
         this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
-        this.sqlParquetCacheDiskDir = this.dbRoot != null ? this.dbRoot + Files.SEPARATOR + "tmp" : null;
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -1167,17 +1165,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlParallelWorkStealingThreshold() {
         return 16;
-    }
-
-    @Override
-    public CharSequence getSqlParquetCacheDiskDir() {
-        return sqlParquetCacheDiskDir;
-    }
-
-    // TODO: pick a non-zero default once PageFrame.isColdParquetPartition() is wired to real cold-tier metadata.
-    @Override
-    public long getSqlParquetCacheDiskSize() {
-        return 0;
     }
 
     @Override

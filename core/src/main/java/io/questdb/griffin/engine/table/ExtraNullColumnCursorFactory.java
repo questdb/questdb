@@ -392,11 +392,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
             return baseFrame.getPartitionLo();
         }
 
-        @Override
-        public boolean isColdParquetPartition() {
-            return baseFrame.isColdParquetPartition();
-        }
-
         public ExtraNullColumnPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;

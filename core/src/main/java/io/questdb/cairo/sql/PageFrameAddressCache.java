@@ -26,7 +26,6 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.std.BoolList;
 import io.questdb.std.ByteList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -37,7 +36,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * Holds formats, addresses and sizes for page frames.
@@ -52,13 +50,10 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
-    @TestOnly
-    public static volatile boolean IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
     // Flat arrays storing per-frame, per-column data. Indexed as: frameIndex * columnCount + columnIndex.
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
     private final DirectLongList auxPageSizes;
-    private final BoolList coldParquetPartitions = new BoolList();
     private final ColumnMapping columnMapping = new ColumnMapping();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
@@ -89,7 +84,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
 
         final byte format = frame.getFormat();
-        boolean isCold = false;
         if (format == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getPageAddress(columnIndex));
@@ -111,7 +105,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
-            isCold = frame.isColdParquetPartition() || IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST;
             hasParquetFrames = true;
         }
 
@@ -123,7 +116,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
-        coldParquetPartitions.add(isCold);
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
@@ -135,7 +127,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
-        coldParquetPartitions.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
@@ -290,11 +281,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
-            coldParquetPartitions.setQuick(frameIndex, frame.isColdParquetPartition() || IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST);
         }
-    }
-
-    boolean isColdParquetPartition(int frameIndex) {
-        return coldParquetPartitions.get(frameIndex);
     }
 }

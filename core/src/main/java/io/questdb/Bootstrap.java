@@ -572,7 +572,6 @@ public class Bootstrap {
                 verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false);
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
-                verifyFileSystem(path, cairoConfig.getSqlParquetCacheDiskDir(), "parquet spill", false, false);
                 verifyFileOpts(path, cairoConfig);
                 cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
             }

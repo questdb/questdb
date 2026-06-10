@@ -316,7 +316,6 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
         Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
-        Assert.assertEquals(0L, configuration.getCairoConfiguration().getSqlParquetCacheDiskSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
@@ -2590,8 +2589,6 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertEquals(128L * Numbers.SIZE_1MB, configuration.getSqlParquetCacheMemorySize());
-        Assert.assertEquals(64L * Numbers.SIZE_1MB, configuration.getSqlParquetCacheDiskSize());
-        Assert.assertEquals("/tmp/test-parquet-spill", configuration.getSqlParquetCacheDiskDir());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(100_000, configuration.getSqlParallelWorkStealingSpinTimeout());

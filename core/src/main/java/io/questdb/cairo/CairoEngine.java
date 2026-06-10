@@ -60,7 +60,6 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -271,10 +270,6 @@ public class CairoEngine implements Closeable, WriterSource {
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
-            PageFrameMemoryPool.cleanStaleDiskSpillFiles(
-                    configuration.getFilesFacade(),
-                    configuration.getSqlParquetCacheDiskDir()
-            );
 
             // IMPORTANT: Do not reorder statements!
             // The backup recovery process needs the `dataID` (since it will set it),
