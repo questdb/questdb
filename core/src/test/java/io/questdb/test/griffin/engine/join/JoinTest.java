@@ -7543,6 +7543,60 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWrappedBarrierSlaveMasterFilterStaysPostJoin() throws Exception {
+        // LEAK-B: a single-table predicate (b.w + b.m > 0) references only b, which is the SLAVE of
+        // the inner RIGHT join AND is NULL-extended by the later c RIGHT join. Because the join is
+        // wrapped in a sub-query, the predicate routes through moveWhereInsideSubQueries' barrier
+        // branch, which anchored it at b's own join -- below the c nulling join. The unmatched c key
+        // 2 produces a NULL-master row that the predicate must drop; anchoring below the c join leaked
+        // it (2 rows for 1). The non-wrapped form already stays post-join via assignFilters.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("INSERT INTO a VALUES (1)");
+            execute("CREATE TABLE b (k INT, w INT, m INT)");
+            execute("INSERT INTO b VALUES (1, 5, 5)");
+            execute("CREATE TABLE c (k INT, x INT)");
+            execute("INSERT INTO c VALUES (1, 9), (2, 99)");
+
+            final String expected = "ak\tbk\tbw\tbm\tck\tcx\n1\t1\t5\t5\t1\t9\n";
+            assertQuery("SELECT * FROM (SELECT a.k ak, b.k bk, b.w bw, b.m bm, c.k ck, c.x cx " +
+                    "FROM a RIGHT JOIN b ON a.k = b.k RIGHT JOIN c ON b.k = c.k) WHERE bw + bm > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: 0<b.w+b.m")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testWrappedMultiTableMasterFilterStaysPostJoin() throws Exception {
+        // LEAK-A: companion to testMultiTableMasterFilterStaysPostJoin, but the join is wrapped in a
+        // sub-query. After moveWhereInsideSubQueries inlines the outer predicate into the join model,
+        // the rewritten t0.a < t1.b references two master tables and routes through the
+        // distinctIndexes>1 branch instead of assignFilters. A later RIGHT/FULL join NULL-extends t0
+        // and t1 for the unmatched t2 key 2; the filter must stay above that join. Anchoring at the
+        // highest referenced model index (t1's inner join) leaked the (null,null,2) row -- 2 for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\n1\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a, b, k FROM (SELECT t0.a a, t1.b b, t2.k k " +
+                        "FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k) WHERE a < b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a<t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testWrappedSubQueryMasterFilterStaysPostJoin() throws Exception {
         // The join is wrapped in a sub-query and the master predicate sits on the outer model, so
         // it reaches moveWhereInsideSubQueries instead of analyseEquals. The same master-nulling

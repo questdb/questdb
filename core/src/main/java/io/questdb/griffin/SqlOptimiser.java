@@ -4967,6 +4967,30 @@ public class SqlOptimiser implements Mutable {
         return nullingAnchorByExecPos.getQuick(orderedPos);
     }
 
+    /**
+     * Model index of the last master-nulling join that executes after every table referenced by a
+     * multi-table predicate, or -1. {@code refModelIndexes} holds the referenced model indexes sorted
+     * ascending. A later master-nulling join NULL-extends all tables joined before it, so anchoring a
+     * WHERE predicate there holds it above any downstream join that NULL-extends a referenced table.
+     * Falls back to model order when the execution order is not a full permutation.
+     */
+    private int lastNullingJoinAfterReferencedTables(IntList refModelIndexes) {
+        final int n = refModelIndexes.size();
+        if (!isNullingExecOrderValid) {
+            // model-order fallback: outermost nulling join after the highest referenced model index
+            // (refModelIndexes is sorted ascending, so the last entry is the highest)
+            return nullingAnchorByModelPos.getQuick(refModelIndexes.getQuick(n - 1));
+        }
+        int maxExecPos = -1;
+        for (int i = 0; i < n; i++) {
+            final int execPos = nullingExecPosByModel.getQuick(refModelIndexes.getQuick(i));
+            if (execPos > maxExecPos) {
+                maxExecPos = execPos;
+            }
+        }
+        return lastNullingJoinAfterOrderedPosition(maxExecPos);
+    }
+
     // Walks only the nested-model chain (not join models) because named windows are defined
     // on the masterModel and propagated through nesting, never on join models.
     // Stops at subquery boundaries to prevent resolving names from inner scopes.
@@ -5409,8 +5433,18 @@ public class SqlOptimiser implements Mutable {
                         addWhereNode(model, node);
                         continue;
                     } else if (distinctIndexes > 1) {
-                        int greatest = tempIntList.get(distinctIndexes - 1);
-                        final IQueryModel m = model.getJoinModels().get(greatest);
+                        // A multi-table WHERE predicate must stay above any later master-nulling join
+                        // that NULL-extends a referenced table; anchoring at the highest referenced
+                        // model index would leak its NULL-master rows. Re-anchor in execution order.
+                        // An ON conjunct gates its own join, which runs first, so it stays put.
+                        int anchorIndex = tempIntList.get(distinctIndexes - 1);
+                        if (!node.innerPredicate) {
+                            final int nullingIndex = lastNullingJoinAfterReferencedTables(tempIntList);
+                            if (nullingIndex > -1) {
+                                anchorIndex = nullingIndex;
+                            }
+                        }
+                        final IQueryModel m = model.getJoinModels().get(anchorIndex);
                         m.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, m.getPostJoinWhereClause(), nodes.getQuick(i)));
                         continue;
                     }
@@ -5425,7 +5459,13 @@ public class SqlOptimiser implements Mutable {
                     if (tableIndex > 0
                             && (joinBarriers.contains(joinType))
                     ) {
-                        IQueryModel joinModel = model.getJoinModels().getQuick(tableIndex);
+                        // A WHERE predicate on a barrier-joined table must still stay above a LATER
+                        // master-nulling join that NULL-extends that table; anchoring at the table's
+                        // own barrier join would leak the downstream NULL-master rows. An ON conjunct
+                        // gates its own join, which runs first, so it pushes as usual.
+                        final int nullingJoinIndex = node.innerPredicate ? -1 : masterNullingJoinIndexInOrder(tableIndex);
+                        final int anchorIndex = nullingJoinIndex >= 0 ? nullingJoinIndex : tableIndex;
+                        final IQueryModel joinModel = model.getJoinModels().getQuick(anchorIndex);
                         joinModel.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, joinModel.getPostJoinWhereClause(), node));
                         continue;
                     }
