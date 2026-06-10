@@ -467,7 +467,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     private static Path newTLPath() {
         if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
-            Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet());
+            // The thread name is the payload: a leak report only shows a byte-count delta, and
+            // the allocating thread may be dead by then -- this trace is the sole attribution.
+            Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet()
+                    + " on thread '" + Thread.currentThread().getName() + '\'');
             synchronized (System.err) {
                 System.err.print("Creating ");
                 ex.printStackTrace(System.err);
