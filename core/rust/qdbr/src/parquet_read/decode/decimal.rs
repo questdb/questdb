@@ -1024,13 +1024,16 @@ fn validate_flba_dict(dict_page: &DictPage, src_len: usize) -> ParquetResult<()>
 /// target `T` is up to 32 bytes (`Decimal256`), so the reservation is up to 32x
 /// the page buffer -- tens of gigabytes for a multi-GiB decompressed dict page.
 /// A plain `Vec::with_capacity` aborts the JVM over JNI when that allocation
-/// fails; `try_reserve_exact` turns it into a recoverable `Layout` error while
-/// still decoding any dictionary that genuinely fits in memory.
+/// fails; `try_reserve_exact` turns it into a recoverable out-of-memory error
+/// while still decoding any dictionary that genuinely fits in memory. The reason
+/// is `OutOfMemory` (not `Layout`): `validate_flba_dict` has already accepted the
+/// layout, so a failure here is purely an allocation shortfall, and the write
+/// path must retry on transient pressure rather than suspend the table.
 fn try_reserve_dict_values<T>(num_values: usize) -> ParquetResult<Vec<T>> {
     let mut values = Vec::new();
     values.try_reserve_exact(num_values).map_err(|_| {
         fmt_err!(
-            Layout,
+            OutOfMemory(None),
             "cannot allocate {num_values} decimal dictionary values"
         )
     })?;
@@ -1202,6 +1205,7 @@ fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NU
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parquet::error::ParquetErrorReason;
 
     #[test]
     fn fixed_decimal_slicer_oversized_read_errors() {
@@ -1247,6 +1251,14 @@ mod tests {
         assert!(
             err.to_string().contains("cannot allocate"),
             "unexpected error: {err}"
+        );
+        // Classify the failure OutOfMemory, not Layout: validate_flba_dict has
+        // already accepted the layout, and on the write path (decimal columns in
+        // a parquet merge) a Layout error suspends the table while OutOfMemory
+        // backs off and retries.
+        assert!(
+            matches!(err.reason(), ParquetErrorReason::OutOfMemory(_)),
+            "allocation failure must be classified OutOfMemory, not Layout: {err:?}"
         );
     }
 }

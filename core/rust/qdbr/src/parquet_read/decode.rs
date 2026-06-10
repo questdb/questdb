@@ -2126,8 +2126,11 @@ fn decode_null_bitmap<'a>(
 /// column-chunk size, and a highly compressible page can legitimately decompress
 /// to more than that, so the size cannot be range-checked up front. A plain
 /// `Vec::resize` aborts the JVM over JNI on allocation failure; `try_reserve`
-/// turns a decompression-bomb header into a recoverable `Layout` error while still
-/// decoding any page that genuinely fits in memory.
+/// turns a decompression-bomb header into a recoverable out-of-memory error while
+/// still decoding any page that genuinely fits in memory. Every reachable `size`
+/// is `<= i32::MAX`, so a failure here is always an allocation shortfall, never a
+/// malformed layout: classifying it `OutOfMemory` lets a caller retry on transient
+/// memory pressure instead of treating the page as corrupt.
 ///
 /// The sizing is grow-only and deliberately does not `clear()`: callers thread one
 /// buffer through every page of a file, so clearing would force `resize` to memset
@@ -2141,7 +2144,7 @@ pub(super) fn resize_decompress_buffer(buffer: &mut Vec<u8>, size: usize) -> Par
     if size > buffer.len() {
         buffer.try_reserve(size - buffer.len()).map_err(|_| {
             fmt_err!(
-                Layout,
+                OutOfMemory(None),
                 "cannot allocate {} bytes for a decompressed page",
                 size
             )
@@ -2297,6 +2300,7 @@ mod tests {
         decode_page, decode_page_filtered, decompress_sliced_data, resize_decompress_buffer,
     };
     use crate::allocator::{AcVec, TestAllocatorState};
+    use crate::parquet::error::ParquetErrorReason;
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::page::{DataPage, DictPage};
@@ -4350,6 +4354,14 @@ mod tests {
         assert!(
             err.to_string().contains("cannot allocate"),
             "unexpected error: {err}"
+        );
+        // The failure must be classified OutOfMemory, not Layout: on the write
+        // path (parquet merges under ApplyWal2TableJob) a Layout error suspends
+        // the table, whereas OutOfMemory backs off and retries -- the correct
+        // response to transient memory pressure.
+        assert!(
+            matches!(err.reason(), ParquetErrorReason::OutOfMemory(_)),
+            "allocation failure must be classified OutOfMemory, not Layout: {err:?}"
         );
     }
 
