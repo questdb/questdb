@@ -1428,7 +1428,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("""
                     SELECT  1
                     FROM    WorkflowEvent el
-
+                    
                     Right JOIN WorkflowEventAction ep0
                       ON    el.CreateDate = ep0.CreateDate
                       and   el.Id = ep0.WorkflowEventId
@@ -1599,7 +1599,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       and   el.Id = ep0.WorkflowEventId
                       and   ep0.ActionTypeId = 13
                       and   ep0.Message = '2'
-
+                    
                     WHERE   el.UserId = 19
                       and   el.TenantId = 24024
                       and   el.EventTypeId = 1
@@ -1620,13 +1620,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("""
                     SELECT  *
                     FROM    WorkflowEvent el
-
+                    
                     FULL JOIN WorkflowEventAction ep0
                       ON    el.CreateDate = ep0.CreateDate
                       and   el.Id = ep0.WorkflowEventId
                       and   ep0.ActionTypeId = 13
                       and   ep0.Message = '2'
-
+                    
                     WHERE   el.UserId = 19
                       and   el.TenantId = 24024
                       and   el.EventTypeId = 1
@@ -4387,38 +4387,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToKeyedQuery() throws Exception {
-        // Pins the optimizer rewrite shape (Long Top K above Async Group By
-        // with a timestamp_floor_utc keyFunctions entry) so silent regressions
-        // such as a cursor-path fallback, lost LIMIT pushdown, or parallelism
-        // drop fail the test. Correctness is already covered by
-        // SampleByTest#testSampleByFromToIsAllowedForKeyedQueries.
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.FROM_TO_DDL);
-            final String query = """
-                    SELECT ts, count, s
-                    FROM fromto
-                    SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'
-                    LIMIT 6""";
-            assertQuery(query)
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Long Top K lo: 6
-                              keys: [ts asc]
-                                Async Group By workers: 1
-                                  keys: [ts,s]
-                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
-                            """);
-        });
-    }
-
-    @Test
     public void testSampleByFromToFillNullWithExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
@@ -4461,6 +4429,38 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             2018-01-19T00:00:00.000000Z\tnull\tnull
                             2018-01-24T00:00:00.000000Z\tnull\tnull
                             2018-01-29T00:00:00.000000Z\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToKeyedQuery() throws Exception {
+        // Pins the optimizer rewrite shape (Long Top K above Async Group By
+        // with a timestamp_floor_utc keyFunctions entry) so silent regressions
+        // such as a cursor-path fallback, lost LIMIT pushdown, or parallelism
+        // drop fail the test. Correctness is already covered by
+        // SampleByTest#testSampleByFromToIsAllowedForKeyedQueries.
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+            final String query = """
+                    SELECT ts, count, s
+                    FROM fromto
+                    SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'
+                    LIMIT 6""";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Long Top K lo: 6
+                              keys: [ts asc]
+                                Async Group By workers: 1
+                                  keys: [ts,s]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
         });
     }
