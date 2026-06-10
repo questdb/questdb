@@ -1251,4 +1251,45 @@ mod tests {
             (-1, u64::MAX, u64::MAX, u64::MAX)
         );
     }
+
+    #[test]
+    fn try_new_decimal_dicts_all_widths_decode_through_fallible_reservation() {
+        // Drive every PreconvertedFlbaDecimalDict::try_new_decimalN call site --
+        // each routes its dictionary-value reservation through the fallible
+        // try_reserve_dict_values. The sibling test covers only Decimal256 and the
+        // wider FLBA-dict decode tests only Decimal64, so the remaining widths had
+        // no test exercising their reservation. src_len == 1 is the
+        // max-amplification shape (one buffer byte per value, target up to 32
+        // bytes); a valid such dict must reserve and fill exactly num_values
+        // entries for every width.
+        let buffer = [0x00u8, 0x01, 0x7f, 0xff]; // four 1-byte big-endian decimals
+        let dict_page = DictPage {
+            buffer: &buffer,
+            num_values: buffer.len(),
+            is_sorted: false,
+        };
+        let n = buffer.len();
+
+        let d8 = PreconvertedFlbaDecimalDict::<Decimal8>::try_new_decimal8(&dict_page, 1).unwrap();
+        assert_eq!(d8.values.len(), n);
+        let d16 =
+            PreconvertedFlbaDecimalDict::<Decimal16>::try_new_decimal16(&dict_page, 1).unwrap();
+        assert_eq!(d16.values.len(), n);
+        let d32 =
+            PreconvertedFlbaDecimalDict::<Decimal32>::try_new_decimal32(&dict_page, 1).unwrap();
+        assert_eq!(d32.values.len(), n);
+        let d64 =
+            PreconvertedFlbaDecimalDict::<Decimal64>::try_new_decimal64(&dict_page, 1).unwrap();
+        assert_eq!(d64.values.len(), n);
+        let d128 =
+            PreconvertedFlbaDecimalDict::<Decimal128>::try_new_decimal128(&dict_page, 1).unwrap();
+        assert_eq!(d128.values.len(), n);
+        let d256 =
+            PreconvertedFlbaDecimalDict::<Decimal256>::try_new_decimal256(&dict_page, 1).unwrap();
+        assert_eq!(d256.values.len(), n);
+
+        // Spot-check sign extension reaches the narrow widths too: 0xff -> -1.
+        assert_eq!(d8.values[3].0, -1);
+        assert_eq!(d16.values[3].0, -1);
+    }
 }

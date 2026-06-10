@@ -790,4 +790,73 @@ mod tests {
         drop(buffers);
         assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
     }
+
+    // Encodes the rep/def level streams for a single 2D-array row of `n` leaf
+    // elements that are all present-but-null: def == 2 (one below max_def_level
+    // == 3), so read_and_append_one_row_2d takes its has_nulls branch and grows
+    // def_scratch to `n` entries. The first leaf opens the row (rep 0); the rest
+    // continue a single inner list (rep 2). Mirrors encode_null_element_row_levels
+    // for the 2D decode path, whose def_scratch callsite is otherwise untested.
+    fn encode_null_element_row_levels_2d(n: usize) -> (Vec<u8>, Vec<u8>) {
+        const MAX_REP: i16 = 2;
+        const MAX_DEF: i16 = 3;
+        let rep = std::iter::once(0u32).chain(std::iter::repeat_n(2u32, n - 1));
+        let def = std::iter::repeat_n(2u32, n);
+        let mut rep_buf = Vec::new();
+        let mut def_buf = Vec::new();
+        encode_u32(&mut rep_buf, rep, n, get_bit_width(MAX_REP)).unwrap();
+        encode_u32(&mut def_buf, def, n, get_bit_width(MAX_DEF)).unwrap();
+        (rep_buf, def_buf)
+    }
+
+    #[test]
+    fn decode_array_rows_2d_null_elements_decodes() {
+        // Coverage/sanity: with no memory limit a foreign 2D array row of all
+        // present-but-null elements decodes cleanly, exercising the 2D
+        // def_scratch has_nulls growth path. Pins the level scaffolding so the
+        // allocation failure test below cannot pass for the wrong reason.
+        const N: usize = 256;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let (rep_buf, def_buf) = encode_null_element_row_levels_2d(N);
+        let mut levels_iter = LevelsIterator::try_new(N, 2, 3, &rep_buf, &def_buf).unwrap();
+        let mut buffers = ColumnChunkBuffers::new(allocator);
+        let empty: &[u8] = &[];
+        let mut slicer = DataPageFixedSlicer::<8>::new(empty, 0);
+
+        decode_array_rows_2d(&mut levels_iter, 3, 0, 1, &mut slicer, &mut buffers).unwrap();
+
+        // One aux entry for the row; data holds the shape header + N f64 NaNs.
+        assert_eq!(buffers.aux_vec.len(), ARRAY_AUX_SIZE);
+        assert_eq!(buffers.data_vec.len(), 8 + 8 * N);
+    }
+
+    #[test]
+    fn decode_array_rows_2d_def_scratch_alloc_failure_errors_not_aborts() {
+        // The 2D counterpart of the 1D def_scratch alloc-failure test: the 2D row
+        // path uses its own AcVec<u32> def_scratch (read_and_append_one_row_2d),
+        // whose fallible push/reserve/resize must surface a recoverable error
+        // rather than abort the JVM. Same scope note applies -- a memory limit
+        // proves abort-freedom, not fail-on-revert, because the sibling data_vec
+        // reservation (also fallible, strictly larger per element) masks
+        // def_scratch under any limit that trips it.
+        const N: usize = 4096;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let (rep_buf, def_buf) = encode_null_element_row_levels_2d(N);
+        let mut levels_iter = LevelsIterator::try_new(N, 2, 3, &rep_buf, &def_buf).unwrap();
+        let mut buffers = ColumnChunkBuffers::new(allocator);
+        let empty: &[u8] = &[];
+        let mut slicer = DataPageFixedSlicer::<8>::new(empty, 0);
+
+        tas.set_mem_rss_limit(tas.rss_mem_used() + 256);
+        let err = decode_array_rows_2d(&mut levels_iter, 3, 0, 1, &mut slicer, &mut buffers)
+            .expect_err("def_scratch growth past the memory limit must error, not abort");
+        assert!(
+            matches!(err.reason(), ParquetErrorReason::OutOfMemory(_)),
+            "allocation failure must be classified OutOfMemory: {err:?}"
+        );
+        drop(buffers);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
+    }
 }

@@ -4572,6 +4572,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn decompress_sliced_data_v2_compressed_lying_size_errors() {
+        // V2 counterpart of the V1 lying-size test: a V2 compressed page whose
+        // uncompressed_size under-claims the real decompressed length (levels +
+        // values) must surface a clean error, not panic or abort. The PR hoisted
+        // the buffer sizing into the can_decompress arm, so resize_decompress_buffer
+        // sizes decompress_buffer[offset..] one byte short and the codec cannot fill
+        // it -- the error must propagate out rather than reach an unwritten tail.
+        let levels = [0xAAu8, 0xBB, 0xCC];
+        let values: Vec<u8> = (0..40u8).collect();
+        let mut body = levels.to_vec();
+        body.extend_from_slice(&snappy_compress(&values));
+        let page = SlicedDataPage {
+            header: DataPageHeader::V2(DataPageHeaderV2 {
+                num_values: values.len() as i32,
+                num_nulls: 0,
+                num_rows: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_levels_byte_length: levels.len() as i32,
+                repetition_levels_byte_length: 0,
+                is_compressed: Some(true),
+                statistics: None,
+            }),
+            buffer: &body,
+            compression: Compression::Snappy,
+            uncompressed_size: levels.len() + values.len() - 1, // lies: one byte short
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        assert!(
+            decompress_sliced_data(&page, &mut decompress_buffer).is_err(),
+            "a V2 compressed page whose uncompressed_size under-claims the body must error"
+        );
+    }
+
     // Regenerates the committed end-to-end fixture
     // core/src/test/resources/sqllogictest/data/parquet-testing/broken/rle_dict_index_bitwidth_over_32.parquet
     // read by the Java `ParquetTest` sqllogictest. Ignored by default; run with

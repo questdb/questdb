@@ -2386,4 +2386,36 @@ mod multi_dict_tests {
         // Uncompressed pages do not allocate, so persistent stays empty.
         assert!(persistent.is_empty());
     }
+
+    /// Pins the load-bearing `buf.clear()` in `decompress_varchar_slice_dict`:
+    /// because `resize_decompress_buffer` is grow-only it never re-zeroes a reused
+    /// pool buffer, so a malformed dict page whose codec under-fills the buffer
+    /// would otherwise expose stale bytes from a previous page -- and the varchar
+    /// aux entries hold pointers into this dict buffer for the whole column-chunk
+    /// decode. Snappy writes only the real decompressed length and leaves the rest
+    /// of the output untouched, so an over-claimed `uncompressed_size` under-fills.
+    #[test]
+    fn compressed_dict_clears_pooled_buffer_before_decompress() {
+        let payload: Vec<u8> = (0..16u8).collect();
+        let compressed = snappy_compress(&payload);
+
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        // A dirty pooled buffer longer than the page's uncompressed_size: the
+        // grow-only resize truncates it in place without re-zeroing, so absent the
+        // clear() its tail would still read back as these stale 0xAB bytes.
+        let mut pool: Vec<Vec<u8>> = vec![vec![0xABu8; 64]];
+
+        // uncompressed_size (32) over-claims the real decompressed length (16), so
+        // the codec under-fills: it writes 16 bytes and never touches the last 16.
+        let dict_page = make_snappy_dict(&compressed, 32, 4);
+        let page = decompress_varchar_slice_dict(dict_page, &mut persistent, &mut pool).unwrap();
+
+        assert_eq!(page.buffer.len(), 32);
+        assert_eq!(&page.buffer[..payload.len()], payload.as_slice());
+        assert!(
+            page.buffer[payload.len()..].iter().all(|&b| b == 0),
+            "the under-filled tail must be zeroed by clear(), not stale pool bytes: {:?}",
+            &page.buffer[payload.len()..]
+        );
+    }
 }
