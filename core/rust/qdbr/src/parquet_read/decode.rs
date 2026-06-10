@@ -2128,15 +2128,25 @@ fn decode_null_bitmap<'a>(
 /// `Vec::resize` aborts the JVM over JNI on allocation failure; `try_reserve`
 /// turns a decompression-bomb header into a recoverable `Layout` error while still
 /// decoding any page that genuinely fits in memory.
+///
+/// The sizing is grow-only and deliberately does not `clear()`: callers thread one
+/// buffer through every page of a file, so clearing would force `resize` to memset
+/// the whole page on every call only for the decompressor to overwrite it. Growing
+/// in place zeros just the delta a larger page adds beyond the previous one. A
+/// malformed page whose codec under-fills the buffer (Snappy/LZ4 do not check the
+/// fill) thus keeps stale bytes from an earlier page of the same file in its tail;
+/// a caller needing a zeroed tail must `clear()` first (see
+/// `decompress_varchar_slice_dict`).
 pub(super) fn resize_decompress_buffer(buffer: &mut Vec<u8>, size: usize) -> ParquetResult<()> {
-    buffer.clear();
-    buffer.try_reserve(size).map_err(|_| {
-        fmt_err!(
-            Layout,
-            "cannot allocate {} bytes for a decompressed page",
-            size
-        )
-    })?;
+    if size > buffer.len() {
+        buffer.try_reserve(size - buffer.len()).map_err(|_| {
+            fmt_err!(
+                Layout,
+                "cannot allocate {} bytes for a decompressed page",
+                size
+            )
+        })?;
+    }
     buffer.resize(size, 0);
     Ok(())
 }
@@ -4332,6 +4342,25 @@ mod tests {
             err.to_string().contains("cannot allocate"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn resize_decompress_buffer_grows_in_place_without_clearing() {
+        // The helper threads one buffer through every page of a file. It must
+        // size in place without clear()ing -- a clear() would make resize memset
+        // the whole uncompressed_page_size on every page (a per-page regression)
+        // only for the decompressor to overwrite it. Pin the observable contract:
+        // growing preserves the bytes already present (zeroing only the added
+        // tail), and shrinking truncates. A clear()-first implementation would
+        // zero byte 0 here and fail this assertion.
+        let mut buf = vec![0xAB_u8; 4];
+        resize_decompress_buffer(&mut buf, 8).unwrap();
+        assert_eq!(buf.len(), 8);
+        assert_eq!(&buf[..4], &[0xAB; 4], "grow must not memset existing bytes");
+        assert_eq!(&buf[4..], &[0; 4], "grown tail must be zeroed");
+
+        resize_decompress_buffer(&mut buf, 2).unwrap();
+        assert_eq!(buf.as_slice(), &[0xAB; 2], "shrink must truncate in place");
     }
 
     #[test]

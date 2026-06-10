@@ -128,6 +128,10 @@ pub(super) fn decompress_varchar_slice_dict<'bufs>(
         (dict_page.buffer.as_ptr(), dict_page.buffer.len())
     } else {
         let mut buf = buf_pool.pop().unwrap_or_default();
+        // The grow-only resize_decompress_buffer won't zero a reused pool buffer;
+        // clear so a malformed under-filling dict page can't expose stale tail bytes
+        // (aux entries retain pointers into this dict for the whole column-chunk decode).
+        buf.clear();
         resize_decompress_buffer(&mut buf, dict_page.uncompressed_size)?;
         parquet2::compression::decompress(dict_page.compression, dict_page.buffer, &mut buf)?;
         let ptr = buf.as_ptr();
