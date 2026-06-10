@@ -66,9 +66,8 @@ public final class QwpEgressFrameWriter {
 
     /**
      * Writes the body of a {@code CACHE_RESET} frame: msg_kind + reset_mask.
-     * {@code resetMask} is the bitwise OR of
-     * {@link QwpEgressMsgKind#RESET_MASK_DICT} and
-     * {@link QwpEgressMsgKind#RESET_MASK_SCHEMAS}.
+     * {@code resetMask} currently carries only
+     * {@link QwpEgressMsgKind#RESET_MASK_DICT}.
      *
      * @return address just past the body
      */
@@ -158,8 +157,8 @@ public final class QwpEgressFrameWriter {
      * The {@code zoneId} field is gated by the {@link QwpEgressMsgKind#CAP_ZONE}
      * bit in {@code capabilities}: when the bit is set, a u16+utf8 trailer is
      * appended (zero-length if {@code zoneId} is null); when the bit is unset,
-     * the trailer is omitted entirely so a v2.0 client reading a v2.1 server
-     * with no zone configured sees the original byte layout.
+     * the trailer is omitted entirely so a client built against the zone-less
+     * layout sees the byte layout it expects.
      *
      * @return address just past the body, or -1 if {@code bodyCapBytes} is too
      * small to hold the fixed fields (1+1+8+4+8+2+2 = 26 bytes), or 28 bytes
