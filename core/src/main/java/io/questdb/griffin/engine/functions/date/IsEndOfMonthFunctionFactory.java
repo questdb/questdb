@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class IsEndOfMonthFunctionFactory implements FunctionFactory {
@@ -44,7 +45,13 @@ public class IsEndOfMonthFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final Function arg = args.getQuick(0);
         return new Func(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
@@ -67,6 +74,9 @@ public class IsEndOfMonthFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
+                return false;
+            }
             return driver.getDayOfMonth(value) == driver.getDaysPerMonth(value);
         }
 

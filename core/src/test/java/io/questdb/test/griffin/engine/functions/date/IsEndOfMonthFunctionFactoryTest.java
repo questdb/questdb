@@ -28,10 +28,10 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testNull() throws Exception {
         assertQuery("select is_end_of_month(null)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -42,7 +42,6 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTimestamp() throws Exception {
         assertQuery("select is_end_of_month('2024-02-29T00:00:00.000000Z'::timestamp)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -50,7 +49,6 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select is_end_of_month('2024-02-28T00:00:00.000000Z'::timestamp)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -58,7 +56,6 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select is_end_of_month('2023-02-28T00:00:00.000000Z'::timestamp)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -66,7 +63,6 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select is_end_of_month('2026-04-30T00:00:00.000000Z'::timestamp)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -74,7 +70,6 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select is_end_of_month('2026-04-29T00:00:00.000000Z'::timestamp)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -82,7 +77,13 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select is_end_of_month('2026-01-31T00:00:00.000000Z'::timestamp)")
-                .ddl(null)
+                .expectSize()
+                .returns("""
+                        is_end_of_month
+                        true
+                        """);
+
+        assertQuery("select is_end_of_month('2025-12-31T00:00:00.000000Z'::timestamp)")
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -91,9 +92,27 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampColumn() throws Exception {
+        execute("create table x (ts timestamp)");
+        execute("insert into x values ('2024-02-29T00:00:00.000000Z')");
+        execute("insert into x values ('2024-02-28T00:00:00.000000Z')");
+        execute("insert into x values (null)");
+        execute("insert into x values ('2025-12-31T00:00:00.000000Z')");
+
+        assertQuery("select ts, is_end_of_month(ts) from x")
+                .expectSize()
+                .returns("""
+                        ts\tis_end_of_month
+                        2024-02-29T00:00:00.000000Z\ttrue
+                        2024-02-28T00:00:00.000000Z\tfalse
+                        \tfalse
+                        2025-12-31T00:00:00.000000Z\ttrue
+                        """);
+    }
+
+    @Test
     public void testTimestampNs() throws Exception {
         assertQuery("select is_end_of_month('2024-02-29T00:00:00.000000123Z'::timestamp_ns)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
@@ -101,11 +120,36 @@ public class IsEndOfMonthFunctionFactoryTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select is_end_of_month('2024-02-28T00:00:00.000000123Z'::timestamp_ns)")
-                .ddl(null)
                 .expectSize()
                 .returns("""
                         is_end_of_month
                         false
+                        """);
+    }
+
+    @Test
+    public void testTimestampNsNull() throws Exception {
+        assertQuery("select is_end_of_month(null::timestamp_ns)")
+                .expectSize()
+                .returns("""
+                        is_end_of_month
+                        false
+                        """);
+    }
+
+    @Test
+    public void testTimestampColumnWhereClause() throws Exception {
+        execute("create table x (ts timestamp)");
+        execute("insert into x values ('2024-02-29T00:00:00.000000Z')");
+        execute("insert into x values ('2024-02-28T00:00:00.000000Z')");
+        execute("insert into x values (null)");
+        execute("insert into x values ('2025-12-31T00:00:00.000000Z')");
+
+        assertQuery("select ts from x where is_end_of_month(ts)")
+                .returns("""
+                        ts
+                        2024-02-29T00:00:00.000000Z
+                        2025-12-31T00:00:00.000000Z
                         """);
     }
 }
