@@ -253,6 +253,8 @@ public class WalEventCursor {
                 break;
             case TRUNCATE:
                 break;
+            case REPLICATION_DISABLE:
+                break;
             case MAT_VIEW_INVALIDATE:
                 mvInvalidationInfo.read();
                 break;

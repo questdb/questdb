@@ -117,6 +117,104 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalBaseTableInvalidatesDependentMatView() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainWalAndMatViewQueues();
+            assertSql("price\n1.323\n", "select price from price_1h");
+
+            final TableToken oldBase = engine.verifyTableName("base_price");
+            final int oldId = oldBase.getTableId();
+
+            // Rebase the BASE table (not the view).
+            execute("alter table base_price suspend wal");
+            execute("alter table base_price rebase wal");
+            drainWalAndMatViewQueues();
+
+            final TableToken newBase = engine.verifyTableName("base_price");
+            Assert.assertNotEquals(oldBase.getDirName(), newBase.getDirName());
+            Assert.assertNotEquals(oldId, newBase.getTableId());
+            assertSql("count\n2\n", "select count() from base_price");
+
+            // The base rebase invalidated the dependent mat view (its watermark no longer maps onto the
+            // reset base sequencer). It does NOT silently serve a stale incremental refresh.
+            assertSql("view_status\ninvalid\n", "select view_status from materialized_views");
+
+            // A full refresh recovers it against the rebased base.
+            execute("refresh materialized view price_1h full;");
+            drainWalAndMatViewQueues();
+            assertSql("view_status\nvalid\n", "select view_status from materialized_views");
+            assertSql("count\n1\n", "select count() from price_1h");
+
+            // And it tracks new base data again afterwards.
+            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainWalAndMatViewQueues();
+            assertSql("sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.5\t2024-09-10T13:00:00.000000Z\n", "price_1h");
+        });
+    }
+
+    @Test
+    public void testRebaseWalMaterializedView() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainWalAndMatViewQueues();
+            assertSql("price\n1.323\n", "select price from price_1h");
+
+            final TableToken oldView = engine.verifyTableName("price_1h");
+            final int oldId = oldView.getTableId();
+            Assert.assertTrue(oldView.isMatView());
+
+            // Rebase the materialized view itself.
+            execute("alter materialized view price_1h suspend wal");
+            execute("alter materialized view price_1h rebase wal");
+            drainWalQueue();
+
+            final TableToken newView = engine.verifyTableName("price_1h");
+            // New identity, still a registered mat view, data preserved via hard links.
+            Assert.assertTrue(newView.isMatView());
+            Assert.assertNotEquals(oldView.getDirName(), newView.getDirName());
+            Assert.assertNotEquals(oldId, newView.getTableId());
+            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(newView));
+            assertSql("price\n1.323\n", "select price from price_1h");
+
+            // The rebased view still refreshes from the base (a full refresh, watermark not preserved).
+            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainWalAndMatViewQueues();
+            assertSql("count\n2\n", "select count() from price_1h");
+        });
+    }
+
+    @Test
     public void testAlterAddIndexInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
             execute(

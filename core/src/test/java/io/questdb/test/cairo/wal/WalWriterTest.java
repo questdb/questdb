@@ -4878,6 +4878,134 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalTableKeepsDataResetsSequencerAndStaysWritable() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertSql("count\n3\n", "select count() from t");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+            final int oldTableId = oldToken.getTableId();
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            final TableToken newToken = engine.verifyTableName("t");
+            // New identity (dir + id), old dir dropped.
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNotEquals(oldTableId, newToken.getTableId());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+
+            // Applied data is preserved (hard-linked), counter is reset to a fresh sequencer.
+            assertSql("count\n3\n", "select count() from t");
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(newToken).getSeqTxn() <= 2);
+
+            // The rebased table is live and writable.
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertSql("count\n4\n", "select count() from t");
+        });
+    }
+
+    @Test
+    public void testRebaseWalDiscardsPendingStructuralChange() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Queue pending WAL transactions that never get applied: a data row and a STRUCTURAL change.
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("alter table t add column c int");
+            // Suspend before draining, so the two pending txns above stay unapplied.
+            execute("alter table t suspend wal");
+
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // Only the applied row survives; the pending insert AND the structural add-column are discarded.
+            assertSql("count\n1\n", "select count() from t");
+            assertSql("count\n2\n", "select count() from table_columns('t')");
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedForNonWalTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day bypass wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "is not a WAL table");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedWhenNotSuspended() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "requires the table to be suspended first");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedWhenWriteNotDenied() throws Exception {
+        // write-denial defaults to false; rebase requires it so suspension actually blocks writes.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("alter table t suspend wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cairo.wal.apply.suspended.write.denied=true");
+            }
+        });
+    }
+
+    @Test
+    public void testReplicationDisableMarkerTxnAppliesAsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertSql("count\n1\n", "select count() from t");
+
+            final TableToken tt = engine.verifyTableName("t");
+            // Write the data-less REPLICATION_DISABLE marker transaction.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                walWriter.markReplicationDisabled();
+            }
+            drainWalQueue();
+
+            // The marker applies as a no-op (no rows) and is consumed (applied seqTxn advances),
+            // so subsequent data still applies — if the marker had stalled apply, this would stay at 1.
+            assertSql("count\n1\n", "select count() from t");
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertSql("count\n2\n", "select count() from t");
+        });
+    }
+
+    @Test
     public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {

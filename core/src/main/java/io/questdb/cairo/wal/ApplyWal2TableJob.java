@@ -804,6 +804,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 writer.markSeqTxnCommitted(seqTxn);
                 lastCommittedRows = 0;
                 return 1;
+            case REPLICATION_DISABLE:
+                // Data-less marker (first txn of a rebased table). Disable replication for this table
+                // FIRST (durable) so a crash before marking the txn applied re-applies idempotently and
+                // never loses the disable; then mark the txn applied so apply proceeds to later txns.
+                engine.disableReplication(writer.getTableToken());
+                writer.markSeqTxnCommitted(seqTxn);
+                lastCommittedRows = 0;
+                return 1;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
         }

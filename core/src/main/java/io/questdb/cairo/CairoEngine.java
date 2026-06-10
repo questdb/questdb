@@ -128,6 +128,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
@@ -1389,6 +1390,26 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Disables replication for the table on this node. Invoked when a
+     * {@link io.questdb.cairo.wal.WalTxnType#REPLICATION_DISABLE} marker transaction is applied (the
+     * first txn of a table created by {@code ALTER TABLE ... REBASE WAL}). No-op in OSS, which has no
+     * replication; the enterprise engine overrides it to write a durable per-table marker that the
+     * replica downloader consults. Must be idempotent.
+     */
+    public void disableReplication(TableToken tableToken) {
+        // no-op in OSS
+    }
+
+    /**
+     * Re-enables replication for the table on this node (clears whatever {@link #disableReplication}
+     * set). Invoked by {@code ALTER TABLE ... RESUME REPLICATION}. No-op in OSS; enterprise overrides
+     * it to delete the per-table marker and re-notify the downloader. Must be idempotent.
+     */
+    public void resumeReplication(TableToken tableToken) {
+        // no-op in OSS
+    }
+
+    /**
      * Removes a table from the runtime hard-suspend set. Called by
      * {@code ALTER TABLE ... RESUME WAL}. A table configured via
      * {@code cairo.wal.apply.suspended.tables} stays suspended until also removed from the config.
@@ -2192,6 +2213,202 @@ public class CairoEngine implements Closeable, WriterSource {
             enqueueCompileView(tableToken);
             return tableToken;
         }
+    }
+
+    /**
+     * Rebases a hard-suspended WAL table ({@code ALTER TABLE ... REBASE WAL}): clones the applied data
+     * into a new dir with a new tableId and a brand-new sequencer (seqTxn reset to 0), discarding all
+     * non-applied WAL (including pending structural changes), writes a non-replicable
+     * {@link io.questdb.cairo.wal.WalTxnType#REPLICATION_DISABLE} marker as the new table's first txn,
+     * then repoints the logical name to the new dir and drops the old one.
+     * <p>
+     * Preconditions: WAL table (not a view) and hard-suspended (ALTER TABLE ... SUSPEND WAL).
+     * <p>
+     * Note: crash-recovery startup reconcile of {@code _rebase.state} markers and mat-view dependent
+     * migration are tracked as follow-ups; the happy path leaves no marker behind.
+     *
+     * @return the new table token
+     */
+    public TableToken rebaseWalTable(TableToken oldToken, SecurityContext securityContext) {
+        if (!oldToken.isWal() || oldToken.isView()) {
+            throw CairoException.nonCritical().put("REBASE WAL is supported only for WAL tables [table=").put(oldToken.getTableName()).put(']');
+        }
+        if (!tableSequencerAPI.getTxnTracker(oldToken).isHardSuspended()) {
+            throw CairoException.nonCritical().put("REBASE WAL requires the table to be suspended first [table=").put(oldToken.getTableName()).put(']');
+        }
+        // Require suspension to actually stop writes, so the table is quiescent without extra locking:
+        // with write-denial on, getWalWriter rejects ingestion for a hard-suspended table.
+        if (!configuration.isWalApplySuspendedWriteDenied()) {
+            throw CairoException.nonCritical().put("REBASE WAL requires cairo.wal.apply.suspended.write.denied=true so that suspension blocks writes [table=").put(oldToken.getTableName()).put(']');
+        }
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int mkDirMode = configuration.getMkDirMode();
+        final CharSequence root = configuration.getDbRoot();
+        final String tableName = oldToken.getTableName();
+        final int newTableId = (int) tableIdGenerator.getNextId();
+        final String newDirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, newTableId, true);
+        final TableToken newToken = new TableToken(
+                tableName, newDirName, configuration.getDbLogName(), newTableId,
+                oldToken.isView(), oldToken.isMatView(), true,
+                oldToken.isSystem(), oldToken.isProtected(), oldToken.isPublic()
+        );
+
+        // Serialize against concurrent create/drop/rename/rebase of this name. No write-quiescence lock is
+        // needed: the gate above guarantees the table is hard-suspended with write-denial on, so getWalWriter
+        // already rejects ingestion and the apply job skips it.
+        while (!lockTableCreate(oldToken)) {
+            Os.pause();
+        }
+        boolean staged = false;
+        boolean renamed = false;
+        boolean preRegistered = false;
+        boolean swapped = false;
+        TableWriter oldWriter = null;
+        try {
+            // Fence any in-flight apply and snapshot a consistent applied state (the table is suspended,
+            // so the writer is free).
+            oldWriter = getWriter(oldToken, "rebase");
+
+            try (Path src = new Path(); Path dst = new Path()) {
+                // Build the clone in a hidden ".rebase/" staging dir (mirrors ".download"/".checkpoint").
+                // Startup table-dir scans only consider immediate db-root children that are complete tables
+                // and never recurse into dot-prefixed dirs, so the in-progress clone is invisible; a crash
+                // mid-build leaves only an ignored ".rebase/<dir>" orphan. The sequencer is created only
+                // AFTER the rename, in the final dir, so the sequencer registry never binds the staging path.
+                dst.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken);
+                if (ff.mkdirs(dst.slash(), mkDirMode) != 0) {
+                    throw CairoException.critical(ff.errno()).put("could not create rebase staging dir [path=").put(dst).put(']');
+                }
+                staged = true;
+
+                // Clone data: hard-link partition column files, copy table-root files, exclude txn_seq/wal*.
+                TableUtils.cloneTableDirForRebase(ff, src.of(root).concat(oldToken), dst.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken), mkDirMode, Misc.getThreadLocalSink());
+
+                // Reset _txn (seqTxn=0, lag, structure version=0) and _meta (new tableId, metadataVersion=0)
+                // in the staging dir — exactly as WAL conversion does (TableConverter).
+                try (
+                        TxWriter txWriter = new TxWriter(ff, configuration);
+                        MemoryMARW metaMem = Vm.getCMARWInstance()
+                ) {
+                    final int sLen = dst.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).size();
+                    txWriter.ofRW(dst.concat(TableUtils.TXN_FILE_NAME).$());
+                    txWriter.resetLagValuesUnsafe();
+                    TableUtils.openSmallFile(ff, dst.trimTo(sLen), sLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
+                    metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
+                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                    txWriter.resetStructureVersionUnsafe();
+                }
+
+                // Atomically move the completed clone into its final location.
+                if (ff.rename(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
+                    throw CairoException.critical(ff.errno()).put("could not move rebased table into place [from=").put(src).put(", to=").put(dst).put(']');
+                }
+                renamed = true;
+
+                // The final dir is now a complete table not yet in tables.d. ACCEPTED RISK: there is a tiny
+                // window until rebaseSwap commits it in which a crash would let startup reloadFromRootDirectory
+                // adopt it and clash with the still-registered old dir. Microsecond window on a rare admin op,
+                // low impact, so not guarded.
+                tableNameRegistry.preRegisterDir(newToken);
+                preRegistered = true;
+
+                // Create a brand-new sequencer (seqTxn 0) directly in the final dir.
+                try (MemoryMARW metaMem = Vm.getCMARWInstance()) {
+                    TableUtils.openSmallFile(ff, dst.of(root).concat(newToken), dst.size(), metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
+                    try (TableWriterMetadata metadata = new TableWriterMetadata(newToken)) {
+                        metadata.reload(dst, metaMem);
+                        tableSequencerAPI.registerTable(newTableId, metadata, newToken);
+                    }
+                }
+
+                // Repoint the logical name to the new dir and mark the old dir dropped.
+                tableNameRegistry.rebaseSwap(oldToken, newToken);
+                swapped = true;
+
+                // Write the non-replicable marker as the new table's first transaction (seqTxn 1).
+                try (WalWriter walWriter = getWalWriter(newToken)) {
+                    walWriter.markReplicationDisabled();
+                }
+            } catch (Throwable th) {
+                try {
+                    if (preRegistered) {
+                        try {
+                            tableSequencerAPI.dropTable(newToken, true);
+                        } catch (Throwable ignore) {
+                            // sequencer may not have been registered yet
+                        }
+                        tableNameRegistry.purgeToken(newToken);
+                    }
+                    try (Path p = new Path()) {
+                        if (renamed) {
+                            p.of(root).concat(newToken).$();
+                        } else if (staged) {
+                            p.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$();
+                        }
+                        if (renamed || staged) {
+                            ff.rmdir(p, true);
+                        }
+                    }
+                } catch (Throwable cleanupEx) {
+                    th.addSuppressed(cleanupEx);
+                }
+                throw th;
+            }
+
+            // If the rebased object is a materialized view, register the new dir as a fresh mat view
+            // (its _mv/_mv.s files were cloned). The refresh watermark is intentionally NOT carried over
+            // (see plan): createViewState installs default state, so the view does one full refresh.
+            // Best-effort: a registration failure must not undo the already-committed rebase.
+            if (newToken.isMatView()) {
+                try (
+                        Path p = new Path();
+                        BlockFileReader blockReader = new BlockFileReader(configuration)
+                ) {
+                    final int mvRootLen = p.of(root).size();
+                    final MatViewDefinition def = new MatViewDefinition();
+                    MatViewDefinition.readFrom(this, def, blockReader, p, mvRootLen, newToken);
+                    if (matViewGraph.addView(def)) {
+                        matViewStateStore.createViewState(def);
+                    }
+                } catch (Throwable mvEx) {
+                    LOG.error().$("could not register rebased materialized view, it may need manual recreation [view=")
+                            .$(newToken).$(", e=").$(mvEx).I$();
+                }
+            }
+
+            // Dependent mat views were refreshed against the old base sequencer; the rebase reset it to 0,
+            // so their watermarks no longer map onto the new base. Force a full refresh of any dependents
+            // (covers a rebased base table, and a rebased mat view that is itself a base of another).
+            matViewStateStore.enqueueInvalidateDependentViews(newToken, "base table rebase");
+
+            // Committed. Tear down the old table (data survives via new dir hard links).
+            oldWriter.close();
+            oldWriter = null;
+            try (Path p = new Path()) {
+                final int len = p.of(root).concat(oldToken).size();
+                ff.removeQuiet(p.concat(TableUtils.TXN_FILE_NAME).$());
+                ff.removeQuiet(p.trimTo(len).concat(TableUtils.META_FILE_NAME).$());
+            }
+            tableSequencerAPI.dropTable(oldToken, false);
+            removeTableToken(oldToken);
+            if (oldToken.isMatView()) {
+                // Drop the old mat view's graph/state entries (keyed by the old dir name).
+                matViewStateStore.removeViewState(oldToken);
+                matViewGraph.removeView(oldToken);
+            }
+            try (Path p = new Path()) {
+                p.of(root).concat(oldToken).$();
+                ff.rmdir(p, true);
+            }
+        } finally {
+            if (oldWriter != null) {
+                oldWriter.close();
+            }
+            unlockTableCreate(oldToken);
+        }
+        enqueueCompileView(newToken);
+        return newToken;
     }
 
     private @NotNull ViewMetadata getViewMetadata(TableToken tableToken) {

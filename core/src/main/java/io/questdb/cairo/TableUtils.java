@@ -79,6 +79,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
@@ -155,6 +156,10 @@ public final class TableUtils {
     public static final int TABLE_TYPE_VIEW = 3;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    // Dot-prefixed db-root staging dir for ALTER TABLE ... REBASE WAL (mirrors ".download"/".checkpoint").
+    // The startup table-dir scans only consider immediate db-root children that are complete tables and
+    // never recurse, so the in-progress clone built inside here is invisible until renamed into place.
+    public static final String REBASE_TMP_DIR = ".rebase";
     public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
@@ -1638,6 +1643,75 @@ public final class TableUtils {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    /**
+     * Clones a WAL table directory for {@code ALTER TABLE ... REBASE WAL}: hard-links the files inside
+     * each data partition directory (immutable) and copies every table-root file (mutable: {@code _meta},
+     * {@code _txn}, {@code _cv}, symbol maps). Excludes the sequencer ({@code txn_seq}), WAL segment dirs
+     * ({@code wal*}) and transient markers, so the clone gets a brand-new sequencer and no pending WAL.
+     * Callers position {@code srcDir}/{@code dstDir} at the respective table directories and must have
+     * created {@code dstDir}; both paths are restored to their original length on return.
+     */
+    public static void cloneTableDirForRebase(FilesFacade ff, Path srcDir, Path dstDir, int dirMode, StringSink nameSink) {
+        final int srcLen = srcDir.size();
+        final int dstLen = dstDir.size();
+        final long pFind = ff.findFirst(srcDir.$());
+        if (pFind < 1) {
+            throw CairoException.critical(ff.errno()).put("could not list table dir for rebase [path=").put(srcDir).put(']');
+        }
+        try {
+            do {
+                final long pName = ff.findName(pFind);
+                if (!Files.notDots(pName)) {
+                    continue;
+                }
+                final int type = ff.findType(pFind);
+                nameSink.clear();
+                Utf8s.utf8ToUtf16Z(pName, nameSink);
+                if (type == Files.DT_FILE) {
+                    if (isRebaseClonedRootFile(nameSink)) {
+                        srcDir.trimTo(srcLen).concat(pName);
+                        dstDir.trimTo(dstLen).concat(pName);
+                        if (ff.copy(srcDir.$(), dstDir.$()) < 0) {
+                            throw CairoException.critical(ff.errno()).put("could not clone table file [from=").put(srcDir).put(", to=").put(dstDir).put(']');
+                        }
+                    }
+                } else if (!isRebaseExcludedDir(nameSink)) {
+                    // A data partition directory: hard-link the immutable column files inside it.
+                    srcDir.trimTo(srcLen).concat(pName);
+                    dstDir.trimTo(dstLen).concat(pName);
+                    ff.mkdir(dstDir.$(), dirMode);
+                    if (ff.hardLinkDirRecursive(srcDir, dstDir, dirMode) < 0) {
+                        throw CairoException.critical(ff.errno()).put("could not hard-link partition for rebase [from=").put(srcDir).put(", to=").put(dstDir).put(']');
+                    }
+                }
+                srcDir.trimTo(srcLen);
+                dstDir.trimTo(dstLen);
+            } while (ff.findNext(pFind) > 0);
+        } finally {
+            ff.findClose(pFind);
+            srcDir.trimTo(srcLen);
+            dstDir.trimTo(dstLen);
+        }
+    }
+
+    // Whether a top-level directory entry should be EXCLUDED from a rebase clone (sequencer + WAL dirs).
+    private static boolean isRebaseExcludedDir(CharSequence name) {
+        return Chars.equals(name, io.questdb.cairo.wal.WalUtils.SEQ_DIR)
+                || Chars.equals(name, io.questdb.cairo.wal.WalUtils.SEQ_DIR_DEPRECATED)
+                || Chars.startsWith(name, io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE);
+    }
+
+    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers).
+    private static boolean isRebaseClonedRootFile(CharSequence name) {
+        if (Chars.equals(name, TODO_FILE_NAME)
+                || Chars.equals(name, CONVERT_FILE_NAME)
+                || Chars.equals(name, io.questdb.cairo.wal.WalUtils.REPLICATION_DISABLED_FILE_NAME)
+                || Chars.equals(name, TXN_SCOREBOARD_FILE_NAME)) {
+            return false;
+        }
+        return !Chars.endsWith(name, io.questdb.cairo.wal.WalUtils.WAL_PENDING_FS_MARKER);
     }
 
     public static void overwriteTableNameFile(Path tablePath, MemoryMAR memory, FilesFacade ff, @NotNull CharSequence tableName) {

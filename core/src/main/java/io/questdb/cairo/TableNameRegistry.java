@@ -137,12 +137,33 @@ public interface TableNameRegistry extends Closeable {
     TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal);
 
     /**
+     * Pre-registers the new dir's reverse mapping for a table rebase (ALTER TABLE ... REBASE WAL),
+     * so {@link #getTableTokenByDirName(CharSequence)} resolves the new dir BEFORE the logical name is
+     * swapped to it. The public name still resolves to the old token until {@link #rebaseSwap}. The
+     * reverse entry is created in the "dropped" state so it is not picked up as live until the swap.
+     *
+     * @param newToken token of the freshly-created rebase target dir
+     */
+    void preRegisterDir(TableToken newToken);
+
+    /**
      * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is
      * part of async directory purging job.
      *
      * @param token table token to remove
      */
     void purgeToken(TableToken token);
+
+    /**
+     * Atomically repoints a table's logical name from {@code oldToken} (old dir) to {@code newToken}
+     * (a freshly-created clone dir with the SAME logical name) and marks the old dir dropped. Unlike
+     * {@link #rename(TableToken, TableToken)}, this marks the old dir's reverse-map entry as dropped so
+     * it is reclaimed. Used by ALTER TABLE ... REBASE WAL.
+     *
+     * @param oldToken current token (old dir) the name resolves to
+     * @param newToken new token (new dir), same logical name
+     */
+    void rebaseSwap(TableToken oldToken, TableToken newToken);
 
     /**
      * Tests consistency of the internal data structures. This is test-only method

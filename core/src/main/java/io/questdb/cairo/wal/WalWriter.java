@@ -609,6 +609,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 '}';
     }
 
+    /**
+     * Writes a data-less {@link WalTxnType#REPLICATION_DISABLE} marker transaction. On a freshly
+     * created sequencer this becomes seqTxn 1, so it is the first transaction any consumer (local
+     * apply or a replica) sees. Used by ALTER TABLE ... REBASE WAL.
+     */
+    public void markReplicationDisabled() {
+        try {
+            lastSegmentTxn = events.replicationDisable();
+            getSequencerTxn();
+        } catch (Throwable th) {
+            rollback0();
+            throw th;
+        }
+    }
+
     @Override
     public void truncate() {
         throw new UnsupportedOperationException("cannot truncate symbol tables on WAL table");

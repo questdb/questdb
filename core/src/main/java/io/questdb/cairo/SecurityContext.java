@@ -115,6 +115,14 @@ public interface SecurityContext extends Mutable {
 
     void authorizePGWire();
 
+    /**
+     * Authorizes {@code ALTER TABLE ... REBASE WAL}. Requires the same privilege as resuming WAL, so by
+     * default it delegates to {@link #authorizeResumeWal(TableToken)}.
+     */
+    default void authorizeRebaseWal(TableToken tableToken) {
+        authorizeResumeWal(tableToken);
+    }
+
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(ViewDefinition viewDefinition);

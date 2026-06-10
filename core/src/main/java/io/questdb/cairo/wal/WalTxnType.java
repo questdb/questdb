@@ -29,6 +29,9 @@ public class WalTxnType {
     public static final byte MAT_VIEW_DATA = 3;
     public static final byte MAT_VIEW_INVALIDATE = 4;
     public static final byte NONE = -1;
+    // Data-less marker written as the first txn of a rebased table (ALTER TABLE ... REBASE WAL).
+    // When applied, it disables replication for the table on the applying node until resumed.
+    public static final byte REPLICATION_DISABLE = 6;
     public static final byte SQL = 1;
     public static final byte TRUNCATE = 2;
     public static final byte VIEW_DEFINITION = 5;

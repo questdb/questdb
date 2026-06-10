@@ -91,8 +91,43 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
+    public void preRegisterDir(TableToken newToken) {
+        // Make the new dir resolvable by dir name (in dropped state so it is not yet live), without
+        // touching the logical name mapping, which still resolves to the old token until rebaseSwap.
+        dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.ofDropped(newToken));
+    }
+
+    @Override
     public void purgeToken(TableToken token) {
         dirNameToTableTokenMap.remove(token.getDirName());
+    }
+
+    @Override
+    public void rebaseSwap(TableToken oldToken, TableToken newToken) {
+        assert Chars.equals(oldToken.getTableName(), newToken.getTableName());
+        final String tableName = oldToken.getTableName();
+        // Lock the logical name while we log the change, so no concurrent create/drop/rename grabs it.
+        if (!tableNameToTableTokenMap.replace(tableName, oldToken, LOCKED_DROP_TOKEN)) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
+        // Log ADD(new) before DROP(old): a crash leaves both names recoverable on replay, never vanished.
+        nameStore.logAddTable(newToken);
+        nameStore.logDropTable(oldToken);
+
+        // New dir becomes live; old dir is marked dropped so it is reclaimed by the purge job. This must
+        // happen BEFORE hydrating metadata: hydrateTable() skips tables it sees as dropped, and the new
+        // dir was pre-registered in the dropped state, so it has to be promoted to live first.
+        dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
+        dirNameToTableTokenMap.put(oldToken.getDirName(), ReverseTableMapItem.ofDropped(oldToken));
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.dropTable(oldToken);
+            metadataRW.hydrateTable(newToken);
+        }
+
+        // Repoint the logical name to the new token (table queryable from the new dir from now on).
+        boolean swapped = tableNameToTableTokenMap.replace(tableName, LOCKED_DROP_TOKEN, newToken);
+        assert swapped;
     }
 
     @Override
