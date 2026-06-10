@@ -1780,6 +1780,31 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnEqColumnMasterFilterStaysPostJoin() throws Exception {
+        // A same-table column comparison (a.c1 = a.c2) is single-table, so it used to be pushed
+        // into the master sub-query. RIGHT/FULL OUTER NULL-extend the master: pushing it emptied
+        // the master (its only row fails c1=c2), pairing each slave row with a NULL master and
+        // leaking 2 rows. As a post-join filter the full join keeps the matched (1,2) row, which
+        // c1=c2 drops, and the unmatched NULL-master row, which c1=c2 keeps because NULL=NULL is
+        // true here, leaving exactly one (null,null) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, c2 INT, k INT)");
+            execute("INSERT INTO m VALUES (1, 2, 10)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (10), (20)");
+
+            final String expected = "c1\tc2\nnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.c1, m.c2 FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.c1 = m.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.c1=m.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -5832,6 +5857,31 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOperatorMasterFilterStaysPostJoin() throws Exception {
+        // assignFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
+        // master to a post-join filter; the existing folded-FALSE splice test only exercises that
+        // path for a constant-FALSE predicate. The master row (c1=50) matches the slave and passes
+        // the filter; the slave's unmatched row becomes a NULL-master row that c1<100 drops
+        // (NULL<100 is NULL/false). Pushing the predicate into the master would leak that
+        // NULL-master row, so RIGHT/FULL must return only the matched row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, k INT)");
+            execute("INSERT INTO m VALUES (50, 10)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (10), (20)");
+
+            final String expected = "c1\n50\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.c1 FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.c1 < 100")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.c1<100")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testOuterHashJoinOnFunctionCondition12() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int, s1 string)");
@@ -7256,6 +7306,33 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testUnionCursorLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj", false);
+    }
+
+    @Test
+    public void testWrappedSubQueryMasterFilterStaysPostJoin() throws Exception {
+        // The join is wrapped in a sub-query and the master predicate sits on the outer model, so
+        // it reaches moveWhereInsideSubQueries instead of analyseEquals. The same master-nulling
+        // guard must apply: RIGHT/FULL/SPLICE all NULL-extend the master, and the master has no
+        // 's2' row, so every output row is NULL-master and WHERE a = 's2' must return nothing.
+        // Pushing the predicate into the master sub-query emptied it and leaked 2 NULL-master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 1)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 2), ('s3', 50, 3)");
+
+            final String empty = "a\tb\n";
+            for (String join : new String[]{
+                    "m RIGHT JOIN s ON m.sym = s.sym",
+                    "m FULL JOIN s ON m.sym = s.sym",
+                    "m SPLICE JOIN s ON (sym)"}) {
+                assertQuery("SELECT a, b FROM (SELECT m.sym a, m.c1 b FROM " + join + ") WHERE a = 's2'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.sym='s2'")
+                        .returns(empty);
+            }
+        });
     }
 
     private void assertFailure(String query, String expectedMessage, int position) {

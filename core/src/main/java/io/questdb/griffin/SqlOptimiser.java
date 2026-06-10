@@ -1699,7 +1699,14 @@ public class SqlOptimiser implements Mutable {
                                     joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                                 addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                             } else {
-                                addWhereNode(parent, lhi, node);
+                                // a.c1 = a.c2 is single-table too: keep it post-join when the table is
+                                // a master nulled by a downstream SPLICE/FULL/RIGHT OUTER join
+                                final int nullingJoinIndex = masterNullingJoinIndex(parent, lhi);
+                                if (nullingJoinIndex < 0) {
+                                    addWhereNode(parent, lhi, node);
+                                } else {
+                                    addPostJoinWhereClause(parent.getJoinModels().getQuick(nullingJoinIndex), node);
+                                }
                             }
                         } else {
                             // For an outer/asof barrier, both sides reference the same
@@ -5350,6 +5357,15 @@ public class SqlOptimiser implements Mutable {
                     ) {
                         IQueryModel joinModel = model.getJoinModels().getQuick(tableIndex);
                         joinModel.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, joinModel.getPostJoinWhereClause(), node));
+                        continue;
+                    }
+
+                    // Same guard as analyseEquals, for a master predicate that arrives here from an
+                    // outer wrapping model: keep it post-join when a downstream SPLICE/FULL/RIGHT
+                    // OUTER join nulls the master, instead of pushing it into the master sub-query.
+                    final int nullingJoinIndex = masterNullingJoinIndex(model, tableIndex);
+                    if (nullingJoinIndex >= 0) {
+                        addPostJoinWhereClause(model.getJoinModels().getQuick(nullingJoinIndex), node);
                         continue;
                     }
 
