@@ -32,8 +32,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * End-to-end regression test for the {@code first_not_null} / {@code last_not_null} merge bug
- * across every value type.
+ * End-to-end regression test for the {@code first_not_null} / {@code last_not_null} parallel
+ * merge invariant, across every value type.
  * <p>
  * Parallel keyed GROUP BY reduces page frames into per-worker (and owner) maps, then merges shard
  * maps pairwise via {@link io.questdb.griffin.engine.groupby.GroupByMergeShardJob}. The inherited,
@@ -52,10 +52,23 @@ import org.junit.Test;
  * sorts ahead of the real value and a guardless merge drops it. The correct answer is non-null for
  * all KEY_COUNT keys, so the count of keys whose aggregate is non-null must equal KEY_COUNT.
  * <p>
+ * Scope - this test exercises the merge dest-null guard only. For last_not_null that guard is the
+ * defect fixed on this branch (the merge previously compared rowId alone), so the pre-fix code
+ * drops values here on essentially every run. For first_not_null the guard already existed, so
+ * these cases are a regression guard that it stays in place - deleting the first_not_null dest-null
+ * guard makes them fail with the same signature. They do NOT cover the separate computeNext
+ * ordering defect (a slot receiving a key's rows out of rowId order). The min-rowId merge corrects
+ * a single slot's ordering error unless two non-null rows of one key happen to land in the same
+ * slot in reverse order, a scheduling window that cannot be forced from SQL; a count-based,
+ * single-non-null fixture like this one therefore cannot give the first_not_null ordering fix
+ * teeth. That defect is covered deterministically, per type and per width, by
+ * {@link FirstLastParallelOrderingTest}, which drives computeFirst/computeNext directly with
+ * descending rowIds.
+ * <p>
  * The split of a key's rows across page frames - and the frame-to-worker dispatch - is dynamic, so
- * any single key may or may not hit the buggy merge direction on a given run; with many keys the
- * buggy code drops at least one value on essentially every run. The query runs repeatedly to make
- * the failure reliable rather than seed-dependent.
+ * any single key may or may not hit the buggy merge direction on a given run; with many keys a
+ * guardless merge drops at least one value on essentially every run. The query runs repeatedly to
+ * make the failure reliable rather than seed-dependent.
  */
 public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
 
@@ -231,7 +244,7 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
         final String query = "SELECT count(*) FROM (SELECT g, " + func + "(v) lv FROM tab) WHERE lv IS NOT NULL";
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, createSql, ctx);
                     // Every key has exactly one non-null value, so a correct aggregate is non-null
                     // for all KEY_COUNT keys. A guardless merge drops some on most runs.

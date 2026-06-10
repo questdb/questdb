@@ -348,6 +348,60 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullGeoIntSkipsNullsAndPicksMinNonNullRowId() throws Exception {
+        GeoIntArg arg = new GeoIntArg(ColumnType.getGeoHashTypeWithBits(20));
+        // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
+        assertWinnerRowId(
+                build(new FirstNotNullGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0 || i == 2) {
+                        arg.setNull();
+                    } else {
+                        arg.set(1 + i);
+                    }
+                },
+                20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullGeoLongSkipsNullsAndPicksMinNonNullRowId() throws Exception {
+        GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
+        // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
+        assertWinnerRowId(
+                build(new FirstNotNullGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0 || i == 2) {
+                        arg.setNull();
+                    } else {
+                        arg.set(1L + i);
+                    }
+                },
+                20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullGeoShortSkipsNullsAndPicksMinNonNullRowId() throws Exception {
+        GeoShortArg arg = new GeoShortArg(ColumnType.getGeoHashTypeWithBits(10));
+        // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
+        assertWinnerRowId(
+                build(new FirstNotNullGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0 || i == 2) {
+                        arg.setNull();
+                    } else {
+                        arg.set((short) (1 + i));
+                    }
+                },
+                20
+        );
+    }
+
+    @Test
     public void testFirstNotNullIPv4SkipsNullsAndPicksMinNonNullRowId() throws Exception {
         IPv4Arg arg = new IPv4Arg();
         // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
@@ -432,12 +486,45 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastGeoBytePicksMaxRowId() throws Exception {
+        GeoByteArg arg = new GeoByteArg(ColumnType.getGeoHashTypeWithBits(5));
+        assertWinnerRowId(
+                build(new LastGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set((byte) (1 + i)),
+                100
+        );
+    }
+
+    @Test
     public void testLastGeoIntPicksMaxRowId() throws Exception {
         GeoIntArg arg = new GeoIntArg(ColumnType.getGeoHashTypeWithBits(20));
         assertWinnerRowId(
                 build(new LastGeoHashGroupByFunctionFactory(), arg),
                 ROW_IDS,
                 i -> arg.set(1 + i),
+                100
+        );
+    }
+
+    @Test
+    public void testLastGeoLongPicksMaxRowId() throws Exception {
+        GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
+        assertWinnerRowId(
+                build(new LastGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(1L + i),
+                100
+        );
+    }
+
+    @Test
+    public void testLastGeoShortPicksMaxRowId() throws Exception {
+        GeoShortArg arg = new GeoShortArg(ColumnType.getGeoHashTypeWithBits(10));
+        assertWinnerRowId(
+                build(new LastGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set((short) (1 + i)),
                 100
         );
     }
@@ -651,6 +738,62 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastNotNullGeoByteMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoByteArg arg = new GeoByteArg(ColumnType.getGeoHashTypeWithBits(5));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set((byte) 1)
+        );
+    }
+
+    @Test
+    public void testLastNotNullGeoByteSkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        GeoByteArg arg = new GeoByteArg(ColumnType.getGeoHashTypeWithBits(5));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set((byte) (1 + i));
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
+    public void testLastNotNullGeoIntMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoIntArg arg = new GeoIntArg(ColumnType.getGeoHashTypeWithBits(20));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(1)
+        );
+    }
+
+    @Test
+    public void testLastNotNullGeoIntSkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        GeoIntArg arg = new GeoIntArg(ColumnType.getGeoHashTypeWithBits(20));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set(1 + i);
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
     public void testLastNotNullGeoLongMergeKeepsNonNullOverNullDest() throws Exception {
         GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
         assertLastNotNullMergeKeepsNonNull(
@@ -672,6 +815,34 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                         arg.setNull();
                     } else {
                         arg.set(1L + i);
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
+    public void testLastNotNullGeoShortMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoShortArg arg = new GeoShortArg(ColumnType.getGeoHashTypeWithBits(10));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set((short) 1)
+        );
+    }
+
+    @Test
+    public void testLastNotNullGeoShortSkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        GeoShortArg arg = new GeoShortArg(ColumnType.getGeoHashTypeWithBits(10));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set((short) (1 + i));
                     }
                 },
                 80
@@ -996,6 +1167,9 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
             value = v;
         }
 
+        private void setNull() {
+            value = GeoHashes.INT_NULL;
+        }
     }
 
     private static final class GeoLongArg extends GeoLongFunction {
@@ -1035,6 +1209,9 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
             value = v;
         }
 
+        private void setNull() {
+            value = GeoHashes.SHORT_NULL;
+        }
     }
 
     private static final class IPv4Arg extends IPv4Function {

@@ -82,10 +82,15 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal128(record, decimal128);
             if (!decimal128.isNull()) {
-                // Read the stored value into a separate buffer so decimal128 keeps the arg
-                // value, letting the winning branch store it without re-reading arg.
-                mapValue.getDecimal128(valueIndex + 1, storedValue);
-                if (storedValue.isNull() || rowId > mapValue.getLong(valueIndex)) {
+                // A higher rowId always wins for last_not_null, so check it first and skip the
+                // wide stored-value read on the common in-order path. decimal128 keeps the arg
+                // value; storedValue is only read when the rowId does not win, to test for a null.
+                boolean isWinner = rowId > mapValue.getLong(valueIndex);
+                if (!isWinner) {
+                    mapValue.getDecimal128(valueIndex + 1, storedValue);
+                    isWinner = storedValue.isNull();
+                }
+                if (isWinner) {
                     mapValue.putLong(valueIndex, rowId);
                     mapValue.putDecimal128(valueIndex + 1, decimal128);
                 }
@@ -163,10 +168,15 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal256(record, decimal256);
             if (!decimal256.isNull()) {
-                // Read the stored value into a separate buffer so decimal256 keeps the arg
-                // value, letting the winning branch store it without re-reading arg.
-                mapValue.getDecimal256(valueIndex + 1, storedValue);
-                if (storedValue.isNull() || rowId > mapValue.getLong(valueIndex)) {
+                // A higher rowId always wins for last_not_null, so check it first and skip the
+                // wide stored-value read on the common in-order path. decimal256 keeps the arg
+                // value; storedValue is only read when the rowId does not win, to test for a null.
+                boolean isWinner = rowId > mapValue.getLong(valueIndex);
+                if (!isWinner) {
+                    mapValue.getDecimal256(valueIndex + 1, storedValue);
+                    isWinner = storedValue.isNull();
+                }
+                if (isWinner) {
                     mapValue.putLong(valueIndex, rowId);
                     mapValue.putDecimal256(valueIndex + 1, decimal256);
                 }
