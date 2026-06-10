@@ -5446,6 +5446,16 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
+            // writeSidecarFixedStrideForColumn assembles one key's raw values
+            // into the shared scratch at (1 << shift) bytes per value -- 16
+            // for UUID/LONG128/DECIMAL128, 32 for LONG256/DECIMAL256 -- so
+            // the scratch must be sized by the widest live fixed-size cover
+            // column, not by Long.BYTES: with an 8-bytes-per-value allocation,
+            // a single key holding more than half (16B types) or a quarter
+            // (32B types) of a dirty stride's merged values writes past the
+            // allocation. The full-seal twins already size by value width.
+            final long sidecarValueSize = Math.max(Long.BYTES, peakCoverColumnValueSize());
+
             for (int s = 0; s < sc; s++) {
                 long strideOff = sealValueMem.getAppendOffset() - sealOffset - siSize;
                 Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
@@ -5518,7 +5528,7 @@ public class PostingIndexWriter implements IndexWriter {
                             totalStrideVals += strideKeyCounts[j];
                         }
                         if (totalStrideVals > 0) {
-                            long neededBuf = (long) totalStrideVals * Long.BYTES;
+                            long neededBuf = totalStrideVals * sidecarValueSize;
                             if (neededBuf > incrSidecarBufSize) {
                                 incrSidecarBuf = Unsafe.realloc(incrSidecarBuf, incrSidecarBufSize, neededBuf, MemoryTag.NATIVE_INDEX_READER);
                                 incrSidecarBufSize = neededBuf;
@@ -6556,6 +6566,16 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             for (int c = 0; c < coverCount; c++) {
+                // Tombstoned slot (dropped INCLUDE column): mapCoveringColumnsForSeal
+                // encodes it as type=-1/shift=0, openSidecarFiles leaves its sidecar
+                // mem null and creates no .pcN file, so there is nothing to write.
+                // Without this skip the shift=0 sentinel routes into the fixed-stride
+                // writer, which rejects type -1. Same skip as writeSidecarsPerColumn
+                // on the full-seal path; captureCoverEndOffsets publishes end offset
+                // 0 for the slot and covered reads fall back to NULL.
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
                 int colType = coveredColumnTypes.getQuick(c);
                 int shift = coveredColumnShifts.getQuick(c);
 
