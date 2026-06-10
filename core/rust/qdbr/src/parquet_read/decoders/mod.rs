@@ -56,7 +56,10 @@ pub use rle_dictionary::RleDictionaryDecoder;
 /// here is purely an allocation shortfall, and the write path must retry on
 /// transient pressure rather than suspend the table. `what` names the entry kind
 /// for the error message.
-pub(crate) fn try_reserve_dict_values<T>(num_values: usize, what: &str) -> ParquetResult<Vec<T>> {
+pub(crate) fn try_reserve_dict_values<T>(
+    num_values: usize,
+    what: &'static str,
+) -> ParquetResult<Vec<T>> {
     let mut values = Vec::new();
     values
         .try_reserve_exact(num_values)

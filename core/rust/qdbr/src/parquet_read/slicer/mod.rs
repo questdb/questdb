@@ -186,7 +186,7 @@ fn checked_len(value: i64) -> ParquetResult<i32> {
 fn collect_checked_lengths<E>(
     iter: impl Iterator<Item = Result<i64, E>>,
     limit: usize,
-    what: &str,
+    what: &'static str,
 ) -> ParquetResult<Vec<i32>> {
     let mut lengths: Vec<i32> = Vec::new();
     lengths.try_reserve_exact(limit).map_err(|_| {

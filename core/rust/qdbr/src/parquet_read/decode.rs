@@ -4252,6 +4252,141 @@ mod tests {
         );
     }
 
+    // Decode an all-non-null V1 ByteArray page of `strings` under `encoding` through
+    // the real decode_page dispatch, reading only rows [0, row_hi). Returns its
+    // (data_vec, aux_vec). With row_hi < strings.len() this is the partial-range read
+    // that regressed C1: decode_byte_array_dispatch hands row_hi straight to the
+    // DELTA slicer, so the value-bytes offset must be computed over the whole length
+    // stream, not the blocks take(row_hi) entered.
+    fn decode_delta_varlen_page_partial(
+        column_type: ColumnType,
+        encoding: Encoding,
+        strings: &[&[u8]],
+        row_hi: usize,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = strings.len();
+
+        let mut values = Vec::new();
+        match encoding {
+            Encoding::DeltaLengthByteArray => {
+                parquet2::encoding::delta_length_byte_array::encode(
+                    strings.iter().copied(),
+                    &mut values,
+                );
+            }
+            Encoding::DeltaByteArray => {
+                parquet2::encoding::delta_byte_array::encode(strings.iter().copied(), &mut values);
+            }
+            other => panic!("unsupported delta encoding {other:?}"),
+        }
+
+        // Definition levels: n rows, all non-null (level 1), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(1u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        buffer.extend_from_slice(&values);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: encoding.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
+        (
+            bufs.data_vec.as_slice().to_vec(),
+            bufs.aux_vec.as_slice().to_vec(),
+        )
+    }
+
+    // Reading the first `row_hi` values of a multi-block DELTA page must yield
+    // exactly what fully decoding a page of just those `row_hi` values yields -- the
+    // decoded prefix cannot depend on how many more values follow it. Before the
+    // offset fix the partial read of the 300-value page (length stream spanning
+    // three 128-value blocks) began inside the length stream and diverged from the
+    // reference. 300 distinct varying-length values exercise non-zero-bit-width
+    // later blocks, whose miniblock bytes the buggy offset also dropped.
+    fn assert_delta_varlen_partial_matches_prefix(column_type: ColumnType, encoding: Encoding) {
+        let owned: Vec<String> = (0..300).map(|i| format!("v{i}")).collect();
+        let all: Vec<&[u8]> = owned.iter().map(|s| s.as_bytes()).collect();
+        let row_hi = 5;
+
+        let (partial_data, partial_aux) =
+            decode_delta_varlen_page_partial(column_type, encoding, &all, row_hi);
+        let (ref_data, ref_aux) =
+            decode_delta_varlen_page_partial(column_type, encoding, &all[..row_hi], row_hi);
+
+        assert_eq!(
+            partial_data, ref_data,
+            "partial multi-block decode data_vec must match the prefix-only decode"
+        );
+        assert_eq!(
+            partial_aux, ref_aux,
+            "partial multi-block decode aux_vec must match the prefix-only decode"
+        );
+    }
+
+    #[test]
+    fn decode_page_delta_length_string_partial_range_multi_block() {
+        assert_delta_varlen_partial_matches_prefix(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_delta_length_varchar_partial_range_multi_block() {
+        assert_delta_varlen_partial_matches_prefix(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_delta_byte_array_varchar_partial_range_multi_block() {
+        // The DeltaByteArray path (prefix + suffix streams, DeltaBytesArraySlicer) is
+        // foreign-only today, but its offset carries the same latent bug, so guard
+        // its partial-range read too.
+        assert_delta_varlen_partial_matches_prefix(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
     #[test]
     fn decode_page_dict_num_values_over_buffer_errors_not_panics() {
         // End-to-end through decode_page: a dictionary-encoded Varchar column
