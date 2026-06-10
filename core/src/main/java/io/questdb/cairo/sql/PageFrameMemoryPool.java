@@ -123,8 +123,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         try {
             this.maxCacheBytes = Math.max(maxCacheBytes, 0L);
             this.effectiveBudgetBytes = decodeHint.applyTo(this.maxCacheBytes);
-            // Sized for the MONOTONIC cap; SCATTERED cursors rehash up on demand
-            // rather than every pool (incl. all-native scans) paying for 256 slots.
+            // Passing the MONOTONIC cap floors to the map's 16-slot minimum; SCATTERED
+            // cursors rehash up on demand rather than every pool (incl. all-native
+            // scans) paying for 256 slots.
             byFrameIndex = new IntObjHashMap<>(ParquetDecodeHint.MONOTONIC.maxCachedBuffers);
             columnIdToParquetIdx = new IntIntHashMap(16);
             frameMemory = new PageFrameMemoryImpl();

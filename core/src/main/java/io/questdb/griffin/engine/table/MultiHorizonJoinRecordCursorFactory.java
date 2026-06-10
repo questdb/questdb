@@ -439,7 +439,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     final long scaledHorizonTs = scaleTimestamp(horizonTs, ss.getMasterTsScale());
                     long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
 
-                    long matchRowId = Long.MIN_VALUE;
+                    long matchRowId;
                     if (ss.isKeyed()) {
                         Record masterKeyRecord = masterRecord;
                         if (symbolTranslatingRecords.getQuick(s) != null) {
