@@ -1159,9 +1159,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             processor.resumeRecv(this);
 
             // resumeRecv() returned normally -> the processor is ready to read from a websocket again.
-            // We don't return true, because that would make the infrastructure to call as immediately again
+            // We don't return true, because that would make the infrastructure call us immediately again
             // and we would monopolize the thread. Instead, we use PeerIsSlowToWriteException as a signal
-            // to be registered for reading this gives the Worker thread a chance to run other processors.
+            // to be registered for reading. This gives the worker thread a chance to run other processors.
             throw PeerIsSlowToWriteException.INSTANCE;
         } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // Need more data from/to peer
