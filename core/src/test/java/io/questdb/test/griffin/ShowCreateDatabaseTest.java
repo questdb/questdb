@@ -388,6 +388,77 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMatViewOnViewDependencyOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // a_mv reads s_view, which is inlined to its base table during compilation, so the plan
+            // walk never sees s_view. The view name must still be collected as a dependency, otherwise
+            // a_mv (which sorts before s_view) emits first and the replay fails: s_view does not exist
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            execute("create view s_view as (select ts, s, v from base)");
+            execute("create materialized view a_mv as (select ts, s, avg(v) v from s_view sample by 1d) partition by day");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            final int viewIdx = dump.indexOf("CREATE VIEW 's_view'");
+            final int mvIdx = dump.indexOf("CREATE MATERIALIZED VIEW 'a_mv'");
+            Assert.assertTrue(viewIdx >= 0 && mvIdx >= 0);
+            Assert.assertTrue("the view must precede the materialized view that reads it", viewIdx < mvIdx);
+
+            execute("drop materialized view a_mv");
+            execute("drop view s_view");
+            execute("drop table base");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testViewOnMatViewDependencyOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // a_view reads z_mv (a materialized view); matviews are physical and not inlined, so the
+            // view graph records the dependency by name. a_view (sorting first) must still emit after z_mv
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view z_mv as (select ts, s, avg(v) v from base sample by 1d) partition by day");
+            execute("create view a_view as (select ts, s from z_mv)");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            final int mvIdx = dump.indexOf("CREATE MATERIALIZED VIEW 'z_mv'");
+            final int viewIdx = dump.indexOf("CREATE VIEW 'a_view'");
+            Assert.assertTrue(mvIdx >= 0 && viewIdx >= 0);
+            Assert.assertTrue("the materialized view must precede the view that reads it", mvIdx < viewIdx);
+
+            execute("drop view a_view");
+            execute("drop materialized view z_mv");
+            execute("drop table base");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
     private static String inventory() throws Exception {
         sink.clear();
         printSql("SELECT table_name, table_type FROM tables() ORDER BY table_name, table_type");

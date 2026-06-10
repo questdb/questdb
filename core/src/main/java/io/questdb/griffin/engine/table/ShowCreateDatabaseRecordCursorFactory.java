@@ -44,7 +44,10 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -135,11 +138,9 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         appendAclGrants(out, executionContext);
     }
 
-    // inline OWNED BY follows the USERS category: a schema-only dump stays free of ACL identities
-    protected boolean isOwnedByIncluded() {
-        return (includeMask & INCLUDE_USERS) != 0;
-    }
-
+    // the per-object SHOW CREATE factories take a token position for error reporting; a database dump
+    // has no per-object source position, so it passes 0. The position is only surfaced if the object
+    // is dropped between collection and emit, an accepted best-effort edge case for a live dump.
     protected RecordCursorFactory matViewFactory(TableToken token) {
         return new ShowCreateMatViewRecordCursorFactory(token, 0);
     }
@@ -289,6 +290,22 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                     final ObjList<TableToken> collected = tableTokenCollector.tables.getList();
                     for (int i = 0, n = collected.size(); i < n; i++) {
                         out.add(collected.getQuick(i));
+                    }
+                }
+            }
+            // a view referenced by the mat view is inlined during compilation, so the plan walk
+            // above only sees the view's physical base tables, never the view itself. Collect the
+            // view (and mat-view) names from the parsed model so those objects are emitted ahead of
+            // this mat view and the dump stays replayable.
+            final ExecutionModel model = compiler.generateExecutionModel(definition.getMatViewSql(), executionContext);
+            final IQueryModel queryModel = model.getQueryModel();
+            if (queryModel != null) {
+                final ObjList<CharSequence> referencedViews = new ObjList<>();
+                SqlUtil.collectAllTableAndViewNames(queryModel, referencedViews, true);
+                for (int i = 0, n = referencedViews.size(); i < n; i++) {
+                    final TableToken dependency = engine.getTableTokenIfExists(referencedViews.getQuick(i));
+                    if (dependency != null) {
+                        out.add(dependency);
                     }
                 }
             }
