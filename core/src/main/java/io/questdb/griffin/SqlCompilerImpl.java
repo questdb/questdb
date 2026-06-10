@@ -43,6 +43,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
@@ -2310,7 +2311,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
                 } else if (isExpireKeyword(tok)) {
-                    alterTableDropExpire(tableToken, tableNamePosition, tableMetadata);
+                    throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
                 }
             } else if (isRenameKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
@@ -2559,8 +2560,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isTtlKeyword(tok)) {
                     alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
                 } else if (isExpireKeyword(tok)) {
-                    executionContext.getSecurityContext().authorizeAlterTableSetParam(tableToken);
-                    alterTableSetExpire(executionContext, tableToken, tableNamePosition, tableMetadata);
+                    throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -4220,8 +4220,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
                             createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
                         }
-                        // Reject a bad EXPIRE ROWS predicate before the view exists.
-                        validateCreateExpiryPredicate(executionContext, createTableOp, metadata);
+                        // Reject a bad EXPIRE ROWS policy before the view exists.
+                        validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
 
                         matViewDefinition = engine.createMatView(
                                 executionContext.getSecurityContext(),
@@ -5247,7 +5247,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
         }
-        validateExpiryPredicate(executionContext, tableToken, clause.predicate, clause.predicatePos);
+        if (RowExpiryUtil.isKeepLatest(clause.predicate)) {
+            validateAlterKeepLatestPolicy(tableToken, tableMetadata, clause.predicate, clause.predicatePos);
+        } else {
+            validateExpiryPredicate(executionContext, tableToken, clause.predicate, clause.predicatePos);
+        }
         final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
                 tableNamePosition,
                 tableToken,
@@ -5327,6 +5331,97 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validationCompiler.validateExpiryPredicateOnMetadata(
                     executionContext, metadata, predicate, createTableOp.getTableNamePosition());
         }
+    }
+
+    /**
+     * Validates a CREATE MATERIALIZED VIEW EXPIRE ROWS policy before the view exists. Relative KEEP LATEST
+     * retention is only allowed on a passthrough (non-aggregating) view, and its key columns must resolve
+     * against the view's columns (with a designated timestamp present). A plain WHEN predicate is validated
+     * structurally as for any object.
+     */
+    private void validateCreateMatViewExpiryPolicy(
+            SqlExecutionContext executionContext,
+            CreateMatViewOperation createMatViewOp,
+            CreateTableOperation createTableOp,
+            RecordMetadata selectMetadata
+    ) throws SqlException {
+        final String predicate = createTableOp.getExpiryPredicate();
+        if (predicate == null) {
+            return;
+        }
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            if (!createMatViewOp.isPassthrough()) {
+                throw SqlException.$(createTableOp.getTableNamePosition(),
+                        "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views");
+            }
+            validateKeepLatestColumns(selectMetadata, RowExpiryUtil.keepLatestKeys(predicate), createTableOp.getTableNamePosition());
+            return;
+        }
+        validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
+    }
+
+    /**
+     * Validates the body of an ALTER ... SET EXPIRE ROWS KEEP LATEST policy: the target must be a
+     * passthrough materialized view and the key columns must resolve. (ALTER ... SET EXPIRE on a base table
+     * is rejected earlier in the grammar, so this only runs for materialized-view targets.)
+     */
+    private void validateAlterKeepLatestPolicy(
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        final MatViewDefinition def = tableToken.isMatView() ? engine.getMatViewGraph().getViewDefinition(tableToken) : null;
+        if (def == null || !def.isPassthrough()) {
+            throw SqlException.$(position,
+                    "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views");
+        }
+        validateKeepLatestColumns(tableMetadata, RowExpiryUtil.keepLatestKeys(predicate), position);
+    }
+
+    /**
+     * Validates a KEEP LATEST PARTITION BY column list against {@code metadata}: a designated timestamp must
+     * exist (LATEST ON requires it) and every key column must resolve. {@code keysCsv} is the raw,
+     * comma-separated list captured by the parser (names may be double-quoted / padded with spaces).
+     */
+    private void validateKeepLatestColumns(RecordMetadata metadata, CharSequence keysCsv, int position) throws SqlException {
+        if (metadata.getTimestampIndex() < 0) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a designated timestamp");
+        }
+        boolean any = false;
+        int start = 0;
+        final int n = keysCsv.length();
+        for (int i = 0; i <= n; i++) {
+            if (i == n || keysCsv.charAt(i) == ',') {
+                final CharSequence key = unquoteTrim(keysCsv, start, i);
+                if (key.length() == 0) {
+                    throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST has an empty PARTITION BY column");
+                }
+                if (metadata.getColumnIndexQuiet(key) < 0) {
+                    throw SqlException.$(position, "invalid EXPIRE ROWS KEEP LATEST column: ").put(key);
+                }
+                any = true;
+                start = i + 1;
+            }
+        }
+        if (!any) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
+        }
+    }
+
+    /** Trims surrounding whitespace and one optional layer of double quotes from {@code s[lo, hi)}. */
+    private static CharSequence unquoteTrim(CharSequence s, int lo, int hi) {
+        while (lo < hi && s.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && s.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        if (hi - lo >= 2 && s.charAt(lo) == '"' && s.charAt(hi - 1) == '"') {
+            lo++;
+            hi--;
+        }
+        return s.subSequence(lo, hi);
     }
 
     /**

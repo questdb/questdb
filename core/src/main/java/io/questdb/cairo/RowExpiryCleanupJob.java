@@ -155,6 +155,12 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * via the keep-filter, then compacts via REPLACE_RANGE and batch-drops fully expired partitions.
      */
     public boolean cleanupTable(TableToken tableToken, String predicate, long cleanupIntervalMicros) {
+        // KEEP LATEST (relative) policies are read-filter-authoritative for now; physical cleanup of the
+        // latest-per-key set is deferred (a follow-up). Skip so the scalar keep-filter below is never built
+        // from the encoded policy string.
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            return false;
+        }
         final String tableName = tableToken.getTableName();
         final String keepFilter = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
 

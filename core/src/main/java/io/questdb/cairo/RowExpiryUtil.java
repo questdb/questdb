@@ -50,22 +50,18 @@ public final class RowExpiryUtil {
      */
     public static final long DEFAULT_CLEANUP_INTERVAL_MICROS = 3_600_000_000L;
 
-    private RowExpiryUtil() {
-    }
+    // The EXPIRE ROWS policy is persisted as a single string in the table's _meta {@code expiryPredicate}
+    // slot. A plain (legacy) string is a boolean WHEN predicate. The relative "KEEP LATEST" mode (a
+    // passthrough mat view keeping only the latest row per key) cannot be expressed as a per-row predicate,
+    // so it is encoded with a non-printable sentinel prefix (unit-separator 0x1F, then 'L') followed by the
+    // raw PARTITION BY column-list text. Encoding here (rather than adding a new _meta field) keeps the
+    // storage, replication and metadata-interface plumbing unchanged. The sentinel cannot occur in a real
+    // predicate, so a legacy raw predicate always decodes as a WHEN predicate (backward compatible).
+    private static final char KEEP_LATEST_MODE = 'L';
+    private static final char POLICY_SENTINEL = (char) 0x1F;
+    private static final String KEEP_LATEST_PREFIX = String.valueOf(POLICY_SENTINEL) + KEEP_LATEST_MODE;
 
-    /**
-     * Renders the cleanup cadence as a stride string (e.g. {@code 30m}, {@code 1h}, {@code 2d}), or null
-     * when there is no policy ({@code micros <= 0}). Shared by the {@code tables()} and
-     * {@code materialized_views()} catalogue functions. Allocates a String — acceptable on the cold
-     * catalogue path; use {@link #appendCleanupEvery} to render into an existing sink.
-     */
-    public static String formatCleanupEvery(long micros) {
-        if (micros <= 0) {
-            return null;
-        }
-        final StringSink sink = new StringSink();
-        appendCleanupEvery(sink, micros);
-        return sink.toString();
+    private RowExpiryUtil() {
     }
 
     /**
@@ -95,5 +91,55 @@ public final class RowExpiryUtil {
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
         return "CASE WHEN (" + predicate.trim() + ") THEN false ELSE true END";
+    }
+
+    /**
+     * Human-readable rendering of a stored policy for catalogue functions ({@code tables()},
+     * {@code materialized_views()}): the KEEP LATEST clause body for the relative mode, or the raw predicate
+     * (unchanged) otherwise. Returns null for no policy.
+     */
+    public static String displayPredicate(CharSequence stored) {
+        if (stored == null) {
+            return null;
+        }
+        if (isKeepLatest(stored)) {
+            return "KEEP LATEST PARTITION BY " + keepLatestKeys(stored);
+        }
+        return stored.toString();
+    }
+
+    /**
+     * Encodes a {@code KEEP LATEST PARTITION BY <keysCsv>} policy for storage in the {@code expiryPredicate}
+     * slot (see the {@link #KEEP_LATEST_PREFIX} note). {@code keysCsv} is the raw, comma-separated column
+     * list as written by the user (quoting preserved).
+     */
+    public static String encodeKeepLatest(CharSequence keysCsv) {
+        return KEEP_LATEST_PREFIX + keysCsv;
+    }
+
+    /**
+     * Renders the cleanup cadence as a stride string (e.g. {@code 30m}, {@code 1h}, {@code 2d}), or null
+     * when there is no policy ({@code micros <= 0}). Shared by the {@code tables()} and
+     * {@code materialized_views()} catalogue functions. Allocates a String — acceptable on the cold
+     * catalogue path; use {@link #appendCleanupEvery} to render into an existing sink.
+     */
+    public static String formatCleanupEvery(long micros) {
+        if (micros <= 0) {
+            return null;
+        }
+        final StringSink sink = new StringSink();
+        appendCleanupEvery(sink, micros);
+        return sink.toString();
+    }
+
+    /** True if {@code stored} is an encoded KEEP LATEST policy (vs a plain WHEN predicate or no policy). */
+    public static boolean isKeepLatest(CharSequence stored) {
+        return stored != null && stored.length() >= 2
+                && stored.charAt(0) == POLICY_SENTINEL && stored.charAt(1) == KEEP_LATEST_MODE;
+    }
+
+    /** The raw PARTITION BY column-list text of an encoded KEEP LATEST policy (check {@link #isKeepLatest} first). */
+    public static CharSequence keepLatestKeys(CharSequence stored) {
+        return stored.subSequence(2, stored.length());
     }
 }

@@ -214,6 +214,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public boolean isPassthrough() {
+        return passthrough;
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return createTableOperation.getMaxUncommittedRows();
     }

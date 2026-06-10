@@ -305,27 +305,4 @@ public class ShowTablesTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testTablesExpireRowsColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            // Table with a row-expiry policy: the predicate and cleanup cadence must be surfaced.
-            execute("create table t (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal " +
-                    "EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
-            // Table with no policy: both columns must be null.
-            execute("create table no_policy (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            drainWalQueue();
-
-            assertQuery("select expire_predicate, expire_cleanup_every from tables() where table_name = 't'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("expire_predicate\texpire_cleanup_every\n" +
-                            "v < 2.0\t30m\n");
-
-            assertQuery("select expire_predicate, expire_cleanup_every from tables() where table_name = 'no_policy'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("expire_predicate\texpire_cleanup_every\n" +
-                            "\t\n");
-        });
-    }
 }

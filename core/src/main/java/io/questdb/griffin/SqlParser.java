@@ -442,55 +442,104 @@ public class SqlParser {
      */
     public ExpireRowsClause parseExpireRowsClause(GenericLexer lexer, boolean inCreateTable) throws SqlException {
         expectTok(lexer, "rows");
-        expectTok(lexer, "when");
-
-        final int predicateStart = lexer.getPosition();
-        int predicateEnd;
-        int depth = 0;
+        CharSequence tok = tok(lexer, "'when' or 'keep'");
+        final int predicateStart;
+        final String predicateSql;
         boolean foundCleanup = false;
-        CharSequence tok;
-        while (true) {
-            tok = optTok(lexer);
-            if (tok == null || Chars.equals(tok, ';')) {
-                predicateEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
-                break;
+
+        if (isKeepKeyword(tok)) {
+            // EXPIRE ROWS KEEP LATEST [ON <ts>] PARTITION BY <col> [, <col> ...]
+            // Relative retention (keep only the latest row per key) — passthrough-mat-view-only, validated
+            // at create. The PARTITION BY column list is captured as raw text and stored encoded
+            // (RowExpiryUtil.encodeKeepLatest) in the predicate slot; the read filter rewrites a reference
+            // into "<ref> LATEST ON <designated ts> PARTITION BY <cols>".
+            predicateStart = lexer.lastTokenPosition();
+            expectTok(lexer, "latest");
+            tok = tok(lexer, "'on' or 'partition'");
+            if (isOnKeyword(tok)) {
+                // Optional "ON <ts>": consumed and ignored. A table-input LATEST ON requires the designated
+                // timestamp, so the read filter always uses it (the named column is validated at create).
+                tok(lexer, "timestamp column name");
+                tok = tok(lexer, "'partition'");
             }
-            if (depth == 0) {
+            if (!isPartitionKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+            }
+            expectTok(lexer, "by");
+            final int keysStart = lexer.getPosition();
+            int keysEnd;
+            while (true) {
+                tok = optTok(lexer);
+                if (tok == null || Chars.equals(tok, ';')) {
+                    keysEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                    break;
+                }
                 if (isCleanupKeyword(tok)) {
-                    predicateEnd = lexer.lastTokenPosition();
+                    keysEnd = lexer.lastTokenPosition();
                     foundCleanup = true;
                     break;
                 }
-                if (inCreateTable && (isWithKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
-                    predicateEnd = lexer.lastTokenPosition();
+                // A column list cannot contain WITH/IN/DEDUP, so each unambiguously ends it (e.g. IN VOLUME).
+                if (inCreateTable && (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+                    keysEnd = lexer.lastTokenPosition();
                     break;
                 }
-                if (inCreateTable && isInKeyword(tok)) {
-                    // 'IN' is ambiguous: 'IN VOLUME' ends the predicate, but '<col> IN (...)' is part of
-                    // it. Only treat IN as the boundary when it is followed by VOLUME; otherwise it is
-                    // predicate content and we keep scanning (the following '(' bumps the paren depth).
-                    final int inPos = lexer.lastTokenPosition();
-                    final CharSequence afterIn = optTok(lexer);
-                    if (afterIn != null && isVolumeKeyword(afterIn)) {
-                        lexer.unparseLast(); // hand VOLUME back so the caller parses IN VOLUME
-                        predicateEnd = inPos;
+            }
+            final String keysCsv = Chars.toString(lexer.getContent(), keysStart, keysEnd).trim();
+            if (keysCsv.isEmpty()) {
+                throw SqlException.$(keysStart, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
+            }
+            predicateSql = RowExpiryUtil.encodeKeepLatest(keysCsv);
+        } else {
+            lexer.unparseLast();
+            expectTok(lexer, "when");
+
+            predicateStart = lexer.getPosition();
+            int predicateEnd;
+            int depth = 0;
+            while (true) {
+                tok = optTok(lexer);
+                if (tok == null || Chars.equals(tok, ';')) {
+                    predicateEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                    break;
+                }
+                if (depth == 0) {
+                    if (isCleanupKeyword(tok)) {
+                        predicateEnd = lexer.lastTokenPosition();
+                        foundCleanup = true;
                         break;
                     }
-                    if (afterIn != null) {
-                        lexer.unparseLast();
+                    if (inCreateTable && (isWithKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+                        predicateEnd = lexer.lastTokenPosition();
+                        break;
+                    }
+                    if (inCreateTable && isInKeyword(tok)) {
+                        // 'IN' is ambiguous: 'IN VOLUME' ends the predicate, but '<col> IN (...)' is part of
+                        // it. Only treat IN as the boundary when it is followed by VOLUME; otherwise it is
+                        // predicate content and we keep scanning (the following '(' bumps the paren depth).
+                        final int inPos = lexer.lastTokenPosition();
+                        final CharSequence afterIn = optTok(lexer);
+                        if (afterIn != null && isVolumeKeyword(afterIn)) {
+                            lexer.unparseLast(); // hand VOLUME back so the caller parses IN VOLUME
+                            predicateEnd = inPos;
+                            break;
+                        }
+                        if (afterIn != null) {
+                            lexer.unparseLast();
+                        }
                     }
                 }
+                if (Chars.equals(tok, '(')) {
+                    depth++;
+                } else if (Chars.equals(tok, ')')) {
+                    depth--;
+                }
             }
-            if (Chars.equals(tok, '(')) {
-                depth++;
-            } else if (Chars.equals(tok, ')')) {
-                depth--;
-            }
-        }
 
-        final String predicateSql = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
-        if (predicateSql.isEmpty()) {
-            throw SqlException.$(predicateStart, "EXPIRE ROWS WHEN predicate is empty");
+            predicateSql = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
+            if (predicateSql.isEmpty()) {
+                throw SqlException.$(predicateStart, "EXPIRE ROWS WHEN predicate is empty");
+            }
         }
 
         final long cleanupIntervalMicros;
@@ -758,6 +807,26 @@ public class SqlParser {
             int position,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            // Relative "KEEP LATEST" retention (passthrough mat views): hide all but the latest row per key
+            // by rewriting the reference into "SELECT * FROM "t" LATEST ON "<ts>" PARTITION BY <cols>". The
+            // PARTITION BY list is stored as raw text (quoting preserved); the timestamp is always the
+            // table's designated timestamp. LATEST ON cannot share a query level with WHERE, so isolating it
+            // in this inner sub-query is exactly right: any outer predicate filters the already-latest rows.
+            final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
+            final String latestSql = "SELECT * FROM \"" + tableName + "\" LATEST ON \""
+                    + designatedTimestampColumn + "\" PARTITION BY " + keys;
+            final GenericLexer latestLexer = viewLexers.next();
+            latestLexer.of(latestSql);
+            final IQueryModel latestSubQuery = parseAsSubQuery(latestLexer, null, false, sqlParserCallback, model.getDecls(), true);
+            model.setNestedModel(latestSubQuery);
+            model.setNestedModelIsSubQuery(true);
+            if (model.getAlias() == null) {
+                model.setAlias(literal(tableName, position));
+            }
+            return;
+        }
+
         // Quote the table name so names that need quoting (or look like keywords) parse correctly. The
         // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
         // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
@@ -2129,12 +2198,10 @@ public class SqlParser {
                 }
             }
 
-            // Optional: EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]
-            // The predicate is captured here as raw text and validated structurally before the table is
-            // created (SqlCompilerImpl.validateCreateExpiryPredicate, binding it against the columns being
-            // created). ALTER TABLE ... SET EXPIRE validates against the existing table instead.
+            // EXPIRE ROWS is only supported on materialized views (see CREATE MATERIALIZED VIEW). Base
+            // tables use TTL + storage policies for retention.
             if (tok != null && isExpireKeyword(tok)) {
-                tok = parseCreateTableExpireRows(lexer, builder);
+                throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
             }
         }
         final boolean isWalEnabled = configuration.isWalSupported()

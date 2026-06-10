@@ -578,24 +578,6 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExpireRowsRoundTrip() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
-            sink.clear();
-            printSql("SHOW CREATE TABLE tango", sink);
-            final String ddl = sink.toString();
-            TestUtils.assertContains(ddl, "EXPIRE ROWS WHEN v < 2.0");
-            TestUtils.assertContains(ddl, "CLEANUP EVERY 30m");
-            // Round-trip: the emitted DDL must be valid SQL and preserve the policy.
-            execute("DROP TABLE tango");
-            execute(ddl.substring(ddl.indexOf('\n') + 1));
-            sink.clear();
-            printSql("SHOW CREATE TABLE tango", sink);
-            TestUtils.assertContains(sink.toString(), "EXPIRE ROWS WHEN v < 2.0");
-        });
-    }
-
-    @Test
     public void testTtlOneHour() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");

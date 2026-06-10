@@ -255,7 +255,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                             final CairoTable viewTable = metadataRO.getTable(viewToken);
                             if (viewTable != null) {
-                                expirePredicate = viewTable.getExpiryPredicate();
+                                expirePredicate = RowExpiryUtil.displayPredicate(viewTable.getExpiryPredicate());
                                 expireCleanupMicros = viewTable.getExpiryCleanupIntervalMicros();
                             }
                         }
