@@ -6069,6 +6069,32 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterConstFilterDoesNotLeakIntoNestedNullingJoinDifferentColumn() throws Exception {
+        // Keeps the per-level clearConstNameToMaps() load-bearing: unlike the sibling test where the
+        // nested WHERE a.k = 1 re-registers "k" and masks a missing clear, here the nested master
+        // WHERE filters a DIFFERENT column (a.j = 1) while the join key still reuses "k". Without the
+        // clear the outer "k -> 2" survives and addTransitiveFilters injects a foreign b.k = 2 into
+        // the nested slave, dropping the matching row (0 rows instead of 1).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (q INT, k INT)");
+            execute("INSERT INTO tc VALUES (1, 2)");
+            execute("CREATE TABLE ta (j INT, k INT)");
+            execute("INSERT INTO ta VALUES (1, 1)");
+            execute("CREATE TABLE tb (k INT, v INT)");
+            execute("INSERT INTO tb VALUES (1, 10)");
+
+            assertQuery("SELECT * FROM tc " +
+                    "JOIN (SELECT a.k k1, b.v FROM ta a RIGHT JOIN tb b ON a.k = b.k WHERE a.j = 1) x " +
+                    "  ON tc.q = x.k1 " +
+                    "WHERE tc.k = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("q\tk\tk1\tv\n1\t2\t1\t10\n");
+        });
+    }
+
+    @Test
     public void testOuterHashJoinOnFunctionCondition12() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int, s1 string)");
