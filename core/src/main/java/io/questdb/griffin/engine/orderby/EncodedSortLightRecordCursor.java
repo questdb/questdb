@@ -49,8 +49,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
-    private final long maxEntryMemBytes;
+    private final long keyCapBytes;
     private final long parallelThreshold;
+    private final long valueCapBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -74,7 +75,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
-            this.maxEntryMemBytes = SortKeyEncoder.entryHeapBytes(configuration);
+            this.keyCapBytes = configuration.getSqlSortKeyMaxBytes();
+            this.valueCapBytes = configuration.getSqlSortLightValueMaxBytes();
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } finally {
@@ -187,7 +189,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private void buildAndSort() {
         // Pre-allocate if size is known
         long estimatedSize = baseCursor.size();
-        long maxEntries = maxEntryMemBytes / entrySize;
+        long maxEntries = SortKeyEncoder.maxEntries(keyCapBytes, valueCapBytes, keyType);
+        long maxEntryMemBytes = maxEntries * entrySize;
         if (estimatedSize > 0) {
             if (estimatedSize > maxEntries) {
                 SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);

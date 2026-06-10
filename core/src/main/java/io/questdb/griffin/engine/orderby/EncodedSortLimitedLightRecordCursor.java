@@ -64,11 +64,12 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
-    private final long maxEntryMemBytes;
+    private final long keyCapBytes;
     private final long parallelThreshold;
     // A copy, not a buffer address: entryMem may reallocate on growth.
     private final long[] thresholdEntry = new long[SortKeyType.MAX_ENTRY_LONGS];
     private final int timestampIndex;
+    private final long valueCapBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -87,6 +88,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     private long limit;
     private int longsPerEntry;
     private long maxEntries;
+    private long maxEntryMemBytes;
     private int rowIdOffset;
     private long skipFirst;
     private long skipLast;
@@ -111,7 +113,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         this.entryMem = entryMemInit;
         this.timestampIndex = timestampIndex;
         this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
-        this.maxEntryMemBytes = SortKeyEncoder.entryHeapBytes(configuration);
+        this.keyCapBytes = configuration.getSqlSortKeyMaxBytes();
+        this.valueCapBytes = configuration.getSqlSortLightValueMaxBytes();
         this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
         this.isOpen = true;
     }
@@ -192,7 +195,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         rowIdOffset = keyType.rowIdOffset();
         keyLongs = keyType.keyLength() / Long.BYTES;
         longsPerEntry = entrySize / Long.BYTES;
-        maxEntries = maxEntryMemBytes / entrySize;
+        maxEntries = SortKeyEncoder.maxEntries(keyCapBytes, valueCapBytes, keyType);
+        maxEntryMemBytes = maxEntries * entrySize;
         // The trigger stays within maxEntries so compaction fires before the overflow check can.
         compactionTrigger = limit > 0 && limit < maxEntries
                 ? Math.min(Math.max(limit << 1, MIN_COMPACTION_TRIGGER), maxEntries)
