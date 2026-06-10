@@ -553,6 +553,94 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Var-size sibling of {@link #testRollbackThenIncrementalSealUsesRebuiltSidecar}.
+     * Rollback reencodes rowids into one global decoded-values array, then rebuilds
+     * per-stride VARCHAR sidecars from global key offsets. The clean-stride assertion
+     * on k257 pins the shift < 0 branch to that global-offset contract.
+     */
+    @Test
+    public void testRollbackThenIncrementalSealUsesRebuiltVarSizeSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_var_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // k0 is assigned to stride 0 and k257 to stride 1.
+            execute("""
+                    INSERT INTO t_rb_var_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L),
+                           'k' || ((x - 1) % 300),
+                           ('lbl-' || x || '-' || (x % 17))::VARCHAR
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition.
+            execute("""
+                    INSERT INTO t_rb_var_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L),
+                           'k' || (100 + (x % 100)),
+                           ('o3-' || x)::VARCHAR
+                    FROM long_sequence(100)
+                    """);
+
+            TableToken tableToken = engine.verifyTableName("t_rb_var_seal");
+            try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:30:00.000000Z"));
+                row.putSym(1, "k0");
+                row.putVarchar(2, utf8("rolled-back"));
+                row.append();
+                writer.rollback();
+
+                // Only k0 is dirtied after rollback. k257 stays in the clean
+                // stride copied from the rollback-rebuilt VARCHAR sidecar.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putVarchar(2, utf8("new-" + i));
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            assertQuery("SELECT count() AS total, count(label) AS non_null FROM t_rb_var_seal WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),count(label)]
+                              filter: null
+                                CoveringIndex on: sym with: label
+                                  filter: sym='k0'
+                            """)
+                    .returns("""
+                            total\tnon_null
+                            60\t60
+                            """);
+            assertQuery("SELECT count() AS total, count(label) AS non_null FROM t_rb_var_seal WHERE sym = 'k257'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),count(label)]
+                              filter: null
+                                CoveringIndex on: sym with: label
+                                  filter: sym='k257'
+                            """)
+                    .returns("""
+                            total\tnon_null
+                            10\t10
+                            """);
+        });
+    }
+
+    /**
      * Real-discard variant of
      * {@link #testRollbackThenIncrementalSealUsesRebuiltSidecar}: the
      * index holds rowids beyond the committed transient row count -- the
