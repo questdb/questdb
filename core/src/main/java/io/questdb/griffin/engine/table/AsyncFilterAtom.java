@@ -110,7 +110,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return filterUsedColumnIndexes;
     }
 
-    public @NotNull IntHashSet getLateMaterializationSkipColumnIndexes() {
+    public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
         return lateMatSkipColumnIndexes != null ? lateMatSkipColumnIndexes : filterUsedColumnIndexes;
     }
 
@@ -252,21 +252,25 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
+    /**
+     * Must run before the frame sequence dispatches any reduce task: workers read
+     * {@link #getLateMaterializationSkipColumnIndexes()} without synchronization and
+     * rely on the happens-before edge the reduce queue provides after dispatch.
+     */
     public void setParentUsedColumns(@Nullable IntHashSet columns) {
-        if (columns == null) {
+        if (columns == null || filterUsedColumnIndexes == null) {
             lateMatSkipColumnIndexes = null;
             return;
         }
-        if (lateMatSkipColumnIndexes == null) {
-            lateMatSkipColumnIndexes = new IntHashSet();
-        } else {
-            lateMatSkipColumnIndexes.clear();
-        }
+        final IntHashSet skipSet = lateMatSkipColumnIndexes != null ? lateMatSkipColumnIndexes : new IntHashSet();
+        lateMatSkipColumnIndexes = null;
+        skipSet.clear();
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             if (!columns.contains(i) || filterUsedColumnIndexes.contains(i)) {
-                lateMatSkipColumnIndexes.add(i);
+                skipSet.add(i);
             }
         }
+        lateMatSkipColumnIndexes = skipSet;
     }
 
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {

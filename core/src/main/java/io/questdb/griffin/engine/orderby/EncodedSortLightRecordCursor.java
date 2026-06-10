@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -37,7 +36,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -48,7 +46,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
@@ -77,11 +74,11 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
-            // Clamp each operand to MAX_HEAP_SIZE_LIMIT before adding so an unset (Long.MAX_VALUE)
+            // Clamp each operand before adding so an unset (Long.MAX_VALUE)
             // cap does not overflow into a negative budget.
-            final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), MAX_HEAP_SIZE_LIMIT);
-            final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_HEAP_SIZE_LIMIT);
-            this.maxEntryMemBytes = Math.min(keyCap + valueCap, MAX_HEAP_SIZE_LIMIT);
+            final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
+            final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
+            this.maxEntryMemBytes = Math.min(keyCap + valueCap, SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } finally {
@@ -193,43 +190,41 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
 
     private void buildAndSort() {
         // Pre-allocate if size is known
-        try {
-            long estimatedSize = baseCursor.size();
-            long maxEntries = maxEntryMemBytes / entrySize;
-            if (estimatedSize > 0) {
-                if (estimatedSize > maxEntries) {
-                    throwLimitOverflow();
-                }
-                entryMem.setCapacity(estimatedSize * longsPerEntry);
+        long estimatedSize = baseCursor.size();
+        long maxEntries = maxEntryMemBytes / entrySize;
+        if (estimatedSize > 0) {
+            if (estimatedSize > maxEntries) {
+                SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
             }
-
-            // Collect (key, rowId) entries
-            entryMem.clear();
-            count = 0;
-            if (estimatedSize > 0) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
-                    entryMem.skip(longsPerEntry);
-                    count++;
-                }
-            } else {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    if (count >= maxEntries) {
-                        throwLimitOverflow();
-                    }
-                    entryMem.ensureCapacity(longsPerEntry);
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
-                    entryMem.skip(longsPerEntry);
-                    count++;
-                }
-            }
-        } finally {
-            Misc.free(encoder);
+            entryMem.setCapacity(estimatedSize * longsPerEntry);
         }
+
+        // Collect (key, rowId) entries
+        entryMem.clear();
+        count = 0;
+        if (estimatedSize > 0) {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                entryMem.skip(longsPerEntry);
+                count++;
+            }
+        } else {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                if (count >= maxEntries) {
+                    SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+                }
+                entryMem.ensureCapacity(longsPerEntry);
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                entryMem.skip(longsPerEntry);
+                count++;
+            }
+        }
+        // No finally: a retry after a mid-build throw must not see freed rank maps.
+        Misc.free(encoder);
 
         if (count <= 1) {
             startAddr = entryMem.getAddress() + rowIdOffset;
@@ -252,15 +247,5 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         Misc.free(encoder);
         baseCursor = Misc.free(baseCursor);
         baseRecord = null;
-    }
-
-    private void throwLimitOverflow() {
-        throw LimitOverflowException.instance()
-                .put("limit of ").put(maxEntryMemBytes)
-                .put(" memory exceeded in EncodedSort (raise ")
-                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                .put(" or ")
-                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                .put(')');
     }
 }

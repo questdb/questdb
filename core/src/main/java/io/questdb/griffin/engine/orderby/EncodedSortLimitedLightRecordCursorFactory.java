@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -57,17 +58,11 @@ import org.jetbrains.annotations.Nullable;
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final EncodedSortLimitedLightRecordCursor genericCursor;
+    private final EncodedSortLimitedLightRecordCursor cursor;
     private final Function hiFunction;
     private final Function loFunction;
-    private final EncodedSortLimitedPartiallySortedLightRecordCursor partiallySortedCursor;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
-    private EncodedSortLimitedLightRecordCursor activeCursor;
-    private boolean isFirstN;
-    private long limit;
-    private long skipFirst;
-    private long skipLast;
 
     public EncodedSortLimitedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -84,21 +79,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.hiFunction = hiFunction;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        EncodedSortLimitedLightRecordCursor generic = null;
-        EncodedSortLimitedPartiallySortedLightRecordCursor partial = null;
-        try {
-            generic = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter);
-            if (timestampIndex != -1) {
-                partial = new EncodedSortLimitedPartiallySortedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex);
-            }
-        } catch (Throwable th) {
-            Misc.free(generic);
-            Misc.free(partial);
-            close();
-            throw th;
-        }
-        this.genericCursor = generic;
-        this.partiallySortedCursor = partial;
+        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex);
     }
 
     @Override
@@ -118,10 +99,10 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
 
         try {
             baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-            activeCursor.of(baseCursor, executionContext);
-            return activeCursor;
+            cursor.of(baseCursor, executionContext);
+            return cursor;
         } catch (Throwable th) {
-            Misc.free(activeCursor);
+            Misc.free(cursor);
             throw th;
         }
     }
@@ -143,7 +124,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Sort light");
+        sink.type("Encode sort light");
         sink.meta("lo").val(loFunction);
         if (hiFunction != null) {
             sink.meta("hi").val(hiFunction);
@@ -165,65 +146,72 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         return base.usesIndex();
     }
 
-    private void computeLimits() {
-        this.skipFirst = 0;
-        this.skipLast = 0;
-        this.limit = 0;
-        this.isFirstN = false;
-
-        final long lo = loFunction.getLong(null);
-        if (lo < 0 && hiFunction == null) {
-            this.limit = -lo;
-            return;
-        }
-        if (lo > -1 && hiFunction == null) {
-            this.isFirstN = true;
-            this.limit = lo;
-            return;
-        }
-        final long hi = hiFunction.getLong(null);
-        if (lo < 0) {
-            if (lo == hi) {
-                this.limit = 0;
-            } else {
-                this.limit = -Math.min(hi, lo);
-                this.skipLast = Math.max(-Math.max(hi, lo), 0);
-            }
-            return;
-        }
-        if (hi < 0) {
-            this.limit = -1;
-            this.skipFirst = lo;
-            this.skipLast = -hi;
-            return;
-        }
-        this.isFirstN = true;
-        this.limit = Math.max(hi, lo);
-        this.skipFirst = Math.min(hi, lo);
-    }
-
+    /**
+     * Re-reads the limit functions, derives the selection window, and binds it to
+     * the cursor's selection. Runs on every execution so that bind-variable
+     * limits re-bind on cached plans.
+     */
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         loFunction.init(baseCursor, executionContext);
         if (hiFunction != null) {
             hiFunction.init(baseCursor, executionContext);
         }
-        computeLimits();
-        // The lo >= 0, hi < 0 shape ("all rows except the first lo and last -hi") arrives
-        // here as limit = -1 with both skips set. setSelection() maps the negative limit
-        // to unbounded, so the emit slice [skipFirst, count - skipLast) implements the
-        // shape on the generic cursor (isFirstN is false, so it is always selected);
-        // no separate fallback cursor is needed.
-        final EncodedSortLimitedLightRecordCursor next = (timestampIndex != -1 && isFirstN)
-                ? partiallySortedCursor
-                : genericCursor;
-        next.setSelection(isFirstN, limit, skipFirst, skipLast);
-        activeCursor = next;
+
+        boolean isFirstN = false;
+        long limit = 0;
+        long skipFirst = 0;
+        long skipLast = 0;
+
+        final long rawLo = loFunction.getLong(null);
+        if (hiFunction == null) {
+            if (rawLo < 0) {
+                // Last N rows. A NULL lo (Numbers.LONG_NULL) lands here too: -lo stays
+                // negative and setSelection() maps it to unbounded, returning the full
+                // sorted set like LimitRecordCursor does.
+                limit = -rawLo;
+            } else {
+                // First N rows.
+                isFirstN = true;
+                limit = rawLo;
+            }
+        } else {
+            // A NULL lo with hi present means "from the start": LIMIT null,3 returns
+            // the first 3 rows. Without this, NULL falls into the lo < 0 branch and
+            // the query returns the full set instead of the head slice.
+            final long lo = rawLo == Numbers.LONG_NULL ? 0 : rawLo;
+            final long hi = hiFunction.getLong(null);
+            if (lo < 0) {
+                // Negative range, e.g. -10,-5: five rows ending five rows from the
+                // tail. lo == hi is an invalid bottom range, e.g. -3,-3: empty result.
+                if (lo != hi) {
+                    limit = -Math.min(hi, lo);
+                    skipLast = Math.max(-Math.max(hi, lo), 0);
+                }
+            } else if (hi < 0) {
+                // lo >= 0, hi < 0: from lo up to -hi rows before the end. The result
+                // size cannot be estimated, so the scan is unbounded (setSelection
+                // maps the negative limit) and the emit slice applies both skips;
+                // isFirstN stays false, so the generic cursor is always selected.
+                // A NULL hi lands here too: its negated skipLast overflows negative
+                // and setSelection clamps it to 0, so LIMIT 1,null returns rows from
+                // 1 to the end.
+                limit = -1;
+                skipFirst = lo;
+                skipLast = -hi;
+            } else {
+                // Both non-negative: rows lo..hi.
+                isFirstN = true;
+                limit = Math.max(hi, lo);
+                skipFirst = Math.min(hi, lo);
+            }
+        }
+
+        cursor.setSelection(isFirstN, limit, skipFirst, skipLast);
     }
 
     @Override
     protected void _close() {
         Misc.free(base);
-        Misc.free(genericCursor);
-        Misc.free(partiallySortedCursor);
+        Misc.free(cursor);
     }
 }

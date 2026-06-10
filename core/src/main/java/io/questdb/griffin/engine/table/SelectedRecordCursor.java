@@ -38,8 +38,8 @@ class SelectedRecordCursor implements RecordCursor {
     private final IntList columnCrossIndex;
     private final SelectedRecord recordA;
     private final SelectedRecord recordB;
-    private IntHashSet baseUsedColumns;
     private RecordCursor baseCursor;
+    private IntHashSet baseUsedColumns;
 
     public SelectedRecordCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
         this.recordA = new SelectedRecord(columnCrossIndex);

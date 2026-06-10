@@ -413,6 +413,73 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitCompactionBottomK() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            49998
+                            49999
+                            50000
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitCompactionTopKAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            // 50,000 rows exceed the compaction trigger, so the build exercises the
+            // threshold-reject and compact paths; ascending input with ORDER BY v
+            // takes the all-rejected path, DESC the all-accepted path.
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitCompactionTopKDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v DESC LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            50000
+                            49999
+                            49998
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitCompactionWithRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 2,5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByLimitLoPosHiNegBindVariableFirstExecution() throws Exception {
         // The legacy tree-chain factory keeps a pre-existing bug on this shape: a fresh
         // factory returns all rows instead of the slice (it only slices correctly on
@@ -549,8 +616,8 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM x ORDER BY v LIMIT null::long")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlan("""
-                            Sort light lo: nullL
+                    .withPlan((sortMode == SortMode.SORT_ENABLED ? "Encode sort light" : "Sort light") + """
+                             lo: nullL
                               keys: [v]
                                 PageFrame
                                     Row forward scan
@@ -563,6 +630,26 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             3
                             4
                             5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitSmallLimitUnderTightMemoryCap() throws Exception {
+        // The caps fit ~32K entries; the 50,000-row scan overflows them without
+        // compaction. The tree-chain path holds only `limit` entries, so both
+        // parameterized modes must return the top rows instead of throwing.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 262_144);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 262_144);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
                             """);
         });
     }

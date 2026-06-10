@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -298,9 +299,16 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * Declares which projected column indexes the parent cursor will read during forward
      * iteration (via {@link #getRecord()}); columns accessed only via
      * {@link #recordAt(Record, long)} may be omitted. Null restores the default of
-     * materialising every projected column.
+     * materializing every projected column.
+     * <p>
+     * Wrappers that hold a delegate cursor must forward the call, translating column
+     * indexes when the wrapper remaps them. Wrappers whose own code reads further base
+     * columns during iteration (e.g. a filter or virtual functions) must NOT forward,
+     * because the parent's set cannot account for those reads.
+     *
+     * @param columnIndexes the columns the parent reads while iterating, or null
      */
-    default void setParentUsedColumns(IntHashSet columnIndexes) {
+    default void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
     }
 
     /**
