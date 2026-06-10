@@ -162,6 +162,25 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCloseDeregistersShutdownHook() throws Exception {
+        assertMemoryLeak(() -> {
+            final Thread hook;
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start(true);
+                hook = serverMain.testGetShutdownHookThread();
+                Assert.assertNotNull("start(true) must register a shutdown hook", hook);
+            }
+            // close() must deregister the hook: the JVM-static hook map would otherwise pin
+            // the full engine graph per boot in a long-lived JVM (e.g. a reused test fork).
+            // removeShutdownHook returns false only when the hook is no longer registered.
+            Assert.assertFalse(
+                    "close() must deregister the shutdown hook",
+                    Runtime.getRuntime().removeShutdownHook(hook)
+            );
+        });
+    }
+
+    @Test
     public void testConcurrentTableDrop() throws Exception {
         assertMemoryLeak(() -> {
             int tableCount = 20;

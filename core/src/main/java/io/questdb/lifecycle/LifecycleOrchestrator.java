@@ -74,6 +74,12 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // and writers never race the hashmap's rehash boundary.
     private final ConcurrentHashMap<String, Long> lastTransitionMicros = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ProgressEvent> latestProgress = new ConcurrentHashMap<>();
+    // Runs after the executor drain but before the reverse-topo stop loop. ServerMain installs
+    // a worker-pool halt here: the stop loop frees component resources (e.g. the http dispatcher's
+    // native FDSet) dependents-first, and on a boot-failure rollback shared pool workers are still
+    // running at that point -- they must stop touching those resources before the loop frees them.
+    @Nullable
+    private volatile Runnable preStopHook;
     private final AtomicBoolean ran = new AtomicBoolean();
     private final ObjList<Component> registry = new ObjList<>();
     private final CharSequenceObjHashMap<Component> registryByName = new CharSequenceObjHashMap<>();
@@ -135,6 +141,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
         // loop and just shut down the executor. This makes close() safe to call after a validation
         // failure in run() and on an orchestrator that was never run() at all.
         if (reverseTopoOrder != null) {
+            final Runnable hook = preStopHook;
+            if (hook != null) {
+                try {
+                    hook.run();
+                } catch (Throwable t) {
+                    injectedLog.error().$("pre-stop hook failed ").$(t).$();
+                }
+            }
             for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
                 Component c = reverseTopoOrder.getQuick(i);
                 State current = stateOf(c.name());
@@ -220,6 +234,16 @@ public class LifecycleOrchestrator implements QuietCloseable {
             }
             throw new LifecycleStartupException("boot-essential component(s) failed");
         }
+    }
+
+    /**
+     * Installs a hook that {@link #close()} runs after the executor drain and before the
+     * reverse-topo stop loop. ServerMain supplies a bounded worker-pool halt so no pool worker
+     * still touches component resources (native fd sets, queues) while the stop loop frees them
+     * on a boot-failure rollback. The hook must be idempotent with the normal shutdown path.
+     */
+    public void setPreStopHook(@Nullable Runnable hook) {
+        this.preStopHook = hook;
     }
 
     public LifecycleSnapshot snapshot() {

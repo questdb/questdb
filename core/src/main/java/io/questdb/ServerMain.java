@@ -84,6 +84,7 @@ public class ServerMain implements Closeable {
     private Thread compileViewsThread;
     private Thread hydrateMetadataThread;
     private io.questdb.lifecycle.LifecycleOrchestrator orchestrator;
+    private Thread shutdownHookThread;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -218,6 +219,21 @@ public class ServerMain implements Closeable {
                 workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
             }
             freeOnExit.close();
+            // Deregister the shutdown hook: the JVM-static ApplicationShutdownHooks map holds
+            // the hook Thread until JVM exit, and the hook's closure references this ServerMain
+            // and therefore the whole engine graph. A long-lived JVM that boots many servers
+            // (e.g. a reused test fork) would otherwise pin one engine graph per boot.
+            // Skip when the hook itself runs close(): removeShutdownHook would throw
+            // IllegalStateException during shutdown, and the map clears itself at exit anyway.
+            final Thread hook = shutdownHookThread;
+            if (hook != null && hook != Thread.currentThread()) {
+                shutdownHookThread = null;
+                try {
+                    Runtime.getRuntime().removeShutdownHook(hook);
+                } catch (IllegalStateException ignore) {
+                    // JVM shutdown already in progress; the hook is running or about to run.
+                }
+            }
         }
     }
 
@@ -366,6 +382,15 @@ public class ServerMain implements Closeable {
     }
 
     /**
+     * Test-only accessor: the shutdown hook thread registered by {@link #start(boolean)},
+     * or null when no hook was requested or {@link #close()} already deregistered it.
+     */
+    @TestOnly
+    public Thread testGetShutdownHookThread() {
+        return shutdownHookThread;
+    }
+
+    /**
      * Test-only factory: create an IlpTcpEnvelope bound to this ServerMain instance.
      * Used by per-envelope lifecycle unit tests that register envelopes directly into a
      * LifecycleTestHarness instead of going through the full bootstrap path.
@@ -411,6 +436,19 @@ public class ServerMain implements Closeable {
                     null    // tokio runtime -- enterprise plans (Plan 04) override registerComponents to provide
             );
             freeOnExit(orchestrator);
+            // Halt worker pools before the rollback stop loop frees component resources.
+            // On a boot failure of a late component (run() -> close()), the reverse-topo stop
+            // loop stops dependents like web-http first, freeing the dispatcher's native FDSet
+            // while shared pool workers still run -- on Windows the select dispatcher then
+            // dereferences the freed native array in runSerially() (EXCEPTION_ACCESS_VIOLATION);
+            // epoll/kqueue only hand a closed fd to the kernel and survive with EBADF. The hook
+            // mirrors the halt-then-free order of close(); WorkerPool.halt() is CAS-guarded, so
+            // the normal-shutdown second call is a no-op.
+            orchestrator.setPreStopHook(() -> {
+                if (workerPoolManager != null) {
+                    workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                }
+            });
             if (addShutdownHook) {
                 addShutdownHook();
             }
@@ -422,7 +460,7 @@ public class ServerMain implements Closeable {
     }
 
     private void addShutdownHook() {
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+        final Thread hook = new Thread(() -> {
             try {
                 System.err.println("SIGTERM received");
                 System.out.println("SIGTERM received");
@@ -438,7 +476,9 @@ public class ServerMain implements Closeable {
                 System.err.println("QuestDB is shutdown.");
                 System.out.println("QuestDB is shutdown.");
             }
-        }));
+        });
+        shutdownHookThread = hook;
+        Runtime.getRuntime().addShutdownHook(hook);
     }
 
     /**
