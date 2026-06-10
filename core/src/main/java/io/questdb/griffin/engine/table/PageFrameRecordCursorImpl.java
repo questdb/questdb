@@ -107,6 +107,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
         prepareRowCursorFactory();
         try {
+            // frames are only decoded up to the cap; rows past it are undecoded memory
+            if (rowsProducedSinceSkip >= maxRowsAfterSkip) {
+                isExhausted = true;
+                return false;
+            }
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
                 final long rowIndex = rowCursor.next();
@@ -120,13 +125,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             while ((frame = frameCursor.next()) != null) {
                 frameAddressCache.add(frameCount, frame);
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
-                if (remaining <= 0) {
-                    isExhausted = true;
-                    return false;
-                }
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
                 final int inFrameHi = (int) Math.min(frameSize, remaining);
-                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, 0, inFrameHi);
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
@@ -228,9 +229,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             final long roomInFrame = frameSize - skipTarget;
             final long takeFromFrame = Math.min(roomInFrame, this.maxRowsAfterSkip);
-            final int inFrameLo = (int) skipTarget;
-            final int inFrameHi = (int) (skipTarget + takeFromFrame);
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameLo, inFrameHi);
+            // decoded parquet buffers are frame-origin and reads use absolute
+            // frame-relative row indexes, so the decode window must start at row 0
+            final int inFrameHi = takeFromFrame == 0 ? 0 : (int) (skipTarget + takeFromFrame);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameHi);
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);
             recordA.setRowIndex(0);

@@ -1652,6 +1652,72 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOffsetLandsMidParquetFrame() throws Exception {
+        // the skip must land inside a parquet frame (skipTarget > 0 in the landing frame)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (0, '2024-01-01T00:00:00.000000Z'),
+                    (1, '2024-01-02T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:01.000000Z'),
+                    (3, '2024-01-02T00:00:02.000000Z'),
+                    (4, '2024-01-02T00:00:03.000000Z'),
+                    (5, '2024-01-02T00:00:04.000000Z'),
+                    (6, '2024-01-03T00:00:00.000000Z')""");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in ('2024-01-01', '2024-01-02')");
+            // skip 2 lands at row 1 of the 2024-01-02 parquet frame
+            assertQuery("SELECT a FROM x LIMIT 2, 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            2
+                            3
+                            4
+                            """);
+            // skip 5 lands at row 4 of the parquet frame, then crosses into the native frame
+            assertQuery("SELECT a FROM x LIMIT -2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            5
+                            6
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOffsetLandsMidParquetFrameTail() throws Exception {
+        // negative limit landing inside a parquet frame that is the last partition
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT ts FROM x ORDER BY ts LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts
+                            2024-01-01T00:07:00.000000Z
+                            """);
+            assertQuery("SELECT a FROM x ORDER BY ts LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            6
+                            7
+                            8
+                            """);
+        });
+    }
+
+    @Test
     public void testLimitRightFrameFormat() throws Exception {
         assertMemoryLeak(() -> {
             execute(
