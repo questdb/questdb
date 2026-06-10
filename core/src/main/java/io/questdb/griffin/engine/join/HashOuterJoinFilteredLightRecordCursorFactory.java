@@ -60,6 +60,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     private final int columnSplit;
     private final Function filter;
+    private final JoinSymbolTableSource filterSymbolTableSource;
     private final int joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
@@ -107,6 +108,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY, false, false);
             }
             this.filter = filter;
+            this.filterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
         } catch (Throwable th) {
             close();
             throw th;
@@ -406,16 +408,20 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 matchIdsMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 matchIdsMap.reopen();
             }
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             this.swapped = swapped;
+            // The filter source mirrors this cursor's getSymbolTable(): when swapped, master/slave
+            // columns resolve against the swapped-back cursors.
             if (swapped) {
                 record.of(slaveRecord, masterRecord);
                 this.masterCursorSink = slaveKeySink;
                 this.slaveCursorSink = masterKeySink;
+                filterSymbolTableSource.of(slaveCursor, masterCursor);
             } else {
                 record.of(masterRecord, slaveRecord);
                 this.masterCursorSink = masterKeySink;
                 this.slaveCursorSink = slaveKeySink;
+                filterSymbolTableSource.of(masterCursor, slaveCursor);
             }
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
@@ -427,8 +433,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                             slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
                 }
             }
-            filter.init(this, sqlExecutionContext);
+            // Adopt master/slave last so an init() throw above leaves them unset for the getCursor() catch.
+            filter.init(filterSymbolTableSource, sqlExecutionContext);
             this.mapCursor = Misc.free(mapCursor);
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
 
         @Override
@@ -506,14 +515,17 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            filter.init(this, sqlExecutionContext);
+            filterSymbolTableSource.of(masterCursor, slaveCursor);
+            filter.init(filterSymbolTableSource, sqlExecutionContext);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor,
                         slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
             }
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -635,15 +647,18 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 matchIdsMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 matchIdsMap.reopen();
             }
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
-            filter.init(this, sqlExecutionContext);
+            filterSymbolTableSource.of(masterCursor, slaveCursor);
+            filter.init(filterSymbolTableSource, sqlExecutionContext);
             mapCursor = Misc.free(mapCursor);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor,
                         slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
             }
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

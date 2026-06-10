@@ -143,6 +143,14 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
     }
 
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
+        this.masterCursor = masterCursor;
+        this.slaveCursor = slaveCursor;
+    }
+
+    // Sets up the per-run join state from the master/slave cursors without adopting them into the owned
+    // fields, letting a filtered subclass run its throwing filter.init() and adopt the cursors last.
+    protected void ofWithoutAdopt(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
             joinKeyMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
@@ -153,8 +161,6 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
         // triggers a malloc that lands under this tracker. After the cursor's
         // close(), the chain's backing is freed against the same tracker.
         slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         masterRecord = masterCursor.getRecord();
         slaveRecord = slaveChain.getRecord();

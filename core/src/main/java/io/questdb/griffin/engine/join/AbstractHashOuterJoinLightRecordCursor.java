@@ -134,6 +134,14 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     }
 
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
+        this.masterCursor = masterCursor;
+        this.slaveCursor = slaveCursor;
+    }
+
+    // Sets up the per-run join state from the master/slave cursors without adopting them into the owned
+    // fields, letting a filtered subclass run its throwing filter.init() and adopt the cursors last.
+    protected void ofWithoutAdopt(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
             slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
@@ -141,8 +149,6 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             joinKeyMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             joinKeyMap.reopen();
         }
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         masterRecord = masterCursor.getRecord();
         slaveRecord = slaveCursor.getRecordB();

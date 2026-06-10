@@ -132,6 +132,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {
         private final Function filter;
+        private final JoinSymbolTableSource filterSymbolTableSource;
         private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -145,6 +146,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             super(columnSplit);
             this.record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
             this.filter = filter;
+            this.filterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.isMatch = false;
             this.matchIdsMap = matchIdsMap;
             isOpen = false;
@@ -237,13 +239,16 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 matchIdsMap.setMemoryTracker(executionContext.getMemoryTracker());
                 matchIdsMap.reopen();
             }
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
-            filter.init(this, executionContext);
+            // filter.init() resolves symbols through a source over the master/slave cursors. Adopt the
+            // cursors last so an init() throw above leaves them unset for the getCursor() catch.
+            filterSymbolTableSource.of(masterCursor, slaveCursor);
+            filter.init(filterSymbolTableSource, executionContext);
             this.slaveRecord = slaveCursor.getRecord();
             record.of(masterCursor.getRecord(), this.slaveRecord);
             isMasterHasNextPending = true;
             circuitBreaker = executionContext.getCircuitBreaker();
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

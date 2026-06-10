@@ -83,7 +83,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     private final int hiSign;
     private final char hiTimeUnit;
     private final boolean includePrevailing;
-    private final WindowJoinSymbolTableSource joinSymbolTableSource;
+    private final JoinSymbolTableSource joinSymbolTableSource;
     private final int loSign;
     private final char loTimeUnit;
     private final int masterTimestampIndex;
@@ -201,7 +201,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             this.ownerMasterFilter = ownerMasterFilter;
             this.perWorkerMasterFilters = perWorkerMasterFilters;
             this.filterUsedColumnIndexes = filterUsedColumnIndexes;
-            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
             this.vectorized = vectorized && ownerWindowLoFunc == null && ownerWindowHiFunc == null;

@@ -392,6 +392,39 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashOuterJoinFilteredFullFatSymbolFilterResolves() throws Exception {
+        // A full-fat FULL OUTER JOIN whose non-equi filter compares SYMBOL columns from both sides.
+        // filter.init() resolves those columns through the join cursor's getSymbolTable(), which reads
+        // the adopted master/slave cursors, so of() must adopt them BEFORE filter.init(). count=5 (one
+        // matched pair, two unmatched master, two unmatched slave) proves the symbol filter both inited
+        // without NPE and evaluated correctly; a fix that adopts after filter.init() would NPE here.
+        // Shrink the slave-chain page so its default 16 MiB page does not breach the 512 KiB limit.
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (g INT, k SYMBOL)");
+            execute("INSERT INTO m VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+            execute("CREATE TABLE s (g INT, k SYMBOL)");
+            execute("INSERT INTO s VALUES (1, 'a'), (2, 'x'), (3, 'c')");
+            drainWalQueue();
+            final String sql = "SELECT count(*) FROM (SELECT m.k mk, s.k sk FROM m FULL OUTER JOIN s ON m.g = s.g AND m.k <> s.k)";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    Assert.assertTrue(
+                            "expected HashOuterJoinFilteredRecordCursorFactory, got: " + factory.getClass().getSimpleName(),
+                            isFactoryInChain(factory, HashOuterJoinFilteredRecordCursorFactory.class)
+                    );
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(5, cursor.getRecord().getLong(0));
+                        Assert.assertFalse(cursor.hasNext());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHashOuterJoinFilteredLightOpenFailureReleasesAllocations() throws Exception {
         // A FULL OUTER JOIN with a non-equi filter routes to the filtered light factory whose
         // full-outer cursor reopens a match-ids map (region 1) before the slave chain (region 2).
@@ -406,6 +439,24 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                     "SELECT * FROM m FULL OUTER JOIN s ON m.k = s.k AND m.v <> s.v",
                     HashOuterJoinFilteredLightRecordCursorFactory.class
             );
+        });
+    }
+
+    @Test
+    public void testHashOuterJoinFilteredLightSymbolFilterResolves() throws Exception {
+        // Light-path counterpart of testHashOuterJoinFilteredFullFatSymbolFilterResolves: a FULL OUTER
+        // JOIN whose non-equi filter compares SYMBOL columns routes to the filtered light factory. Its
+        // of() adopts master/slave before filter.init(), which resolves the symbols via getSymbolTable().
+        // count=5 proves correct resolution; a fix that adopts after filter.init() would NPE here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (g INT, k SYMBOL)");
+            execute("INSERT INTO m VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+            execute("CREATE TABLE s (g INT, k SYMBOL)");
+            execute("INSERT INTO s VALUES (1, 'a'), (2, 'x'), (3, 'c')");
+            drainWalQueue();
+            final String sql = "SELECT count(*) FROM (SELECT m.k mk, s.k sk FROM m FULL OUTER JOIN s ON m.g = s.g AND m.k <> s.k)";
+            assertUsesFactory(sql, HashOuterJoinFilteredLightRecordCursorFactory.class);
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
         });
     }
 
@@ -659,6 +710,24 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                     "SELECT * FROM m FULL OUTER JOIN s ON m.k <> s.k",
                     NestedLoopFullJoinRecordCursorFactory.class
             );
+        });
+    }
+
+    @Test
+    public void testNestedLoopFullJoinSymbolFilterResolves() throws Exception {
+        // A FULL OUTER JOIN with a non-equi SYMBOL condition (no equi key) routes to the nested-loop
+        // full join. Its of() adopts master/slave before filter.init(), which resolves the symbol
+        // columns via getSymbolTable(). count=7 (seven matched pairs, no unmatched rows) proves the
+        // symbol filter inited and evaluated correctly; a fix that adopts after filter.init() would NPE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL)");
+            execute("INSERT INTO m VALUES ('a'), ('b'), ('c')");
+            execute("CREATE TABLE s (k SYMBOL)");
+            execute("INSERT INTO s VALUES ('a'), ('x'), ('c')");
+            drainWalQueue();
+            final String sql = "SELECT count(*) FROM (SELECT m.k mk, s.k sk FROM m FULL OUTER JOIN s ON m.k <> s.k)";
+            assertUsesFactory(sql, NestedLoopFullJoinRecordCursorFactory.class);
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("count\n7\n");
         });
     }
 
