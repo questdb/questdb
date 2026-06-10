@@ -4054,6 +4054,50 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * {@code rollbackConditionally(0)} routes to {@code truncate()}, whose
+     * path-based branch rewrites the .pk header pages ({@code initKeyMemory})
+     * and queues the superseded .pv for purge. {@code PostingSealPurgeOperator}
+     * unlinks queued files with no durability barrier against .pk writeback,
+     * so truncate() must msync .pk before recording the purge: under the
+     * default NOSYNC commit mode nothing else syncs it, and a power loss after
+     * the unlink journals but before the .pk page writes back would recover a
+     * committed chain head pointing at a deleted .pv -- readers fail hard
+     * (mapValueMem has no missing-file tolerance) until REINDEX.
+     */
+    @Test
+    public void testRollbackConditionallyToZeroSyncsKeyFileBeforePurgeUnlink() throws Exception {
+        final PkSyncCountingFacade pkSync = new PkSyncCountingFacade();
+        ff = pkSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_zero_pk_sync";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                    Assert.assertTrue("facade must have attributed the .pk mapping", pkSync.hasPkMapping());
+
+                    pkSync.arm();
+                    writer.rollbackConditionally(0);
+                    pkSync.disarm();
+
+                    Assert.assertEquals("rollbackConditionally(0) must run truncate()", -1L, writer.getMaxValue());
+                    Assert.assertTrue(
+                            "truncate() must sync .pk before queuing the old .pv for purge; without "
+                                    + "the barrier a power loss after the purge unlink recovers a chain "
+                                    + "head pointing at a deleted .pv",
+                            pkSync.armedPkSyncCount() > 0
+                    );
+                }
+            }
+        });
+    }
+
     @Test
     public void testRollbackDiscardsFutureDeferredPostingSealPurge() throws Exception {
         assertMemoryLeak(() -> {
@@ -4109,6 +4153,54 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 runPostingSealPurgeJob(purgeJob);
             }
             assertPostingSealFilesExist(oldFiles, true);
+        });
+    }
+
+    /**
+     * A real-discard rollback (indexed rowids above the rollback point) runs
+     * {@code reencodeMonolithic}: it syncs the new .pv, publishes the new
+     * sealTxn's chain entry into .pk and returns, and
+     * {@code rollbackToMaxValue} immediately queues the superseded .pv/.pc
+     * for purge. {@code PostingSealPurgeOperator} unlinks queued files with
+     * no durability barrier against .pk writeback, so the publish must be
+     * msynced before the purge is recorded -- mirroring seal()'s
+     * unconditional .pk sync. Under the default NOSYNC commit mode nothing
+     * else syncs .pk, and a power loss after the unlink journals but before
+     * the .pk page writes back would recover a committed chain head pointing
+     * at a deleted .pv.
+     */
+    @Test
+    public void testRollbackRealDiscardSyncsKeyFileBeforePurgeUnlink() throws Exception {
+        final PkSyncCountingFacade pkSync = new PkSyncCountingFacade();
+        ff = pkSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_discard_pk_sync";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 100; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    Assert.assertTrue("facade must have attributed the .pk mapping", pkSync.hasPkMapping());
+
+                    pkSync.arm();
+                    writer.rollbackValues(49);
+                    pkSync.disarm();
+
+                    Assert.assertEquals("rollback must take the real-discard reencode path", 49L, writer.getMaxValue());
+                    Assert.assertTrue(
+                            "the rollback reencode must sync .pk after publishing the new chain entry "
+                                    + "and before rollbackToMaxValue queues the old .pv/.pc for purge; "
+                                    + "without the barrier a power loss after the purge unlink recovers "
+                                    + "a chain head pointing at deleted files",
+                            pkSync.armedPkSyncCount() > 0
+                    );
+                }
+            }
         });
     }
 
@@ -8547,6 +8639,91 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         int getFailureCount() {
             return failureCount;
+        }
+    }
+
+    /**
+     * Counts msync calls that target the posting index .pk mapping while
+     * armed. The openRW/mmap/mremap/munmap overrides map the .pk file's fd
+     * to its live mapping address range so msync(addr, ...) can be
+     * attributed back to the file. The rollback durability tests use it to
+     * assert that the rollback publish paths sync .pk before queuing the
+     * superseded files for purge.
+     */
+    private static class PkSyncCountingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger armedPkSyncs = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pkFds = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pkMappings = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            pkFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && pkFds.containsKey(fd)) {
+                pkMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pkMappings.remove(addr) != null && newAddr != -1) {
+                pkMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pkMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armedPkSyncs.incrementAndGet();
+                        break;
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pkMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pk")) {
+                pkFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            armedPkSyncs.set(0);
+            armed.set(true);
+        }
+
+        int armedPkSyncCount() {
+            return armedPkSyncs.get();
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        boolean hasPkMapping() {
+            return !pkMappings.isEmpty();
         }
     }
 

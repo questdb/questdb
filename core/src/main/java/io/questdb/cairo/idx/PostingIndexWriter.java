@@ -1611,6 +1611,14 @@ public class PostingIndexWriter implements IndexWriter {
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
             sealTxn = newTxn;
             initKeyMemory(keyMem, sealTxn);
+            // Make the header rewrite durable before recording the purge of
+            // the superseded .pv. PostingSealPurgeOperator unlinks with no
+            // ordering against .pk writeback, so without this barrier a
+            // power loss after the unlink journals but before the .pk page
+            // writes back recovers the old chain head pointing at a deleted
+            // .pv -- readers fail hard until REINDEX. Pairs with seal()'s
+            // unconditional .pk sync.
+            keyMem.sync(false);
             recordPostingSealPurge(oldSealTxn);
         } else {
             // fd-based writer (O3 path): no concurrent readers, safe to truncate in place
@@ -4679,6 +4687,18 @@ public class PostingIndexWriter implements IndexWriter {
                         /* overrideMinKey */ 0,
                         /* overrideMaxKey */ keyCount - 1
                 );
+                // The caller (rollbackToMaxValue) queues the superseded
+                // .pv/.pc for purge as soon as this method returns, and
+                // PostingSealPurgeOperator unlinks them with no ordering
+                // against .pk writeback. Sync the chain publish now -- the
+                // new .pv and sidecars are already synced above -- so a
+                // power loss after the unlink cannot recover a committed
+                // chain head pointing at deleted files. Pairs with seal()'s
+                // unconditional .pk sync; the fd-based branch is exempt
+                // because it never bumps sealTxn, so no purge is queued.
+                if (partitionPath.size() > 0 && keyMem.isOpen()) {
+                    keyMem.sync(false);
+                }
             } finally {
                 Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
             }
