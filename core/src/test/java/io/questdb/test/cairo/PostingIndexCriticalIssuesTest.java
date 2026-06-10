@@ -62,6 +62,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -479,6 +480,351 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             ts\tsym\tprice
                             2024-01-01T02:30:00.000000Z\tC\t7.0
                             2024-01-01T03:00:00.000000Z\tC\t4.0
+                            """);
+        });
+    }
+
+    /**
+     * Rollback leaves the covering sidecar inconsistent with the bumped
+     * sealTxn: {@code rollbackValues -> reencodeMonolithic} writes a new
+     * {@code .pv.N} and advances sealTxn to N, but never writes the
+     * {@code .pc0.N} sidecar. The next append then lazily creates
+     * {@code .pc0.N} in append layout ({@code openSidecarFilesForAppend}),
+     * and the commit's incremental seal snapshots that file believing it is
+     * a sealed stride-indexed sidecar. Interpreting appended cover data as
+     * stride offsets yields a multi-exabyte {@code putBlockOfBytes} that
+     * surfaces as "No space left" (ENOSPC/EFBIG), distressing the writer.
+     */
+    @Test
+    public void testRollbackThenIncrementalSealMisreadsAppendModeSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            execute("""
+                    INSERT INTO t_rb_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition
+            execute("""
+                    INSERT INTO t_rb_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 0.0
+                    FROM long_sequence(100)
+                    """);
+
+            TableToken tableToken = engine.verifyTableName("t_rb_seal");
+            try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                // Stage one O3 row and roll it back. The posting rollback
+                // reencodes the .pv at a bumped sealTxn but writes no .pc
+                // sidecar at that txn.
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:30:00.000000Z"));
+                row.putSym(1, "k0");
+                row.putDouble(2, 1.0);
+                row.append();
+                writer.rollback();
+
+                // O3 append touching only key k0: stride 0 is dirty, stride 1
+                // stays clean, so the seal goes incremental and copies the
+                // "clean" stride verbatim from the bogus append-layout sidecar.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putDouble(2, i);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            // count() is served from the row-id index, sum(price) from the
+            // covering sidecar - the sum catches silent sidecar corruption
+            // when the misread offsets happen to stay in bounds.
+            assertQuery("SELECT count(), sum(price) FROM t_rb_seal WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            60\t17725.0
+                            """);
+        });
+    }
+
+    /**
+     * Real-discard variant of
+     * {@link #testRollbackThenIncrementalSealMisreadsAppendModeSidecar}: the
+     * index holds rowids beyond the committed transient row count -- the
+     * state a crash between the posting-index publish and the txn commit
+     * leaves behind -- so the reopen-time {@code rollbackConditionally}
+     * eviction cannot no-op and must run the rollback reencode. The reencode
+     * publishes a bumped sealTxn with no {@code .pc} sidecar; the next
+     * append then creates the sidecar in append layout, and the commit's
+     * incremental seal must recognize the untrusted layout (the snapshot
+     * validation in {@code seal()}) and rebuild sidecars via
+     * {@code sealFull} instead of copying garbage stride offsets.
+     */
+    @Test
+    public void testReopenEvictionThenIncrementalSealRebuildsSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_evict (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            execute("""
+                    INSERT INTO t_rb_evict
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition
+            execute("""
+                    INSERT INTO t_rb_evict
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 0.0
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            TableToken token = engine.verifyTableName("t_rb_evict");
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            // Plant index values beyond the committed transient row count
+            // (3_100 rows are committed), mimicking a crash that happened
+            // after the posting index published new generations but before
+            // the table txn committed.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                try (PostingIndexWriter planted = new PostingIndexWriter(configuration)) {
+                    planted.of(path, "sym", COLUMN_NAME_TXN_NONE, partitionTs, partitionNameTxn);
+                    for (int i = 0; i < 5; i++) {
+                        planted.add(0, 3_100 + i);
+                    }
+                    planted.setMaxValue(3_104);
+                    planted.commit();
+                }
+            }
+
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // Opening the writer ran rollbackConditionally(3_100) on the
+                // last partition: getMaxValue() == 3_104 forces a real
+                // discard, so the rollback reencode published a bumped
+                // sealTxn without writing .pc sidecars at that txn.
+                // Covered reads in the rollback-to-next-seal window must
+                // still serve the committed data.
+                assertQuery("SELECT count(), sum(price) FROM t_rb_evict WHERE sym = 'k0'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                count\tsum
+                                10\t16500.0
+                                """);
+
+                // O3 append touching only key 'k0': one stride dirty, the
+                // other clean, so the seal goes incremental and must not
+                // trust the append-layout sidecar the gen flush just created
+                // at the rollback's sealTxn.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putDouble(2, i);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            assertQuery("SELECT count(), sum(price) FROM t_rb_evict WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            60\t17725.0
+                            """);
+            // 'k1' lives in the stride the post-rollback commit left clean;
+            // its covered values come from the sidecar the rollback reencode
+            // rebuilt.
+            assertQuery("SELECT count(), sum(price) FROM t_rb_evict WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            11\t13510.0
+                            """);
+        });
+    }
+
+    /**
+     * Defense-in-depth check for the snapshot validation in {@code seal()}:
+     * a published sealTxn whose {@code .pc} sidecar is missing on disk is
+     * exactly the state the rollback reencode left behind before this fix
+     * (and what a cover-sources-not-configured rollback still leaves), as
+     * well as what a database upgraded mid-incident carries. The next gen
+     * flush recreates the file in append layout; the following incremental
+     * seal must recognize it as untrusted and rebuild via {@code sealFull}
+     * instead of interpreting raw cover bytes as stride offsets.
+     */
+    @Test
+    public void testIncrementalSealDistrustsRecreatedSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_orphan (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            execute("""
+                    INSERT INTO t_rb_orphan
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition
+            execute("""
+                    INSERT INTO t_rb_orphan
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 0.0
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            // Simulate the pre-fix rollback state: the chain head references
+            // a sealTxn that has no .pc sidecar on disk.
+            java.io.File sidecar = newestSidecarFile(engine.verifyTableName("t_rb_orphan"));
+            Assert.assertTrue("failed to delete " + sidecar, sidecar.delete());
+
+            TableToken token = engine.verifyTableName("t_rb_orphan");
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // O3 append touching only key 'k0': the gen flush lazily
+                // recreates the missing .pc in append layout, one stride is
+                // dirty and the other clean, so the seal goes incremental
+                // and must distrust the recreated file.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putDouble(2, i);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            // 'k0' lives in the dirty stride, which the seal re-encodes
+            // from live data either way; 'k1' lives in the clean stride,
+            // whose covered data only survives when the seal refuses to
+            // copy it out of the append-layout file (the unfixed code
+            // either crashes with a multi-exabyte allocation or silently
+            // writes an empty stride block, returning NULL sums here).
+            assertQuery("SELECT count(), sum(price) FROM t_rb_orphan WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            60\t17725.0
+                            """);
+            assertQuery("SELECT count(), sum(price) FROM t_rb_orphan WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            11\t13510.0
+                            """);
+        });
+    }
+
+    /**
+     * The incremental seal's clean-stride copy used the snapshot length as
+     * the last stride's upper bound. Post-seal gen flushes append raw cover
+     * blocks to the same {@code .pc} file after its sealed region, so every
+     * incremental seal whose last stride stayed clean swept those gen blocks
+     * into the new sealed sidecar, growing it by the raw size of all data
+     * appended since the previous seal -- again on every following seal. The
+     * copy must stop at the stored stride-index sentinel.
+     */
+    @Test
+    public void testIncrementalSealLastCleanStrideStopsAtSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_tail (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides; 'k1' is key 0
+            // (stride 0), 'k0' is key 299 (stride 1, the last stride).
+            execute("""
+                    INSERT INTO t_tail
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+
+            TableToken token = engine.verifyTableName("t_tail");
+            long sealedSizeAfterFirstSeal;
+            long sealedSizeAfterSecondSeal;
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // Two O3-append commits on 'k1' only (descending timestamps
+                // past the committed max keep the last partition in
+                // append=true O3 mode, the shape that seals in place rather
+                // than rewriting the partition). The first commit runs the
+                // initial full seal; the second finds stride 0 dirty and
+                // stride 1 (the last) clean, so it seals incrementally. The
+                // 20_000 raw cover values (160_000 bytes) the second commit
+                // flushes before its seal sit as gen blocks after the first
+                // seal's stride data; copying the clean last stride must not
+                // sweep them into the new sealed file.
+                appendDescendingK1Batch(writer, "2024-01-01T01:00:00.000000Z");
+                writer.commit();
+                sealedSizeAfterFirstSeal = newestSidecarSize(token);
+
+                appendDescendingK1Batch(writer, "2024-01-01T02:00:00.000000Z");
+                writer.commit();
+                sealedSizeAfterSecondSeal = newestSidecarSize(token);
+            }
+
+            // The second sealed sidecar only grows by the ALP-compressed
+            // encoding of 20_000 constant doubles (a few KiB). Sweeping the
+            // raw gen blocks would grow it by at least 160_000 bytes.
+            long growth = sealedSizeAfterSecondSeal - sealedSizeAfterFirstSeal;
+            Assert.assertTrue(
+                    "incremental seal swept post-seal gen blocks into the last clean stride [growth=" + growth + ']',
+                    growth < 80_000);
+
+            // 'k1': 10 base rows (sum 13_510) + 40_000 rows at 1.0 each.
+            assertQuery("SELECT count(), sum(price) FROM t_tail WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            40010\t53510.0
+                            """);
+            // 'k0' lives in the clean last stride: its covered data is
+            // copied verbatim across both seals and must stay intact.
+            assertQuery("SELECT count(), sum(price) FROM t_tail WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            10\t16500.0
                             """);
         });
     }
@@ -7798,6 +8144,61 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         }
         return false;
+    }
+
+    /**
+     * Appends 20_000 'k1' rows at price 1.0 with strictly descending
+     * timestamps starting just above {@code baseTimestamp}. Descending rows
+     * past the committed max keep the last partition in append=true O3
+     * mode, which seals the posting index in place on commit.
+     */
+    private static void appendDescendingK1Batch(TableWriter writer, String baseTimestamp) throws NumericException {
+        long base = MicrosFormatUtils.parseTimestamp(baseTimestamp);
+        for (int i = 0; i < 20_000; i++) {
+            TableWriter.Row r = writer.newRow(base + (19_999 - i));
+            r.putSym(1, "k1");
+            r.putDouble(2, 1.0);
+            r.append();
+        }
+    }
+
+    /**
+     * The newest (highest sealTxn) {@code sym.pc0.0.N} covering sidecar in
+     * the table's first partition. Superseded sidecars linger until the
+     * async seal purge runs, so the highest txn picks the live one.
+     */
+    private static java.io.File newestSidecarFile(TableToken token) {
+        long partitionTs;
+        long partitionNameTxn;
+        try (TableReader reader = engine.getReader(token)) {
+            partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+            partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+        }
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+            java.io.File dir = new java.io.File(path.toString());
+            String[] names = dir.list();
+            Assert.assertNotNull("partition dir must exist: " + dir, names);
+            String prefix = "sym.pc0.0.";
+            long bestTxn = -1;
+            java.io.File best = null;
+            for (String n : names) {
+                if (n.startsWith(prefix)) {
+                    long txn = Long.parseLong(n.substring(prefix.length()));
+                    if (txn > bestTxn) {
+                        bestTxn = txn;
+                        best = new java.io.File(dir, n);
+                    }
+                }
+            }
+            Assert.assertNotNull("no " + prefix + "* sidecar found in " + dir, best);
+            return best;
+        }
+    }
+
+    private static long newestSidecarSize(TableToken token) {
+        return newestSidecarFile(token).length();
     }
 
     private static String timestampAtMinute(int minuteOfDay) {
