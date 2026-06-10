@@ -1594,6 +1594,60 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * C2 repro (fixed->var dedup key): symmetric to {@link #testO3DedupKeyConversionVarToFixed}
+     * but converting a fixed dedup key (INT) to a var-size target (VARCHAR). The parquet
+     * partition decodes the key as a fixed INT array with no aux buffer, but the O3 dedup
+     * compare in O3PartitionJob.mergeRowGroup treats the target VARCHAR column as var-size and
+     * reads getChunkAuxPtr -- a dangling/zero aux pointer for a fixed decode -- producing a
+     * garbage compare or a SIGSEGV. The native control table (nt) dedups correctly, so the
+     * cursors must match once C2 is fixed.
+     */
+    @Test
+    public void testO3DedupKeyConversionFixedToVar() throws Exception {
+        assertMemoryLeak(() -> assertO3DedupKeyConversion(
+                "INT", "VARCHAR",
+                "10", "30", "50",   // seed keys: fixed INT literals
+                "'30'", "'31'"      // O3 keys: var literals, '30' duplicates seed 30, '31' is new
+        ));
+    }
+
+    /**
+     * C2 repro (symbol->fixed dedup key): a SYMBOL dedup key converted to a fixed target (LONG).
+     * Like {@link #testO3DedupKeyConversionVarToFixed}, the parquet partition decodes the key as
+     * VARCHAR_SLICE (symbol stored as UTF-8 BYTE_ARRAY), which the O3 dedup compare in
+     * O3PartitionJob.mergeRowGroup would misread as a fixed LONG array. The pre-pass must
+     * materialise the partition to native (resolving the symbol map) before the type change so
+     * dedup runs natively. The native control table (nt) dedups correctly.
+     */
+    @Test
+    public void testO3DedupKeyConversionSymbolToFixed() throws Exception {
+        assertMemoryLeak(() -> assertO3DedupKeyConversion(
+                "SYMBOL", "LONG",
+                "'10'", "'30'", "'50'",   // seed keys: symbol string literals
+                "30", "31"                // O3 keys: fixed literals, 30 duplicates seed '30', 31 is new
+        ));
+    }
+
+    /**
+     * C2 repro (var->fixed dedup key): a deduplicated WAL table whose non-timestamp dedup key is
+     * converted from a var-size source (VARCHAR) to a fixed target (LONG) while its partition is
+     * parquet, then takes an O3 insert. The parquet partition's dedup-key column is decoded into
+     * the row-group buffer as VARCHAR_SLICE, but the O3 dedup compare in O3PartitionJob.mergeRowGroup
+     * reads it as a fixed LONG array (getChunkDataPtr interpreted with the target column size). The
+     * bytes compared are the var-size slice layout, not LONG key values, so the dedup decision is
+     * wrong: the duplicate row is not collapsed (or the wrong row is). The native control table (nt)
+     * dedups correctly, so the cursors must match once C2 is fixed.
+     */
+    @Test
+    public void testO3DedupKeyConversionVarToFixed() throws Exception {
+        assertMemoryLeak(() -> assertO3DedupKeyConversion(
+                "VARCHAR", "LONG",
+                "'10'", "'30'", "'50'",   // seed keys: var VARCHAR literals
+                "30", "31"                // O3 keys: fixed literals, 30 duplicates seed '30', 31 is new
+        ));
+    }
+
+    /**
      * O3 insert into a parquet partition that has a pending column type cast must
      * rewrite the parquet with the new type, materializing the conversion. The
      * partition stays in parquet format but the on-disk parquet column type
@@ -2764,6 +2818,69 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     private void assertConversion(String sourceType, String targetType, String values) throws Exception {
         assertConversionWithEncoding(sourceType, targetType, values, null);
+    }
+
+    /**
+     * Shared body for the C2 O3-dedup-on-converted-key reproducers. Builds a native control table
+     * (nt) and a parquet table (pt), both WAL + DEDUP UPSERT KEYS(ts, k), seeds three rows,
+     * converts pt's partition to parquet, then ALTERs the dedup key 'k' from srcKeyType to
+     * dstKeyType on both tables (changeColumnType preserves the dedup-key flag). A final O3 insert
+     * lands one duplicate key (dupKey at the same ts as seedKeyB, which must collapse and replace
+     * val) and one new key (newKey at an out-of-order ts, which forces the merge into the parquet
+     * partition). nt dedups against native data; pt dedups inside O3PartitionJob.mergeRowGroup
+     * against the parquet row-group decode buffer, so the two cursors must match.
+     * <p>
+     * seedKeyA/B/C are srcKeyType literals; dupKey equals seedKeyB after conversion and newKey is a
+     * distinct dstKeyType literal -- both O3 keys are written post-ALTER, so they use dstKeyType.
+     */
+    private void assertO3DedupKeyConversion(
+            String srcKeyType,
+            String dstKeyType,
+            String seedKeyA,
+            String seedKeyB,
+            String seedKeyC,
+            String dupKey,
+            String newKey
+    ) throws Exception {
+        try {
+            String create = "CREATE TABLE %s (k " + srcKeyType + ", val INT, ts TIMESTAMP)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)";
+            execute(create.formatted("nt"));
+            execute(create.formatted("pt"));
+
+            String seed = "INSERT INTO %s VALUES"
+                    + " (" + seedKeyA + ", 100, '2024-01-01T00:00:01.000000Z'),"
+                    + " (" + seedKeyB + ", 300, '2024-01-01T00:00:03.000000Z'),"
+                    + " (" + seedKeyC + ", 500, '2024-01-01T00:00:05.000000Z')";
+            execute(seed.formatted("nt"));
+            execute(seed.formatted("pt"));
+            drainWalQueue();
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE nt ALTER COLUMN k TYPE " + dstKeyType);
+            execute("ALTER TABLE pt ALTER COLUMN k TYPE " + dstKeyType);
+            drainWalQueue();
+
+            // O3 insert: dupKey collides with the seed row at 00:00:03 (must collapse to one row,
+            // val replaced by 999); newKey at 00:00:02 is out-of-order, forcing the O3 merge into
+            // the parquet partition, and carries a brand-new key (no collapse).
+            String o3 = "INSERT INTO %s VALUES"
+                    + " (" + dupKey + ", 999, '2024-01-01T00:00:03.000000Z'),"
+                    + " (" + newKey + ", 777, '2024-01-01T00:00:02.000000Z')";
+            execute(o3.formatted("nt"));
+            execute(o3.formatted("pt"));
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT k, val, ts FROM nt ORDER BY ts, k",
+                    "SELECT k, val, ts FROM pt ORDER BY ts, k"
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
     }
 
     private void assertConversionWithEncoding(String sourceType, String targetType, String values, String encoding) throws Exception {
