@@ -383,6 +383,12 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getDate(Record rec) {
+            // zeroValue is always LONG_NULL, which is the NULL sentinel for both DATE and TIMESTAMP results.
+            return zeroValue;
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             return zeroValue;
         }
