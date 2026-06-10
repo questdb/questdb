@@ -42,6 +42,7 @@ public class O3ParquetMergeContext implements Closeable {
     private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private IntList activeColIndices;
     private IntList activeToDecodeIdx;
+    private DirectIntList bloomFilterColumns;
     private PartitionDescriptor chunkDescriptor;
     // Non-owning descriptor for the O3-only writers (writeFreshParquetFromO3 +
     // copyO3ToRowGroup). Column pointers reference already-sorted/deduped O3
@@ -66,6 +67,7 @@ public class O3ParquetMergeContext implements Closeable {
         actionsBuf = new ObjList<>();
         activeColIndices = new IntList();
         activeToDecodeIdx = new IntList();
+        bloomFilterColumns = new DirectIntList(16, MemoryTag.NATIVE_O3);
         chunkDescriptor = new PartitionDescriptor();
         freshPartitionDescriptor = new PartitionDescriptor();
         gapO3Ranges = new LongList();
@@ -86,6 +88,7 @@ public class O3ParquetMergeContext implements Closeable {
     public void clear() {
         activeColIndices.clear();
         activeToDecodeIdx.clear();
+        bloomFilterColumns.clear();
         chunkDescriptor.clear();
         freshPartitionDescriptor.clear();
         gapO3Ranges.clear();
@@ -105,6 +108,7 @@ public class O3ParquetMergeContext implements Closeable {
         actionsBuf = null;
         activeColIndices = null;
         activeToDecodeIdx = null;
+        bloomFilterColumns = Misc.free(bloomFilterColumns);
         chunkDescriptor = Misc.free(chunkDescriptor);
         freshPartitionDescriptor = Misc.free(freshPartitionDescriptor);
         gapO3Ranges = null;
@@ -139,6 +143,10 @@ public class O3ParquetMergeContext implements Closeable {
     public IntList getActiveToDecodeIdx(int columnCount) {
         activeToDecodeIdx.setPos(columnCount);
         return activeToDecodeIdx;
+    }
+
+    public DirectIntList getBloomFilterColumns() {
+        return bloomFilterColumns;
     }
 
     public PartitionDescriptor getChunkDescriptor() {

@@ -3741,6 +3741,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
             final double minCompressionRatio = configuration.getPartitionEncoderParquetMinCompressionRatio();
 
+            // Honor per-column bloom filter flags (bit 25 of the parquet encoding
+            // config), exactly as the CONVERT path does in produceParquetFromNative.
+            final DirectIntList bloomFilterIndexes = ctx.getBloomFilterColumns();
+            bloomFilterIndexes.clear();
+            TableUtils.deriveBloomFilterColumnIndexes(metadata, bloomFilterIndexes);
+            long bloomFilterColumnIndexesPtr = 0;
+            int bloomFilterColumnCount = 0;
+            if (bloomFilterIndexes.size() > 0) {
+                bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
+                bloomFilterColumnCount = (int) bloomFilterIndexes.size();
+            }
+
             PartitionEncoder.encodeWithOptions(
                     descriptor,
                     parquetPath,
@@ -3750,8 +3762,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     rowGroupSize,
                     dataPageSize,
                     parquetVersion,
-                    0,
-                    0,
+                    bloomFilterColumnIndexesPtr,
+                    bloomFilterColumnCount,
                     configuration.getPartitionEncoderParquetBloomFilterFpp(),
                     minCompressionRatio,
                     Files.toOsFd(parquetMetaFd),

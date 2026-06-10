@@ -782,6 +782,40 @@ public final class TableUtils {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
+    /**
+     * Derives the dense descriptor indexes of columns carrying the bloom-filter flag
+     * (bit 25, set by {@link #packParquetConfig}) in their per-column parquet encoding
+     * config, appending them to {@code indexes}.
+     * <p>
+     * The index space is the parquet encoder's dense column list: deleted columns are
+     * skipped, so the produced indexes line up with the columns added to the
+     * {@link io.questdb.griffin.engine.table.parquet.PartitionDescriptor PartitionDescriptor}
+     * by both {@link #produceParquetFromNative} (CONVERT) and
+     * {@code O3PartitionJob.writeFreshParquetFromO3} (fresh O3 partitions). The Rust encoder
+     * reads bloom columns solely from this explicit list, never from the per-column config,
+     * so every encoder path that wants config-driven bloom filters must build the list here.
+     * <p>
+     * Like {@link #parseBloomFilterColumnIndexes}, this method only appends; the caller clears
+     * {@code indexes} first when a fresh result is required.
+     *
+     * @param metadata table metadata whose per-column parquet encoding config flags are inspected
+     * @param indexes  reusable DirectIntList that receives the flagged columns' dense indexes
+     */
+    public static void deriveBloomFilterColumnIndexes(RecordMetadata metadata, DirectIntList indexes) {
+        final int columnCount = metadata.getColumnCount();
+        int descriptorIndex = 0;
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType <= 0) {
+                continue; // skip deleted columns
+            }
+            if (isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
+                indexes.add(descriptorIndex);
+            }
+            descriptorIndex++;
+        }
+    }
+
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
         long recSize = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -1938,17 +1972,7 @@ public final class TableUtils {
                 bloomFilterIndexes.clear();
                 if (useMetadataBloomFilters) {
                     // Derive bloom filter columns from per-column metadata flags
-                    int metaDescriptorIndex = 0;
-                    for (int i = 0; i < columnCount; i++) {
-                        final int colType = metadata.getColumnType(i);
-                        if (colType <= 0) {
-                            continue;
-                        }
-                        if (TableUtils.isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
-                            bloomFilterIndexes.add(metaDescriptorIndex);
-                        }
-                        metaDescriptorIndex++;
-                    }
+                    deriveBloomFilterColumnIndexes(metadata, bloomFilterIndexes);
                 } else {
                     // Explicit bloom_filter_columns override from CONVERT PARTITION WITH clause
                     parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);

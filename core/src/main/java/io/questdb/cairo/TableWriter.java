@@ -332,6 +332,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    // Mirrors the hasParquetPartitions flag last published to the metadata cache, so
+    // commit00() only takes the global metadata-cache write lock when the flag flips.
+    private boolean hasNotifiedParquetPartitions;
     private boolean hasPostingIndexers;
     private int indexCount;
     private boolean isInCtorRecovery;
@@ -4811,6 +4814,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriterAndPublishPendingPostingSealPurges();
+        // A data commit on a FORMAT PARQUET table creates parquet partitions through
+        // the O3 path, but unlike CONVERT/ATTACH it does not otherwise refresh the
+        // metadata cache. Left stale, MetadataCache.hasParquetPartitions stays false
+        // and SqlCodeGenerator never enables parquet row-group pruning (bloom and
+        // min/max stats) for the table. Publish only when the flag actually flips:
+        // the metadata-cache write lock is global, so taking it on every commit would
+        // serialize with the metadata reads that every query performs.
+        final boolean hasParquetPartitions = txWriter.hasParquetPartitions();
+        if (hasParquetPartitions != hasNotifiedParquetPartitions) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, hasParquetPartitions);
+            }
+            hasNotifiedParquetPartitions = hasParquetPartitions;
+        }
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
     }

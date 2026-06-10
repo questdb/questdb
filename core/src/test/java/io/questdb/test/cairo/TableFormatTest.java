@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -392,6 +393,74 @@ public class TableFormatTest extends AbstractCairoTest {
                             "2024-01-01\ttrue\n" +
                             "2024-01-02\ttrue\n" +
                             "2024-01-03\ttrue\n");
+        });
+    }
+
+    @Test
+    public void testFreshParquetEnablesRowGroupPruning() throws Exception {
+        // A fresh FORMAT PARQUET table must enable parquet row-group pruning on read.
+        // The pushdown is gated on the metadata cache reporting that the table has
+        // parquet partitions, so the O3/WAL-apply commit that creates the partition
+        // must refresh that flag (commit00). Left stale, no row group is ever skipped
+        // - not even by min/max stats. 'val' carries no bloom filter, so the skip
+        // below is driven purely by row-group statistics: 1_000_000 sits above the
+        // partition's max.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL FORMAT PARQUET");
+            execute("""
+                    INSERT INTO tango VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertSql("val\n", "SELECT val FROM tango WHERE val = 1_000_000");
+            Assert.assertTrue(
+                    "fresh FORMAT PARQUET table must enable row-group pruning",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0
+            );
+        });
+    }
+
+    @Test
+    public void testFreshParquetHonorsBloomFilterColumns() throws Exception {
+        // A fresh FORMAT PARQUET partition written straight from the O3 buffers
+        // (writeFreshParquetFromO3) must honor the per-column BLOOM_FILTER flag,
+        // exactly as the CONVERT path does. The Rust encoder reads bloom columns
+        // only from the explicit index list, not from the per-column config in the
+        // descriptor, so the writer has to build that list itself. The queried
+        // value 25_000 falls inside the column's [1, 100_000] min/max range, so
+        // row-group statistics cannot exclude it - only a bloom filter can. A fresh
+        // writer that dropped the configured filter would skip no row groups.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (val INT PARQUET(BLOOM_FILTER), ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL FORMAT PARQUET");
+            execute("""
+                    INSERT INTO tango VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+
+            assertSql("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n",
+                    "SELECT name, isParquet FROM table_partitions('tango')");
+
+            // A value within [min, max] but absent from the data: only the bloom
+            // filter can exclude the row group, proving the filter was written.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertSql("val\n", "SELECT val FROM tango WHERE val = 25_000");
+            Assert.assertTrue(
+                    "fresh parquet partition must carry the configured bloom filter",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0
+            );
+
+            // An existing value must still be found through the bloom filter.
+            assertSql("val\n50000\n", "SELECT val FROM tango WHERE val = 50_000");
         });
     }
 
