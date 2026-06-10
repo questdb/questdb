@@ -29,16 +29,27 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.GeoIntFunction;
 import io.questdb.griffin.engine.functions.GeoLongFunction;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullDecimalGroupByFunctionFactory;
@@ -46,10 +57,22 @@ import io.questdb.griffin.engine.functions.groupby.FirstNotNullGeoHashGroupByFun
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullIPv4GroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullCharGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullDateGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullDecimalGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullDoubleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullFloatGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullIPv4GroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullIntGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullLongGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullStrGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullSymbolGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullUuidGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullVarcharGroupByFunctionFactory;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -57,6 +80,8 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -418,6 +443,26 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastNotNullCharMergeKeepsNonNullOverNullDest() throws Exception {
+        CharArg arg = new CharArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullCharGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set('a')
+        );
+    }
+
+    @Test
+    public void testLastNotNullDateMergeKeepsNonNullOverNullDest() throws Exception {
+        DateArg arg = new DateArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDateGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
     public void testLastNotNullDecimal128MergeKeepsNonNullOverNullDest() throws Exception {
         DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL128, 30, 5));
         assertLastNotNullMergeKeepsNonNull(
@@ -586,6 +631,26 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastNotNullDoubleMergeKeepsNonNullOverNullDest() throws Exception {
+        DoubleArg arg = new DoubleArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDoubleGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(1.5)
+        );
+    }
+
+    @Test
+    public void testLastNotNullFloatMergeKeepsNonNullOverNullDest() throws Exception {
+        FloatArg arg = new FloatArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullFloatGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(1.5f)
+        );
+    }
+
+    @Test
     public void testLastNotNullGeoLongMergeKeepsNonNullOverNullDest() throws Exception {
         GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
         assertLastNotNullMergeKeepsNonNull(
@@ -642,6 +707,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastNotNullIntMergeKeepsNonNullOverNullDest() throws Exception {
+        IntArg arg = new IntArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullIntGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42)
+        );
+    }
+
+    @Test
     public void testLastNotNullLongMergeKeepsNonNullOverNullDest() throws Exception {
         LongArg arg = new LongArg();
         assertLastNotNullMergeKeepsNonNull(
@@ -651,13 +726,66 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testLastNotNullStrMergeKeepsNonNullOverNullDest() throws Exception {
+        StrArg arg = new StrArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullStrGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set("abc")
+        );
+    }
+
+    @Test
+    public void testLastNotNullSymbolMergeKeepsNonNullOverNullDest() throws Exception {
+        SymbolArg arg = new SymbolArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullSymbolGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(5)
+        );
+    }
+
+    @Test
+    public void testLastNotNullTimestampMergeKeepsNonNullOverNullDest() throws Exception {
+        TimestampArg arg = new TimestampArg(ColumnType.TIMESTAMP);
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullTimestampGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullUuidMergeKeepsNonNullOverNullDest() throws Exception {
+        UuidArg arg = new UuidArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullUuidGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullVarcharMergeKeepsNonNullOverNullDest() throws Exception {
+        VarcharArg arg = new VarcharArg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullVarcharGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set("abc")
+        );
+    }
+
     private void assertLastNotNullMergeKeepsNonNull(GroupByFunction func, Runnable setNull, Runnable setNonNull) throws Exception {
         assertMemoryLeak(() -> {
             final ArrayColumnTypes types = new ArrayColumnTypes();
             func.initValueTypes(types);
             func.initValueIndex(0);
-            try (SimpleMapValue dest = new SimpleMapValue(types.getColumnCount());
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                 SimpleMapValue dest = new SimpleMapValue(types.getColumnCount());
                  SimpleMapValue src = new SimpleMapValue(types.getColumnCount())) {
+                // Str/Varchar store the value via the allocator; for inline types setAllocator is a no-op.
+                func.setAllocator(allocator);
                 // dest: a group whose only seen row is NULL, committed at the higher rowId.
                 func.setEmpty(dest);
                 setNull.run();
@@ -713,6 +841,40 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
         void apply(int row);
     }
 
+    private static final class CharArg extends CharFunction {
+        private char value;
+
+        @Override
+        public char getChar(Record rec) {
+            return value;
+        }
+
+        private void set(char v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = 0;
+        }
+    }
+
+    private static final class DateArg extends DateFunction {
+        private long value = Numbers.LONG_NULL;
+
+        @Override
+        public long getDate(Record rec) {
+            return value;
+        }
+
+        private void set(long v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = Numbers.LONG_NULL;
+        }
+    }
+
     private static final class DecimalArg extends DecimalFunction {
         private final Decimal256 value = new Decimal256();
 
@@ -760,6 +922,40 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
 
         private void setNull() {
             value.ofRawNull();
+        }
+    }
+
+    private static final class DoubleArg extends DoubleFunction {
+        private double value = Double.NaN;
+
+        @Override
+        public double getDouble(Record rec) {
+            return value;
+        }
+
+        private void set(double v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = Double.NaN;
+        }
+    }
+
+    private static final class FloatArg extends FloatFunction {
+        private float value = Float.NaN;
+
+        @Override
+        public float getFloat(Record rec) {
+            return value;
+        }
+
+        private void set(float v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = Float.NaN;
         }
     }
 
@@ -858,6 +1054,23 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
         }
     }
 
+    private static final class IntArg extends IntFunction {
+        private int value = Numbers.INT_NULL;
+
+        @Override
+        public int getInt(Record rec) {
+            return value;
+        }
+
+        private void set(int v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = Numbers.INT_NULL;
+        }
+    }
+
     private static final class LongArg extends LongFunction {
         private long value = Numbers.LONG_NULL;
 
@@ -872,6 +1085,138 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
 
         private void setNull() {
             value = Numbers.LONG_NULL;
+        }
+    }
+
+    private static final class StrArg extends StrFunction {
+        private CharSequence value;
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return value;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return value;
+        }
+
+        private void set(CharSequence v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = null;
+        }
+    }
+
+    private static final class SymbolArg extends SymbolFunction {
+        private int value = SymbolTable.VALUE_IS_NULL;
+
+        @Override
+        public int getInt(Record rec) {
+            return value;
+        }
+
+        @Override
+        public CharSequence getSymbol(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return false;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            throw new UnsupportedOperationException();
+        }
+
+        private void set(int v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = SymbolTable.VALUE_IS_NULL;
+        }
+    }
+
+    private static final class TimestampArg extends TimestampFunction {
+        private long value = Numbers.LONG_NULL;
+
+        private TimestampArg(int timestampType) {
+            super(timestampType);
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        private void set(long v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = Numbers.LONG_NULL;
+        }
+    }
+
+    private static final class UuidArg extends UuidFunction {
+        private long hi = Numbers.LONG_NULL;
+        private long lo = Numbers.LONG_NULL;
+
+        @Override
+        public long getLong128Hi(Record rec) {
+            return hi;
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            return lo;
+        }
+
+        private void set(long v) {
+            lo = v;
+            hi = 0;
+        }
+
+        private void setNull() {
+            lo = Numbers.LONG_NULL;
+            hi = Numbers.LONG_NULL;
+        }
+    }
+
+    private static final class VarcharArg extends VarcharFunction {
+        private Utf8Sequence value;
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return value;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return value;
+        }
+
+        private void set(CharSequence v) {
+            value = new Utf8String(v);
+        }
+
+        private void setNull() {
+            value = null;
         }
     }
 }
