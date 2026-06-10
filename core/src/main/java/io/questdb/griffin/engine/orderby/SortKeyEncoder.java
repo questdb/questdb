@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
@@ -66,8 +67,8 @@ public class SortKeyEncoder implements QuietCloseable {
     private final boolean isSingleColumnFixed8;
     private final boolean[] isSymbol;
     private final int[] offsets;
-    private final ObjList<DirectIntList> rankMaps;
     private final int[] rankMapSizes;
+    private final ObjList<DirectIntList> rankMaps;
     private SortKeyType keyType;
     private long padMask;
 
@@ -173,6 +174,14 @@ public class SortKeyEncoder implements QuietCloseable {
         }
 
         return rankMaps;
+    }
+
+    public static long entryHeapBytes(CairoConfiguration configuration) {
+        // Clamp each operand before adding so an unset (Long.MAX_VALUE) cap does
+        // not overflow into a negative budget.
+        final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), MAX_ENTRY_HEAP_BYTES);
+        final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_ENTRY_HEAP_BYTES);
+        return Math.min(keyCap + valueCap, MAX_ENTRY_HEAP_BYTES);
     }
 
     public static IntHashSet extractSortKeyColumnIndexes(IntList sortColumnFilter) {

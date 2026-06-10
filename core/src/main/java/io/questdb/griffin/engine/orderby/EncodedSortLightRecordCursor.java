@@ -49,9 +49,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
-    private final long keyCapBytes;
+    private final long maxEntryMemBytes;
     private final long parallelThreshold;
-    private final long valueCapBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -75,9 +74,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
-            // Clamp each cap so an unset (Long.MAX_VALUE) value stays a usable budget.
-            this.keyCapBytes = Math.min(configuration.getSqlSortKeyMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
-            this.valueCapBytes = Math.min(configuration.getSqlSortLightValueMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
+            this.maxEntryMemBytes = SortKeyEncoder.entryHeapBytes(configuration);
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } finally {
@@ -190,12 +187,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private void buildAndSort() {
         // Pre-allocate if size is known
         long estimatedSize = baseCursor.size();
-        // Each cap binds on its own, like the tree chain's separate key and value heaps.
-        long maxEntries = Math.min(
-                Math.min(keyCapBytes / keyType.keyLength(), valueCapBytes / Long.BYTES),
-                SortKeyEncoder.MAX_ENTRY_HEAP_BYTES / entrySize
-        );
-        long maxEntryMemBytes = maxEntries * entrySize;
+        long maxEntries = maxEntryMemBytes / entrySize;
         if (estimatedSize > 0) {
             if (estimatedSize > maxEntries) {
                 SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
