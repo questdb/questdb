@@ -1162,7 +1162,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             // We don't return true, because that would make the infrastructure call us immediately again
             // and we would monopolize the thread. Instead, we use PeerIsSlowToWriteException as a signal
             // to be registered for reading. This gives the worker thread a chance to run other processors.
-            throw PeerIsSlowToWriteException.INSTANCE;
+            throw registerDispatcherRead();
         } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // Need more data from/to peer
             throw e;
