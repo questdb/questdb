@@ -10479,6 +10479,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // Regression: dropping an INCLUDE column tombstones its cover slot
+    // (coveringColumnIndices entry -1), and the seal maps the slot as
+    // type=-1/shift=0. A pure-append O3 commit keeps the dense gen0 plus
+    // sparse O3 gens, so the reseal takes sealIncremental, whose
+    // writeSidecarStrideData did not skip tombstoned slots and crashed with
+    // "maxCompressedSize: unsupported column type -1". The setup needs more
+    // than DENSE_STRIDE (256) symbol keys with the O3 batch touching only
+    // the first stride: with every stride dirty, sealIncremental falls back
+    // to the tombstone-safe sealFull and the bug stays hidden. Found by
+    // WalWriterFuzzTest#testConvertPartitionToParquetWithCoveringIndex
+    // (seeds 6069995328240L, 1781013513457L).
+    @Test
+    public void testDropCoveredColumnThenO3AppendIncrementalSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // More than DENSE_STRIDE (256) symbol keys, so the sealed index
+            // has at least two strides.
+            execute("""
+                    INSERT INTO t_drop_o3
+                    SELECT timestamp_sequence('2024-01-01', 1_000_000) ts,
+                           ('sym_' || x)::SYMBOL sym,
+                           x::DOUBLE price
+                    FROM long_sequence(300)
+                    """);
+
+            // ALTER ADD INDEX on existing data builds a dense gen0 per
+            // partition, the precondition for the incremental seal.
+            execute("ALTER TABLE t_drop_o3 ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            // Tombstone the covering slot.
+            execute("ALTER TABLE t_drop_o3 DROP COLUMN price");
+
+            // Pure-append O3 into the last partition: the batch is internally
+            // out of order so the writer takes the O3 commit path, but its
+            // min ts is above the committed max, so the partition task runs
+            // with append=true and the seal keeps the dense gen0 + sparse O3
+            // gens. Existing symbol keys from the first stride only, so at
+            // least one stride stays clean and the incremental seal does not
+            // fall back to the (tombstone-safe) full seal.
+            execute("""
+                    INSERT INTO t_drop_o3 VALUES
+                    ('2024-01-01T01:00:00', 'sym_1'),
+                    ('2024-01-01T00:59:00', 'sym_2')
+                    """);
+
+            assertQuery("SELECT ts, sym FROM t_drop_o3 WHERE sym = 'sym_1'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym
+                            2024-01-01T00:00:00.000000Z\tsym_1
+                            2024-01-01T01:00:00.000000Z\tsym_1
+                            """);
+        });
+    }
+
     @Test
     public void testDropIndexRemovesCovering() throws Exception {
         assertMemoryLeak(() -> {
@@ -11745,6 +11809,103 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
+        });
+    }
+
+    // Regression: sealIncremental sized the shared dirty-stride sidecar
+    // scratch at Long.BYTES per merged value, but
+    // writeSidecarFixedStrideForColumn assembles one key's raw values into it
+    // at (1 << shift) bytes each -- 16 for UUID, 32 for LONG256. A symbol key
+    // holding more than half (16B) or a quarter (32B) of a dirty stride's
+    // merged values wrote past the allocation: the hot key below overran the
+    // scratch by ~94 KB of native heap. The overrun is silent in a plain run
+    // (the compressor reads the same out-of-bounds bytes straight back), so
+    // this test pins the workload and the covered query results; a guard-zone
+    // probe over the scratch demonstrated the overrun before the fix.
+    @Test
+    public void testIncrementalSealWideIncludeHotSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wide_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        u UUID,
+                        l LONG256
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // One hot symbol (key 0) holds 4_000 of the 4_300 rows; 300 cold
+            // symbols (keys 1..300, one row each) push the key count past
+            // DENSE_STRIDE (256) so the sealed index has two strides, with
+            // the hot key holding nearly all of stride 0's values.
+            execute("""
+                    INSERT INTO t_wide_o3
+                    SELECT timestamp_sequence('2024-01-01', 1_000_000) ts,
+                           (CASE WHEN x <= 4_000 THEN 'sym_hot' ELSE 'sym_' || (x - 4_000) END)::SYMBOL sym,
+                           'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID u,
+                           '0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7'::LONG256 l
+                    FROM long_sequence(4_300)
+                    """);
+
+            // ALTER ADD INDEX on existing data builds a dense gen0 per
+            // partition, the precondition for the incremental seal.
+            execute("ALTER TABLE t_wide_o3 ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (u, l)");
+
+            // Pure-append O3 batch (internally out of order, min ts above the
+            // committed max) touching only stride-0 keys, so stride 1 stays
+            // clean and sealIncremental does not fall back to sealFull.
+            execute("""
+                    INSERT INTO t_wide_o3 VALUES
+                    ('2024-01-01T02:00:00', 'sym_hot',
+                     'b1b2c3d4-e5f6-4708-9192-a3b4c5d6e7f8'::UUID,
+                     '0x8aa1b2c3d4e5f60718293a4b5c6d7e8f9aa1b2c3d4e5f60718293a4b5c6d7e8f'::LONG256),
+                    ('2024-01-01T01:59:00', 'sym_1',
+                     'c1c2c3d4-e5f6-4718-8192-a3b4c5d6e7f9'::UUID,
+                     '0x9bb1c2d3e4f5061728394a5b6c7d8e9f0bb1c2d3e4f5061728394a5b6c7d8e9f'::LONG256)
+                    """);
+
+            // Covered read of a dirty-stride cold key: one gen0 row plus the
+            // O3 row, decoded from the re-encoded stride-0 sidecar blocks.
+            assertQuery("SELECT ts, u, l FROM t_wide_o3 WHERE sym = 'sym_1'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            ts\tu\tl
+                            2024-01-01T01:06:40.000000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7
+                            2024-01-01T01:59:00.000000Z\tc1c2c3d4-e5f6-4718-8192-a3b4c5d6e7f9\t0x9bb1c2d3e4f5061728394a5b6c7d8e9f0bb1c2d3e4f5061728394a5b6c7d8e9f
+                            """);
+
+            // Covered read of a clean-stride key (stride 1 copies the old
+            // sidecar block verbatim during the incremental seal).
+            assertQuery("SELECT ts, u, l FROM t_wide_o3 WHERE sym = 'sym_300'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            ts\tu\tl
+                            2024-01-01T01:11:39.000000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7
+                            """);
+
+            // Filtered count over the hot key's covered values decodes its
+            // entire sidecar block: 4_000 gen0 rows match, the O3 row does not.
+            assertQuery("""
+                    SELECT count() FROM t_wide_o3
+                    WHERE sym = 'sym_hot'
+                      AND u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID
+                      AND l = '0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7'::LONG256
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            count
+                            4000
+                            """);
         });
     }
 

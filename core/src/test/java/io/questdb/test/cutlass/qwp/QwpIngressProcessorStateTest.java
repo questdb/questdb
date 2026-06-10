@@ -42,8 +42,6 @@ import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchema;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
@@ -555,9 +553,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 addNativeData(state, wrapQwpPayload(new byte[]{
                         4, 't', 'e', 's', 't',
                         0,    // rowCount=0
-                        0,    // columnCount=0
-                        0x00, // SCHEMA_MODE_FULL
-                        0     // schemaId=0
+                        0     // columnCount=0
                 }));
                 state.processMessage();
                 Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
@@ -1907,44 +1903,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(7, state.getDeferredErrorStatus());
                 Assert.assertEquals(42, state.getDeferredErrorSequence());
                 Assert.assertEquals(0, state.getDeferredErrorMessage().length());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testProcessMessageRejectsSchemaMismatch() throws Exception {
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-
-                // Pre-register schema 0 with 2 columns via reflection
-                Field decoderField = QwpIngressProcessorState.class.getDeclaredField("streamingDecoder");
-                decoderField.setAccessible(true);
-                Object decoder = decoderField.get(state);
-                Field registryField = decoder.getClass().getDeclaredField("schemaRegistry");
-                registryField.setAccessible(true);
-                QwpSchemaRegistry registry = (QwpSchemaRegistry) registryField.get(decoder);
-                registry.put(0, QwpSchema.create(new QwpColumnDef[]{
-                        new QwpColumnDef("val", QwpConstants.TYPE_INT),
-                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP)
-                }));
-
-                // Reference schema 0 but declare 3 columns (mismatch with 2)
-                addNativeData(state, wrapQwpPayload(new byte[]{
-                        7, 's', 'm', '_', 't', 'e', 's', 't',
-                        0,                              // rowCount=0
-                        3,                              // columnCount=3 (schema has 2)
-                        0x01,                           // SCHEMA_MODE_REFERENCE
-                        0                               // schemaId=0
-                }));
-                state.processMessage();
-                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
             } finally {
                 state.onDisconnected();
                 state.close();
