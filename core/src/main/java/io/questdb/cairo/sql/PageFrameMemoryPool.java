@@ -30,8 +30,6 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -79,7 +77,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, Mutable {
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
-    private static final Log LOG = LogFactory.getLog(PageFrameMemoryPool.class);
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
     private static final int SHELL_POOL_CAP = 256;
@@ -138,12 +135,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
-    public static PageFrameMemoryPool forConfiguration(CairoConfiguration configuration, long maxCacheBytes) {
-        return new PageFrameMemoryPool(maxCacheBytes);
+    public static PageFrameMemoryPool forConfiguration(CairoConfiguration configuration) {
+        return forMaxCacheBytes(configuration.getSqlParquetCacheMemorySize());
     }
 
-    public static PageFrameMemoryPool forConfiguration(CairoConfiguration configuration) {
-        return forConfiguration(configuration, configuration.getSqlParquetCacheMemorySize());
+    public static PageFrameMemoryPool forMaxCacheBytes(long maxCacheBytes) {
+        return new PageFrameMemoryPool(maxCacheBytes);
     }
 
     @Override
@@ -792,7 +789,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             DirectLongList auxPageSizes = null;
             DirectLongList pageAddresses = null;
             DirectLongList pageSizes = null;
-            RowGroupBuffers rowGroupBuffers = null;
+            RowGroupBuffers rowGroupBuffers;
             try {
                 auxPageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
                 auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
@@ -804,7 +801,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 Misc.free(auxPageSizes);
                 Misc.free(pageAddresses);
                 Misc.free(pageSizes);
-                Misc.free(rowGroupBuffers);
                 throw th;
             }
             this.auxPageAddresses = auxPageAddresses;
