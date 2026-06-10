@@ -285,10 +285,9 @@ public class QwpMessageHeader {
             throw QwpParseException.invalidMagic();
         }
 
-        // Validate version. Ingest pins to v1 (the v2 bump is egress-only) so
-        // a v2 message arriving on the ingest path is rejected at the wire
-        // level rather than silently accepted with no v2-specific handling.
-        if (version < VERSION_1 || version > MAX_SUPPORTED_INGEST_VERSION) {
+        // Validate version. QWP runs at a single version; reject anything else
+        // at the wire level.
+        if (version != VERSION) {
             throw QwpParseException.unsupportedVersion();
         }
 
