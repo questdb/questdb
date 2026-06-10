@@ -65,6 +65,10 @@ jobs:
         run: |
           set -eu
           cd core/src/main/c/share/async-profiler
+          # The submodule is cloned shallow (.gitmodules: shallow = true), so
+          # the clone carries no tags; fetch them so git describe reports the
+          # release tag (e.g. v4.4) instead of a bare commit sha.
+          git fetch --tags --quiet origin || true
           ASYNC_VERSION=$(git describe --tags --always)
           ASYNC_SHA=$(git rev-parse --short=8 HEAD)
           echo "version=$ASYNC_VERSION" >> "$GITHUB_OUTPUT"
