@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.GeoLongFunction;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullDecimalGroupByFunctionFactory;
@@ -48,6 +49,7 @@ import io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFac
 import io.questdb.griffin.engine.functions.groupby.LastNotNullDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullIPv4GroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullLongGroupByFunctionFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -96,6 +98,39 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstDecimal16PicksMinRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL16, 4, 1));
+        assertWinnerRowId(
+                build(new FirstDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                20
+        );
+    }
+
+    @Test
+    public void testFirstDecimal256PicksMinRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL256, 50, 5));
+        assertWinnerRowId(
+                build(new FirstDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                20
+        );
+    }
+
+    @Test
+    public void testFirstDecimal32PicksMinRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL32, 9, 2));
+        assertWinnerRowId(
+                build(new FirstDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                20
+        );
+    }
+
+    @Test
     public void testFirstDecimal64PicksMinRowId() throws Exception {
         DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
         assertWinnerRowId(
@@ -107,12 +142,45 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstDecimal8PicksMinRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL8, 2, 0));
+        assertWinnerRowId(
+                build(new FirstDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                20
+        );
+    }
+
+    @Test
+    public void testFirstGeoBytePicksMinRowId() throws Exception {
+        GeoByteArg arg = new GeoByteArg(ColumnType.getGeoHashTypeWithBits(5));
+        assertWinnerRowId(
+                build(new FirstGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set((byte) (1 + i)),
+                20
+        );
+    }
+
+    @Test
     public void testFirstGeoIntPicksMinRowId() throws Exception {
         GeoIntArg arg = new GeoIntArg(ColumnType.getGeoHashTypeWithBits(20));
         assertWinnerRowId(
                 build(new FirstGeoHashGroupByFunctionFactory(), arg),
                 ROW_IDS,
                 i -> arg.set(1 + i),
+                20
+        );
+    }
+
+    @Test
+    public void testFirstGeoLongPicksMinRowId() throws Exception {
+        GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
+        assertWinnerRowId(
+                build(new FirstGeoHashGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(1L + i),
                 20
         );
     }
@@ -147,8 +215,80 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstNotNullDecimal16SkipsNullsAndPicksMinNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL16, 4, 1));
+        // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
+        assertWinnerRowId(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0 || i == 2) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDecimal256SkipsNullsAndPicksMinNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL256, 50, 5));
+        // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
+        assertWinnerRowId(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0 || i == 2) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDecimal32SkipsNullsAndPicksMinNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL32, 9, 2));
+        // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
+        assertWinnerRowId(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0 || i == 2) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                20
+        );
+    }
+
+    @Test
     public void testFirstNotNullDecimal64SkipsNullsAndPicksMinNonNullRowId() throws Exception {
         DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
+        // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
+        assertWinnerRowId(
+                build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0 || i == 2) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                20
+        );
+    }
+
+    @Test
+    public void testFirstNotNullDecimal8SkipsNullsAndPicksMinNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL8, 2, 0));
         // nulls at indices 0 and 2 (rowIds 100, 60); non-null at 80, 40, 20; min non-null is 20.
         assertWinnerRowId(
                 build(new FirstNotNullDecimalGroupByFunctionFactory(), arg),
@@ -201,8 +341,63 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastDecimal128PicksMaxRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL128, 30, 5));
+        assertWinnerRowId(
+                build(new LastDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                100
+        );
+    }
+
+    @Test
+    public void testLastDecimal16PicksMaxRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL16, 4, 1));
+        assertWinnerRowId(
+                build(new LastDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                100
+        );
+    }
+
+    @Test
+    public void testLastDecimal256PicksMaxRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL256, 50, 5));
+        assertWinnerRowId(
+                build(new LastDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                100
+        );
+    }
+
+    @Test
+    public void testLastDecimal32PicksMaxRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL32, 9, 2));
+        assertWinnerRowId(
+                build(new LastDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                100
+        );
+    }
+
+    @Test
     public void testLastDecimal64PicksMaxRowId() throws Exception {
         DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
+        assertWinnerRowId(
+                build(new LastDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> arg.set(10L + i),
+                100
+        );
+    }
+
+    @Test
+    public void testLastDecimal8PicksMaxRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL8, 2, 0));
         assertWinnerRowId(
                 build(new LastDecimalGroupByFunctionFactory(), arg),
                 ROW_IDS,
@@ -219,6 +414,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                 ROW_IDS,
                 i -> arg.set(1 + i),
                 100
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal128MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL128, 30, 5));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
         );
     }
 
@@ -241,6 +446,156 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastNotNullDecimal16MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL16, 4, 1));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal16SkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL16, 4, 1));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal256MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL256, 50, 5));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal256SkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL256, 50, 5));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal32MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL32, 9, 2));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal32SkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL32, 9, 2));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal64MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal64SkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal8MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL8, 2, 0));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal8SkipsNullsAndPicksMaxNonNullRowId() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL8, 2, 0));
+        // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
+        assertWinnerRowId(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                ROW_IDS,
+                i -> {
+                    if (i == 0) {
+                        arg.setNull();
+                    } else {
+                        arg.set(10L + i);
+                    }
+                },
+                80
+        );
+    }
+
+    @Test
+    public void testLastNotNullGeoLongMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
     public void testLastNotNullGeoLongSkipsNullsAndPicksMaxNonNullRowId() throws Exception {
         GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
         // null at the highest rowId (index 0 -> rowId 100); max non-null rowId is 80.
@@ -255,6 +610,16 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                     }
                 },
                 80
+        );
+    }
+
+    @Test
+    public void testLastNotNullIPv4MergeKeepsNonNullOverNullDest() throws Exception {
+        IPv4Arg arg = new IPv4Arg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullIPv4GroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(0x0A000001)
         );
     }
 
@@ -277,42 +642,12 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLastNotNullDecimal128MergeKeepsNonNullOverNullDest() throws Exception {
-        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL128, 30, 5));
+    public void testLastNotNullLongMergeKeepsNonNullOverNullDest() throws Exception {
+        LongArg arg = new LongArg();
         assertLastNotNullMergeKeepsNonNull(
-                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                build(new LastNotNullLongGroupByFunctionFactory(), arg),
                 arg::setNull,
                 () -> arg.set(42L)
-        );
-    }
-
-    @Test
-    public void testLastNotNullDecimal64MergeKeepsNonNullOverNullDest() throws Exception {
-        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
-        assertLastNotNullMergeKeepsNonNull(
-                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
-                arg::setNull,
-                () -> arg.set(42L)
-        );
-    }
-
-    @Test
-    public void testLastNotNullGeoLongMergeKeepsNonNullOverNullDest() throws Exception {
-        GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
-        assertLastNotNullMergeKeepsNonNull(
-                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
-                arg::setNull,
-                () -> arg.set(42L)
-        );
-    }
-
-    @Test
-    public void testLastNotNullIPv4MergeKeepsNonNullOverNullDest() throws Exception {
-        IPv4Arg arg = new IPv4Arg();
-        assertLastNotNullMergeKeepsNonNull(
-                build(new LastNotNullIPv4GroupByFunctionFactory(), arg),
-                arg::setNull,
-                () -> arg.set(0x0A000001)
         );
     }
 
@@ -520,6 +855,23 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
 
         private void setNull() {
             value = Numbers.IPv4_NULL;
+        }
+    }
+
+    private static final class LongArg extends LongFunction {
+        private long value = Numbers.LONG_NULL;
+
+        @Override
+        public long getLong(Record rec) {
+            return value;
+        }
+
+        private void set(long v) {
+            value = v;
+        }
+
+        private void setNull() {
+            value = Numbers.LONG_NULL;
         }
     }
 }

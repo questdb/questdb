@@ -72,6 +72,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
     private static class Decimal128Func extends FirstDecimalGroupByFunctionFactory.FirstLastDecimal128Func {
         private final Decimal128 decimal128 = new Decimal128();
+        private final Decimal128 storedValue = new Decimal128();
 
         public Decimal128Func(Function arg) {
             super(arg);
@@ -81,9 +82,12 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal128(record, decimal128);
             if (!decimal128.isNull()) {
-                mapValue.getDecimal128(valueIndex + 1, decimal128);
-                if (decimal128.isNull() || rowId > mapValue.getLong(valueIndex)) {
-                    computeFirst(mapValue, record, rowId);
+                // Read the stored value into a separate buffer so decimal128 keeps the arg
+                // value, letting the winning branch store it without re-reading arg.
+                mapValue.getDecimal128(valueIndex + 1, storedValue);
+                if (storedValue.isNull() || rowId > mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putDecimal128(valueIndex + 1, decimal128);
                 }
             }
         }
@@ -100,6 +104,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 destValue.getDecimal128(valueIndex + 1, decimal128);
+                // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
                 if (srcRowId > destRowId || decimal128.isNull()) {
                     destValue.putLong(valueIndex, srcRowId);
                     srcValue.getDecimal128(valueIndex + 1, decimal128);
@@ -137,6 +142,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
             if (srcVal != Decimals.DECIMAL16_NULL) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
+                // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
                 if (srcRowId > destRowId || destValue.getDecimal16(valueIndex + 1) == Decimals.DECIMAL16_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putShort(valueIndex + 1, srcVal);
@@ -147,6 +153,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
     private static class Decimal256Func extends FirstDecimalGroupByFunctionFactory.FirstLastDecimal256Func {
         private final Decimal256 decimal256 = new Decimal256();
+        private final Decimal256 storedValue = new Decimal256();
 
         public Decimal256Func(Function arg) {
             super(arg);
@@ -156,9 +163,12 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal256(record, decimal256);
             if (!decimal256.isNull()) {
-                mapValue.getDecimal256(valueIndex + 1, decimal256);
-                if (decimal256.isNull() || rowId > mapValue.getLong(valueIndex)) {
-                    computeFirst(mapValue, record, rowId);
+                // Read the stored value into a separate buffer so decimal256 keeps the arg
+                // value, letting the winning branch store it without re-reading arg.
+                mapValue.getDecimal256(valueIndex + 1, storedValue);
+                if (storedValue.isNull() || rowId > mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putDecimal256(valueIndex + 1, decimal256);
                 }
             }
         }
@@ -175,6 +185,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 destValue.getDecimal256(valueIndex + 1, decimal256);
+                // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
                 if (srcRowId > destRowId || decimal256.isNull()) {
                     destValue.putLong(valueIndex, srcRowId);
                     srcValue.getDecimal256(valueIndex + 1, decimal256);
@@ -212,6 +223,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
             if (srcVal != Decimals.DECIMAL32_NULL) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
+                // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
                 if (srcRowId > destRowId || destValue.getDecimal32(valueIndex + 1) == Decimals.DECIMAL32_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putInt(valueIndex + 1, srcVal);
@@ -248,6 +260,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
             if (!Decimal64.isNull(srcVal)) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
+                // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
                 if (srcRowId > destRowId || Decimal64.isNull(destValue.getDecimal64(valueIndex + 1))) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putLong(valueIndex + 1, srcVal);
@@ -284,6 +297,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
             if (srcVal != Decimals.DECIMAL8_NULL) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
+                // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
                 if (srcRowId > destRowId || destValue.getDecimal8(valueIndex + 1) == Decimals.DECIMAL8_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putByte(valueIndex + 1, srcVal);

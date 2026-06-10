@@ -100,6 +100,7 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
+            // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
             if (srcRowId > destRowId || destValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
