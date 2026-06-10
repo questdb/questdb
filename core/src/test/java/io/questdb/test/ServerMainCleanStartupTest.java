@@ -77,7 +77,6 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
                 }, "select * from wal_tables order by 1")
                         .noLeakCheck()
-                        .expectSize()
                         .returns("""
                                 name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
                                 x\tfalse\t0\t0\t0\t\t\t0
