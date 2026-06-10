@@ -94,7 +94,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             return;
         }
         sink.putAscii(" EXPIRE ROWS ");
-        RowExpiryUtil.appendClause(sink, predicate);
+        RowExpiryUtil.appendExpireClause(sink, predicate);
         // Only print CLEANUP EVERY when it differs from the (shared) default cadence.
         if (cleanupIntervalMicros > 0 && cleanupIntervalMicros != RowExpiryUtil.DEFAULT_CLEANUP_INTERVAL_MICROS) {
             sink.putAscii(" CLEANUP EVERY ");

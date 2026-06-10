@@ -99,7 +99,7 @@ public final class RowExpiryUtil {
      * {@code sink}: {@code WHEN <predicate>} for scalar/window, or the {@code KEEP ...} form for the relative
      * modes. Used by SHOW CREATE; the rendering round-trips through the grammar.
      */
-    public static void appendClause(CharSink<?> sink, CharSequence stored) {
+    public static void appendExpireClause(CharSink<?> sink, CharSequence stored) {
         if (isKeepLatest(stored)) {
             appendKeepLatestClause(sink, stored);
         } else if (isKeepBy(stored)) {
@@ -132,8 +132,8 @@ public final class RowExpiryUtil {
         }
         if (isKeepLatest(stored) || isKeepBy(stored)) {
             final StringSink sink = new StringSink();
-            appendClause(sink, stored);
-            // appendClause emits the full "KEEP ..." clause body for these modes (no leading "WHEN").
+            appendExpireClause(sink, stored);
+            // appendExpireClause emits the full "KEEP ..." clause body for these modes (no leading "WHEN").
             return sink.toString();
         }
         if (isWindow(stored)) {
@@ -211,24 +211,6 @@ public final class RowExpiryUtil {
         return null;
     }
 
-    private static void appendKeepLatestClause(CharSink<?> sink, CharSequence stored) {
-        sink.putAscii("KEEP LATEST");
-        final CharSequence ts = keepLatestTs(stored);
-        if (ts.length() > 0) {
-            sink.putAscii(" ON ").put(ts);
-        }
-        sink.putAscii(" PARTITION BY ").put(keepLatestKeys(stored));
-    }
-
-    private static int sentinelIndex(CharSequence s, int from) {
-        for (int i = from, n = s.length(); i < n; i++) {
-            if (s.charAt(i) == POLICY_SENTINEL) {
-                return i;
-            }
-        }
-        return s.length();
-    }
-
     private static void appendKeepByClause(CharSink<?> sink, CharSequence stored) {
         final KeepBy k = new KeepBy(stored);
         sink.putAscii("KEEP ");
@@ -239,6 +221,15 @@ public final class RowExpiryUtil {
         if (k.keys.length() > 0) {
             sink.putAscii(" PARTITION BY ").put(k.keys);
         }
+    }
+
+    private static void appendKeepLatestClause(CharSink<?> sink, CharSequence stored) {
+        sink.putAscii("KEEP LATEST");
+        final CharSequence ts = keepLatestTs(stored);
+        if (ts.length() > 0) {
+            sink.putAscii(" ON ").put(ts);
+        }
+        sink.putAscii(" PARTITION BY ").put(keepLatestKeys(stored));
     }
 
     private static String buildKeepByPredicate(CharSequence stored, CharSequence designatedTs) {
@@ -270,6 +261,15 @@ public final class RowExpiryUtil {
 
     private static boolean hasMode(CharSequence s, char mode) {
         return s != null && s.length() >= 2 && s.charAt(0) == POLICY_SENTINEL && s.charAt(1) == mode;
+    }
+
+    private static int sentinelIndex(CharSequence s, int from) {
+        for (int i = from, n = s.length(); i < n; i++) {
+            if (s.charAt(i) == POLICY_SENTINEL) {
+                return i;
+            }
+        }
+        return s.length();
     }
 
     private static CharSequence windowBody(CharSequence stored) {
