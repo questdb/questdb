@@ -584,6 +584,8 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
         .map(|c| {
             if let Some(enc) = c.parquet_encoding_config.encoding() {
                 validate_encoding(c.data_type, enc)
+            } else if c.designated_timestamp {
+                validate_encoding(c.data_type, Encoding::DeltaBinaryPacked)
             } else {
                 encoding_map(c.data_type)
             }
