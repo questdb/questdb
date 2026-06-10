@@ -304,15 +304,23 @@ mod tests {
 
     #[test]
     fn bitpacked_run_bitwidth_over_32_errors() {
-        // The definition/repetition-levels decode path builds
-        // bitpacked::Decoder::<u32> via read_next() with a width taken from the
-        // schema's max level. A foreign file can declare a level bit width wider
-        // than 32; without the num_bits guard that reaches
-        // unreachable!("invalid num_bits 40") and aborts the JVM across JNI.
-        // HybridRleDecoder::try_new must surface a clean error instead. The bit
-        // width (40) is passed as the level width, not embedded in the stream.
+        // Defense-in-depth for the num_bits guard reached through
+        // HybridRleDecoder::try_new. try_new eagerly decodes the first run, and a
+        // bitpacked run builds bitpacked::Decoder::<u32>; a num_bits > 32 there
+        // would reach unreachable!("invalid num_bits 40") and abort the JVM across
+        // JNI, so it must surface a clean error instead.
+        //
+        // No parquet2 caller actually feeds such a width. Definition and
+        // repetition level widths come from get_bit_width(max_level): computed
+        // from the schema and capped at 16, never file-declared. The one
+        // file-controlled width -- the RLE_DICTIONARY index-width byte -- is
+        // pre-checked `> 32` before it reaches try_new (deserialize/utils.rs), and
+        // qdbr guards and tests that same byte. This pins the guard directly, so
+        // it holds for any future caller.
+        //
+        // num_bits (40) is passed in as the width, not embedded in the stream.
         // Wire format: [0x03 = bitpacked indicator (1 group of 8), then 40 data
-        // bytes = 8 * 40 bits].
+        // bytes = 8 values x 40 bits].
         let mut data = vec![0x03u8];
         data.extend(std::iter::repeat_n(0u8, 40));
 
