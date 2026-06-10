@@ -63,6 +63,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -485,18 +486,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Rollback leaves the covering sidecar inconsistent with the bumped
-     * sealTxn: {@code rollbackValues -> reencodeMonolithic} writes a new
-     * {@code .pv.N} and advances sealTxn to N, but never writes the
-     * {@code .pc0.N} sidecar. The next append then lazily creates
-     * {@code .pc0.N} in append layout ({@code openSidecarFilesForAppend}),
-     * and the commit's incremental seal snapshots that file believing it is
-     * a sealed stride-indexed sidecar. Interpreting appended cover data as
-     * stride offsets yields a multi-exabyte {@code putBlockOfBytes} that
-     * surfaces as "No space left" (ENOSPC/EFBIG), distressing the writer.
+     * Rollback reencode publishes a bumped sealTxn for the compacted
+     * {@code .pv.N}; it must also stage a sealed {@code .pc0.N} sidecar so a
+     * following incremental seal can copy clean strides without falling back
+     * to the historical append-layout misread.
      */
     @Test
-    public void testRollbackThenIncrementalSealMisreadsAppendModeSidecar() throws Exception {
+    public void testRollbackThenIncrementalSealUsesRebuiltSidecar() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_rb_seal (
@@ -521,8 +517,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("t_rb_seal");
             try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
                 // Stage one O3 row and roll it back. The posting rollback
-                // reencodes the .pv at a bumped sealTxn but writes no .pc
-                // sidecar at that txn.
+                // reencodes the .pv at a bumped sealTxn and must rebuild the
+                // matching sealed .pc sidecar at that txn.
                 TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:30:00.000000Z"));
                 row.putSym(1, "k0");
                 row.putDouble(2, 1.0);
@@ -531,7 +527,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
                 // O3 append touching only key k0: stride 0 is dirty, stride 1
                 // stays clean, so the seal goes incremental and copies the
-                // "clean" stride verbatim from the bogus append-layout sidecar.
+                // clean stride verbatim from the rollback-rebuilt sidecar.
                 long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
                 for (int i = 0; i < 50; i++) {
                     TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
@@ -544,7 +540,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             // count() is served from the row-id index, sum(price) from the
             // covering sidecar - the sum catches silent sidecar corruption
-            // when the misread offsets happen to stay in bounds.
+            // that would otherwise leave row-id counts looking correct.
             assertQuery("SELECT count(), sum(price) FROM t_rb_seal WHERE sym = 'k0'")
                     .noLeakCheck()
                     .expectSize()
@@ -558,16 +554,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     /**
      * Real-discard variant of
-     * {@link #testRollbackThenIncrementalSealMisreadsAppendModeSidecar}: the
+     * {@link #testRollbackThenIncrementalSealUsesRebuiltSidecar}: the
      * index holds rowids beyond the committed transient row count -- the
      * state a crash between the posting-index publish and the txn commit
      * leaves behind -- so the reopen-time {@code rollbackConditionally}
      * eviction cannot no-op and must run the rollback reencode. The reencode
-     * publishes a bumped sealTxn with no {@code .pc} sidecar; the next
-     * append then creates the sidecar in append layout, and the commit's
-     * incremental seal must recognize the untrusted layout (the snapshot
-     * validation in {@code seal()}) and rebuild sidecars via
-     * {@code sealFull} instead of copying garbage stride offsets.
+     * must publish a bumped sealTxn with matching sealed {@code .pc}
+     * sidecars, then the following incremental seal must be able to copy a
+     * clean stride from that rebuilt sidecar.
      */
     @Test
     public void testReopenEvictionThenIncrementalSealRebuildsSidecar() throws Exception {
@@ -621,7 +615,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 // Opening the writer ran rollbackConditionally(3_100) on the
                 // last partition: getMaxValue() == 3_104 forces a real
                 // discard, so the rollback reencode published a bumped
-                // sealTxn without writing .pc sidecars at that txn.
+                // sealTxn with rebuilt .pc sidecars at that txn.
                 // Covered reads in the rollback-to-next-seal window must
                 // still serve the committed data.
                 assertQuery("SELECT count(), sum(price) FROM t_rb_evict WHERE sym = 'k0'")
@@ -634,9 +628,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 """);
 
                 // O3 append touching only key 'k0': one stride dirty, the
-                // other clean, so the seal goes incremental and must not
-                // trust the append-layout sidecar the gen flush just created
-                // at the rollback's sealTxn.
+                // other clean, so the seal goes incremental and reads the
+                // clean stride from the rollback-rebuilt sealed sidecar.
                 long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
                 for (int i = 0; i < 50; i++) {
                     TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
@@ -4277,6 +4270,70 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                     + "a chain head pointing at deleted files",
                             pkSync.armedPkSyncCount() > 0
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackRealDiscardSidecarSyncFailureUnlinksStagedSealFiles() throws Exception {
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_discard_sidecar_sync_fail";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(
+                            coverNames,
+                            coverNameTxns,
+                            coverTops,
+                            coverShifts,
+                            coverIndices,
+                            coverTypes,
+                            -1
+                    );
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 100; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+
+                    pcSync.arm();
+                    try {
+                        writer.rollbackValues(49);
+                        Assert.fail("expected staged .pc sync failure");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "[test] staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one staged .pc sync", 1, pcSync.failureCount());
+
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged rollback .pv must be unlinked [path=" + pv + ']',
+                            configuration.getFilesFacade().exists(pv));
+
+                    LPSZ pc = PostingIndexUtils.coverDataFileName(
+                            path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged rollback .pc must be unlinked [path=" + pc + ']',
+                            configuration.getFilesFacade().exists(pc));
                 }
             }
         });
@@ -8717,6 +8774,80 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         int getFailureCount() {
             return failureCount;
+        }
+    }
+
+    private static class PcSyncFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pcFds = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pcMappings = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            pcFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && pcFds.containsKey(fd)) {
+                pcMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pcMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armed.set(false);
+                        failures.incrementAndGet();
+                        throw CairoException.critical(0).put("[test] staged .pc sync failed");
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pcMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pcMappings.remove(addr) != null && newAddr != -1) {
+                pcMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pc0")) {
+                pcFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        int failureCount() {
+            return failures.get();
         }
     }
 

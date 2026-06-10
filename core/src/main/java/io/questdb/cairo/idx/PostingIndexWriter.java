@@ -1188,9 +1188,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
             return;
         }
-        if (sidecarMems.size() > 0) {
-            closeSidecarMems();
-        }
+        closeSidecarMems();
         long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
@@ -1282,10 +1280,9 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         // No indexed value lies above maxValue: the reencode would be a
-        // no-op rewrite that bumps sealTxn, leaves the new txn without
-        // sidecars (rollbackToMaxValue writes no .pc files) and queues
-        // purge work. Mirror rollbackConditionally's guard and keep the
-        // current seal generation instead.
+        // no-op rewrite that bumps sealTxn and queues purge work. Mirror
+        // rollbackConditionally's guard and keep the current seal generation
+        // instead.
         if (getMaxValue() <= maxValue) {
             return;
         }
@@ -1370,13 +1367,12 @@ public class PostingIndexWriter implements IndexWriter {
             // copies by the stored sentinel and re-gathers dirty strides from
             // the column files, so copying the tail would be pure waste.
             //
-            // A sealTxn published by the rollback reencode has no sidecars:
-            // the next gen flush creates the .pc file in append layout
-            // (openSidecarFilesForAppend), which the clean-stride copy must
-            // not interpret as sealed stride-indexed data. Take the sealFull
-            // path, which rebuilds sidecars from column data, whenever a live
-            // cover column's file is missing or structurally not a sealed
-            // file.
+            // Take the sealFull path, which rebuilds sidecars from column
+            // data, whenever a live cover column's file is missing or
+            // structurally not a sealed file. This rejects stale append-layout
+            // sidecars from older writers or abandoned seal attempts before
+            // the clean-stride copy can interpret them as sealed
+            // stride-indexed data.
             if (haveSavedSidecars) {
                 Path p = Path.getThreadLocal(partitionPath);
                 int pp = p.size();
@@ -1404,7 +1400,7 @@ public class PostingIndexWriter implements IndexWriter {
                                             // that the copy below leaves out.
                                             if (isTrustedSealedSidecarSnapshot(mapped, fileLen, gen0KeyCount)) {
                                                 long sentinel = Unsafe.getLong(mapped + sentinelSlotOffset);
-                                                long sealedLen = Math.min(fileLen, sentinel + gen0SiSize);
+                                                long sealedLen = sentinel + gen0SiSize;
                                                 savedSidecarBufs[c] = Unsafe.malloc(sealedLen, MemoryTag.NATIVE_INDEX_READER);
                                                 savedSidecarSizes[c] = sealedLen;
                                                 Unsafe.copyMemory(mapped, savedSidecarBufs[c], sealedLen);
@@ -1435,9 +1431,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             if (coverCount > 0 && partitionPath.size() > 0) {
-                if (sidecarMems.size() > 0) {
-                    closeSidecarMems();
-                }
+                closeSidecarMems();
                 openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
             }
 
@@ -3406,15 +3400,11 @@ public class PostingIndexWriter implements IndexWriter {
      * before {@link #sealIncremental} copies clean stride blocks out of it
      * verbatim.
      * <p>
-     * The check exists because {@link #rollbackToMaxValue} publishes a new
-     * sealTxn for the reencoded {@code .pv} without writing any sidecars at
-     * that txn. The next gen flush then creates the {@code .pc} file in
-     * append layout ({@link #openSidecarFilesForAppend} +
-     * {@link #writeSidecarGenData}): the same gen-header region, but raw gen
-     * blocks starting at {@code PC_HEADER_SIZE} with no stride index at all.
-     * Interpreting that file as sealed turns appended cover bytes into
-     * stride offsets and feeds garbage block sizes to
-     * {@code putBlockOfBytes}.
+     * The check rejects append-layout sidecars left by older writers or by
+     * abandoned seal attempts. Those files have the same gen-header region,
+     * but raw gen blocks start at {@code PC_HEADER_SIZE} with no stride index
+     * at all. Interpreting that file as sealed turns appended cover bytes into
+     * stride offsets and feeds garbage block sizes to {@code putBlockOfBytes}.
      * <p>
      * The two layouts are separable from the snapshot alone: a sealed file
      * places every post-seal gen block after the sealed region (header +
@@ -4348,6 +4338,10 @@ public class PostingIndexWriter implements IndexWriter {
      * affects stride layout. Rollback is rare and operates on small data.
      */
     private void reencodeMonolithic(long maxValue, long maxValueCutoff, long totalCountsAddr, long totalValueCount) {
+        final int oldKeyCount = keyCount;
+        final int oldGenCount = genCount;
+        final long oldValueMemSize = valueMemSize;
+        final long oldMaxValue = this.maxValue;
         long allValuesAddr = Unsafe.malloc(totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         try {
             long keyOffsetsSize = (long) keyCount * Long.BYTES;
@@ -4446,6 +4440,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                 long survivingValueCount = 0;
                 int newKeyCount = 0;
+                int globalMaxKeyCount = 0;
                 for (int key = 0; key < keyCount; key++) {
                     int origCount = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
                     if (origCount == 0) continue;
@@ -4468,6 +4463,9 @@ public class PostingIndexWriter implements IndexWriter {
                     int newCount = cutoff + 1;
                     Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, newCount);
                     survivingValueCount += newCount;
+                    if (newCount > globalMaxKeyCount) {
+                        globalMaxKeyCount = newCount;
+                    }
                     if (newCount > 0) {
                         newKeyCount = key + 1;
                     }
@@ -4486,239 +4484,234 @@ public class PostingIndexWriter implements IndexWriter {
                 // the writer's sealTxn lags genCounter, and reusing a
                 // dropped sealTxn would race the still-pending .pv purge.
                 long newTxn = Math.max(1, chain.peekNextSealTxn());
-                if (partitionPath.size() > 0) {
-                    openSealValueFile(newTxn);
-                } else {
-                    // fd-based writer (O3): no concurrent readers, reuse valueMem
-                    valueMem.jumpTo(0);
-                    sealTarget = valueMem;
-                }
-                int sc = PostingIndexUtils.strideCount(keyCount);
-                int siSize = PostingIndexUtils.strideIndexSize(keyCount);
-                long sealOffset = 0;
-                for (int i = 0; i < siSize; i += Long.BYTES) {
-                    sealTarget.putLong(0L);
-                }
-
-                long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
-                int maxLocalHeaderSize = Math.max(
-                        PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE),
-                        PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE));
-                long localHeaderBuf = 0;
-                int[] bpKeySizes = strideBpKeySizes;
-                int[] keyCounts = strideKeyCounts;
-                long[] keyOffsets = strideKeyOffsets;
-                long bpTrialBuf = 0;
-                long bpTrialBufSize = 0;
-
+                boolean pathBased = partitionPath.size() > 0;
+                boolean stagedSealFiles = false;
+                boolean switched = false;
+                boolean published = false;
                 try {
-                    localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
-                    for (int s = 0; s < sc; s++) {
-                        int ks = PostingIndexUtils.keysInStride(keyCount, s);
+                    if (pathBased) {
+                        stagedSealFiles = true;
+                        openSealValueFile(newTxn);
+                    } else {
+                        // fd-based writer (O3): no concurrent readers, reuse valueMem
+                        valueMem.jumpTo(0);
+                        sealTarget = valueMem;
+                    }
+                    int sc = PostingIndexUtils.strideCount(keyCount);
+                    int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+                    long sealOffset = 0;
+                    for (int i = 0; i < siSize; i += Long.BYTES) {
+                        sealTarget.putLong(0L);
+                    }
 
-                        long strideTrialSize = 0;
-                        for (int j = 0; j < ks; j++) {
-                            int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                            int count = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                            keyCounts[j] = count;
-                            long keyOff = Unsafe.getLong(keyOffsetsAddr + (long) key * Long.BYTES);
-                            keyOffsets[j] = keyOff;
-                            strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(count);
-                        }
-                        if (strideTrialSize > bpTrialBufSize) {
-                            if (bpTrialBuf != 0) {
-                                Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
+                    long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+                    int maxLocalHeaderSize = Math.max(
+                            PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE),
+                            PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE));
+                    long localHeaderBuf = 0;
+                    int[] bpKeySizes = strideBpKeySizes;
+                    int[] keyCounts = strideKeyCounts;
+                    long[] keyOffsets = strideKeyOffsets;
+                    long bpTrialBuf = 0;
+                    long bpTrialBufSize = 0;
+
+                    try {
+                        localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+                        for (int s = 0; s < sc; s++) {
+                            int ks = PostingIndexUtils.keysInStride(keyCount, s);
+
+                            long strideTrialSize = 0;
+                            for (int j = 0; j < ks; j++) {
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                int count = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                                keyCounts[j] = count;
+                                long keyOff = Unsafe.getLong(keyOffsetsAddr + (long) key * Long.BYTES);
+                                keyOffsets[j] = keyOff;
+                                strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(count);
                             }
-                            bpTrialBufSize = strideTrialSize;
-                            bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                        }
+                            if (strideTrialSize > bpTrialBufSize) {
+                                if (bpTrialBuf != 0) {
+                                    Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
+                                }
+                                bpTrialBufSize = strideTrialSize;
+                                bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
+                            }
 
-                        int bpDataTotal = 0;
-                        for (int j = 0; j < ks; j++) {
-                            int count = keyCounts[j];
-                            if (count > 0) {
+                            int bpDataTotal = 0;
+                            for (int j = 0; j < ks; j++) {
+                                int count = keyCounts[j];
+                                if (count > 0) {
+                                    long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
+                                    encodeCtx.ensureCapacity(count);
+                                    bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, rowIdEncoding);
+                                } else {
+                                    bpKeySizes[j] = 0;
+                                }
+                                bpDataTotal += bpKeySizes[j];
+                            }
+
+                            int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+                            int deltaSize = deltaHeaderSize + bpDataTotal;
+
+                            long totalStrideValuesL = 0;
+                            long strideMinValue = Long.MAX_VALUE;
+                            long strideMaxValue = Long.MIN_VALUE;
+                            for (int j = 0; j < ks; j++) {
+                                int count = keyCounts[j];
+                                totalStrideValuesL += count;
                                 long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
-                                encodeCtx.ensureCapacity(count);
-                                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, rowIdEncoding);
+                                for (int i = 0; i < count; i++) {
+                                    long val = Unsafe.getLong(keyAddr + (long) i * Long.BYTES);
+                                    if (val < strideMinValue) strideMinValue = val;
+                                    if (val > strideMaxValue) strideMaxValue = val;
+                                }
+                            }
+                            if (totalStrideValuesL == 0) {
+                                strideMinValue = 0;
+                                strideMaxValue = 0;
+                            }
+
+                            boolean useFlat;
+                            int localBitWidth = 0;
+                            int flatDataSize = 0;
+                            int flatSize;
+                            int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+
+                            if (totalStrideValuesL > Integer.MAX_VALUE) {
+                                useFlat = false;
                             } else {
-                                bpKeySizes[j] = 0;
-                            }
-                            bpDataTotal += bpKeySizes[j];
-                        }
+                                int totalStrideValues = (int) totalStrideValuesL;
+                                long strideRange = strideMaxValue - strideMinValue;
+                                int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
+                                int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
+                                int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
+                                int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
 
-                        int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-                        int deltaSize = deltaHeaderSize + bpDataTotal;
-
-                        long totalStrideValuesL = 0;
-                        long strideMinValue = Long.MAX_VALUE;
-                        long strideMaxValue = Long.MIN_VALUE;
-                        for (int j = 0; j < ks; j++) {
-                            int count = keyCounts[j];
-                            totalStrideValuesL += count;
-                            long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
-                            for (int i = 0; i < count; i++) {
-                                long val = Unsafe.getLong(keyAddr + (long) i * Long.BYTES);
-                                if (val < strideMinValue) strideMinValue = val;
-                                if (val > strideMaxValue) strideMaxValue = val;
-                            }
-                        }
-                        if (totalStrideValuesL == 0) {
-                            strideMinValue = 0;
-                            strideMaxValue = 0;
-                        }
-
-                        boolean useFlat;
-                        int localBitWidth = 0;
-                        int flatDataSize = 0;
-                        int flatSize;
-                        int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-
-                        if (totalStrideValuesL > Integer.MAX_VALUE) {
-                            useFlat = false;
-                        } else {
-                            int totalStrideValues = (int) totalStrideValuesL;
-                            long strideRange = strideMaxValue - strideMinValue;
-                            int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
-                            int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
-                            int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-                            int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
-
-                            if (alignedBitWidth != naturalBitWidth) {
-                                int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-                                int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-                                if (alignedFlatSize < deltaSize) {
-                                    localBitWidth = alignedBitWidth;
-                                    flatDataSize = alignedFlatDataSize;
-                                    flatSize = alignedFlatSize;
+                                if (alignedBitWidth != naturalBitWidth) {
+                                    int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
+                                    int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
+                                    if (alignedFlatSize < deltaSize) {
+                                        localBitWidth = alignedBitWidth;
+                                        flatDataSize = alignedFlatDataSize;
+                                        flatSize = alignedFlatSize;
+                                    } else {
+                                        localBitWidth = naturalBitWidth;
+                                        flatDataSize = naturalFlatDataSize;
+                                        flatSize = naturalFlatSize;
+                                    }
                                 } else {
                                     localBitWidth = naturalBitWidth;
                                     flatDataSize = naturalFlatDataSize;
                                     flatSize = naturalFlatSize;
                                 }
+                                useFlat = flatSize < deltaSize;
+                            }
+
+                            long strideOff = sealTarget.getAppendOffset() - sealOffset - siSize;
+                            Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
+
+                            if (useFlat) {
+                                writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
+                                        flatHeaderSize, flatDataSize, localHeaderBuf, allValuesAddr);
                             } else {
-                                localBitWidth = naturalBitWidth;
-                                flatDataSize = naturalFlatDataSize;
-                                flatSize = naturalFlatSize;
+                                writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, localHeaderBuf);
                             }
-                            useFlat = flatSize < deltaSize;
+
                         }
 
-                        long strideOff = sealTarget.getAppendOffset() - sealOffset - siSize;
-                        Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
-
-                        if (useFlat) {
-                            writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
-                                    flatHeaderSize, flatDataSize, localHeaderBuf, allValuesAddr);
-                        } else {
-                            writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, localHeaderBuf);
+                        long totalStrideBlocksSize = sealTarget.getAppendOffset() - sealOffset - siSize;
+                        Unsafe.putLong(strideIndexBuf + (long) sc * Long.BYTES, totalStrideBlocksSize);
+                        Unsafe.copyMemory(strideIndexBuf, sealTarget.addressOf(sealOffset), siSize);
+                        valueMemSize = sealTarget.getAppendOffset();
+                    } finally {
+                        if (bpTrialBuf != 0) {
+                            Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
                         }
-
+                        if (localHeaderBuf != 0) {
+                            Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+                        }
+                        Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
                     }
 
-                    long totalStrideBlocksSize = sealTarget.getAppendOffset() - sealOffset - siSize;
-                    Unsafe.putLong(strideIndexBuf + (long) sc * Long.BYTES, totalStrideBlocksSize);
-                    Unsafe.copyMemory(strideIndexBuf, sealTarget.addressOf(sealOffset), siSize);
                     valueMemSize = sealTarget.getAppendOffset();
-                } finally {
-                    if (bpTrialBuf != 0) {
-                        Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    if (localHeaderBuf != 0) {
-                        Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
-                }
+                    sealTarget = null;
 
-                valueMemSize = sealTarget.getAppendOffset();
-                sealTarget = null;
-
-                if (partitionPath.size() > 0) {
-                    sealValueMem.sync(false);
-                    switchToSealedValueFile(newTxn);
-                    // Rebuild covering sidecars at the rollback's new
-                    // sealTxn so the published txn never advertises covered
-                    // data without sealed .pc files. Without this, covered
-                    // reads in the rollback-to-next-seal window return NULL
-                    // values, and the next gen flush creates the .pc file
-                    // in append layout, which the next incremental seal
-                    // must not snapshot as sealed data. The TableWriter
-                    // rollback paths configure cover sources before the
-                    // rollback (openPartition runs configureCoveringIfNeeded
-                    // ahead of rollbackConditionally); when no source is
-                    // configured, seal()'s snapshot validation routes the
-                    // next seal to sealFull instead. Only the name-based
-                    // source qualifies: addr-based cover pointers belong to
-                    // an O3 job's processing window and may be stale by the
-                    // time a rollback runs.
-                    boolean hasCoverSources = coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0;
-                    if (coverCount > 0 && hasCoverSources) {
-                        if (sidecarMems.size() > 0) {
+                    if (pathBased) {
+                        // Rebuild covering sidecars at the rollback's new
+                        // sealTxn before switching valueMem. This keeps any
+                        // sidecar failure in the pre-switch staging phase,
+                        // where the new files can be unlinked directly.
+                        boolean hasCoverSources = coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0;
+                        if (coverCount > 0 && hasCoverSources) {
                             closeSidecarMems();
+                            openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newTxn);
+                            writeSidecarsPerColumnFromDecodedValues(totalCountsAddr, keyOffsetsAddr, allValuesAddr, globalMaxKeyCount);
                         }
-                        openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newTxn);
-                        // totalCountsAddr holds the post-filter per-key
-                        // counts at this point; size the per-stride decode
-                        // scratch from them the same way the seal path does.
-                        long maxStrideTotal = 0;
-                        for (int s = 0; s < sc; s++) {
-                            long strideTotal = 0;
-                            int ks = PostingIndexUtils.keysInStride(keyCount, s);
-                            for (int j = 0; j < ks; j++) {
-                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                                strideTotal += Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                            }
-                            if (strideTotal > maxStrideTotal) {
-                                maxStrideTotal = strideTotal;
+                        sealValueMem.sync(false);
+                        // Sync covering sidecars before publishing the new
+                        // sealTxn in .pk so readers do not see a torn sidecar
+                        // tail after a power loss.
+                        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+                            MemoryMARW mem = sidecarMems.getQuick(c);
+                            if (mem != null && mem.isOpen()) {
+                                mem.sync(false);
                             }
                         }
-                        long strideValsSize = Math.max(maxStrideTotal, 1) * Long.BYTES;
-                        long strideValsAddr = Unsafe.malloc(strideValsSize, MemoryTag.NATIVE_INDEX_READER);
-                        try {
-                            writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
-                        } finally {
-                            Unsafe.free(strideValsAddr, strideValsSize, MemoryTag.NATIVE_INDEX_READER);
+                        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+                            sidecarInfoMem.sync(false);
                         }
+                        switchToSealedValueFile(newTxn);
+                        switched = true;
                     }
-                    // Sync covering sidecars before publishing the new
-                    // sealTxn in .pk so readers do not see a torn sidecar
-                    // tail after a power loss.
-                    for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-                        MemoryMARW mem = sidecarMems.getQuick(c);
-                        if (mem != null && mem.isOpen()) {
-                            mem.sync(false);
-                        }
-                    }
-                    if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-                        sidecarInfoMem.sync(false);
-                    }
-                }
 
-                Unsafe.storeFence();
-                // genCount must publish after the chain entry is appended so
-                // a mid-seal failure leaves the in-memory view consistent
-                // with on-disk .pk.
-                this.maxValue = maxValue;
-                this.genCount = 1;
-                publishToChain(
-                        /* newGenCount */ 1,
-                        /* overrideGenIndex */ 0,
-                        /* overrideFileOffset */ sealOffset,
-                        /* overrideSize */ valueMemSize - sealOffset,
-                        /* overrideKeyCount */ keyCount,
-                        /* overrideMinKey */ 0,
-                        /* overrideMaxKey */ keyCount - 1
-                );
-                // The caller (rollbackToMaxValue) queues the superseded
-                // .pv/.pc for purge as soon as this method returns, and
-                // PostingSealPurgeOperator unlinks them with no ordering
-                // against .pk writeback. Sync the chain publish now -- the
-                // new .pv and sidecars are already synced above -- so a
-                // power loss after the unlink cannot recover a committed
-                // chain head pointing at deleted files. Pairs with seal()'s
-                // unconditional .pk sync; the fd-based branch is exempt
-                // because it never bumps sealTxn, so no purge is queued.
-                if (partitionPath.size() > 0 && keyMem.isOpen()) {
-                    keyMem.sync(false);
+                    Unsafe.storeFence();
+                    // genCount must publish after the chain entry is appended so
+                    // a mid-seal failure leaves the in-memory view consistent
+                    // with on-disk .pk.
+                    this.maxValue = maxValue;
+                    this.genCount = 1;
+                    publishToChain(
+                            /* newGenCount */ 1,
+                            /* overrideGenIndex */ 0,
+                            /* overrideFileOffset */ sealOffset,
+                            /* overrideSize */ valueMemSize - sealOffset,
+                            /* overrideKeyCount */ keyCount,
+                            /* overrideMinKey */ 0,
+                            /* overrideMaxKey */ keyCount - 1
+                    );
+                    published = true;
+                    // The caller (rollbackToMaxValue) queues the superseded
+                    // .pv/.pc for purge as soon as this method returns, and
+                    // PostingSealPurgeOperator unlinks them with no ordering
+                    // against .pk writeback. Sync the chain publish now -- the
+                    // new .pv and sidecars are already synced above -- so a
+                    // power loss after the unlink cannot recover a committed
+                    // chain head pointing at deleted files. Pairs with seal()'s
+                    // unconditional .pk sync; the fd-based branch is exempt
+                    // because it never bumps sealTxn, so no purge is queued.
+                    if (pathBased && keyMem.isOpen()) {
+                        keyMem.sync(false);
+                    }
+                } catch (Throwable th) {
+                    sealTarget = null;
+                    if (pathBased && stagedSealFiles && !published) {
+                        if (switched) {
+                            LOG.error().$("posting index rollback reencode post-switch failure, scheduling orphan purge [")
+                                    .$("indexName=").$(indexName)
+                                    .$(", newSealTxn=").$(newTxn)
+                                    .$(']').$();
+                            scheduleOrphanPurge(newTxn);
+                        } else {
+                            Misc.free(sealValueMem);
+                            closeSidecarMems();
+                            unlinkOrphanSealFiles(newTxn);
+                            keyCount = oldKeyCount;
+                            genCount = oldGenCount;
+                            valueMemSize = oldValueMemSize;
+                            this.maxValue = oldMaxValue;
+                        }
+                    }
+                    throw th;
                 }
             } finally {
                 Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
@@ -5930,11 +5923,10 @@ public class PostingIndexWriter implements IndexWriter {
 
     /**
      * Best-effort removal of the {@code .pv.{newSealTxn}} and any matching
-     * {@code .pc{c}.{...}.{newSealTxn}} sidecar files when a
-     * {@link #rebuildSidecarsByCopy} attempt aborted before
-     * {@link #switchToSealedValueFile}. The chain never advertised these
-     * files, so no reader can have pinned them; unlink errors are logged
-     * and ignored rather than masking the original throw.
+     * {@code .pc{c}.{...}.{newSealTxn}} sidecar files when seal staging
+     * aborts before {@link #switchToSealedValueFile}. The chain never
+     * advertised these files, so no reader can have pinned them; unlink
+     * errors are logged and ignored rather than masking the original throw.
      */
     private void unlinkOrphanSealFiles(long newSealTxn) {
         if (partitionPath.size() == 0) {
@@ -6394,6 +6386,91 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    private void writeSidecarForColumnFromDecodedValues(
+            int c, int sc, int siSize,
+            long totalCountsAddr, long keyOffsetsAddr, long allValuesAddr,
+            int globalMaxKeyCount
+    ) {
+        MemoryMARW mem = sidecarMems.getQuick(c);
+        int colType = coveredColumnTypes.getQuick(c);
+        int shift = coveredColumnShifts.getQuick(c);
+        long colTop = coveredColumnTops.getQuick(c);
+        int[] keyCounts = strideKeyCounts;
+        long[] keyOffsets = strideKeyOffsets;
+
+        long sidecarStrideIndexBuf = 0;
+        long sidecarBuf = 0;
+        long sidecarBufSize = 0;
+        long longWorkspaceSize = (long) globalMaxKeyCount * Long.BYTES;
+        long longWorkspaceAddr = 0;
+        long exceptionWorkspaceAddr = 0;
+
+        try {
+            sidecarStrideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+            for (int i = 0; i < siSize; i += Long.BYTES) {
+                mem.putLong(0L);
+            }
+            if (shift >= 0 && globalMaxKeyCount > 0) {
+                longWorkspaceAddr = Unsafe.malloc(longWorkspaceSize, MemoryTag.NATIVE_INDEX_READER);
+                exceptionWorkspaceAddr = Unsafe.malloc(globalMaxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+            }
+
+            for (int s = 0; s < sc; s++) {
+                int ks = PostingIndexUtils.keysInStride(keyCount, s);
+                int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
+
+                int strideValCount = 0;
+                for (int j = 0; j < ks; j++) {
+                    int key = strideStart + j;
+                    int count = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                    keyCounts[j] = count;
+                    keyOffsets[j] = Unsafe.getLong(keyOffsetsAddr + (long) key * Long.BYTES);
+                    strideValCount += count;
+                }
+
+                Unsafe.putLong(
+                        sidecarStrideIndexBuf + (long) s * Long.BYTES,
+                        mem.getAppendOffset() - siSize);
+
+                if (strideValCount == 0) {
+                    continue;
+                }
+
+                if (shift < 0) {
+                    writeSidecarVarStrideData(mem, c, colTop, colType, ks, keyCounts, keyOffsets, allValuesAddr);
+                } else {
+                    int valueSize = 1 << shift;
+                    long needed = (long) strideValCount * valueSize;
+                    if (needed > sidecarBufSize) {
+                        sidecarBuf = Unsafe.realloc(sidecarBuf, sidecarBufSize, needed, MemoryTag.NATIVE_INDEX_READER);
+                        sidecarBufSize = needed;
+                    }
+                    writeSidecarFixedStrideForColumn(mem, c, colTop, colType, shift,
+                            ks, keyCounts, keyOffsets, allValuesAddr, sidecarBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                }
+            }
+
+            Unsafe.putLong(
+                    sidecarStrideIndexBuf + (long) sc * Long.BYTES,
+                    mem.getAppendOffset() - siSize);
+            long sidecarIdxAddr = mem.addressOf(PostingIndexUtils.PC_HEADER_SIZE);
+            Unsafe.copyMemory(sidecarStrideIndexBuf, sidecarIdxAddr, siSize);
+        } finally {
+            if (sidecarStrideIndexBuf != 0) {
+                Unsafe.free(sidecarStrideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (sidecarBuf != 0) {
+                Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (longWorkspaceAddr != 0) {
+                Unsafe.free(longWorkspaceAddr, longWorkspaceSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (exceptionWorkspaceAddr != 0) {
+                Unsafe.free(exceptionWorkspaceAddr, globalMaxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+    }
+
     private void writeSidecarForColumnStreaming(
             int c, int sc, int siSize,
             long totalCountsAddr, long keyBuffer, int maxKeyCount,
@@ -6784,6 +6861,38 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+            }
+        }
+    }
+
+    private void writeSidecarsPerColumnFromDecodedValues(long totalCountsAddr, long keyOffsetsAddr, long allValuesAddr, int globalMaxKeyCount) {
+        unmapCoveredColumnReads();
+
+        int sc = PostingIndexUtils.strideCount(keyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+
+        if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
+            Path p = Path.getThreadLocal(coveredPartitionPath);
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                try {
+                    mapCoveredColumn(p, c);
+                    writeSidecarForColumnFromDecodedValues(c, sc, siSize,
+                            totalCountsAddr, keyOffsetsAddr, allValuesAddr, globalMaxKeyCount);
+                } finally {
+                    unmapCoveredColumn(c);
+                }
+            }
+        } else if (coveredColumnAddrs.size() > 0) {
+            ensureCoveredColumnReadMaps();
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                writeSidecarForColumnFromDecodedValues(c, sc, siSize,
+                        totalCountsAddr, keyOffsetsAddr, allValuesAddr, globalMaxKeyCount);
             }
         }
     }
