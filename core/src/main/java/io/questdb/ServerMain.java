@@ -63,6 +63,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -948,18 +949,31 @@ public class ServerMain implements Closeable {
             // runs; only the redundant per-switch re-run is suppressed. This mirrors the catch-up
             // self-fire check in start(), which is already gated on hydrateMetadataThread == null.
             if ("engine".equals(depName) && current == State.READY && ServerMain.this.hydrateMetadataThread == null) {
+                // Both runnables walk table metadata through the thread-local Paths and the
+                // threads die asynchronously after boot with no Path cleaner of their own --
+                // without the finally each boot stranded the native PATH/PATH2 allocations on
+                // thread death (a NATIVE_PATH_THREAD_LOCAL residue that surfaces in whichever
+                // test leak-check window the thread happens to die in).
                 ServerMain.this.hydrateMetadataThread = new Thread(() -> {
-                    ServerMain.this.engine.getMetadataCache().onStartupAsyncHydrator();
-                    ServerMain.this.engine.hydrateRecentWriteTracker();
-                });
+                    try {
+                        ServerMain.this.engine.getMetadataCache().onStartupAsyncHydrator();
+                        ServerMain.this.engine.hydrateRecentWriteTracker();
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "metadata-hydration");
                 ServerMain.this.hydrateMetadataThread.start();
 
                 ServerMain.this.compileViewsThread = new Thread(() -> {
-                    ObjList<TableToken> tempSink = new ObjList<>();
-                    try (SqlExecutionContext executionContext = ServerMain.this.engine.createViewCompilerContext(0)) {
-                        ViewCompilerJob.compileAllViews(ServerMain.this.engine, executionContext, tempSink);
+                    try {
+                        ObjList<TableToken> tempSink = new ObjList<>();
+                        try (SqlExecutionContext executionContext = ServerMain.this.engine.createViewCompilerContext(0)) {
+                            ViewCompilerJob.compileAllViews(ServerMain.this.engine, executionContext, tempSink);
+                        }
+                    } finally {
+                        Path.clearThreadLocals();
                     }
-                });
+                }, "view-compiler");
                 ServerMain.this.compileViewsThread.start();
 
                 // GC and the "enjoy" advisory fire from the WorkerPoolManagerEnvelope's tail

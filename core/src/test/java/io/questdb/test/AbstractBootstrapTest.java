@@ -115,6 +115,9 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        // Snapshotted before the leak check baselines so the failure dump below can flag
+        // thread-local Path births that happened inside the measurement window.
+        final long tlPathBirthBaseline = Path.getThreadLocalBirthCount();
         try {
             TestUtils.assertMemoryLeak(() -> {
                 code.run();
@@ -137,7 +140,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             // argLine), so a healthy run pays a registry add/remove and prints nothing.
             if (sb.indexOf("NATIVE_PATH_THREAD_LOCAL") >= 0) {
                 sb.append(" [live thread-local Paths:")
-                        .append(Path.dumpLiveThreadLocalAttributions())
+                        .append(Path.dumpLiveThreadLocalAttributions(tlPathBirthBaseline))
                         .append(']');
             }
             AssertionError annotated = new AssertionError(sb.toString());
