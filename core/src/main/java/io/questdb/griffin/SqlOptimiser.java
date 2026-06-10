@@ -1643,7 +1643,6 @@ public class SqlOptimiser implements Mutable {
         boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
         //the switch code below assumes expression are simple column references
         if (literalCollector.functionCount > 0) {
-            node.innerPredicate = innerPredicate;
             if (canMovePredicate) {
                 parent.addParsedWhereNode(node, innerPredicate);
             } else {
@@ -1802,7 +1801,6 @@ public class SqlOptimiser implements Mutable {
                 break;
             default:
                 if (canMovePredicate) {
-                    node.innerPredicate = innerPredicate;
                     parent.addParsedWhereNode(node, innerPredicate);
                 } else {
                     addOuterJoinExpression(parent, joinModel, joinIndex, node);

@@ -2182,6 +2182,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES (1), (2)");
             assertQuery("SELECT t0.c, t1.k, t2.k FROM t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c = 1 ORDER BY t2.k")
                     .noLeakCheck()
+                    // A non-pushed master filter would render alias-qualified as a post-join
+                    // "Filter filter: t0.c=1" node (cf. testMasterFilterAnchorsAtLastNullingJoinInOrder);
+                    // its absence proves t0.c=1 pushed into t0's scan instead.
+                    .withPlanNotContaining("Filter filter: t0.c")
                     .returns("c\tk\tk1\n1\t1\t1\n1\tnull\t2\n");
         });
     }
