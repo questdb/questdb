@@ -2134,6 +2134,26 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinedMasterFilterPushesDownWhenNotNulled() throws Exception {
+        // t0 is cross-joined and, after reordering, executes AFTER the RIGHT join, so that join never
+        // NULL-extends t0. WHERE t0.c = 1 must push down into t0's scan. Anchoring the post-join filter by
+        // model index (where the RIGHT join precedes t0) compiled it against metadata lacking t0 -
+        // "Invalid column: t0.c". Choosing the anchor in execution order fixes the failure and keeps the
+        // pushdown.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (c INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+            assertQuery("SELECT t0.c, t1.k, t2.k FROM t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c = 1 ORDER BY t2.k")
+                    .noLeakCheck()
+                    .returns("c\tk\tk1\n1\t1\t1\n1\tnull\t2\n");
+        });
+    }
+
+    @Test
     public void testCrossTripleOverflow() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
@@ -2156,6 +2176,33 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testHashJoinRecordNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
+    }
+
+    @Test
+    public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
+        // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
+        // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends
+        // the master. It must push down into the master scan, not stay as a post-join filter - otherwise
+        // the unmatched (NULL-master) slave rows the outer join synthesizes get dropped. Regression: the
+        // master-nulling guard used to intercept these ON conjuncts as if they were WHERE predicates.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, c INT)");
+            execute("INSERT INTO m VALUES (1, 1)");
+            execute("CREATE TABLE x (k INT)");
+            execute("INSERT INTO x VALUES (1)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (1), (2), (3)");
+
+            final String expected = "sk\tmk\tmc\n1\t1\t1\n2\tnull\tnull\n3\tnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                for (String onConjunct : new String[]{"m.c = 1", "m.c > 0", "abs(m.c) = 1"}) {
+                    assertQuery("SELECT s.k sk, m.k mk, m.c mc FROM m JOIN x ON x.k = m.k AND " + onConjunct
+                            + " " + joinType + " JOIN s ON s.k = x.k ORDER BY sk")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
     }
 
     @Test
@@ -5751,6 +5798,27 @@ public class JoinTest extends AbstractCairoTest {
                 ORDER BY order_ts + usec_offs
                 """;
         assertSkipToAndCalculateSize(sql, 1000);
+    }
+
+    @Test
+    public void testMasterFilterAnchorsAtLastNullingJoinInOrder() throws Exception {
+        // wm is NULL-extended by two joins: a homogenized CROSS_RIGHT (non-equi ON) and a RIGHT join.
+        // doReorderTables appends the context-less CROSS_RIGHT last, so it executes AFTER the RIGHT join.
+        // The master WHERE wm.c = 1 must anchor at that last-executing nulling join; anchoring by model
+        // index placed it below the CROSS_RIGHT, which then re-synthesized a NULL-master row that leaked.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wm (x INT, q INT, c INT)");
+            execute("INSERT INTO wm VALUES (1, 1, 9)");
+            execute("CREATE TABLE ws1 (y INT)");
+            execute("INSERT INTO ws1 VALUES (100)");
+            execute("CREATE TABLE ws2 (q INT)");
+            execute("INSERT INTO ws2 VALUES (2)");
+            assertQuery("SELECT * FROM wm RIGHT JOIN ws1 ON wm.x > ws1.y RIGHT JOIN ws2 ON ws2.q = wm.q WHERE wm.c = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: wm.c=1")
+                    .returns("x\tq\tc\ty\tq1\n");
+        });
     }
 
     @Test

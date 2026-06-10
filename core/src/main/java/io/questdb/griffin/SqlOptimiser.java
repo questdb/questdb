@@ -553,6 +553,21 @@ public class SqlOptimiser implements Mutable {
         };
     }
 
+    /**
+     * Returns true for join types that NULL-extend the master (left) side: SPLICE, FULL OUTER
+     * and RIGHT OUTER, plus the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL variants that
+     * {@code homogenizeCrossJoins} produces for a non-equi RIGHT/FULL OUTER ON clause. Each of
+     * these emits rows in which every master column is NULL. LEFT OUTER, ASOF, LT and
+     * JOIN_CROSS_LEFT keep every master row, so they are excluded.
+     */
+    private static boolean isMasterNullingJoinType(int joinType) {
+        return joinType == IQueryModel.JOIN_SPLICE
+                || joinType == IQueryModel.JOIN_FULL_OUTER
+                || joinType == IQueryModel.JOIN_RIGHT_OUTER
+                || joinType == IQueryModel.JOIN_CROSS_RIGHT
+                || joinType == IQueryModel.JOIN_CROSS_FULL;
+    }
+
     private static boolean isOrderedByDesignatedTimestamp(IQueryModel model) {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
@@ -605,13 +620,41 @@ public class SqlOptimiser implements Mutable {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         int result = -1;
         for (int i = tableIndex + 1, n = joinModels.size(); i < n; i++) {
-            final int joinType = joinModels.getQuick(i).getJoinType();
-            if (joinType == IQueryModel.JOIN_SPLICE
-                    || joinType == IQueryModel.JOIN_FULL_OUTER
-                    || joinType == IQueryModel.JOIN_RIGHT_OUTER
-                    || joinType == IQueryModel.JOIN_CROSS_RIGHT
-                    || joinType == IQueryModel.JOIN_CROSS_FULL) {
+            if (isMasterNullingJoinType(joinModels.getQuick(i).getJoinType())) {
                 result = i;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Execution-order counterpart of {@link #masterNullingJoinIndex}: returns the model index of
+     * the last NULL-extending join that runs after the master table at {@code tableIndex}, or -1.
+     * A post-join master filter must be anchored there. {@code doReorderTables} appends
+     * context-less tables (including homogenized JOIN_CROSS_RIGHT/JOIN_CROSS_FULL joins) to the
+     * end of the execution order, so a model-index anchor can pick a join that runs before the
+     * table joins (filter fails to compile) or before a later nulling join (NULL rows leak).
+     * Falls back to the model-index scan when the execution order is not yet populated.
+     */
+    private static int masterNullingJoinIndexInOrder(IQueryModel parent, int tableIndex) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final IntList ordered = parent.getOrderedJoinModels();
+        final int n = joinModels.size();
+        if (ordered.size() != n) {
+            return masterNullingJoinIndex(parent, tableIndex);
+        }
+        int tablePos = -1;
+        for (int p = 0; p < n; p++) {
+            if (ordered.getQuick(p) == tableIndex) {
+                tablePos = p;
+                break;
+            }
+        }
+        int result = -1;
+        for (int p = tablePos + 1; p < n; p++) {
+            final int modelIndex = ordered.getQuick(p);
+            if (isMasterNullingJoinType(joinModels.getQuick(modelIndex).getJoinType())) {
+                result = modelIndex;
             }
         }
         return result;
@@ -1643,6 +1686,9 @@ public class SqlOptimiser implements Mutable {
         traverseNamesAndIndices(parent, node);
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
+        // Record predicate origin so later stages (assignFilters, moveWhereInsideSubQueries)
+        // can tell an inner-join ON conjunct apart from a WHERE predicate.
+        node.innerPredicate = innerPredicate;
 
         JoinContext jc;
         boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
@@ -1667,8 +1713,10 @@ public class SqlOptimiser implements Mutable {
                         && literalCollector.nullCount == 0
                         // the table must not be OUTER or ASOF joined
                         && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.get(0)).getJoinType())
-                        // and must not sit on the master side of a downstream SPLICE/FULL/RIGHT OUTER join
-                        && masterNullingJoinIndex(parent, literalCollectorBIndexes.get(0)) < 0
+                        // Only a WHERE predicate (joinIndex < 0) on a master-nulled table must stay
+                        // post-join; an inner-join ON conjunct (joinIndex >= 0) gates the inner join,
+                        // which runs first, so it still pushes down.
+                        && (joinIndex >= 0 || masterNullingJoinIndex(parent, literalCollectorBIndexes.get(0)) < 0)
                 ) {
                     // single table reference + constant
                     jc = contextPool.next();
@@ -1698,15 +1746,12 @@ public class SqlOptimiser implements Mutable {
                             if (jc.slaveIndex != joinIndex &&
                                     joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                                 addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                            } else if (joinIndex < 0 && masterNullingJoinIndex(parent, lhi) >= 0) {
+                                // a.c1 = a.c2 on a master-nulled table: defer to assignFilters so the
+                                // post-join anchor is chosen in execution order (WHERE-origin only).
+                                parent.addParsedWhereNode(node, innerPredicate);
                             } else {
-                                // a.c1 = a.c2 is single-table too: keep it post-join when the table is
-                                // a master nulled by a downstream SPLICE/FULL/RIGHT OUTER join
-                                final int nullingJoinIndex = masterNullingJoinIndex(parent, lhi);
-                                if (nullingJoinIndex < 0) {
-                                    addWhereNode(parent, lhi, node);
-                                } else {
-                                    addPostJoinWhereClause(parent.getJoinModels().getQuick(nullingJoinIndex), node);
-                                }
+                                addWhereNode(parent, lhi, node);
                             }
                         } else {
                             // For an outer/asof barrier, both sides reference the same
@@ -1755,8 +1800,9 @@ public class SqlOptimiser implements Mutable {
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
                         && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())
-                        // and must not sit on the master side of a downstream SPLICE/FULL/RIGHT OUTER join
-                        && masterNullingJoinIndex(parent, literalCollectorAIndexes.get(0)) < 0) {
+                        // see the case 0 / bSize == 1 branch above: WHERE on a master-nulled table
+                        // stays post-join, an inner-join ON conjunct (joinIndex >= 0) pushes down
+                        && (joinIndex >= 0 || masterNullingJoinIndex(parent, literalCollectorAIndexes.get(0)) < 0)) {
                     // single table reference + constant
                     if (!canMovePredicate) {
                         addOuterJoinExpression(parent, joinModel, joinIndex, node);
@@ -1875,7 +1921,9 @@ public class SqlOptimiser implements Mutable {
                     parent.setConstWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, parent.getConstWhereClause(), node));
                 } else if (rs == 1 && // single table reference and this table is not joined via OUTER or ASOF
                         joinBarriers.excludes(parent.getJoinModels().getQuick(refs.get(0)).getJoinType())) {
-                    final int nullingJoinIndex = masterNullingJoinIndex(parent, refs.get(0));
+                    // Only a WHERE predicate is held back from a master-nulling join; an inner-join ON
+                    // conjunct gates that inner join, which runs first, so it pushes down as usual.
+                    final int nullingJoinIndex = node.innerPredicate ? -1 : masterNullingJoinIndexInOrder(parent, refs.get(0));
                     if (nullingJoinIndex < 0) {
                         // get single table reference out of the way right away
                         // we don't have to wait until "our" table comes along
@@ -5360,10 +5408,10 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
 
-                    // Same guard as analyseEquals, for a master predicate that arrives here from an
-                    // outer wrapping model: keep it post-join when a downstream SPLICE/FULL/RIGHT
-                    // OUTER join nulls the master, instead of pushing it into the master sub-query.
-                    final int nullingJoinIndex = masterNullingJoinIndex(model, tableIndex);
+                    // A master WHERE predicate (not an inner-join ON conjunct that was pushed here)
+                    // must stay post-join when a downstream nulling join NULL-extends the master;
+                    // anchor it in execution order so a later nulling join cannot re-leak NULL rows.
+                    final int nullingJoinIndex = node.innerPredicate ? -1 : masterNullingJoinIndexInOrder(model, tableIndex);
                     if (nullingJoinIndex >= 0) {
                         addPostJoinWhereClause(model.getJoinModels().getQuick(nullingJoinIndex), node);
                         continue;
