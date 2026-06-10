@@ -193,12 +193,13 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
                 // size cannot be estimated, so the scan is unbounded (setSelection
                 // maps the negative limit) and the emit slice applies both skips;
                 // isFirstN stays false, so the generic cursor is always selected.
-                // A NULL hi lands here too: its negated skipLast overflows negative
-                // and setSelection clamps it to 0, so LIMIT 1,null returns rows from
-                // 1 to the end.
-                limit = -1;
-                skipFirst = lo;
-                skipLast = -hi;
+                // A NULL hi produces the empty result, matching the legacy chain
+                // and LimitRecordCursor.
+                if (hi != Numbers.LONG_NULL) {
+                    limit = -1;
+                    skipFirst = lo;
+                    skipLast = -hi;
+                }
             } else {
                 // Both non-negative: rows lo..hi.
                 isFirstN = true;

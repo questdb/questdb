@@ -59,7 +59,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     // factory does not own the chain, just keeps the reference to enable updating of the limits
     private LimitedSizeLongTreeChain chain;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
-    private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
+    private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or LimitedSizePartiallySortedLightRecordCursor
     private boolean isFirstN;
     private long limit;
     private long skipFirst;
@@ -128,8 +128,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
      * 2. "limit L, H" means we need to keep :
      * L < 0          - last  L records (but skip last H records, if H >=0 then don't skip anything)
      * L >= 0, H >= 0 - first H records (but skip first L later, if H <= L then return empty set)
-     * L >= 0, H < 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
-     * H-th from the end, and we don't) and need to revert to default behavior - produce the whole set and skip.
+     * L >= 0, H < 0  - the result spans from record L-th from the beginning up to H-th from the end, so the
+     * chain stays unbounded (limit -1) and the cursor skips L rows from the start and H from the end.
      * <p>
      * Similar to LimitRecordCursorFactory.LimitRecordCursor, but doesn't check the underlying count.
      */
@@ -180,17 +180,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public boolean usesIndex() {
         return base.usesIndex();
-    }
-
-    // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
-    // because such case can't really be optimized by topN/bottomN
-    private boolean canBeOptimized(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-        loFunction.init(baseCursor, executionContext);
-        if (hiFunction != null) {
-            hiFunction.init(baseCursor, executionContext);
-        }
-
-        return !(loFunction.getLong(null) >= 0 && hiFunction != null && hiFunction.getLong(null) < 0);
     }
 
     private void computeLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -259,23 +248,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             return;
         }
 
-        if (canBeOptimized(baseCursor, executionContext)) {
-            initializeLimitedSizeCursor(executionContext, baseCursor);
-        } else {
-            initializeUnlimitedSizeCursor();
-        }
-    }
-
-    private void initializeUnlimitedSizeCursor() {
-        LongTreeChain chain = new LongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxBytes(),
-                configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxBytes(),
-                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
-        );
-        this.cursor = new SortedLightRecordCursor(chain, comparator, rankMaps);
+        initializeLimitedSizeCursor(executionContext, baseCursor);
     }
 
     private boolean isInitialized() {

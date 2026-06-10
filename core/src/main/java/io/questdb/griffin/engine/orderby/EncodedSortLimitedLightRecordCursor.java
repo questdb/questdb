@@ -64,11 +64,12 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
-    private final long maxEntryMemBytes;
+    private final long keyCapBytes;
     private final long parallelThreshold;
     // A copy, not a buffer address: entryMem may reallocate on growth.
     private final long[] thresholdEntry = new long[SortKeyType.MAX_ENTRY_LONGS];
     private final int timestampIndex;
+    private final long valueCapBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -87,6 +88,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     private long limit;
     private int longsPerEntry;
     private long maxEntries;
+    private long maxEntryMemBytes;
     private int rowIdOffset;
     private long skipFirst;
     private long skipLast;
@@ -111,9 +113,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         this.entryMem = entryMemInit;
         this.timestampIndex = timestampIndex;
         this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
-        final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
-        final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
-        this.maxEntryMemBytes = Math.min(keyCap + valueCap, SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
+        this.keyCapBytes = Math.min(configuration.getSqlSortKeyMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
+        this.valueCapBytes = Math.min(configuration.getSqlSortLightValueMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
         this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
         this.isOpen = true;
     }
@@ -194,10 +195,15 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         rowIdOffset = keyType.rowIdOffset();
         keyLongs = keyType.keyLength() / Long.BYTES;
         longsPerEntry = entrySize / Long.BYTES;
-        maxEntries = maxEntryMemBytes / entrySize;
+        // Each cap binds on its own, like the tree chain's separate key and value heaps.
+        maxEntries = Math.min(
+                Math.min(keyCapBytes / keyType.keyLength(), valueCapBytes / Long.BYTES),
+                SortKeyEncoder.MAX_ENTRY_HEAP_BYTES / entrySize
+        );
+        maxEntryMemBytes = maxEntries * entrySize;
         // The trigger stays within maxEntries so compaction fires before the overflow check can.
         compactionTrigger = limit > 0 && limit < maxEntries
-                ? Math.clamp(limit << 1, MIN_COMPACTION_TRIGGER, maxEntries)
+                ? Math.min(Math.max(limit << 1, MIN_COMPACTION_TRIGGER), maxEntries)
                 : Long.MAX_VALUE;
         hasThreshold = false;
         circuitBreaker = executionContext.getCircuitBreaker();
@@ -264,8 +270,6 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             }
             runBuild();
         }
-        // No finally: a retry after a mid-build throw must not see freed rank maps.
-        Misc.free(encoder);
         if (count > 1) {
             Vect.sortEncodedEntries(entryMem.getAddress(), count, keyLongs, parallelThreshold);
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
@@ -275,6 +279,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         if (emitStartAddr < emitEndAddr) {
             baseCursor.setRecordAtRows(this);
         }
+        // No finally: a retry after a mid-build throw must not see freed rank maps.
+        Misc.free(encoder);
     }
 
     /**

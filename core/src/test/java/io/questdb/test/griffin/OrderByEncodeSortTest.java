@@ -510,10 +510,6 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByLimitLoPosHiNegBindVariableFirstExecution() throws Exception {
-        // The legacy tree-chain factory keeps a pre-existing bug on this shape: a fresh
-        // factory returns all rows instead of the slice (it only slices correctly on
-        // re-execution), so the first-execution expectation is asserted encoded-only.
-        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
             bindVariableService.clear();
@@ -527,20 +523,6 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             2
                             3
                             4
-                            """);
-
-            // NULL hi with non-negative lo: skip lo rows, keep the rest
-            bindVariableService.clear();
-            bindVariableService.setLong("lo", 2);
-            bindVariableService.setLong("hi", Numbers.LONG_NULL);
-            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            v
-                            3
-                            4
-                            5
                             """);
         });
     }
@@ -588,6 +570,22 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             3
                             4
                             5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitLoPosHiNullBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
                             """);
         });
     }
@@ -817,6 +815,35 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             1970-01-01T00:00:01.000000Z\t5
                             1970-01-01T00:00:01.000000Z\t6
                             1970-01-01T00:00:02.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTinyMemoryCap() throws Exception {
+        // The caps fit fewer entries than the minimum compaction trigger, so the
+        // trigger must clamp to the budget.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 16_384);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 16_384);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5_000))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 10);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            8
+                            9
+                            10
                             """);
         });
     }

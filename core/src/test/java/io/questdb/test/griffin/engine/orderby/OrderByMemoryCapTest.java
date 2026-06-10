@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -76,24 +77,62 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialEncodedOrderByLimitCapFires() throws Exception {
+        // The encoded top-K honors the key cap on its own: a 64-byte budget fits only
+        // a few entries, so the scan overflows even with the value cap unset.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
+
+        assertMemoryLeak(() -> {
+            // The shared context snapshots the parallel top-K flag at construction,
+            // so it has to be flipped on the context itself.
+            final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            final boolean parallelTopK = context.isParallelTopKEnabled();
+            context.setParallelTopKEnabled(false);
+            try {
+                execute("CREATE TABLE tab AS (" +
+                        "SELECT (x % 1_000)::INT AS g, x::INT AS v" +
+                        " FROM long_sequence(50_000))");
+
+                assertExceptionNoLeakCheck(
+                        "SELECT g, v FROM tab ORDER BY g, v LIMIT 40000",
+                        0,
+                        "memory exceeded in EncodedSort"
+                );
+            } finally {
+                context.setParallelTopKEnabled(parallelTopK);
+            }
+        });
+    }
+
+    @Test
     public void testSerialOrderByLimitCapFires() throws Exception {
-        // Parallel top-K disabled routes ORDER BY ... LIMIT through the serial
-        // LimitedSizeSortedLightRecordCursorFactory. A 64-byte sort.key budget makes its
-        // LimitedSizeLongTreeChain key heap overflow, naming the sort.key config key.
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, false);
+        // With parallel top-K and the encoded sort disabled, ORDER BY ... LIMIT routes
+        // through the serial LimitedSizeSortedLightRecordCursorFactory. A 64-byte
+        // sort.key budget makes its LimitedSizeLongTreeChain key heap overflow, naming
+        // the sort.key config key.
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
 
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab AS (" +
-                    "SELECT (x % 1_000)::INT AS g, x::INT AS v" +
-                    " FROM long_sequence(50_000))");
+            // The shared context snapshots the parallel top-K flag at construction,
+            // so it has to be flipped on the context itself.
+            final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            final boolean parallelTopK = context.isParallelTopKEnabled();
+            context.setParallelTopKEnabled(false);
+            try {
+                execute("CREATE TABLE tab AS (" +
+                        "SELECT (x % 1_000)::INT AS g, x::INT AS v" +
+                        " FROM long_sequence(50_000))");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT g, v FROM tab ORDER BY g, v LIMIT 40000",
-                    0,
-                    "memory exceeded in RedBlackTree (raise cairo.sql.sort.key.max.bytes)"
-            );
+                assertExceptionNoLeakCheck(
+                        "SELECT g, v FROM tab ORDER BY g, v LIMIT 40000",
+                        0,
+                        "memory exceeded in RedBlackTree (raise cairo.sql.sort.key.max.bytes)"
+                );
+            } finally {
+                context.setParallelTopKEnabled(parallelTopK);
+            }
         });
     }
 }

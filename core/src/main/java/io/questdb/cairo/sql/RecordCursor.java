@@ -331,6 +331,9 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * whole row group; cursors that cannot benefit never pull, so the caller pays nothing.
      * Null restores full-frame decoding. Wrappers that hold a delegate cursor must
      * forward the call.
+     * <p>
+     * Until the declaration is cleared with null, reading a row id outside the declared
+     * set is undefined: on a row-filtered Parquet frame such rows materialize as NULLs.
      */
     default void setRecordAtRows(@Nullable RowIdSource source) {
     }

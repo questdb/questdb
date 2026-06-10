@@ -172,10 +172,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return columnTypes;
     }
 
-    public int getFrameCount() {
-        return frameSizes.size();
-    }
-
     public byte getFrameFormat(int frameIndex) {
         return frameFormats.getQuick(frameIndex);
     }

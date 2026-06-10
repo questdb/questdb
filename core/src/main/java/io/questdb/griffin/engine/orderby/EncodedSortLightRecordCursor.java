@@ -49,8 +49,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
-    private final long maxEntryMemBytes;
+    private final long keyCapBytes;
     private final long parallelThreshold;
+    private final long valueCapBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -74,11 +75,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
-            // Clamp each operand before adding so an unset (Long.MAX_VALUE)
-            // cap does not overflow into a negative budget.
-            final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
-            final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
-            this.maxEntryMemBytes = Math.min(keyCap + valueCap, SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
+            // Clamp each cap so an unset (Long.MAX_VALUE) value stays a usable budget.
+            this.keyCapBytes = Math.min(configuration.getSqlSortKeyMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
+            this.valueCapBytes = Math.min(configuration.getSqlSortLightValueMaxBytes(), SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } finally {
@@ -99,7 +98,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     @Override
     public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
         target.ensureCapacity(count);
-        for (long addr = currentAddr; addr < endAddr; addr += entrySize) {
+        for (long addr = startAddr; addr < endAddr; addr += entrySize) {
             final long rowId = Unsafe.getLong(addr);
             if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
                 target.add(rowId);
@@ -191,7 +190,12 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private void buildAndSort() {
         // Pre-allocate if size is known
         long estimatedSize = baseCursor.size();
-        long maxEntries = maxEntryMemBytes / entrySize;
+        // Each cap binds on its own, like the tree chain's separate key and value heaps.
+        long maxEntries = Math.min(
+                Math.min(keyCapBytes / keyType.keyLength(), valueCapBytes / Long.BYTES),
+                SortKeyEncoder.MAX_ENTRY_HEAP_BYTES / entrySize
+        );
+        long maxEntryMemBytes = maxEntries * entrySize;
         if (estimatedSize > 0) {
             if (estimatedSize > maxEntries) {
                 SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
@@ -223,15 +227,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
                 count++;
             }
         }
-        // No finally: a retry after a mid-build throw must not see freed rank maps.
-        Misc.free(encoder);
-
         if (count <= 1) {
             startAddr = entryMem.getAddress() + rowIdOffset;
             toTop();
             if (count > 0) {
                 baseCursor.setRecordAtRows(this);
             }
+            Misc.free(encoder);
             return;
         }
 
@@ -240,6 +242,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
         baseCursor.setRecordAtRows(this);
+        // No finally: a retry after a mid-build throw must not see freed rank maps.
+        Misc.free(encoder);
     }
 
     private void forceClose() {

@@ -111,7 +111,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     }
 
     public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
-        return lateMatSkipColumnIndexes != null ? lateMatSkipColumnIndexes : filterUsedColumnIndexes;
+        final IntHashSet skipSet = lateMatSkipColumnIndexes;
+        return skipSet != null ? skipSet : filterUsedColumnIndexes;
     }
 
     public SelectivityStats getSelectivityStats(int slotId) {
@@ -262,9 +263,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             lateMatSkipColumnIndexes = null;
             return;
         }
-        final IntHashSet skipSet = lateMatSkipColumnIndexes != null ? lateMatSkipColumnIndexes : new IntHashSet();
-        lateMatSkipColumnIndexes = null;
-        skipSet.clear();
+        // Always a fresh set: a previously published one may still be visible to workers.
+        final IntHashSet skipSet = new IntHashSet();
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             if (!columns.contains(i) || filterUsedColumnIndexes.contains(i)) {
                 skipSet.add(i);

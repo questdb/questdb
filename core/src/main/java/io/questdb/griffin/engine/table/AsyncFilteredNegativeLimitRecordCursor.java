@@ -86,7 +86,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         try {
             this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
             this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-            this.frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
             this.dispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
         } catch (Throwable th) {
             close();

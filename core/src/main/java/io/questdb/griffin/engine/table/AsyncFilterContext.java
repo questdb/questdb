@@ -90,7 +90,7 @@ public class AsyncFilterContext implements Closeable {
         this.perWorkerFilters = perWorkerFilters;
 
         try {
-            ownerMemoryPool = PageFrameMemoryPool.forConfiguration(configuration, ownerMemoryPoolMaxBytes);
+            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolMaxBytes);
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
