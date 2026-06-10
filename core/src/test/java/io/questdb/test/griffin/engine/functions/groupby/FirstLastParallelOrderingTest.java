@@ -276,6 +276,71 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testLastNotNullDecimal128MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL128, 30, 5));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullDecimal64MergeKeepsNonNullOverNullDest() throws Exception {
+        DecimalArg arg = new DecimalArg(ColumnType.getDecimalType(ColumnType.DECIMAL64, 18, 3));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullDecimalGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullGeoLongMergeKeepsNonNullOverNullDest() throws Exception {
+        GeoLongArg arg = new GeoLongArg(ColumnType.getGeoHashTypeWithBits(40));
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullGeoHashGroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(42L)
+        );
+    }
+
+    @Test
+    public void testLastNotNullIPv4MergeKeepsNonNullOverNullDest() throws Exception {
+        IPv4Arg arg = new IPv4Arg();
+        assertLastNotNullMergeKeepsNonNull(
+                build(new LastNotNullIPv4GroupByFunctionFactory(), arg),
+                arg::setNull,
+                () -> arg.set(0x0A000001)
+        );
+    }
+
+    private void assertLastNotNullMergeKeepsNonNull(GroupByFunction func, Runnable setNull, Runnable setNonNull) throws Exception {
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes types = new ArrayColumnTypes();
+            func.initValueTypes(types);
+            func.initValueIndex(0);
+            try (SimpleMapValue dest = new SimpleMapValue(types.getColumnCount());
+                 SimpleMapValue src = new SimpleMapValue(types.getColumnCount())) {
+                // dest: a group whose only seen row is NULL, committed at the higher rowId.
+                func.setEmpty(dest);
+                setNull.run();
+                func.computeFirst(dest, null, 100);
+                // src: the only non-null value in the whole group, at the lower rowId.
+                func.setEmpty(src);
+                setNonNull.run();
+                func.computeFirst(src, null, 20);
+                func.merge(dest, src);
+                Assert.assertEquals(
+                        "last_not_null merge dropped the only non-null value because the dest slot held an all-null group with a higher rowId",
+                        20,
+                        dest.getLong(func.getValueIndex())
+                );
+            }
+        });
+    }
+
     private void assertWinnerRowId(GroupByFunction func, long[] rowIds, RowArg setArg, long expectedRowId) throws Exception {
         assertMemoryLeak(() -> {
             final ArrayColumnTypes types = new ArrayColumnTypes();

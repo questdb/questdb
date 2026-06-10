@@ -112,7 +112,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            if (srcRowId > destRowId || destValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putByte(valueIndex + 1, srcVal);
             }
@@ -167,7 +167,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            if (srcRowId > destRowId || destValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
             }
@@ -222,7 +222,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            if (srcRowId > destRowId || destValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putLong(valueIndex + 1, srcVal);
             }
@@ -277,7 +277,7 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            if (srcRowId > destRowId || destValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putShort(valueIndex + 1, srcVal);
             }
