@@ -115,9 +115,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 }
             } finally {
                 Misc.clearObjList(groupByFunctions);
-                // freeObjList nulls the freed slots (keeping the list sized for the next of()'s
-                // setQuick reuse) so a reopen-breach re-close finds null, not stale re-acquired
-                // cursors. slaveTimeFrameStates are reused in place, so they keep their objects.
+                // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
                 Misc.freeObjList(slaveFrameCursors);
                 Misc.freeObjListAndKeepObjects(slaveTimeFrameStates);
                 isOpen = false;

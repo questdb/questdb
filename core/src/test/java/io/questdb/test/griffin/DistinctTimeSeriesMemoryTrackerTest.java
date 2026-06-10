@@ -101,9 +101,9 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testRoutesAndReturnsDistinctRows() throws Exception {
-        // Monotonic timestamps: every row is distinct and the dataMap clears each step, so the
-        // scan stays well under the limit. The plan guard pins the run to DistinctTimeSeries.
-        assertMemoryLeak(() -> assertQuery("SELECT DISTINCT * FROM tab")
+        // Monotonic timestamps: every row is distinct and the dataMap clears each step, so the scan
+        // stays under the limit. The plan guard pins the run to DistinctTimeSeries; returns() self-leak-checks.
+        assertQuery("SELECT DISTINCT * FROM tab")
                 .ddl("CREATE TABLE tab AS (SELECT (x * 1_000_000L)::timestamp ts, (x % 3)::long v FROM long_sequence(6)) TIMESTAMP(ts) PARTITION BY DAY")
                 .timestamp("ts")
                 .withPlanContaining("DistinctTimeSeries")
@@ -113,7 +113,7 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
                         "1970-01-01T00:00:03.000000Z\t0\n" +
                         "1970-01-01T00:00:04.000000Z\t1\n" +
                         "1970-01-01T00:00:05.000000Z\t2\n" +
-                        "1970-01-01T00:00:06.000000Z\t0\n"));
+                        "1970-01-01T00:00:06.000000Z\t0\n");
     }
 
     private static void assertBreach(String sql) throws Exception {

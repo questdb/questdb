@@ -292,7 +292,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         public void close() {
             if (isOpen) {
                 masterCursor = Misc.free(masterCursor);
-                Misc.freeObjListAndKeepObjects(slaveCursors);
+                // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
+                Misc.freeObjList(slaveCursors);
                 Misc.clearObjList(groupByFunctions);
                 Misc.free(groupByAllocator);
                 Misc.freeObjListAndKeepObjects(asOfJoinMaps);

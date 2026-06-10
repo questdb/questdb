@@ -343,7 +343,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         public void close() {
             if (isOpen) {
                 masterCursor = Misc.free(masterCursor);
-                Misc.freeObjListAndKeepObjects(slaveCursors);
+                // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
+                Misc.freeObjList(slaveCursors);
                 mapCursor = Misc.free(mapCursor);
                 Misc.free(dataMap);
                 Misc.clearObjList(groupByFunctions);
