@@ -130,6 +130,7 @@ public class SqlParser {
     // Map of view definitions encountered during query compilation.
     // Using a map ensures consistent view definitions even if views are modified concurrently.
     private final LowerCaseCharSequenceObjHashMap<ViewDefinition> recordedViews = new LowerCaseCharSequenceObjHashMap<>();
+    private final PostOrderTreeTraversalAlgo.Visitor rejectJoinSubQueryRef = this::rejectJoinSubQuery;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
@@ -3518,7 +3519,12 @@ public class SqlParser {
                                     joinModel.addJoinColumn(expr);
                                 } while ((expr = expressionTreeBuilder.poll()) != null);
                             } else {
-                                joinModel.setJoinCriteria(rewriteKnownStatements(expr, decls, null));
+                                final ExpressionNode criteria = rewriteKnownStatements(expr, decls, null);
+                                // A declared variable bound to a sub-query expands here, after the
+                                // parse-time ON-clause sub-query block; reject it so the declared form
+                                // errors like the literal one instead of compiling to a cross join.
+                                traversalAlgo.traverse(criteria, rejectJoinSubQueryRef);
+                                joinModel.setJoinCriteria(criteria);
                             }
                             break;
                         default:
@@ -4679,6 +4685,18 @@ public class SqlParser {
         model.setSampleByOffset(isZeroOffsetToken(offsetExpr.token) ? ZERO_OFFSET : offsetExpr);
         tok = optTok(lexer);
         return tok;
+    }
+
+    // Join ON-clause sub-queries are unsupported and rejected during expression parsing, but
+    // declared variables are literals at parse time and only expand to their definition later, in
+    // rewriteKnownStatements. A variable bound to a sub-query (e.g. "@q := (SELECT ...)" used as
+    // "ON x IN @q") would therefore slip past the parse-time block and compile to surprising
+    // cross-join semantics. Walk the rewritten criteria and reject any sub-query node, so the
+    // declared form errors the same as the literal one at every nesting depth.
+    private void rejectJoinSubQuery(ExpressionNode node) throws SqlException {
+        if (node.type == ExpressionNode.QUERY) {
+            throw SqlException.$(node.position, "query is not allowed here");
+        }
     }
 
     private void rewriteCase(ExpressionNode node) {

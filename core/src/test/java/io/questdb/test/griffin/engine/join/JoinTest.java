@@ -2284,6 +2284,83 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnClauseRejectsDeclaredSubQuery() throws Exception {
+        // ON-clause sub-queries are unsupported and rejected during expression parsing. A declared
+        // variable is a literal at parse time and only expands to its definition later, in
+        // rewriteKnownStatements, so a variable bound to a sub-query (e.g. "@q := (SELECT ...)" used
+        // as "ON x IN @q") used to slip past the parse-time block and compile to surprising cross-join
+        // semantics -- the very footgun the literal rejection prevents. The declared form must now
+        // reject with "query is not allowed here", just like the literal one, at every nesting depth.
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            // declared sub-query in the ON clause of a join nested in an IN sub-query
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q)",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // the same shape at the top level (a pre-existing bypass, now also rejected)
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // a scalar operator with a declared sub-query operand hits the same rewrite path
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select max(symbol) from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol = @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A declared variable bound to a column (not a sub-query) in the ON clause is valid and
+            // must still compile and run -- the reject only fires on sub-query nodes.
+            assertQuery(
+                    "declare @x := s.symbol, @y := r.symbol " +
+                            "select s.symbol from src s join ref r on @x = @y"
+            ).noLeakCheck().noRandomAccess().returns(
+                    "symbol\n" +
+                            "A\n" +
+                            "B\n"
+            );
+
+            // A rejected declared ON-clause sub-query must leave the shared parser state clean: the
+            // SAME pooled compiler compiles the next, valid query without carrying over corrupted state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "declare @q := (select symbol from trades) " +
+                                    "select s.symbol from src s join ref r on s.symbol in @q",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("declared ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select s.symbol from src s join ref r on s.symbol = r.symbol"
+                ).withCompiler(compiler).noLeakCheck().noRandomAccess().returns(
+                        "symbol\n" +
+                                "A\n" +
+                                "B\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testJoinAliasBug() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (xid int, a int, b int)");
