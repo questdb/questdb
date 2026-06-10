@@ -4257,13 +4257,14 @@ mod tests {
         // End-to-end through decode_page: a dictionary-encoded Varchar column
         // whose dictionary page header claims far more values (i32::MAX) than its
         // buffer can hold. decode_page builds BaseVarDictDecoder, whose num_values
-        // guard must surface a clean Layout error before it reaches
-        // Vec::with_capacity(num_values), whose tens-of-gigabytes reservation
-        // aborts the JVM when the allocator refuses it. Proves the guard
-        // propagates through the full decode dispatch, not just the direct
-        // constructor. (with_capacity is lazy, so this pins propagation of the
-        // guard's rejection, not the abort, which is allocator/overcommit
-        // dependent.)
+        // guard must surface a clean Layout error before it reaches the
+        // dictionary-value reservation (try_reserve_dict_values), whose
+        // tens-of-gigabytes request would otherwise abort the JVM when the
+        // allocator refuses it. Proves the guard propagates through the full
+        // decode dispatch, not just the direct constructor. The reservation
+        // allocates eagerly, but whether such a request actually aborts is
+        // allocator/overcommit dependent, so this test pins propagation of the
+        // guard's rejection, not the abort.
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 

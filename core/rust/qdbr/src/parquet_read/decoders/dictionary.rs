@@ -293,11 +293,12 @@ mod tests {
         // i32::MAX) while carrying a tiny buffer. Each value needs at least a
         // 4-byte length prefix, so try_new must reject the header up front with
         // its own "too short to hold" error -- distinct from the per-element
-        // loop's "too short to read" -- before it reaches
-        // Vec::with_capacity(num_values), whose tens-of-gigabytes reservation
-        // aborts the process when the allocator refuses it. (with_capacity is
-        // lazy, so this pins the guard's rejection and its distinct message, not
-        // the abort itself, which is allocator/overcommit dependent.)
+        // loop's "too short to read" -- before it reaches the dictionary-value
+        // reservation (try_reserve_dict_values), whose tens-of-gigabytes request
+        // would otherwise abort the process when the allocator refuses it. The
+        // reservation allocates eagerly, but whether such a request actually
+        // aborts is allocator/overcommit dependent, so this test pins the guard's
+        // rejection and its distinct message, not the abort itself.
         let buffer = [0u8; 8]; // room for at most 2 zero-length values
         let dict_page = DictPage {
             buffer: &buffer,

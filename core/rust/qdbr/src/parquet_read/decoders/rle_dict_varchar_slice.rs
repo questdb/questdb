@@ -1664,8 +1664,17 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let result = RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true);
-        // BaseVarDictDecoder catches the short buffer before we reach the 28-bit check
-        assert!(result.is_err());
+        // The buffer is sized to match the declared length (2^28), so
+        // BaseVarDictDecoder accepts it; the 28-bit header-capacity check in
+        // RleDictVarcharSliceDecoder::try_new is what rejects the oversized value.
+        // Assert that exact error so the test can't pass for the wrong reason.
+        let err = result
+            .err()
+            .expect("a dict value length >= 2^28 must error");
+        assert!(
+            err.to_string().contains("exceeds 28-bit header capacity"),
+            "expected the 28-bit header-capacity error, got: {err}"
+        );
     }
 
     // push_slice detects OOB value via the RleIterator::Rle path.
