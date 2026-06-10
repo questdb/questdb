@@ -5354,7 +5354,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!createMatViewOp.isPassthrough()) {
                 throw SqlException.$(pos, "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views");
             }
-            validateKeepLatestColumns(selectMetadata, RowExpiryUtil.keepLatestKeys(predicate), pos);
+            validateKeepLatestColumns(selectMetadata, predicate, pos);
             return;
         }
         if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
@@ -5388,7 +5388,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     "EXPIRE ROWS KEEP / window retention is only supported on passthrough (non-aggregating) materialized views");
         }
         if (RowExpiryUtil.isKeepLatest(predicate)) {
-            validateKeepLatestColumns(tableMetadata, RowExpiryUtil.keepLatestKeys(predicate), position);
+            validateKeepLatestColumns(tableMetadata, predicate, position);
         } else {
             validateWindowPolicy(executionContext, "\"" + tableToken.getTableName() + "\"", tsName(tableMetadata), predicate, position);
         }
@@ -5427,14 +5427,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Validates a KEEP LATEST PARTITION BY column list against {@code metadata}: a designated timestamp must
-     * exist (LATEST ON requires it) and every key column must resolve. {@code keysCsv} is the raw,
-     * comma-separated list captured by the parser (names may be double-quoted / padded with spaces).
+     * Validates a KEEP LATEST policy against {@code metadata}: a designated timestamp must exist (LATEST ON
+     * requires it); an explicit {@code ON <ts>} must name exactly that designated timestamp; and every
+     * PARTITION BY key column must resolve. {@code stored} is the encoded policy.
      */
-    private void validateKeepLatestColumns(RecordMetadata metadata, CharSequence keysCsv, int position) throws SqlException {
-        if (metadata.getTimestampIndex() < 0) {
+    private void validateKeepLatestColumns(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
+        final int tsIndex = metadata.getTimestampIndex();
+        if (tsIndex < 0) {
             throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a designated timestamp");
         }
+        final CharSequence onTs = RowExpiryUtil.keepLatestTs(stored);
+        if (onTs.length() > 0 && !Chars.equalsIgnoreCase(onTs, metadata.getColumnName(tsIndex))) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST ON must name the designated timestamp '")
+                    .put(metadata.getColumnName(tsIndex)).put("', not '").put(onTs).put('\'');
+        }
+        final CharSequence keysCsv = RowExpiryUtil.keepLatestKeys(stored);
         boolean any = false;
         int start = 0;
         final int n = keysCsv.length();

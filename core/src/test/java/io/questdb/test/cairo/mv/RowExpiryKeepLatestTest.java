@@ -271,6 +271,37 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testKeepLatestOnDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('A',1.0,'2024-01-01T00:00:00.000000Z'),('A',2.0,'2024-01-02T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep latest on ts partition by k");
+            drainWalAndMatViewQueues();
+            assertSql(
+                    "k\tv\tts\n" +
+                            "A\t2.0\t2024-01-02T00:00:00.000000Z\n",
+                    "select k, v, ts from mv order by k"
+            );
+            sink.clear();
+            printSql("show create materialized view mv", sink);
+            TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP LATEST ON ts PARTITION BY k");
+        });
+    }
+
+    @Test
+    public void testKeepLatestOnNonDesignatedRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertCreateFails(
+                    "create materialized view mv as (select * from base) expire rows keep latest on v partition by k",
+                    "EXPIRE ROWS KEEP LATEST ON must name the designated timestamp 'ts', not 'v'"
+            );
+        });
+    }
+
     private void assertCreateFails(String sql, String contains) throws Exception {
         try {
             execute(sql);

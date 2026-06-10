@@ -101,7 +101,7 @@ public final class RowExpiryUtil {
      */
     public static void appendClause(CharSink<?> sink, CharSequence stored) {
         if (isKeepLatest(stored)) {
-            sink.putAscii("KEEP LATEST PARTITION BY ").put(keepLatestKeys(stored));
+            appendKeepLatestClause(sink, stored);
         } else if (isKeepBy(stored)) {
             appendKeepByClause(sink, stored);
         } else if (isWindow(stored)) {
@@ -130,12 +130,10 @@ public final class RowExpiryUtil {
         if (stored == null) {
             return null;
         }
-        if (isKeepLatest(stored)) {
-            return "KEEP LATEST PARTITION BY " + keepLatestKeys(stored);
-        }
-        if (isKeepBy(stored)) {
+        if (isKeepLatest(stored) || isKeepBy(stored)) {
             final StringSink sink = new StringSink();
-            appendKeepByClause(sink, stored);
+            appendClause(sink, stored);
+            // appendClause emits the full "KEEP ..." clause body for these modes (no leading "WHEN").
             return sink.toString();
         }
         if (isWindow(stored)) {
@@ -149,8 +147,9 @@ public final class RowExpiryUtil {
                 + POLICY_SENTINEL + col + POLICY_SENTINEL + keysCsv;
     }
 
-    public static String encodeKeepLatest(CharSequence keysCsv) {
-        return KEEP_LATEST_PREFIX + keysCsv;
+    public static String encodeKeepLatest(CharSequence ts, CharSequence keysCsv) {
+        // body = <ts-or-empty> SEP <keys>; an empty ts means "use the designated timestamp".
+        return KEEP_LATEST_PREFIX + (ts == null ? "" : ts) + POLICY_SENTINEL + keysCsv;
     }
 
     public static String encodeWindow(CharSequence predicate) {
@@ -188,7 +187,12 @@ public final class RowExpiryUtil {
 
     /** The raw PARTITION BY column-list text of an encoded KEEP LATEST policy (check {@link #isKeepLatest}). */
     public static CharSequence keepLatestKeys(CharSequence stored) {
-        return stored.subSequence(2, stored.length());
+        return stored.subSequence(sentinelIndex(stored, 2) + 1, stored.length());
+    }
+
+    /** The explicit {@code ON <ts>} column of a KEEP LATEST policy, or empty when none was specified. */
+    public static CharSequence keepLatestTs(CharSequence stored) {
+        return stored.subSequence(2, sentinelIndex(stored, 2));
     }
 
     /**
@@ -205,6 +209,24 @@ public final class RowExpiryUtil {
             return buildKeepByPredicate(stored, designatedTs);
         }
         return null;
+    }
+
+    private static void appendKeepLatestClause(CharSink<?> sink, CharSequence stored) {
+        sink.putAscii("KEEP LATEST");
+        final CharSequence ts = keepLatestTs(stored);
+        if (ts.length() > 0) {
+            sink.putAscii(" ON ").put(ts);
+        }
+        sink.putAscii(" PARTITION BY ").put(keepLatestKeys(stored));
+    }
+
+    private static int sentinelIndex(CharSequence s, int from) {
+        for (int i = from, n = s.length(); i < n; i++) {
+            if (s.charAt(i) == POLICY_SENTINEL) {
+                return i;
+            }
+        }
+        return s.length();
     }
 
     private static void appendKeepByClause(CharSink<?> sink, CharSequence stored) {

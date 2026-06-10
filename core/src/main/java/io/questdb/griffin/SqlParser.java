@@ -457,10 +457,11 @@ public class SqlParser {
             tok = tok(lexer, "'latest', 'highest', 'lowest' or a row count");
             if (isLatestKeyword(tok)) {
                 tok = tok(lexer, "'on' or 'partition'");
+                String latestTs = "";
                 if (isOnKeyword(tok)) {
-                    // Optional "ON <ts>": consumed and ignored. A table-input LATEST ON requires the
-                    // designated timestamp, so the read filter always uses it.
-                    tok(lexer, "timestamp column name");
+                    // Optional "ON <ts>": captured and validated == the designated timestamp at create/alter
+                    // (a table-input LATEST ON requires it). Stored so SHOW CREATE can round-trip it.
+                    latestTs = Chars.toString(unquote(tok(lexer, "timestamp column name")));
                     tok = tok(lexer, "'partition'");
                 }
                 if (!isPartitionKeyword(tok)) {
@@ -471,7 +472,7 @@ public class SqlParser {
                 if (cap.csv.isEmpty()) {
                     throw SqlException.$(cap.startPos, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
                 }
-                predicateSql = RowExpiryUtil.encodeKeepLatest(cap.csv);
+                predicateSql = RowExpiryUtil.encodeKeepLatest(latestTs, cap.csv);
                 foundCleanup = cap.foundCleanup;
                 tok = cap.nextTok;
             } else {
