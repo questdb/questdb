@@ -830,6 +830,84 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The sealed-sidecar validator bounded the sealed region with
+     * {@code sentinel + siSize <= fileLen}, which a corrupt
+     * near-{@code Long.MAX_VALUE} sentinel overflows past, marking the file
+     * trusted. The incremental seal sizes its snapshot copy and the last
+     * clean stride's copy from that sentinel, so one torn write turned into
+     * a negative-size allocation or an out-of-bounds read. The validator
+     * must reject a sentinel that places the sealed end past the file and
+     * route the seal to sealFull.
+     */
+    @Test
+    public void testIncrementalSealRejectsOverflowingSidecarSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ovf (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides; 'k1' is key 0
+            // (stride 0), 'k0' is key 299 (stride 1, the last stride).
+            execute("""
+                    INSERT INTO t_ovf
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+
+            TableToken token = engine.verifyTableName("t_ovf");
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                appendDescendingK1Batch(writer, "2024-01-01T01:00:00.000000Z");
+                writer.commit();
+            }
+            engine.releaseAllWriters();
+
+            // Overwrite the sealed sidecar's stride-index sentinel with a
+            // near-overflow offset. The value stays monotonic with the
+            // preceding entries, so only the sealed-end bound can reject it.
+            java.io.File sidecar = newestSidecarFile(token);
+            long sentinelSlot = PostingIndexUtils.PC_HEADER_SIZE
+                    + (long) PostingIndexUtils.strideCount(300) * Long.BYTES;
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(sidecar, "rw")) {
+                raf.seek(sentinelSlot);
+                // RandomAccessFile writes big-endian; the file is little-endian
+                raf.writeLong(Long.reverseBytes(Long.MAX_VALUE - 8));
+            }
+
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // O3 append touching only 'k1': stride 0 dirty, stride 1
+                // clean, so the seal goes incremental and must distrust the
+                // corrupt snapshot instead of trusting the overflowed bound.
+                appendDescendingK1Batch(writer, "2024-01-01T02:00:00.000000Z");
+                writer.commit();
+            }
+
+            // 'k1': 10 base rows (sum 13_510) + 40_000 rows at 1.0 each.
+            assertQuery("SELECT count(), sum(price) FROM t_ovf WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            40010\t53510.0
+                            """);
+            // 'k0' lives in the last stride, whose covered data the
+            // distrusted seal must rebuild from column files rather than
+            // copy out of the corrupt sidecar.
+            assertQuery("SELECT count(), sum(price) FROM t_ovf WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            10\t16500.0
+                            """);
+        });
+    }
+
+    /**
      * Field report reproduction: a covering POSTING index on a single
      * actively-growing partition fed by sequential (in-order) WAL/ILP commits.
      * Covered reads return wrong values (or SIGSEGV) once enough rows of a hot

@@ -1361,17 +1361,37 @@ public class PostingIndexWriter implements IndexWriter {
         try {
             // Sidecar snapshot lives inside this try so a malloc OOM mid-loop
             // gets cleaned up by the finally instead of leaking partial bufs.
+            //
+            // Each cover validates on the read-only mmap BEFORE paying the
+            // copy, and the copy takes only the sealed region: gen header,
+            // stride index and stride data, ending at sentinel + siSize. The
+            // file tail past that point holds raw post-seal gen blocks that
+            // no snapshot consumer reads: sealIncremental bounds clean-stride
+            // copies by the stored sentinel and re-gathers dirty strides from
+            // the column files, so copying the tail would be pure waste.
+            //
+            // A sealTxn published by the rollback reencode has no sidecars:
+            // the next gen flush creates the .pc file in append layout
+            // (openSidecarFilesForAppend), which the clean-stride copy must
+            // not interpret as sealed stride-indexed data. Take the sealFull
+            // path, which rebuilds sidecars from column data, whenever a live
+            // cover column's file is missing or structurally not a sealed
+            // file.
             if (haveSavedSidecars) {
                 Path p = Path.getThreadLocal(partitionPath);
                 int pp = p.size();
+                int gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
+                long sentinelSlotOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) PostingIndexUtils.strideCount(gen0KeyCount) * Long.BYTES;
                 for (int c = 0; c < coverCount; c++) {
                     if (coveredColumnIndices.getQuick(c) < 0) {
                         continue;
                     }
                     long covT = getCoveredColumnNameTxn(c);
                     LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, c, postingColumnNameTxn, covT, sealTxn);
+                    long fileLen = 0;
+                    boolean isTrusted = false;
                     if (ff.exists(pcFile)) {
-                        long fileLen = ff.length(pcFile);
+                        fileLen = ff.length(pcFile);
                         if (fileLen > 0) {
                             long fd = ff.openRO(pcFile);
                             if (fd >= 0) {
@@ -1379,9 +1399,17 @@ public class PostingIndexWriter implements IndexWriter {
                                     long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
                                     if (mapped > 0) {
                                         try {
-                                            savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
-                                            savedSidecarSizes[c] = fileLen;
-                                            Unsafe.copyMemory(mapped, savedSidecarBufs[c], fileLen);
+                                            // Validate against the real file length: gen header
+                                            // offsets legitimately point into the post-seal tail
+                                            // that the copy below leaves out.
+                                            if (isTrustedSealedSidecarSnapshot(mapped, fileLen, gen0KeyCount)) {
+                                                long sentinel = Unsafe.getLong(mapped + sentinelSlotOffset);
+                                                long sealedLen = Math.min(fileLen, sentinel + gen0SiSize);
+                                                savedSidecarBufs[c] = Unsafe.malloc(sealedLen, MemoryTag.NATIVE_INDEX_READER);
+                                                savedSidecarSizes[c] = sealedLen;
+                                                Unsafe.copyMemory(mapped, savedSidecarBufs[c], sealedLen);
+                                                isTrusted = true;
+                                            }
                                         } finally {
                                             ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
                                         }
@@ -1393,26 +1421,12 @@ public class PostingIndexWriter implements IndexWriter {
                         }
                     }
                     p.trimTo(pp);
-                }
-
-                // A sealTxn published by the rollback reencode has no
-                // sidecars: the next gen flush creates the .pc file in
-                // append layout (openSidecarFilesForAppend), which the
-                // clean-stride copy must not interpret as sealed
-                // stride-indexed data. Take the sealFull path, which
-                // rebuilds sidecars from column data, whenever a live
-                // cover column's snapshot is missing or structurally not
-                // a sealed file.
-                for (int c = 0; c < coverCount; c++) {
-                    if (coveredColumnIndices.getQuick(c) < 0) {
-                        continue;
-                    }
-                    if (!isTrustedSealedSidecarSnapshot(savedSidecarBufs[c], savedSidecarSizes[c], gen0KeyCount)) {
+                    if (!isTrusted) {
                         LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$(indexName)
                                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                                 .$(", sealTxn=").$(sealTxn)
                                 .$(", cover=").$(c)
-                                .$(", snapshotSize=").$(savedSidecarSizes[c])
+                                .$(", fileLen=").$(fileLen)
                                 .I$();
                         isIncrementalCandidate = false;
                         break;
@@ -3412,9 +3426,12 @@ public class PostingIndexWriter implements IndexWriter {
      * snapshot) additionally reject torn or otherwise corrupt files, e.g. a
      * stale sidecar left behind by an abandoned seal txn.
      *
-     * @param bufAddr      snapshot of the whole sidecar file, 0 when the file
-     *                     was missing or empty
-     * @param bufSize      snapshot size in bytes
+     * @param bufAddr      read-only view of the whole sidecar file (mmap or
+     *                     in-memory copy), 0 when the file was missing or
+     *                     empty
+     * @param bufSize      view size in bytes; must be the real file length so
+     *                     gen header offsets pointing into the post-seal tail
+     *                     validate correctly
      * @param gen0KeyCount key count of the dense gen 0 the sidecar was
      *                     sealed with
      * @return true when the snapshot can be trusted as sealed layout; false
@@ -3454,8 +3471,12 @@ public class PostingIndexWriter implements IndexWriter {
             }
             prev = entry;
         }
-        // prev is the sentinel: sealed data end, stored as absolute - siSize
-        return prev + siSize <= bufSize;
+        // prev is the sentinel: sealed data end, stored as absolute - siSize.
+        // Subtract instead of adding so a corrupt near-Long.MAX_VALUE sentinel
+        // cannot overflow past the check; bufSize >= sealedRegionMin makes the
+        // subtraction safe. seal() trusts this bound when it copies only
+        // sentinel + siSize bytes of the snapshot.
+        return prev <= bufSize - siSize;
     }
 
     private void mapColumnFile(Path p, CharSequence colName, long colNameTxn,
