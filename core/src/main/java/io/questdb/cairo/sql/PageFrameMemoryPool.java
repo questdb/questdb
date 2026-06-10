@@ -122,7 +122,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         try {
             this.maxCacheBytes = Math.max(maxCacheBytes, 0L);
             this.effectiveBudgetBytes = accessPattern.applyTo(this.maxCacheBytes);
-            byFrameIndex = new IntObjHashMap<>(ParquetDecodeHint.SCATTERED.maxCachedBuffers);
+            // Sized for the MONOTONIC cap; SCATTERED cursors rehash up on demand
+            // rather than every pool (incl. all-native scans) paying for 256 slots.
+            byFrameIndex = new IntObjHashMap<>(ParquetDecodeHint.MONOTONIC.maxCachedBuffers);
             columnIdToParquetIdx = new IntIntHashMap(16);
             frameMemory = new PageFrameMemoryImpl();
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
@@ -331,6 +333,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      */
     public void releaseParquetBuffers() {
         ParquetBuffers b = lruHead;
+        // byFrameIndex stays in lockstep with the LRU list, so an empty list means
+        // an empty map: skip its O(capacity) clear on the common all-native scan.
+        final boolean hadCachedBuffers = b != null;
         while (b != null) {
             ParquetBuffers next = b.next;
             b.close();
@@ -341,7 +346,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         lruHead = null;
         lruTail = null;
-        if (byFrameIndex != null) {
+        if (hadCachedBuffers) {
             byFrameIndex.clear();
         }
         boundForRecordA = null;
@@ -828,7 +833,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
                 slotCount = (int) (parquetColumns.size() / 2);
-                decodedBytes = rowGroupBuffers.sumChunkBytes(0, slotCount);
+                // Zero-budget pools (per-worker parallel reduce slots) never cache, so
+                // skip the per-decode byte sum: cachedBytes is unused for them.
+                decodedBytes = effectiveBudgetBytes != 0 ? rowGroupBuffers.sumChunkBytes(0, slotCount) : 0;
             } else {
                 slotCount = 0;
                 decodedBytes = 0;
@@ -856,7 +863,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
             }
             final int extraSlots = (int) (parquetColumns.size() / 2);
-            final long extra = rowGroupBuffers.sumChunkBytes(columnOffset, extraSlots);
+            final long extra = effectiveBudgetBytes != 0 ? rowGroupBuffers.sumChunkBytes(columnOffset, extraSlots) : 0;
             if (extraSlots > 0) {
                 slotCount += extraSlots;
             }
