@@ -7175,13 +7175,14 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testStackedNullingJoinsMasterFilterStaysPostJoin() throws Exception {
-        // Two stacked RIGHT OUTER joins both NULL-extend the master mm. masterNullingJoinIndex
-        // must anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not
-        // the inner one: a filter applied after only the inner join would be re-exposed to the
-        // NULL-master rows synthesized by the outer join. Here the inner join (mm..s1) matches
-        // on k=1, so mm.col survives it; the outer join (..s2) then NULL-extends the master for
-        // the unmatched s2 key 2. WHERE mm.col = 1 must drop that NULL-master row, leaving
-        // exactly one row. Anchoring to the inner join instead would leak it (two rows).
+        // Two stacked nulling joins both NULL-extend the master mm. masterNullingJoinIndex must
+        // anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not the inner
+        // one: a filter applied after only the inner join would be re-exposed to the NULL-master rows
+        // synthesized by the outer join. Here the inner join (mm..s1) matches on k=1, so mm.col
+        // survives it; the outer join (..s2) then NULL-extends the master for the unmatched s2 key 2.
+        // WHERE mm.col = 1 must drop that NULL-master row, leaving exactly one row. Anchoring to the
+        // inner join instead would leak it (two rows). Both RIGHT and FULL OUTER null the master, so
+        // every combination of the two join slots must behave the same, for literal and bind forms.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE mm (k INT, col INT)");
             execute("INSERT INTO mm VALUES (1, 1)");
@@ -7190,11 +7191,27 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE s2 (k INT)");
             execute("INSERT INTO s2 VALUES (1), (2)");
 
-            assertQuery("SELECT mm.col FROM mm RIGHT JOIN s1 ON mm.k = s1.k RIGHT JOIN s2 ON s1.k = s2.k WHERE mm.col = 1")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .withPlanContaining("Filter filter: mm.col=1")
-                    .returns("col\n1\n");
+            final String expected = "col\n1\n";
+            for (String inner : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                for (String outer : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    final String from = " FROM mm " + inner + " s1 ON mm.k = s1.k " + outer + " s2 ON s1.k = s2.k WHERE mm.col ";
+
+                    bindVariableService.clear();
+                    assertQuery("SELECT mm.col" + from + "= 1")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .withPlanContaining("Filter filter: mm.col=1")
+                            .returns(expected);
+
+                    // Bind-variable form must produce the identical result under the full battery.
+                    bindVariableService.clear();
+                    bindVariableService.setInt("v", 1);
+                    assertQuery("SELECT mm.col" + from + "= :v::INT")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(expected);
+                }
+            }
         });
     }
 
