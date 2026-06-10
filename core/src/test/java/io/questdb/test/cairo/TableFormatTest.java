@@ -417,7 +417,9 @@ public class TableFormatTest extends AbstractCairoTest {
             drainWalQueue();
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertSql("val\n", "SELECT val FROM tango WHERE val = 1_000_000");
+            assertQuery("SELECT val FROM tango WHERE val = 1_000_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(
                     "fresh FORMAT PARQUET table must enable row-group pruning",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0
@@ -446,21 +448,28 @@ public class TableFormatTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            assertSql("name\tisParquet\n" +
-                            "2024-01-01\ttrue\n",
-                    "SELECT name, isParquet FROM table_partitions('tango')");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n");
 
             // A value within [min, max] but absent from the data: only the bloom
             // filter can exclude the row group, proving the filter was written.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertSql("val\n", "SELECT val FROM tango WHERE val = 25_000");
+            assertQuery("SELECT val FROM tango WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(
                     "fresh parquet partition must carry the configured bloom filter",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0
             );
 
             // An existing value must still be found through the bloom filter.
-            assertSql("val\n50000\n", "SELECT val FROM tango WHERE val = 50_000");
+            assertQuery("SELECT val FROM tango WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
         });
     }
 
