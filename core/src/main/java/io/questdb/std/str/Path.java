@@ -52,6 +52,14 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private static final boolean PARANOIA_MODE = false;
+    // Tracks every live thread-local Path with its birth thread + stack, dumped only when a
+    // NATIVE_PATH_THREAD_LOCAL leak check fails (see dumpLiveThreadLocalAttributions). Unlike
+    // THREAD_LOCAL_PATH_PARANOIA_MODE this produces no output during a healthy run, so test JVMs
+    // can keep it on; the registry add/remove per thread-local birth/close is the only cost.
+    private static final boolean TL_ATTRIBUTION = Boolean.getBoolean("questdb.path.tl.attribution");
+    private static final java.util.Set<Path> liveTlPaths = TL_ATTRIBUTION
+            ? java.util.concurrent.ConcurrentHashMap.newKeySet()
+            : null;
     private static final AtomicInteger threadLocalInstanceCounter = new AtomicInteger();
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::newTLPath);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::newTLPath);
@@ -101,6 +109,31 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         PATH.close();
         PATH2.close();
         SecurePath.clearThreadLocals();
+    }
+
+    /**
+     * Renders the birth thread and creation stack of every still-open thread-local Path.
+     * Test infrastructure appends this to a NATIVE_PATH_THREAD_LOCAL leak-check failure:
+     * entries whose thread is absent from the live-thread list are the leakers (the thread
+     * died without running a Path cleaner). Empty unless -Dquestdb.path.tl.attribution=true.
+     */
+    public static String dumpLiveThreadLocalAttributions() {
+        if (!TL_ATTRIBUTION) {
+            return "thread-local Path attribution off; enable with -Dquestdb.path.tl.attribution=true";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Path p : liveTlPaths) {
+            Exception birth = p.creationStackTrace;
+            if (birth == null) {
+                continue;
+            }
+            sb.append('\n').append(birth.getMessage());
+            StackTraceElement[] stack = birth.getStackTrace();
+            for (int i = 0, n = Math.min(stack.length, 14); i < n; i++) {
+                sb.append("\n    at ").append(stack[i]);
+            }
+        }
+        return sb.length() == 0 ? " none" : sb.toString();
     }
 
     public static Path getThreadLocal(CharSequence root) {
@@ -157,6 +190,9 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
                     System.err.print("Closing ");
                     creationStackTrace.printStackTrace(System.err);
                 }
+            }
+            if (TL_ATTRIBUTION && creationStackTrace != null) {
+                liveTlPaths.remove(this);
             }
             Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
@@ -466,16 +502,22 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     }
 
     private static Path newTLPath() {
-        if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
+        if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE || TL_ATTRIBUTION) {
             // The thread name is the payload: a leak report only shows a byte-count delta, and
             // the allocating thread may be dead by then -- this trace is the sole attribution.
             Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet()
                     + " on thread '" + Thread.currentThread().getName() + '\'');
-            synchronized (System.err) {
-                System.err.print("Creating ");
-                ex.printStackTrace(System.err);
+            if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
+                synchronized (System.err) {
+                    System.err.print("Creating ");
+                    ex.printStackTrace(System.err);
+                }
             }
-            return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL, ex);
+            Path path = new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL, ex);
+            if (TL_ATTRIBUTION) {
+                liveTlPaths.add(path);
+            }
+            return path;
         } else {
             return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL);
         }

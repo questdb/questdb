@@ -131,6 +131,15 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
                     .sorted()
                     .forEach(name -> sb.append(' ').append(name).append(';'));
             sb.append(']');
+            // A still-open thread-local Path whose birth thread is NOT in the live-thread list
+            // above is the leaker: its thread died without running a Path cleaner. The registry
+            // is populated only under -Dquestdb.path.tl.attribution=true (set in the surefire
+            // argLine), so a healthy run pays a registry add/remove and prints nothing.
+            if (sb.indexOf("NATIVE_PATH_THREAD_LOCAL") >= 0) {
+                sb.append(" [live thread-local Paths:")
+                        .append(Path.dumpLiveThreadLocalAttributions())
+                        .append(']');
+            }
             AssertionError annotated = new AssertionError(sb.toString());
             annotated.setStackTrace(e.getStackTrace());
             throw annotated;
