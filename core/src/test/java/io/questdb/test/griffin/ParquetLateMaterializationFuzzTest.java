@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -801,117 +800,6 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     @Test
     public void testTopK() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("SELECT * FROM x where id%499 = 0 ORDER BY id, ts DESC LIMIT 3;");
-    }
-
-    @Test
-    public void testWithDiskSpillEnabledAndColdPartitionFlag() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
-        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
-        try {
-            testLateMaterializationAllTypesLowSelectivity(
-                    "select sum(an_int), count(a_long), first(a_string) from x where id%17=3",
-                    true,
-                    false
-            );
-        } finally {
-            PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
-        }
-    }
-
-    @Test
-    public void testWithDiskSpillEnabledManyPartitions() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 256L * 1024 * 1024);
-        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
-        try {
-            WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, _, sqlExecutionContext) -> {
-                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-                        engine.execute(
-                                """
-                                        create table x as (
-                                          select
-                                            x id,
-                                            cast(x as int) filter_col,
-                                            rnd_int() an_int,
-                                            rnd_long() a_long,
-                                            rnd_double() a_double,
-                                            rnd_str('hello', 'world', '!') a_string,
-                                            rnd_varchar('alpha', 'beta', 'gamma', 'delta') a_varchar,
-                                            rnd_symbol('s1','s2','s3') a_symbol,
-                                            timestamp_sequence(0, 36_000_000) as ts
-                                          from long_sequence(5000)
-                                        ) timestamp(ts) partition by hour;""",
-                                sqlExecutionContext
-                        );
-
-                        final StringSink expected = new StringSink();
-                        CharSequence query = "select sum(an_int), last(a_string), first(a_varchar), count(a_symbol) from x where filter_col%23=7";
-                        engine.print(query, expected, sqlExecutionContext);
-                        engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        assertQuery(query)
-                                .withEngine(engine)
-                                .withContext(sqlExecutionContext)
-                                .noLeakCheck()
-                                .noRandomAccess()
-                                .expectSize()
-                                .returns(expected);
-                    },
-                    configuration,
-                    LOG
-            );
-        } finally {
-            PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
-        }
-    }
-
-    @Test
-    public void testWithDiskSpillEnabledVarcharLateMaterialization() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 8 * 1024);
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
-        PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = true;
-        try {
-            WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, _, sqlExecutionContext) -> {
-                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-                        engine.execute(
-                                """
-                                        create table x as (
-                                          select
-                                            x id,
-                                            cast(x as int) filter_col,
-                                            rnd_varchar('row', 'col', 'item', 'pad-large-string-here') a_varchar,
-                                            rnd_varchar(null, 'optional', '') a_varchar_nullable,
-                                            rnd_int() an_int,
-                                            timestamp_sequence(0, 36_000_000) as ts
-                                          from long_sequence(3000)
-                                        ) timestamp(ts) partition by hour;""",
-                                sqlExecutionContext
-                        );
-
-                        final StringSink expected = new StringSink();
-                        CharSequence query = "select first(a_varchar), last(a_varchar_nullable), sum(an_int) from x where filter_col%19=2";
-                        engine.print(query, expected, sqlExecutionContext);
-                        engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        assertQuery(query)
-                                .withEngine(engine)
-                                .withContext(sqlExecutionContext)
-                                .noLeakCheck()
-                                .noRandomAccess()
-                                .expectSize()
-                                .returns(expected);
-                    },
-                    configuration,
-                    LOG
-            );
-        } finally {
-            PageFrameAddressCache.IS_COLD_PARQUET_PARTITION_FORCED_FOR_TEST = false;
-        }
     }
 
     private StringSink generateRndInListSql(CharSequence column) {

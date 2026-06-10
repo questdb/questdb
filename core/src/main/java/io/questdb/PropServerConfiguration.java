@@ -527,8 +527,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowJoinEnabled;
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
-    private final String sqlParquetCacheDiskDir;
-    private final long sqlParquetCacheDiskSize;
     private final long sqlParquetCacheMemorySize;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
@@ -2202,9 +2200,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
             this.sqlParquetCacheMemorySize = Math.max(getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256L * Numbers.SIZE_1MB), 0L);
-            // TODO: pick a non-zero default once PageFrame.isColdParquetPartition() is wired to real cold-tier metadata.
-            this.sqlParquetCacheDiskSize = Math.max(getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 0L), 0L);
-            this.sqlParquetCacheDiskDir = getString(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_DIR, tmpRoot);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -4741,16 +4736,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParallelWorkStealingThreshold() {
             return sqlParallelWorkStealingThreshold;
-        }
-
-        @Override
-        public CharSequence getSqlParquetCacheDiskDir() {
-            return sqlParquetCacheDiskDir;
-        }
-
-        @Override
-        public long getSqlParquetCacheDiskSize() {
-            return sqlParquetCacheDiskSize;
         }
 
         @Override
