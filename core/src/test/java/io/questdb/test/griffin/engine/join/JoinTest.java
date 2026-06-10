@@ -5855,6 +5855,38 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMasterFilterPushesTransitiveSlaveConstForLiteral() throws Exception {
+        // Parity with the regex path: a master-side equality predicate on a NULL-extending join
+        // stays a post-join filter (removing NULL-master rows), but a non-null literal constant is
+        // still propagated to the slave through the join key, so the slave is pre-filtered. The
+        // push is result-neutral (matched rows have b.sym = a.sym, and the post-join filter already
+        // drops the NULL-master rows). A bind variable is deliberately NOT propagated, because it can
+        // be NULL at runtime and `null = null` is TRUE; the literal and bind forms must still agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT)");
+            execute("INSERT INTO m VALUES ('s2', 100), ('x', 200)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT)");
+            execute("INSERT INTO s VALUES ('s2', 10), ('x', 50), ('zz', 99)");
+
+            final String expected = "e0\te1\ns2\t100\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+
+                // Literal: the post-join filter (a.sym) stays, and the transitive slave filter (sym)
+                // is pushed into the slave sub-query.
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().noRandomAccess().withPlanContaining("filter: sym='s2'").returns(expected);
+
+                // Bind: no transitive push, but the result must match the literal form.
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testMultiTableMasterFilterStaysPostJoin() throws Exception {
         // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches assignFilters'
         // multi-reference else-branch, which anchored it at the inner join where both tables arrive.

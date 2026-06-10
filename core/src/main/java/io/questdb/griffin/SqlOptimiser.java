@@ -1730,22 +1730,38 @@ public class SqlOptimiser implements Mutable {
                         && literalCollector.nullCount == 0
                         // the table must not be OUTER or ASOF joined
                         && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.get(0)).getJoinType())
-                        // Only a WHERE predicate (joinIndex < 0) on a master-nulled table must stay
-                        // post-join; an inner-join ON conjunct (joinIndex >= 0) gates the inner join,
-                        // which runs first, so it still pushes down.
-                        && (joinIndex >= 0 || masterNullingJoinIndex(parent, literalCollectorBIndexes.get(0)) < 0)
                 ) {
-                    // single table reference + constant
-                    jc = contextPool.next();
-                    jc.slaveIndex = literalCollectorBIndexes.get(0);
+                    final int bColIndex = literalCollectorBIndexes.get(0);
+                    final CharSequence cs = literalCollectorBNames.getQuick(0);
+                    // Only a WHERE predicate (joinIndex < 0) on a master-nulled table must stay
+                    // post-join; an inner-join ON conjunct (joinIndex >= 0) gates the inner join,
+                    // which runs first, so it still pushes down.
+                    if (joinIndex >= 0 || masterNullingJoinIndex(parent, bColIndex) < 0) {
+                        // single table reference + constant
+                        jc = contextPool.next();
+                        jc.slaveIndex = bColIndex;
 
-                    addWhereNode(parent, jc.slaveIndex, node);
-                    addJoinContext(parent, jc);
+                        addWhereNode(parent, jc.slaveIndex, node);
+                        addJoinContext(parent, jc);
 
-                    CharSequence cs = literalCollectorBNames.getQuick(0);
-                    constNameToIndex.put(cs, jc.slaveIndex);
-                    constNameToNode.put(cs, node.lhs);
-                    constNameToToken.put(cs, node.token);
+                        constNameToIndex.put(cs, jc.slaveIndex);
+                        constNameToNode.put(cs, node.lhs);
+                        constNameToToken.put(cs, node.token);
+                    } else {
+                        // master-nulled table: keep the predicate post-join so NULL-master rows are
+                        // removed, but still register a non-null literal constant so
+                        // addTransitiveFilters can prune the slave through the join key. That prune is
+                        // result-neutral for RIGHT/FULL/keyed SPLICE (the post-join filter already
+                        // drops the NULL-master rows) and matches the regex path. A bind variable is
+                        // excluded: it can be NULL at runtime, and `null = null` is TRUE, so pushing
+                        // it would change which rows survive.
+                        parent.addParsedWhereNode(node, innerPredicate);
+                        if (node.lhs.type == CONSTANT) {
+                            constNameToIndex.put(cs, bColIndex);
+                            constNameToNode.put(cs, node.lhs);
+                            constNameToToken.put(cs, node.token);
+                        }
+                    }
                 } else {
                     parent.addParsedWhereNode(node, innerPredicate);
                 }
@@ -1816,23 +1832,34 @@ public class SqlOptimiser implements Mutable {
                     }
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
-                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())
-                        // see the case 0 / bSize == 1 branch above: WHERE on a master-nulled table
-                        // stays post-join, an inner-join ON conjunct (joinIndex >= 0) pushes down
-                        && (joinIndex >= 0 || masterNullingJoinIndex(parent, literalCollectorAIndexes.get(0)) < 0)) {
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())) {
                     // single table reference + constant
                     if (!canMovePredicate) {
                         addOuterJoinExpression(parent, joinModel, joinIndex, node);
                         break;
                     }
-                    jc.slaveIndex = lhi;
-                    addWhereNode(parent, lhi, node);
-                    addJoinContext(parent, jc);
+                    final CharSequence cs = literalCollectorANames.getQuick(0);
+                    // see the case 0 / bSize == 1 branch above: WHERE on a master-nulled table
+                    // stays post-join, an inner-join ON conjunct (joinIndex >= 0) pushes down
+                    if (joinIndex >= 0 || masterNullingJoinIndex(parent, lhi) < 0) {
+                        jc.slaveIndex = lhi;
+                        addWhereNode(parent, lhi, node);
+                        addJoinContext(parent, jc);
 
-                    CharSequence cs = literalCollectorANames.getQuick(0);
-                    constNameToIndex.put(cs, lhi);
-                    constNameToNode.put(cs, node.rhs);
-                    constNameToToken.put(cs, node.token);
+                        constNameToIndex.put(cs, lhi);
+                        constNameToNode.put(cs, node.rhs);
+                        constNameToToken.put(cs, node.token);
+                    } else {
+                        // master-nulled table: keep post-join, but still register a non-null literal
+                        // constant for the result-neutral transitive slave prune (see the case 0
+                        // branch); a bind variable is excluded for the same reason.
+                        parent.addParsedWhereNode(node, innerPredicate);
+                        if (node.rhs.type == CONSTANT) {
+                            constNameToIndex.put(cs, lhi);
+                            constNameToNode.put(cs, node.rhs);
+                            constNameToToken.put(cs, node.token);
+                        }
+                    }
                 } else {
                     if (canMovePredicate) {
                         parent.addParsedWhereNode(node, innerPredicate);
