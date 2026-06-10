@@ -66,23 +66,25 @@ public class EmptyTableRecordCursorFactoryTest extends AbstractCairoTest {
         // cursor calls recordAt on the empty random-access master, a no-op). This was formerly
         // reached via a master filter that folded to FALSE and got pushed into the master
         // sub-query; that predicate now stays post-join, so this constant-FALSE sub-query is
-        // the remaining route that places an empty factory as a splice master.
+        // the remaining route that places an empty factory as a splice master. Projecting the
+        // master SYMBOL column also drives the empty master's symbol-table API (newSymbolTable
+        // and the keyOf null round-trip), which the assertion's symbol thread-safety pass checks.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
             execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 3)");
 
-            // Master folds to Empty table; both slave rows survive with a NULL master c1.
+            // Master folds to Empty table; both slave rows survive with an all-NULL master.
             // ORDER BY wraps the splice output in a sort so the assertion's calculateSize()
             // cross-check has a supporting top factory; the Empty table remains the splice master.
-            assertQuery("SELECT a.c1 AS e0, b.v AS e1 " +
-                    "FROM (SELECT * FROM m WHERE 1=2) a SPLICE JOIN s b ON (sym) ORDER BY e1")
+            assertQuery("SELECT a.sym AS e0, a.c1 AS e1, b.v AS e2 " +
+                    "FROM (SELECT * FROM m WHERE 1=2) a SPLICE JOIN s b ON (sym) ORDER BY e2")
                     .withPlanContaining("Empty table")
                     .returns("""
-                            e0\te1
-                            null\t10
-                            null\t50
+                            e0\te1\te2
+                            \tnull\t10
+                            \tnull\t50
                             """);
         });
     }
