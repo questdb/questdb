@@ -31,8 +31,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -43,6 +45,8 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class TableFormatTest extends AbstractCairoTest {
@@ -674,6 +678,122 @@ public class TableFormatTest extends AbstractCairoTest {
                             "2024-01-02\tfalse\n" +
                             "2024-01-03\tfalse\n" +
                             "2024-01-04\ttrue\n");
+        });
+    }
+
+    @Test
+    public void testSetTypeBypassWalRejectedOnFormatParquetTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            try {
+                execute("ALTER TABLE tango SET TYPE BYPASS WAL");
+                fail("SET TYPE BYPASS WAL should be rejected on a FORMAT PARQUET table");
+            } catch (SqlException e) {
+                assertEquals("[12] Cannot convert table to non-WAL, FORMAT PARQUET is only supported on WAL tables", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSetTypeBypassWalRejectedOnParquetLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // NATIVE-format WAL table whose only (active) partition is converted to
+            // parquet: partition-level conversion of the active partition is allowed
+            // on WAL tables, so the SET TYPE guard must look at the partitions, not
+            // just the table format flag.
+            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n");
+            try {
+                execute("ALTER TABLE tango SET TYPE BYPASS WAL");
+                fail("SET TYPE BYPASS WAL should be rejected when the last partition is parquet");
+            } catch (SqlException e) {
+                assertEquals("[12] Cannot convert table to non-WAL, the last partition is in parquet format", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSetTypeConversionSkippedAtLoadOnFormatParquetTable() throws Exception {
+        // SET TYPE BYPASS WAL only schedules the conversion in a _convert file; the
+        // table stays WAL until the next engine load. SET FORMAT PARQUET issued
+        // after the scheduling passes its own WAL check, so the compile-time SET
+        // TYPE guard cannot see it. TableConverter must refuse the conversion at
+        // load time and leave the table as WAL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE tango SET TYPE BYPASS WAL");
+            execute("ALTER TABLE tango SET FORMAT PARQUET");
+            drainWalQueue();
+
+            engine.releaseInactive();
+            engine.load();
+
+            TableToken token = engine.verifyTableName("tango");
+            assertTrue("table must stay WAL", token.isWal());
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+            // The converter consumes the _convert file so the refused conversion
+            // does not retry on every restart.
+            Path convertPath = Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+            assertFalse(configuration.getFilesFacade().exists(convertPath.$()));
+            // The table remains fully usable through the WAL path.
+            execute("INSERT INTO tango VALUES ('2024-01-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n" +
+                            "2024-01-01T01:00:00.000000Z\t2\n");
+        });
+    }
+
+    @Test
+    public void testSetTypeWalAllowedWithParquetPartitions() throws Exception {
+        // Converting TO WAL must stay allowed on tables with parquet partitions:
+        // WAL apply handles parquet, and this is the repair path for an escaped
+        // non-WAL table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 1), " +
+                    "('2024-01-02T00:00:00.000000Z', 2)");
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n" +
+                            "2024-01-02\tfalse\n");
+
+            execute("ALTER TABLE tango SET TYPE WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            TableToken token = engine.verifyTableName("tango");
+            assertTrue("table must be WAL after conversion", token.isWal());
+            execute("INSERT INTO tango VALUES ('2024-01-02T01:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n" +
+                            "2024-01-02T00:00:00.000000Z\t2\n" +
+                            "2024-01-02T01:00:00.000000Z\t3\n");
         });
     }
 
