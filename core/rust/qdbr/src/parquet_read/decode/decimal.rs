@@ -24,18 +24,27 @@ struct Slicer<'a> {
 
 impl Slicer<'_> {
     #[inline]
-    fn next(&mut self) -> &[u8] {
-        let res = &self.data[self.pos..self.pos + self.elem_size];
+    fn next(&mut self) -> ParquetResult<&[u8]> {
+        // Bounds-check the slice: a foreign or corrupt fixed-len-byte-array
+        // decimal page whose definition levels over-claim non-nulls must not
+        // index out of bounds and panic, aborting the JVM across JNI.
+        let res = self
+            .data
+            .get(self.pos..self.pos + self.elem_size)
+            .ok_or_else(|| fmt_err!(Layout, "decimal value exceeds values buffer"))?;
         self.pos += self.elem_size;
-        res
+        Ok(res)
     }
 
     #[inline]
-    fn next_raw_slice(&mut self, count: usize) -> &[u8] {
+    fn next_raw_slice(&mut self, count: usize) -> ParquetResult<&[u8]> {
         let len = self.elem_size * count;
-        let res = &self.data[self.pos..self.pos + len];
+        let res = self
+            .data
+            .get(self.pos..self.pos + len)
+            .ok_or_else(|| fmt_err!(Layout, "decimal value slice exceeds values buffer"))?;
         self.pos += len;
-        res
+        Ok(res)
     }
 
     #[inline]
@@ -451,7 +460,7 @@ impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let slice = self.slicer.next();
+        let slice = self.slicer.next()?;
         let base = self.buffers.data_vec.len();
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
@@ -470,7 +479,7 @@ impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
         debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
         unsafe {
-            let src_ptr = self.slicer.next_raw_slice(count).as_ptr();
+            let src_ptr = self.slicer.next_raw_slice(count)?.as_ptr();
             let dst_ptr = self.buffers.data_vec.as_mut_ptr().add(base);
             if N == 2 {
                 for c in 0..count {
@@ -563,7 +572,7 @@ impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let slice = self.slicer.next();
+        let slice = self.slicer.next()?;
         let base = self.buffers.data_vec.len();
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
@@ -582,7 +591,7 @@ impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<
         debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
         // SAFETY: We reserved enough capacity for `count` values of `N` bytes each, and we only write to the range from `base` to `base + total_bytes`.
         unsafe {
-            let src = self.slicer.next_raw_slice(count);
+            let src = self.slicer.next_raw_slice(count)?;
             let dst = self.buffers.data_vec.as_mut_ptr().add(base);
             for c in 0..count {
                 let src_ptr = src.as_ptr().add(c * N);
@@ -662,7 +671,7 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let slice = self.slicer.next();
+        let slice = self.slicer.next()?;
         let base = self.buffers.data_vec.len();
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
@@ -687,7 +696,7 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
                 let mut out_idx = 0usize;
                 while out_idx < count {
                     let chunk = (count - out_idx).min(CHUNK_VALUES);
-                    let raw_chunk = self.slicer.next_raw_slice(chunk);
+                    let raw_chunk = self.slicer.next_raw_slice(chunk)?;
                     for c in 0..chunk {
                         let src_ptr = raw_chunk.as_ptr().add(c * self.src_len);
                         let signed = decode_decimal64_from_be(src_ptr, self.src_len);
@@ -697,7 +706,7 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
                 }
             } else {
                 for c in 0..count {
-                    let slice = self.slicer.next();
+                    let slice = self.slicer.next()?;
                     let dest = ptr.add(c * N);
                     Self::sign_extend_and_convert(slice, dest, self.src_len)?;
                 }
@@ -1167,5 +1176,38 @@ fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NU
             "unsupported target column type {:?} for FixedLenByteArray decimal",
             target_tag
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_decimal_slicer_oversized_read_errors() {
+        // A foreign/corrupt fixed-len-byte-array decimal page whose definition
+        // levels over-claim non-nulls (more elements than the values buffer
+        // holds) must surface a clean error rather than indexing out of bounds
+        // and aborting the JVM across the JNI boundary. The buffer holds 2 bytes
+        // but each element is 4.
+        let data = [0u8; 2];
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert!(slicer.next().is_err());
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert!(slicer.next_raw_slice(1).is_err());
+    }
+
+    #[test]
+    fn fixed_decimal_slicer_exact_buffer_reads_ok() {
+        // Off-by-one guard: an exactly-sized buffer (one 4-byte element) reads.
+        let data = [1u8, 2, 3, 4];
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert_eq!(slicer.next().unwrap(), &data[..]);
+
+        let mut slicer = Slicer::new(&data, 4);
+        assert_eq!(slicer.next_raw_slice(1).unwrap(), &data[..]);
     }
 }

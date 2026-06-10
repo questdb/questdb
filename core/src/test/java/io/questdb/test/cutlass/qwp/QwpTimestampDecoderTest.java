@@ -111,7 +111,7 @@ public class QwpTimestampDecoderTest {
                     tsCol.addLong(ts);
                     buffer.nextRow();
                 }
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
                 try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
@@ -427,7 +427,7 @@ public class QwpTimestampDecoderTest {
                     }
                     buffer.nextRow();
                 }
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
                 try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
