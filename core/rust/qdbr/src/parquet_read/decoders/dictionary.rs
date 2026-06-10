@@ -4,7 +4,7 @@
 //! lookup traits consumed by `RleDictionaryDecoder`.
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_read::decoders::Converter;
+use crate::parquet_read::decoders::{try_reserve_dict_values, Converter};
 use crate::parquet_read::page::DictPage;
 use std::mem::size_of;
 
@@ -48,14 +48,13 @@ impl<'a> BaseVarDictDecoder<'a> {
         let dict_data = &dict_page.buffer;
 
         // num_values comes from the dictionary page's Thrift header and is
-        // attacker-controlled: slice_reader validates the page *buffer* against
-        // max_page_size and rejects a negative count, but never bounds
-        // num_values against the buffer (so it can be up to i32::MAX). Each
-        // value is a 4-byte length prefix plus its bytes, so a page holding N
-        // values needs at least N * 4 bytes. Reject a header that claims more
-        // values than the buffer can possibly hold, before
-        // Vec::with_capacity(num_values) reserves tens of gigabytes (16 bytes
-        // per &[u8]) and aborts the process on allocation failure.
+        // attacker-controlled: slice_reader bounds the *compressed* page against
+        // max_page_size and rejects a negative count, but never bounds num_values
+        // itself (up to i32::MAX). For a compressed page the buffer here is the
+        // *decompressed* one, sized only by uncompressed_page_size -- also up to
+        // i32::MAX and NOT bounded by max_page_size. Each value needs at least a
+        // 4-byte length prefix, so a page holding N values needs >= N * 4 bytes;
+        // reject a header claiming more, up front, with a cheap precise error.
         if dict_page.num_values > dict_data.len() / size_of::<u32>() {
             return Err(fmt_err!(
                 Layout,
@@ -64,7 +63,12 @@ impl<'a> BaseVarDictDecoder<'a> {
             ));
         }
 
-        let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
+        // The guard above still admits num_values up to buffer.len()/4, so on a
+        // genuinely large (multi-GiB) decompressed dict page the reservation
+        // below is ~4x the buffer (16 bytes per &[u8]); reserve fallibly so that
+        // surfaces a recoverable OutOfMemory error instead of aborting the JVM.
+        let mut dict_values: Vec<&[u8]> =
+            try_reserve_dict_values(dict_page.num_values, "dictionary value slices")?;
         let mut offset = 0usize;
 
         let mut total_key_len = 0;

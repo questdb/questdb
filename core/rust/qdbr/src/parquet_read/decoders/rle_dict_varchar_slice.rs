@@ -8,7 +8,7 @@
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::dictionary::BaseVarDictDecoder;
-use crate::parquet_read::decoders::{RepeatN, RleIterator};
+use crate::parquet_read::decoders::{try_reserve_dict_values, RepeatN, RleIterator};
 use crate::parquet_read::page::DictPage;
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::varchar::SLICE_NULL_HEADER;
@@ -37,7 +37,13 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
     ) -> ParquetResult<Self> {
         let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
 
-        let mut dict_aux = Vec::with_capacity(dict_decoder.dict_values.len());
+        // dict_values.len() is bounded by BaseVarDictDecoder's num_values guard
+        // (<= dict buffer.len()/4), but for a multi-GiB decompressed dict page
+        // that is still ~4x the buffer (16 bytes per aux entry); reserve fallibly
+        // so an oversized dict surfaces a recoverable OutOfMemory error instead of
+        // aborting the JVM via an infallible Vec::with_capacity.
+        let mut dict_aux: Vec<[u64; 2]> =
+            try_reserve_dict_values(dict_decoder.dict_values.len(), "dictionary aux entries")?;
         for &value in &dict_decoder.dict_values {
             if value.len() >= (1usize << 28) {
                 return Err(fmt_err!(
