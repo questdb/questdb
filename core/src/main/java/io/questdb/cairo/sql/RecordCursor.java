@@ -332,7 +332,7 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * Null restores full-frame decoding. Wrappers that hold a delegate cursor must
      * forward the call.
      */
-    default void setRecordAtRows(RowIdSource source) {
+    default void setRecordAtRows(@Nullable RowIdSource source) {
     }
 
     /**

@@ -33,6 +33,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 class SelectedRecordCursor implements RecordCursor {
     private final IntList columnCrossIndex;
@@ -110,7 +111,7 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void setParentUsedColumns(IntHashSet columnIndexes) {
+    public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
         if (columnIndexes == null) {
             baseCursor.setParentUsedColumns(null);
             return;
@@ -132,7 +133,7 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void setRecordAtRows(RowIdSource source) {
+    public void setRecordAtRows(@Nullable RowIdSource source) {
         baseCursor.setRecordAtRows(source);
     }
 

@@ -630,7 +630,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public void setParentUsedColumns(IntHashSet columnIndexes) {
+        public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
             base.setParentUsedColumns(columnIndexes);
         }
 
@@ -640,7 +640,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public void setRecordAtRows(RowIdSource source) {
+        public void setRecordAtRows(@Nullable RowIdSource source) {
             base.setRecordAtRows(source);
         }
 

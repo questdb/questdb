@@ -56,6 +56,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, sortMode == SortMode.SORT_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, false);
         super.setUp();
     }
 
@@ -429,13 +430,39 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitCompactionLargeLimitUnderTightMemoryCap() throws Exception {
+        // The caps fit ~32K entries and the limit exceeds half of that, so compaction
+        // must still fire at the budget instead of overflowing.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 262_144);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 262_144);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            // A bind-variable limit keeps the plan off the constant-limit top-K factories.
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 20_000);
+            assertQuery("SELECT count(*) cnt, min(v) mn, max(v) mx FROM (SELECT * FROM x ORDER BY v LIMIT :n)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            cnt\tmn\tmx
+                            20000\t1\t20000
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByLimitCompactionTopKAsc() throws Exception {
         assertMemoryLeak(() -> {
             // 50,000 rows exceed the compaction trigger, so the build exercises the
             // threshold-reject and compact paths; ascending input with ORDER BY v
-            // takes the all-rejected path, DESC the all-accepted path.
+            // takes the all-rejected path, DESC the all-accepted path. The bind-variable
+            // limit keeps the plan off the constant-limit top-K factories.
             execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
-            assertQuery("SELECT * FROM x ORDER BY v LIMIT 3")
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :n")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -451,7 +478,9 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     public void testOrderByLimitCompactionTopKDesc() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
-            assertQuery("SELECT * FROM x ORDER BY v DESC LIMIT 3")
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT * FROM x ORDER BY v DESC LIMIT :n")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -606,6 +635,19 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                     .returns("""
                             v
                             """);
+
+            // NULL lo with a positive hi: rows from the start
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", 2);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            """);
         });
     }
 
@@ -635,6 +677,87 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitParquetFilterWideProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pq AS (
+                        SELECT
+                            x v,
+                            ('r' || x)::varchar note,
+                            ARRAY[x::double, (x * 2)::double] arr,
+                            ('s' || (x % 3))::symbol sym,
+                            timestamp_sequence(0, 100) ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')");
+            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+            // Reordered projection routes the sort key through the SelectedRecordCursor
+            // remap; the filter engages worker-side late materialization. The two-bound
+            // limit keeps the plan off the constant-limit top-K factories.
+            assertQuery("SELECT note, v, sym FROM pq WHERE sym = 's1' AND v <= 10_000 ORDER BY v DESC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            note\tv\tsym
+                            r10000\t10000\ts1
+                            r9997\t9997\ts1
+                            r9994\t9994\ts1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pq AS (
+                        SELECT
+                            x v,
+                            ('r' || x)::varchar note,
+                            ARRAY[x::double, (x * 2)::double] arr,
+                            ('s' || (x % 3))::symbol sym,
+                            timestamp_sequence(0, 100) ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')");
+            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+
+            // Two-bound limits are not top-K candidates, so the plan stays on the
+            // encoded sort and its emit phase exercises row-filtered Parquet decode.
+            assertQuery("SELECT v, note, arr, sym FROM pq ORDER BY v LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tnote\tarr\tsym
+                            1\tr1\t[1.0,2.0]\ts1
+                            2\tr2\t[2.0,4.0]\ts2
+                            3\tr3\t[3.0,6.0]\ts0
+                            """);
+
+            // Bottom-K spans the native and the Parquet partition.
+            assertQuery("SELECT v, note, arr, sym FROM pq ORDER BY v DESC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tnote\tarr\tsym
+                            1000000\tr1000000\t[1000000.0,2000000.0]\ts0
+                            10000\tr10000\t[10000.0,20000.0]\ts1
+                            9999\tr9999\t[9999.0,19998.0]\ts0
+                            """);
+
+            assertQuery("SELECT v, note, arr, sym FROM pq ORDER BY v LIMIT 2,5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tnote\tarr\tsym
+                            3\tr3\t[3.0,6.0]\ts0
+                            4\tr4\t[4.0,8.0]\ts1
+                            5\tr5\t[5.0,10.0]\ts2
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByLimitSmallLimitUnderTightMemoryCap() throws Exception {
         // The caps fit ~32K entries; the 50,000-row scan overflows them without
         // compaction. The tree-chain path holds only `limit` entries, so both
@@ -643,7 +766,9 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 262_144);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
-            assertQuery("SELECT * FROM x ORDER BY v LIMIT 2")
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 2);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :n")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -651,6 +776,60 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             1
                             2
                             """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTimestampEarlyStopGroupStraddle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE es AS (
+                        SELECT
+                            ((x - 1) / 3 * 1_000_000)::timestamp ts,
+                            10 - x v
+                        FROM long_sequence(9)
+                    ) TIMESTAMP(ts)""");
+
+            // The limit lands mid-group: the second group must be scanned in full.
+            assertQuery("SELECT * FROM es ORDER BY ts, v LIMIT 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t7
+                            1970-01-01T00:00:00.000000Z\t8
+                            1970-01-01T00:00:00.000000Z\t9
+                            1970-01-01T00:00:01.000000Z\t4
+                            """);
+
+            // The limit lands one row past a completed group boundary.
+            assertQuery("SELECT * FROM es ORDER BY ts, v LIMIT 7")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t7
+                            1970-01-01T00:00:00.000000Z\t8
+                            1970-01-01T00:00:00.000000Z\t9
+                            1970-01-01T00:00:01.000000Z\t4
+                            1970-01-01T00:00:01.000000Z\t5
+                            1970-01-01T00:00:01.000000Z\t6
+                            1970-01-01T00:00:02.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitUnboundedOverflowUnderTightMemoryCap() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 262_144);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 262_144);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT null::long")
+                    .noLeakCheck()
+                    .failsWith("memory exceeded");
         });
     }
 

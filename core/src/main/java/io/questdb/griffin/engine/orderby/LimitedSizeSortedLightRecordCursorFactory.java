@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -218,6 +219,10 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         } else {
             // at this stage we also have 'hi'
             long hi = hiFunction.getLong(null);
+            // NULL lo with a non-NULL hi means "from the start"; NULL,NULL stays raw so lo == hi yields empty.
+            if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
+                lo = 0;
+            }
             if (lo < 0) {
                 // right, here we are looking for something like -10,-5 five rows away from tail
                 if (lo == hi) {

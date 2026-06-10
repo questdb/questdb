@@ -59,6 +59,12 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
             new Column("ts", 8),
     };
 
+    @Override
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, false);
+        super.setUp();
+    }
+
     @Test
     public void testFuzzEncodedSort() throws Exception {
         assertMemoryLeak(() -> {
@@ -129,7 +135,11 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                         orderByClause.put(buildOrderByClause(rnd, selected)).put(", ts");
                     }
                     StringSink query = new StringSink();
-                    query.put("SELECT * FROM fuzz_sort_limit ORDER BY ").put(orderByClause).put(' ');
+                    query.put("SELECT * FROM fuzz_sort_limit");
+                    if (rnd.nextBoolean()) {
+                        query.put(" WHERE col_long >= 3");
+                    }
+                    query.put(" ORDER BY ").put(orderByClause).put(' ');
                     appendLimitClause(rnd, query, rowCount);
                     assertQueryMatch(query, "limit");
                 }
@@ -278,6 +288,8 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                         " rnd_decimal(18, 4, 2) col_dec64," +
                         " rnd_decimal(38, 5, 2) col_dec128," +
                         " rnd_decimal(76, 6, 2) col_dec256," +
+                        " rnd_varchar(3, 12, 2) col_vch," +
+                        " rnd_double_array(2) col_arr," +
                         " timestamp_sequence(0, 1_000_000) ts" +
                         " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts)" +
                         (isParquet ? " PARTITION BY HOUR" : "")

@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
     protected final PageFrameAddressCache frameAddressCache;
@@ -107,7 +108,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     @Override
-    public void setRecordAtRows(RowIdSource source) {
+    public void setRecordAtRows(@Nullable RowIdSource source) {
         frameMemoryPool.setRecordAtRows(source);
     }
 

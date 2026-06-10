@@ -41,6 +41,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
@@ -180,7 +181,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void setRecordAtRows(RowIdSource source) {
+    public void setRecordAtRows(@Nullable RowIdSource source) {
         baseCursor.setRecordAtRows(source);
     }
 

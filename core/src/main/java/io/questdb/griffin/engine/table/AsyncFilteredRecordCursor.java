@@ -46,6 +46,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
@@ -249,7 +250,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void setParentUsedColumns(IntHashSet columnIndexes) {
+    public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
         ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(columnIndexes);
     }
 
@@ -259,7 +260,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void setRecordAtRows(RowIdSource source) {
+    public void setRecordAtRows(@Nullable RowIdSource source) {
         frameMemoryPool.setRecordAtRows(source);
     }
 

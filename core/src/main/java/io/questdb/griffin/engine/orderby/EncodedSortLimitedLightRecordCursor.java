@@ -195,10 +195,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         keyLongs = keyType.keyLength() / Long.BYTES;
         longsPerEntry = entrySize / Long.BYTES;
         maxEntries = maxEntryMemBytes / entrySize;
-        // The trigger stays within the entry budget so compaction fires before the
-        // overflow check can, and at least doubles the kept window so the truncate
-        // halves the buffer even under tiny budgets.
-        compactionTrigger = limit > 0 && limit <= maxEntries >> 1
+        // The trigger stays within maxEntries so compaction fires before the overflow check can.
+        compactionTrigger = limit > 0 && limit < maxEntries
                 ? Math.clamp(limit << 1, MIN_COMPACTION_TRIGGER, maxEntries)
                 : Long.MAX_VALUE;
         hasThreshold = false;
@@ -249,6 +247,9 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     }
 
     private void buildAndSort() {
+        entryMem.clear();
+        count = 0;
+        hasThreshold = false;
         if (limit > 0) {
             if (limit == Long.MAX_VALUE) {
                 // Unbounded build keeps every scanned row, so pre-size the buffer the

@@ -235,7 +235,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void setParentUsedColumns(IntHashSet columnIndexes) {
+        public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
             base.setParentUsedColumns(columnIndexes);
         }
 
@@ -245,7 +245,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void setRecordAtRows(RowIdSource source) {
+        public void setRecordAtRows(@Nullable RowIdSource source) {
             base.setRecordAtRows(source);
         }
 
