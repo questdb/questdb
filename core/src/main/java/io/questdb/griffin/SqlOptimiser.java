@@ -628,6 +628,27 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Returns the model index of the last NULL-extending join that runs at an execution-order
+     * position strictly after {@code orderedPos}, or -1 when none follows. Each table that has
+     * already joined by {@code orderedPos} sits on the master side of such a join, so the join
+     * NULL-extends all of them. A post-join filter over those tables must be anchored at this
+     * join. Scans {@code getOrderedJoinModels()}, so the caller must pass a position into that
+     * (execution-order) list, not a raw model index.
+     */
+    private static int lastNullingJoinAfterOrderedPosition(IQueryModel parent, int orderedPos) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final IntList ordered = parent.getOrderedJoinModels();
+        int result = -1;
+        for (int p = orderedPos + 1, n = ordered.size(); p < n; p++) {
+            final int modelIndex = ordered.getQuick(p);
+            if (isMasterNullingJoinType(joinModels.getQuick(modelIndex).getJoinType())) {
+                result = modelIndex;
+            }
+        }
+        return result;
+    }
+
+    /**
      * Execution-order counterpart of {@link #masterNullingJoinIndex}: returns the model index of
      * the last NULL-extending join that runs after the master table at {@code tableIndex}, or -1.
      * A post-join master filter must be anchored there. {@code doReorderTables} appends
@@ -650,14 +671,7 @@ public class SqlOptimiser implements Mutable {
                 break;
             }
         }
-        int result = -1;
-        for (int p = tablePos + 1; p < n; p++) {
-            final int modelIndex = ordered.getQuick(p);
-            if (isMasterNullingJoinType(joinModels.getQuick(modelIndex).getJoinType())) {
-                result = modelIndex;
-            }
-        }
-        return result;
+        return lastNullingJoinAfterOrderedPosition(parent, tablePos);
     }
 
     private static boolean matchesModelAlias(CharSequence prefix, IQueryModel model) {
@@ -1946,8 +1960,18 @@ public class SqlOptimiser implements Mutable {
                     }
                     if (qualifies) {
                         postFilterRemoved.add(k);
-                        IQueryModel m = parent.getJoinModels().getQuick(index);
-                        m.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, m.getPostJoinWhereClause(), node));
+                        // Hold a WHERE predicate past any later SPLICE/FULL/RIGHT OUTER join that
+                        // NULL-extends the tables joined so far; anchoring at i (where the last
+                        // referenced table joins) would leak its NULL-master rows. An ON conjunct
+                        // gates its own join, which runs first, so it stays anchored at i.
+                        int anchorIndex = index;
+                        if (!node.innerPredicate) {
+                            final int nullingIndex = lastNullingJoinAfterOrderedPosition(parent, i);
+                            if (nullingIndex > -1) {
+                                anchorIndex = nullingIndex;
+                            }
+                        }
+                        addPostJoinWhereClause(parent.getJoinModels().getQuick(anchorIndex), node);
                     }
                 }
             }

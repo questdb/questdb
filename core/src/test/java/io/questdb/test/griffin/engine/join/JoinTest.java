@@ -1780,6 +1780,39 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBarrierJoinedMasterFilterStaysPostJoin() throws Exception {
+        // The filter references a single table (u1), but u1 is itself the slave of a LEFT join, so
+        // assignFilters cannot push it into u1's sub-query and routes it to the multi-reference
+        // else-branch. A later RIGHT join NULL-extends both u0 and u1 for the unmatched u2 key 2;
+        // the predicate must be held back past it. Anchoring at the LEFT join (where u1 arrives)
+        // leaked that NULL-master row, returning 2 rows instead of 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u0 (k INT)");
+            execute("INSERT INTO u0 VALUES (1)");
+            execute("CREATE TABLE u1 (k INT, x INT)");
+            execute("INSERT INTO u1 VALUES (1, 1)");
+            execute("CREATE TABLE u2 (k INT)");
+            execute("INSERT INTO u2 VALUES (1), (2)");
+
+            final String expected = "k\tx\tk1\n1\t1\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT u0.k, u1.x, u2.k FROM u0 LEFT JOIN u1 ON u0.k = u1.k " + joinType + " JOIN u2 ON u2.k = u0.k WHERE u1.x = 1";
+                bindVariableService.clear();
+                assertQuery(literal)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: u1.x=1")
+                        .returns(expected);
+
+                final String bind = "SELECT u0.k, u1.x, u2.k FROM u0 LEFT JOIN u1 ON u0.k = u1.k " + joinType + " JOIN u2 ON u2.k = u0.k WHERE u1.x = :v::INT";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testColumnEqColumnMasterFilterStaysPostJoin() throws Exception {
         // A same-table column comparison (a.c1 = a.c2) is single-table, so it used to be pushed
         // into the master sub-query. RIGHT/FULL OUTER NULL-extend the master: pushing it emptied
@@ -5818,6 +5851,31 @@ public class JoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .withPlanContaining("Filter filter: wm.c=1")
                     .returns("x\tq\tc\ty\tq1\n");
+        });
+    }
+
+    @Test
+    public void testMultiTableMasterFilterStaysPostJoin() throws Exception {
+        // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches assignFilters'
+        // multi-reference else-branch, which anchored it at the inner join where both tables arrive.
+        // A later RIGHT/FULL OUTER join NULL-extends t0 and t1 for the unmatched t2 key 2; the filter
+        // must stay above that join. Anchoring below it leaked the (null,null,2) row -- 2 rows for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\n1\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k WHERE t0.a < t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a<t1.b")
+                        .returns(expected);
+            }
         });
     }
 
