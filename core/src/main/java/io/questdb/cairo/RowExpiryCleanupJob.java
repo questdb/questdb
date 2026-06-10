@@ -121,6 +121,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final LongList partitionFloors = new LongList();
     private final LongList partitionNextFloors = new LongList();
     private final LongList partitionRowCounts = new LongList();
+    // Per-cleanup survivor counts per logical partition (parallel to partitionFloors), from the one-pass scan.
+    private final LongList partitionSurvivors = new LongList();
     private long lastGlobalCheckMicros = NO_LAST_RUN;
     private SqlExecutionContextImpl sqlExecutionContext;
 
@@ -247,6 +249,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // per partition; both compile lazily, so a pure bounds-wipe sweep compiles neither.
         final String countSql;
         final String selectSql;
+        // For keep-latest/window: a single survivor-timestamp scan over the WHOLE non-active range, used to
+        // classify every partition in ONE keep-query execution (instead of one count() per partition).
+        String tsScanSql = null;
         if (keepLatest) {
             // Survivors = the global latest row per key (LATEST ON over the WHOLE view), intersected with the
             // partition range by the OUTER predicate (LATEST ON cannot share a level with WHERE). The cleanup
@@ -256,6 +261,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             final String tail = " WHERE \"" + timestampColumnName + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
             countSql = "SELECT count() FROM " + latestSource + tail;
             selectSql = "SELECT * FROM " + latestSource + tail;
+            tsScanSql = "SELECT \"" + timestampColumnName + "\" FROM " + latestSource + tail;
         } else if (window) {
             // Window/keep-by: survivors are the NOT-expired rows per the window keep-filter, computed over the
             // WHOLE view (inner projection) and intersected with the partition range by the OUTER predicate.
@@ -267,12 +273,29 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
             countSql = "SELECT count() FROM " + source + tail;
             selectSql = "SELECT " + windowColsCsv + " FROM " + source + tail;
+            tsScanSql = "SELECT \"" + timestampColumnName + "\" FROM " + source + tail;
         } else {
             final String keepFilter = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
             final String tail = " WHERE (" + keepFilter + ") AND \"" + timestampColumnName
                     + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
             countSql = "SELECT count() FROM \"" + tableName + "\"" + tail;
             selectSql = "SELECT * FROM \"" + tableName + "\"" + tail;
+        }
+
+        // One-pass classification (keep-latest/window): scan the keep-query's surviving timestamps over the
+        // whole non-active range exactly once and bucket them into partitions, so each partition's survivor
+        // count is known without a per-partition keep-query execution. Only when the table is caught up.
+        final boolean onePass = (keepLatest || window) && racyOpsAllowed && partitionFloors.size() > 0;
+        if (onePass) {
+            final long rangeLo = partitionFloors.getQuick(0);
+            final long rangeHi = partitionNextFloors.getQuick(partitionFloors.size() - 1);
+            try {
+                computeSurvivorCountsOnePass(tsScanSql, rangeLo, rangeHi);
+            } catch (Throwable th) {
+                LOG.error().$("row-expiry survivor scan failed [table=").$safe(tableName)
+                        .$(", msg=").$safe(th.getMessage()).I$();
+                return false; // cannot classify safely this sweep; try again next time
+            }
         }
         SqlCompiler cleanupCompiler = null;
         RecordCursorFactory countFactory = null;
@@ -303,17 +326,38 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                 .$(", partitionTs=").$ts(floorTs).I$();
                     } else if (racyOpsAllowed && boundsAction == ACTION_UNKNOWN) {
-                        if (countFactory == null) {
-                            if (cleanupCompiler == null) {
-                                cleanupCompiler = engine.getSqlCompiler();
+                        final int action;
+                        if (onePass) {
+                            // Counts already computed by the single survivor-timestamp scan.
+                            final long survivors = partitionSurvivors.getQuick(i);
+                            action = survivors == 0 ? ACTION_DROP : (survivors < rowCount ? ACTION_REPLACE : ACTION_SKIP);
+                        } else {
+                            if (countFactory == null) {
+                                if (cleanupCompiler == null) {
+                                    cleanupCompiler = engine.getSqlCompiler();
+                                }
+                                bindPartitionRange(floorTs, nextFloorTs); // declare $1/$2 types before compiling
+                                countFactory = cleanupCompiler.compile(countSql, sqlExecutionContext).getRecordCursorFactory();
                             }
-                            bindPartitionRange(floorTs, nextFloorTs); // declare $1/$2 types before compiling
-                            countFactory = cleanupCompiler.compile(countSql, sqlExecutionContext).getRecordCursorFactory();
+                            action = classifyPartition(countFactory, floorTs, nextFloorTs, rowCount);
                         }
-                        // ACTION_REPLACE covers both a partially expired partition (compact to survivors) and a
-                        // fully expired one (zero survivors -> empty REPLACE_RANGE wipe); both go through the
-                        // gated replacePartition below.
-                        if (classifyPartition(countFactory, floorTs, nextFloorTs, rowCount) == ACTION_REPLACE) {
+                        if (action == ACTION_DROP) {
+                            // Fully expired -> no-scan empty REPLACE_RANGE wipe, gated on the sequencer txn so a
+                            // row a concurrent writer back-filled since the survivor scan is never deleted.
+                            if (walWriter == null) {
+                                walWriter = engine.getWalWriter(tableToken);
+                            }
+                            if (txnTracker == null || txnTracker.getSeqTxn() == expectedSeqTxn) {
+                                walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
+                                expectedSeqTxn++; // our commit advanced the sequencer by exactly one txn
+                                workDone = true;
+                                LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
+                                        .$(", partitionTs=").$ts(floorTs).I$();
+                            } else {
+                                LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
+                                        .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
+                            }
+                        } else if (action == ACTION_REPLACE) {
                             if (walWriter == null) {
                                 walWriter = engine.getWalWriter(tableToken);
                             }
@@ -467,10 +511,57 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // from a read-only scan into a scan plus discarded WAL write I/O. Only the (few) expired partitions
         // pay for a second scan.
         final long survivors = countSurvivors(countFactory, floorTs, nextFloorTs);
-        // survivors == 0 -> fully expired (REPLACE wipes it); 0 < survivors < rowCount -> partially expired
-        // (REPLACE compacts to survivors); survivors == rowCount -> nothing expired (SKIP). rowCount is the
-        // reader snapshot, so only act when something is clearly expired.
+        // survivors == 0 -> fully expired (DROP/wipe); 0 < survivors < rowCount -> partially expired (REPLACE
+        // compacts to survivors); survivors == rowCount -> nothing expired (SKIP). rowCount is the reader
+        // snapshot, so only act when something is clearly expired.
+        if (survivors == 0) {
+            return ACTION_DROP;
+        }
         return survivors < rowCount ? ACTION_REPLACE : ACTION_SKIP;
+    }
+
+    /**
+     * Single-pass survivor classification for keep-latest/window: scans the keep-query's surviving timestamps
+     * over the whole non-active range {@code [rangeLo, rangeHi)} ONCE and buckets each into its logical
+     * partition, filling {@link #partitionSurvivors}. Replaces one count() keep-query execution per partition
+     * with a single scan (keep-latest survivors ~= #keys; window survivors bounded by the result set).
+     */
+    private void computeSurvivorCountsOnePass(String tsScanSql, long rangeLo, long rangeHi) throws SqlException {
+        partitionSurvivors.clear();
+        for (int i = 0, n = partitionFloors.size(); i < n; i++) {
+            partitionSurvivors.add(0);
+        }
+        bindPartitionRange(rangeLo, rangeHi);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory factory = compiler.compile(tsScanSql, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        final int idx = partitionIndexFor(record.getTimestamp(0));
+                        if (idx >= 0) {
+                            partitionSurvivors.setQuick(idx, partitionSurvivors.getQuick(idx) + 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Index into {@link #partitionFloors} (ascending) of the logical partition containing {@code ts}, or -1. */
+    private int partitionIndexFor(long ts) {
+        int lo = 0;
+        int hi = partitionFloors.size() - 1;
+        int ans = -1;
+        while (lo <= hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (partitionFloors.getQuick(mid) <= ts) {
+                ans = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return (ans >= 0 && ts < partitionNextFloors.getQuick(ans)) ? ans : -1;
     }
 
     // Binds $1 = partition floor (inclusive), $2 = next floor (exclusive). The interval optimiser prunes to

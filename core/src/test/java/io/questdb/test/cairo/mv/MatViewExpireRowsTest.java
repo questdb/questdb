@@ -66,6 +66,42 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireScalarCustomCleanupCompactsAndWipes() throws Exception {
+        // A non-time (custom) scalar predicate has no bounds fast-path, so cleanup classifies via the count
+        // scan: a fully-expired partition is wiped, a partial one compacted.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // v<2 -> expired (d1 partial)
+                    "('B', 5.0, '2024-01-01T00:00:00.000000Z')," +   // kept
+                    "('C', 1.5, '2024-01-02T00:00:00.000000Z')," +   // v<2 -> d2 fully expired
+                    "('D', 9.0, '2024-01-03T00:00:00.000000Z')");    // active partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate, 0);
+            }
+            drainWalAndMatViewQueues();
+
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql(
+                    "sym\tv\n" +
+                            "B\t5.0\n" +
+                            "D\t9.0\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testExpireScalarCleanupReclaimsOldPartition() throws Exception {
         // The physical cleanup reclaims on a mat view via REPLACE_RANGE (DROP PARTITION via SQL is rejected
         // for mat views). Here a wholly-below-threshold partition is wiped.
