@@ -118,7 +118,7 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
     let mut current_row = 0usize;
     let mut filter_idx = 0usize;
     let filter_len = rows_filter.len();
-    let mut def_scratch = Vec::new();
+    let mut def_scratch: AcVec<u32> = AcVec::new_in(buffers.data_vec.allocator().clone());
 
     if FILL_NULLS && row_lo > 0 {
         let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level as u32)?;
@@ -281,7 +281,7 @@ fn decode_array_rows_1d<T: DataPageSlicer>(
         return Ok(());
     }
 
-    let mut def_scratch = Vec::new();
+    let mut def_scratch: AcVec<u32> = AcVec::new_in(buffers.data_vec.allocator().clone());
 
     let Some(first_vs) = read_and_append_one_row_1d(
         levels_iter,
@@ -331,7 +331,7 @@ fn decode_array_rows_2d<T: DataPageSlicer>(
         return Ok(());
     }
 
-    let mut def_scratch = Vec::new();
+    let mut def_scratch: AcVec<u32> = AcVec::new_in(buffers.data_vec.allocator().clone());
 
     let Some(first_vs) = read_and_append_one_row_2d(
         levels_iter,
@@ -369,7 +369,7 @@ fn read_and_append_one_row_1d<T: DataPageSlicer>(
     max_def_level: u32,
     slicer: &mut T,
     buffers: &mut ColumnChunkBuffers,
-    def_scratch: &mut Vec<u32>,
+    def_scratch: &mut AcVec<u32>,
 ) -> ParquetResult<Option<usize>> {
     let first_def = if levels_iter.has_lookahead() {
         let (_, def) = levels_iter.take_lookahead();
@@ -397,7 +397,7 @@ fn read_and_append_one_row_1d<T: DataPageSlicer>(
 
     def_scratch.clear();
     if has_nulls {
-        def_scratch.push(first_def);
+        def_scratch.push(first_def)?;
     }
 
     loop {
@@ -413,11 +413,11 @@ fn read_and_append_one_row_1d<T: DataPageSlicer>(
                     non_null_count += 1;
                 } else if !has_nulls {
                     has_nulls = true;
-                    def_scratch.reserve(element_count + 1);
-                    def_scratch.resize(element_count, max_def_level);
+                    def_scratch.reserve(element_count + 1)?;
+                    def_scratch.resize(element_count, max_def_level)?;
                 }
                 if has_nulls {
-                    def_scratch.push(def);
+                    def_scratch.push(def)?;
                 }
                 element_count += 1;
             }
@@ -465,7 +465,7 @@ fn read_and_append_one_row_2d<T: DataPageSlicer>(
     max_def_level: u32,
     slicer: &mut T,
     buffers: &mut ColumnChunkBuffers,
-    def_scratch: &mut Vec<u32>,
+    def_scratch: &mut AcVec<u32>,
 ) -> ParquetResult<Option<usize>> {
     let first_def = if levels_iter.has_lookahead() {
         let (_, def) = levels_iter.take_lookahead();
@@ -496,7 +496,7 @@ fn read_and_append_one_row_2d<T: DataPageSlicer>(
 
     def_scratch.clear();
     if has_nulls {
-        def_scratch.push(first_def);
+        def_scratch.push(first_def)?;
     }
 
     loop {
@@ -519,11 +519,11 @@ fn read_and_append_one_row_2d<T: DataPageSlicer>(
                     non_null_count += 1;
                 } else if !has_nulls {
                     has_nulls = true;
-                    def_scratch.reserve(total_elements + 1);
-                    def_scratch.resize(total_elements, max_def_level);
+                    def_scratch.reserve(total_elements + 1)?;
+                    def_scratch.resize(total_elements, max_def_level)?;
                 }
                 if has_nulls {
-                    def_scratch.push(def);
+                    def_scratch.push(def)?;
                 }
                 total_elements += 1;
             }

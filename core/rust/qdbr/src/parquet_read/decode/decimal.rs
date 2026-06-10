@@ -917,7 +917,7 @@ impl<T: Copy> PrimitiveDictDecoder<T> for PreconvertedFlbaDecimalDict<T> {
 impl PreconvertedFlbaDecimalDict<Decimal8> {
     fn try_new_decimal8(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values = try_reserve_dict_values(dict_page.num_values)?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 1];
@@ -931,7 +931,7 @@ impl PreconvertedFlbaDecimalDict<Decimal8> {
 impl PreconvertedFlbaDecimalDict<Decimal16> {
     fn try_new_decimal16(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values = try_reserve_dict_values(dict_page.num_values)?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 2];
@@ -945,7 +945,7 @@ impl PreconvertedFlbaDecimalDict<Decimal16> {
 impl PreconvertedFlbaDecimalDict<Decimal32> {
     fn try_new_decimal32(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values = try_reserve_dict_values(dict_page.num_values)?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 4];
@@ -959,7 +959,7 @@ impl PreconvertedFlbaDecimalDict<Decimal32> {
 impl PreconvertedFlbaDecimalDict<Decimal64> {
     fn try_new_decimal64(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values = try_reserve_dict_values(dict_page.num_values)?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 8];
@@ -973,7 +973,7 @@ impl PreconvertedFlbaDecimalDict<Decimal64> {
 impl PreconvertedFlbaDecimalDict<Decimal128> {
     fn try_new_decimal128(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values = try_reserve_dict_values(dict_page.num_values)?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 16];
@@ -989,7 +989,7 @@ impl PreconvertedFlbaDecimalDict<Decimal128> {
 impl PreconvertedFlbaDecimalDict<Decimal256> {
     fn try_new_decimal256(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
         validate_flba_dict(dict_page, src_len)?;
-        let mut values = Vec::with_capacity(dict_page.num_values);
+        let mut values = try_reserve_dict_values(dict_page.num_values)?;
         for i in 0..dict_page.num_values {
             let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
             let mut buf = [0u8; 32];
@@ -1015,6 +1015,26 @@ fn validate_flba_dict(dict_page: &DictPage, src_len: usize) -> ParquetResult<()>
         ));
     }
     Ok(())
+}
+
+/// Fallibly reserves capacity for `num_values` pre-converted dictionary entries.
+///
+/// `num_values` comes from the dictionary page header. `validate_flba_dict` pins
+/// it to `buffer.len() / src_len`, but `src_len` can be as small as 1 while the
+/// target `T` is up to 32 bytes (`Decimal256`), so the reservation is up to 32x
+/// the page buffer -- tens of gigabytes for a multi-GiB decompressed dict page.
+/// A plain `Vec::with_capacity` aborts the JVM over JNI when that allocation
+/// fails; `try_reserve_exact` turns it into a recoverable `Layout` error while
+/// still decoding any dictionary that genuinely fits in memory.
+fn try_reserve_dict_values<T>(num_values: usize) -> ParquetResult<Vec<T>> {
+    let mut values = Vec::new();
+    values.try_reserve_exact(num_values).map_err(|_| {
+        fmt_err!(
+            Layout,
+            "cannot allocate {num_values} decimal dictionary values"
+        )
+    })?;
+    Ok(values)
 }
 
 fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NULLS: bool>(
@@ -1209,5 +1229,24 @@ mod tests {
 
         let mut slicer = Slicer::new(&data, 4);
         assert_eq!(slicer.next_raw_slice(1).unwrap(), &data[..]);
+    }
+
+    #[test]
+    fn try_reserve_dict_values_rejects_unsatisfiable_count_instead_of_aborting() {
+        // num_values comes from the dictionary page header. validate_flba_dict
+        // pins it to buffer.len() / src_len, but src_len can be 1 while the
+        // target is 32 bytes (Decimal256), so the reservation is up to 32x the
+        // page buffer -- tens of gigabytes for a multi-GiB decompressed dict. A
+        // genuine such request may succeed on a large host, so to pin the
+        // fallible path deterministically we ask for usize::MAX values:
+        // try_reserve_exact fails with CapacityOverflow without attempting (and
+        // aborting on) a real allocation. Proves the sizing surfaces a clean
+        // error rather than the process-aborting Vec::with_capacity.
+        let err = try_reserve_dict_values::<Decimal256>(usize::MAX)
+            .expect_err("an unsatisfiable dictionary value count must error, not abort");
+        assert!(
+            err.to_string().contains("cannot allocate"),
+            "unexpected error: {err}"
+        );
     }
 }
