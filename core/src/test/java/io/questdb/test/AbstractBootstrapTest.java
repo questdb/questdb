@@ -115,10 +115,26 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            code.run();
-            CLOSEABLE.forEach(Misc::free);
-        });
+        try {
+            TestUtils.assertMemoryLeak(() -> {
+                code.run();
+                CLOSEABLE.forEach(Misc::free);
+            });
+        } catch (AssertionError e) {
+            // A leaked native thread-local (e.g. a Path slot held by a straggler thread that
+            // outlived the leak-check baseline) is invisible in the failure message. Append the
+            // live thread names so a CI-only sighting identifies the straggler without a repro.
+            StringBuilder sb = new StringBuilder(e.getMessage() == null ? "" : e.getMessage());
+            sb.append(" [live threads at failure:");
+            Thread.getAllStackTraces().keySet().stream()
+                    .map(Thread::getName)
+                    .sorted()
+                    .forEach(name -> sb.append(' ').append(name).append(';'));
+            sb.append(']');
+            AssertionError annotated = new AssertionError(sb.toString());
+            annotated.setStackTrace(e.getStackTrace());
+            throw annotated;
+        }
     }
 
     protected static void assertQueryFails(
