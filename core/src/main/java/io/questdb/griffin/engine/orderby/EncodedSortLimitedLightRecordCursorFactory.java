@@ -175,11 +175,12 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
                 limit = rawLo;
             }
         } else {
-            // A NULL lo with hi present means "from the start": LIMIT null,3 returns
-            // the first 3 rows. Without this, NULL falls into the lo < 0 branch and
-            // the query returns the full set instead of the head slice.
-            final long lo = rawLo == Numbers.LONG_NULL ? 0 : rawLo;
             final long hi = hiFunction.getLong(null);
+            // A NULL lo with a non-NULL hi means "from the start": LIMIT null,3 returns
+            // the first 3 rows. Without this, NULL falls into the lo < 0 branch and the
+            // query returns the full set instead of the head slice. A NULL lo with a
+            // NULL hi must stay raw so the lo == hi check below yields the empty result.
+            final long lo = rawLo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL ? 0 : rawLo;
             if (lo < 0) {
                 // Negative range, e.g. -10,-5: five rows ending five rows from the
                 // tail. lo == hi is an invalid bottom range, e.g. -3,-3: empty result.
