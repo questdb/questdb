@@ -698,3 +698,92 @@ fn append_array<T: DataPageSlicer>(
     }
     Ok(value_size)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::allocator::TestAllocatorState;
+    use crate::parquet::error::ParquetErrorReason;
+    use crate::parquet_read::slicer::DataPageFixedSlicer;
+    use parquet2::encoding::hybrid_rle::encode_u32;
+    use parquet2::read::levels::get_bit_width;
+
+    // Encodes the rep/def level streams for a single 1D-array row of `n` elements
+    // that are all present-but-null: def == 1 (one below max_def_level == 2), so
+    // read_and_append_one_row_1d takes its has_nulls branch and grows def_scratch
+    // to `n` entries. Per-element nulls only reach this path from a foreign
+    // LIST<double> file -- QuestDB's own writer encodes a missing double as NaN,
+    // never as a def-level null -- which is exactly the foreign-input case the
+    // AcVec change hardens. All elements being null also means the values slicer
+    // is never advanced, so the row decodes without any backing values buffer.
+    fn encode_null_element_row_levels(n: usize) -> (Vec<u8>, Vec<u8>) {
+        const MAX_REP: i16 = 1;
+        const MAX_DEF: i16 = 2;
+        // The first element opens the row (rep 0); the rest continue it (rep 1).
+        let rep = std::iter::once(0u32).chain(std::iter::repeat_n(1u32, n - 1));
+        // Every element is present-but-null (def 1, never max_def_level 2).
+        let def = std::iter::repeat_n(1u32, n);
+        let mut rep_buf = Vec::new();
+        let mut def_buf = Vec::new();
+        encode_u32(&mut rep_buf, rep, n, get_bit_width(MAX_REP)).unwrap();
+        encode_u32(&mut def_buf, def, n, get_bit_width(MAX_DEF)).unwrap();
+        (rep_buf, def_buf)
+    }
+
+    #[test]
+    fn decode_array_rows_1d_null_elements_decodes() {
+        // Coverage/sanity: with no memory limit a foreign 1D array row of all
+        // present-but-null elements decodes cleanly, exercising def_scratch's
+        // has_nulls growth path. Pins the level scaffolding so the allocation
+        // failure test below cannot pass for the wrong reason.
+        const N: usize = 256;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let (rep_buf, def_buf) = encode_null_element_row_levels(N);
+        let mut levels_iter = LevelsIterator::try_new(N, 1, 2, &rep_buf, &def_buf).unwrap();
+        let mut buffers = ColumnChunkBuffers::new(allocator);
+        let empty: &[u8] = &[];
+        let mut slicer = DataPageFixedSlicer::<8>::new(empty, 0);
+
+        decode_array_rows_1d(&mut levels_iter, 2, 0, 1, &mut slicer, &mut buffers).unwrap();
+
+        // One aux entry for the row; data holds the shape header + N f64 NaNs.
+        assert_eq!(buffers.aux_vec.len(), ARRAY_AUX_SIZE);
+        assert_eq!(buffers.data_vec.len(), 8 + 8 * N);
+    }
+
+    #[test]
+    fn decode_array_rows_1d_def_scratch_alloc_failure_errors_not_aborts() {
+        // def_scratch is now an AcVec: a foreign array whose level stream drives
+        // it large must surface a recoverable error, not abort the JVM through an
+        // infallible Vec::push. Decode a row of N present-but-null elements
+        // (forcing def_scratch to grow to N) under a memory limit set just above
+        // the setup, so the growth fails. The decode must return a clean
+        // OutOfMemory error rather than panic/abort.
+        //
+        // Scope: a memory limit proves abort-freedom of this path, not
+        // fail-on-revert -- reverting def_scratch to an infallible std Vec would
+        // merely shift the failure to the sibling data_vec reservation (also
+        // fallible, and strictly larger per element). Abort-freedom is the
+        // contract the AcVec change establishes and the prior infallible Vec
+        // violated.
+        const N: usize = 4096;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let (rep_buf, def_buf) = encode_null_element_row_levels(N);
+        let mut levels_iter = LevelsIterator::try_new(N, 1, 2, &rep_buf, &def_buf).unwrap();
+        let mut buffers = ColumnChunkBuffers::new(allocator);
+        let empty: &[u8] = &[];
+        let mut slicer = DataPageFixedSlicer::<8>::new(empty, 0);
+
+        // Cap memory just above the setup; def_scratch needs N * 4 bytes, far
+        // beyond the headroom, so its growth fails deterministically.
+        tas.set_mem_rss_limit(tas.rss_mem_used() + 256);
+        let err = decode_array_rows_1d(&mut levels_iter, 2, 0, 1, &mut slicer, &mut buffers)
+            .expect_err("def_scratch growth past the memory limit must error, not abort");
+        assert!(
+            matches!(err.reason(), ParquetErrorReason::OutOfMemory(_)),
+            "allocation failure must be classified OutOfMemory: {err:?}"
+        );
+    }
+}
