@@ -1183,6 +1183,54 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRleDictionaryIndexBitWidthOver32() throws Exception {
+        // A foreign parquet whose RLE_DICTIONARY data page declares a dictionary
+        // index bit width > 32 must surface a clean SQL error, not abort the JVM
+        // via an unreachable!() in the bitpacked decoder. The committed fixture is
+        // a valid dictionary-encoded INT32 column ("v") with only that single page
+        // byte patched to 40; the generate_rle_dict_index_bitwidth_fixture Rust
+        // test (core/rust/qdbr) builds and verifies it. Draining the cursor forces
+        // the page decode that trips the guard.
+        assertMemoryLeak(() -> {
+            final String fixture = "rle_dict_index_bitwidth_over_32.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/broken/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            sink.clear();
+            sink.put("SELECT v FROM read_parquet('").put(fixture).put("')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain to force page decode
+                        }
+                        Assert.fail("expected a decode error for an oversized dictionary index bit width");
+                    }
+                } catch (CairoException e) {
+                    // Reaching a clean CairoException here -- rather than a JVM
+                    // abort via the bitpacked decoder's unreachable!() -- is the
+                    // contract. The message differs by reader: the parallel reader
+                    // surfaces the "exceeds" bit-width detail, the non-parallel
+                    // reader reports a generic "corrupted". The Rust
+                    // generate_rle_dict_index_bitwidth_fixture test pins the exact
+                    // guard; here we accept either phrasing.
+                    final String message = e.getMessage();
+                    Assert.assertTrue(
+                            "unexpected error: " + message,
+                            message.contains("exceeds") || message.contains("corrupted")
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVarcharSliceCastToSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT" +

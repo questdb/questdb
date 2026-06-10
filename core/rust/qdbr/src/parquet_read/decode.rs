@@ -2297,7 +2297,8 @@ pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> Parque
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_page, decode_page_filtered, decompress_sliced_data, resize_decompress_buffer,
+        decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
+        resize_decompress_buffer,
     };
     use crate::allocator::{AcVec, TestAllocatorState};
     use crate::parquet::error::ParquetErrorReason;
@@ -2313,13 +2314,13 @@ mod tests {
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
     use arrow::datatypes::ToByteSlice;
-    use parquet2::compression::Compression;
+    use parquet2::compression::{compress, Compression, CompressionOptions};
     use parquet2::encoding::hybrid_rle::encode_u32;
     use parquet2::encoding::Encoding;
     use parquet2::metadata::Descriptor;
     use parquet2::page::{DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
     use parquet2::read::levels::get_bit_width;
-    use parquet2::read::SlicedDataPage;
+    use parquet2::read::{SlicedDataPage, SlicedDictPage};
     use parquet2::schema::types::{FieldInfo, PhysicalType, PrimitiveLogicalType, PrimitiveType};
     use parquet2::schema::Repetition;
     use parquet2::write::Version;
@@ -4444,6 +4445,241 @@ mod tests {
             err.to_string().contains("incorrect decompressed size"),
             "unexpected error: {err}"
         );
+    }
+
+    fn snappy_compress(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        compress(CompressionOptions::Snappy, bytes, &mut out).unwrap();
+        out
+    }
+
+    fn int32_descriptor() -> Descriptor {
+        Descriptor {
+            primitive_type: PrimitiveType::from_physical("c".to_string(), PhysicalType::Int32),
+            max_def_level: 0,
+            max_rep_level: 0,
+        }
+    }
+
+    #[test]
+    fn decompress_sliced_data_v1_compressed_round_trips() {
+        // V1 compressed arm: resize_decompress_buffer sizes the reused buffer to
+        // uncompressed_size, then the whole page body is decompressed into it.
+        let values: Vec<u8> = (0..64u8).collect();
+        let compressed = snappy_compress(&values);
+        let page = SlicedDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            buffer: &compressed,
+            compression: Compression::Snappy,
+            uncompressed_size: values.len(),
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        let data_page = decompress_sliced_data(&page, &mut decompress_buffer).unwrap();
+        assert_eq!(data_page.buffer, &values[..]);
+    }
+
+    #[test]
+    fn decompress_sliced_data_v2_compressed_round_trips() {
+        // V2 compressed arm (can_decompress=true): the first `offset` bytes are
+        // uncompressed levels copied verbatim, and only the values after them are
+        // compressed and decompressed into decompress_buffer[offset..].
+        let levels = [0xAAu8, 0xBB, 0xCC];
+        let values: Vec<u8> = (0..40u8).collect();
+        let mut body = levels.to_vec();
+        body.extend_from_slice(&snappy_compress(&values));
+        let page = SlicedDataPage {
+            header: DataPageHeader::V2(DataPageHeaderV2 {
+                num_values: values.len() as i32,
+                num_nulls: 0,
+                num_rows: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_levels_byte_length: levels.len() as i32,
+                repetition_levels_byte_length: 0,
+                is_compressed: Some(true),
+                statistics: None,
+            }),
+            buffer: &body,
+            compression: Compression::Snappy,
+            uncompressed_size: levels.len() + values.len(),
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        let data_page = decompress_sliced_data(&page, &mut decompress_buffer).unwrap();
+        let mut expected = levels.to_vec();
+        expected.extend_from_slice(&values);
+        assert_eq!(data_page.buffer, &expected[..]);
+    }
+
+    #[test]
+    fn decompress_sliced_dict_compressed_round_trips() {
+        // decompress_sliced_dict sizes the buffer to uncompressed_size and
+        // decompresses the whole dict page body into it.
+        let values: Vec<u8> = (0..48u8).collect();
+        let compressed = snappy_compress(&values);
+        let page = SlicedDictPage {
+            buffer: &compressed,
+            compression: Compression::Snappy,
+            uncompressed_size: values.len(),
+            num_values: 12,
+            is_sorted: false,
+        };
+        let mut buffer = Vec::new();
+        let dict = decompress_sliced_dict(page, &mut buffer).unwrap();
+        assert_eq!(dict.buffer, &values[..]);
+        assert_eq!(dict.num_values, 12);
+    }
+
+    #[test]
+    fn decompress_sliced_data_compressed_lying_size_errors() {
+        // A compressed page whose uncompressed_size under-claims the real
+        // decompressed length must surface a clean error, not panic or abort:
+        // resize_decompress_buffer sizes the output too small, so the codec
+        // cannot fill it and returns an error that propagates out.
+        let values: Vec<u8> = (0..64u8).collect();
+        let compressed = snappy_compress(&values);
+        let page = SlicedDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            buffer: &compressed,
+            compression: Compression::Snappy,
+            uncompressed_size: values.len() - 1, // lies: one byte short of the real output
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        assert!(
+            decompress_sliced_data(&page, &mut decompress_buffer).is_err(),
+            "a compressed page whose uncompressed_size under-claims the body must error"
+        );
+    }
+
+    // Regenerates the committed end-to-end fixture
+    // core/src/test/resources/sqllogictest/data/parquet-testing/broken/rle_dict_index_bitwidth_over_32.parquet
+    // read by the Java `ParquetTest` sqllogictest. Ignored by default; run with
+    // `cargo test -p qdbr -- --ignored generate_rle_dict_index_bitwidth_fixture`
+    // after the on-disk page layout changes. It writes a valid dictionary-encoded
+    // parquet, locates the RLE_DICTIONARY index bit-width byte (the first byte of
+    // a required column's data page) by pointer offset, patches it to 40 (> 32),
+    // and asserts the patched bytes trip the guard with a clean "exceeds" error
+    // (not a JVM abort) before committing them.
+    #[test]
+    #[ignore = "regenerates a committed test fixture on disk"]
+    fn generate_rle_dict_index_bitwidth_fixture() {
+        // Low cardinality (2 distinct values) so the writer dictionary-encodes it.
+        let values: Vec<i32> = vec![7, 7, 7, 9, 9, 7, 9, 7];
+
+        let col = std::sync::Arc::new(
+            parquet::schema::types::Type::primitive_type_builder("v", parquet::basic::Type::INT32)
+                .with_id(Some(0))
+                .with_repetition(parquet::basic::Repetition::REQUIRED)
+                .build()
+                .unwrap(),
+        );
+        let schema = std::sync::Arc::new(
+            parquet::schema::types::Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()
+                .unwrap(),
+        );
+        let props = std::sync::Arc::new(
+            parquet::file::properties::WriterProperties::builder()
+                .set_dictionary_enabled(true)
+                .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_1_0)
+                .build(),
+        );
+
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut file_writer =
+                parquet::file::writer::SerializedFileWriter::new(&mut cursor, schema, props)
+                    .unwrap();
+            let mut row_group_writer = file_writer.next_row_group().unwrap();
+            let mut col_writer = row_group_writer.next_column().unwrap().unwrap();
+            col_writer
+                .typed::<parquet::data_type::Int32Type>()
+                .write_batch(&values, None, None)
+                .unwrap();
+            col_writer.close().unwrap();
+            row_group_writer.close().unwrap();
+            file_writer.close().unwrap();
+        }
+        let mut file = cursor.into_inner();
+
+        // Locate the data page's first byte (the dict-index bit width) by reading
+        // the column chunk's pages as slices into `file` and taking the pointer
+        // offset of the first data page (a required column carries no levels, so
+        // the bit-width byte is buffer[0]).
+        let bitwidth_offset = {
+            let metadata =
+                parquet2::read::read_metadata(&mut Cursor::new(file.as_slice())).unwrap();
+            let column = &metadata.row_groups[0].columns()[0];
+            let reader = parquet2::read::SlicePageReader::new(&file, column, 1 << 20).unwrap();
+            let mut saw_dict = false;
+            let mut offset = None;
+            for page in reader {
+                match page.unwrap() {
+                    parquet2::read::SlicedPage::Dict(_) => saw_dict = true,
+                    parquet2::read::SlicedPage::Data(data) => {
+                        offset = Some((data.buffer.as_ptr() as usize) - (file.as_ptr() as usize));
+                        break;
+                    }
+                }
+            }
+            assert!(
+                saw_dict,
+                "column was not dictionary-encoded; adjust the values"
+            );
+            offset.expect("expected a data page after the dictionary page")
+        };
+
+        let original = file[bitwidth_offset];
+        assert!(
+            original <= 32,
+            "expected a small real bit width at the located offset, got {original}"
+        );
+        file[bitwidth_offset] = 40; // > 32: trips bitpacked::Decoder::<u32>::try_new
+
+        // The patched bytes must trip the guard with a clean error, not abort.
+        {
+            let tas = TestAllocatorState::new();
+            let allocator = tas.allocator();
+            let buf_len = file.len() as u64;
+            let mut reader = Cursor::new(&file);
+            let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len).unwrap();
+            let mut rgb = RowGroupBuffers::new(allocator);
+            let mut ctx = DecodeContext::new(file.as_ptr(), buf_len);
+            let err = decoder
+                .decode_row_group(
+                    &mut ctx,
+                    &mut rgb,
+                    &[(0, ColumnTypeTag::Int.into_type())],
+                    0,
+                    0,
+                    values.len() as u32,
+                )
+                .expect_err("the patched fixture must error, not abort");
+            assert!(
+                err.to_string().contains("exceeds"),
+                "fixture must trip the bit-width guard, got: {err}"
+            );
+        }
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../src/test/resources/sqllogictest/data/parquet-testing/broken/rle_dict_index_bitwidth_over_32.parquet"
+        );
+        std::fs::write(path, &file).unwrap();
     }
 
     #[test]
