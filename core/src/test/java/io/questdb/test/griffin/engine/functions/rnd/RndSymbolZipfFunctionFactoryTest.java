@@ -81,9 +81,8 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testExplainPlan() throws Exception {
-        assertQuery("explain select rnd_symbol_zipf('AAPL', 'MSFT', 'GOOGL', 1.5) from long_sequence(10)")
-                .returnsOnce("""
-                        QUERY PLAN
+        assertQuery("select rnd_symbol_zipf('AAPL', 'MSFT', 'GOOGL', 1.5) from long_sequence(10)")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [rnd_symbol_zipf([AAPL,MSFT,GOOGL],1.5)]
                             long_sequence count: 10
@@ -92,9 +91,8 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testExplainPlanLowAlpha() throws Exception {
-        assertQuery("explain select rnd_symbol_zipf('X', 'Y', 'Z', 0.5) from long_sequence(3)")
-                .returnsOnce("""
-                        QUERY PLAN
+        assertQuery("select rnd_symbol_zipf('X', 'Y', 'Z', 0.5) from long_sequence(3)")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [rnd_symbol_zipf([X,Y,Z],0.5)]
                             long_sequence count: 3
@@ -103,9 +101,8 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testExplainPlanTwoSymbols() throws Exception {
-        assertQuery("explain select rnd_symbol_zipf('A', 'B', 2.0) from long_sequence(5)")
-                .returnsOnce("""
-                        QUERY PLAN
+        assertQuery("select rnd_symbol_zipf('A', 'B', 2.0) from long_sequence(5)")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [rnd_symbol_zipf([A,B],2.0)]
                             long_sequence count: 5

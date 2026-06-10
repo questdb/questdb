@@ -44,6 +44,36 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctConstAliasOrderByLimitFromFuzzer() throws Exception {
+        // Original failing query from the query fuzzer (seed s0=104514844543552, s1=1779785264959).
+        assertQuery("SELECT DISTINCT -676 AS e0, t0.x AS e1, -97 AS e2," +
+                " '2024-01-23T16:57:00.000000Z'::TIMESTAMP AS e3, t0.x AS e4" +
+                " FROM long_sequence(73) t0" +
+                " WHERE (t0.x > (t0.x - t0.x) AND t0.x IS NOT NULL)" +
+                " ORDER BY e0 DESC LIMIT 2")
+                .expectSize()
+                .returns("""
+                        e0\te1\te2\te3\te4
+                        -676\t36\t-97\t2024-01-23T16:57:00.000000Z\t36
+                        -676\t26\t-97\t2024-01-23T16:57:00.000000Z\t26
+                        """);
+    }
+
+    @Test
+    public void testDistinctConstAliasOrderByLimitWithDuplicateCol() throws Exception {
+        // Duplicate column refs trigger rewriteTrivialGroupByExpressions which used to push
+        // LIMIT past the virtual carrying the constant alias; ORDER BY e0 then resolved at the
+        // limited group-by and crashed with AIOOBE.
+        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
+                .expectSize()
+                .returns("""
+                        e0\te1\te4
+                        -1\t3\t3
+                        -1\t2\t2
+                        """);
+    }
+
+    @Test
     public void testDistinctImplementsLimitLoPositive() throws Exception {
         execute(
                 "create table x as (" +
@@ -149,6 +179,153 @@ public class DistinctTest extends AbstractCairoTest {
                         foo\t592859671\t73575701
                         foo\t-1191262516\t592859671
                         foo\t-1575378703\t-1191262516
+                        """);
+    }
+
+    @Test
+    public void testDistinctOrderByPositionLimitPush() throws Exception {
+        // The trivial-group-by rewrite pushes the outer LIMIT onto the nested group by, but the
+        // gate runs before ORDER BY tokens are normalized, so it resolves positions/qualifiers
+        // itself. A position over a key (2 == e1) must push like the alias form; one over the
+        // virtual-only constant (1 == e0) must not, else rewriteOrderBy later crashes (AIOOBE).
+        assertMemoryLeak(() -> {
+            final String base = "SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ";
+
+            // position 2 == e1 (a key): pushed, same plan as the alias form. Asserting both against
+            // one literal proves the positional form normalizes to the same column.
+            final String pushedPlan = """
+                    VirtualRecord
+                      functions: [-1,e1,e4]
+                        Long Top K lo: 2
+                          keys: [e1 desc]
+                            GroupBy vectorized: false
+                              keys: [e1,e4]
+                                long_sequence count: 3
+                    """;
+            assertQuery(base + "ORDER BY e1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan);
+            assertQuery(base + "ORDER BY 2 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan);
+
+            // position 1 == e0 (virtual-only constant): not pushed, same plan as the alias form, no AIOOBE.
+            final String notPushedPlan = """
+                    Sort light lo: 2
+                      keys: [e0 desc]
+                        VirtualRecord
+                          functions: [-1,e1,e4]
+                            GroupBy vectorized: false
+                              keys: [e1,e4]
+                                long_sequence count: 3
+                    """;
+            assertQuery(base + "ORDER BY e0 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(notPushedPlan);
+            assertQuery(base + "ORDER BY 1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(notPushedPlan);
+
+            // e1 is unique, so the key-ordered result is deterministic.
+            assertQuery(base + "ORDER BY 2 DESC LIMIT 2")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("e0\te1\te4\n-1\t3\t3\n-1\t2\t2\n");
+            // constant order is unspecified (all e0 equal); assert only the row count and no crash.
+            assertQuery("SELECT count() c FROM (" + base + "ORDER BY 1 DESC LIMIT 2)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("c\n2\n");
+
+            // Qualified ORDER BY t0.x strips to x (single join model). The constant e0 forces the
+            // outer virtual, and the unaliased middle column makes x a group-by key, so the
+            // qualified form pushes like the bare column.
+            final String base2 = "SELECT DISTINCT -1 AS e0, t0.x, t0.x AS e4 FROM long_sequence(3) t0 ";
+            final String pushedPlan2 = """
+                    VirtualRecord
+                      functions: [-1,x,e4]
+                        Long Top K lo: 2
+                          keys: [x desc]
+                            GroupBy vectorized: false
+                              keys: [x,e4]
+                                long_sequence count: 3
+                    """;
+            assertQuery(base2 + "ORDER BY x DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan2);
+            assertQuery(base2 + "ORDER BY t0.x DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan2);
+            assertQuery(base2 + "ORDER BY t0.x DESC LIMIT 2")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("e0\tx\te4\n-1\t3\t3\n-1\t2\t2\n");
+        });
+    }
+
+    @Test
+    public void testDistinctQualifiedColumnInExprWithBindVariableFromFuzzer() throws Exception {
+        // Bind-form of the prior fuzzer query. The bind cast steals the early aliases
+        // ("cast", "cast1") so the bare t0.x projection keeps its user alias "x". The
+        // earlier qualified emit for (t0.x)::CHAR had already registered "x" in the
+        // translating model under the stripped key, and createSelectColumn needed the
+        // same qualified-vs-stripped retry as doReplaceLiteral0 to reuse that entry
+        // instead of renaming the bare projection to "x1" and breaking the DISTINCT
+        // wrapper's lookup.
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "Y");
+            assertQuery("SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
+                    " FROM long_sequence(3) t0")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            cast\tcast1\tx
+                            Y\t\t1
+                            Y\t\t2
+                            Y\t\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctQualifiedColumnInExpressionFromFuzzer() throws Exception {
+        // Qualified t0.x inside the expression must resolve to the same column as the bare
+        // t0.x projection above; otherwise the expression's literal misses the translating
+        // entry, overwrites the columnNameToAlias mapping with a duplicate, and the parent
+        // virtual model raises Invalid column.
+        assertQuery("SELECT DISTINCT -614 AS e0, t0.x AS e1, 786 AS e2, -716 AS e3," +
+                " (278444 * t0.x) AS e4" +
+                " FROM long_sequence(2) t0" +
+                " ORDER BY e1")
+                .expectSize()
+                .returns("""
+                        e0\te1\te2\te3\te4
+                        -614\t1\t786\t-716\t278444
+                        -614\t2\t786\t-716\t556888
+                        """);
+    }
+
+    @Test
+    public void testDistinctReusedColumnWithUserAliasRepro() throws Exception {
+        // Duplicate aliased refs to the same column (x AS e1, x AS e2) under DISTINCT
+        // pointed the outer projection at the translating-model alias "x" while the
+        // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
+        assertQuery("SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)")
+                .expectSize()
+                .returns("""
+                        e0\te1\te2
+                        1\t1\t1
+                        2\t2\t2
+                        3\t3\t3
                         """);
     }
 

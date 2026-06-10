@@ -83,9 +83,9 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                     "from x " +
                     "where sym1 in ('AA', 'BB' ) " +
                     "group by sym1, sym2";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
                             VirtualRecord
                               functions: [sym1,avgBid]
                                 Async JIT Group By workers: 1
@@ -95,10 +95,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
-            assertQuery(query)
-                    .noLeakCheck()
+                            """)
                     .returns("sym1\tavgBid\n");
         });
     }

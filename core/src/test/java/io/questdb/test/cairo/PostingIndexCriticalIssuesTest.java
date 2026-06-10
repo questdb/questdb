@@ -536,10 +536,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // covering sidecar. A healthy covering index keeps them consistent;
             // the orphaned-sidecar bug leaves count() right but sum(value) wrong
             // (and over-reads the .pc -- a bare SIGSEGV without assertions).
-            assertSql(
-                    "count\tsum\n" + total + "\t" + (double) total + "\n",
-                    "SELECT count(), sum(value) FROM flt WHERE ParameterID = 'KCAS'"
-            );
+            assertQuery("SELECT count(), sum(value) FROM flt WHERE ParameterID = 'KCAS'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + total + "\t" + (double) total + "\n");
         });
     }
 
@@ -562,14 +563,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             drainWalQueue();
             // Fresh compile after the capacity change: the covering posting index
             // must still be chosen.
-            assertPlanNoLeakCheck(
-                    "SELECT ts, val FROM x WHERE sym = 'b'",
-                    """
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'b'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: ts, val
                                   filter: sym='b'
-                            """
-            );
+                            """);
         });
     }
 
@@ -594,7 +594,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 CoveringIndex on: sym with: ts, val
                                   filter: sym='zzz'
                             """;
-            assertPlanNoLeakCheck("SELECT ts, val FROM x WHERE sym = 'zzz'", coveringPlan);
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .assertsPlan(coveringPlan);
 
             final long dayMicros = 86_400_000_000L;
             for (int day = 0; day < 6; day++) {
@@ -608,9 +610,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             drainWalQueue();
 
             // The planner must still choose the covering posting index after auto-scale.
-            assertPlanNoLeakCheck("SELECT ts, val FROM x WHERE sym = 'zzz'", coveringPlan);
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .assertsPlan(coveringPlan);
             // The covered sidecar read must still return correct data.
-            assertSql("count\tsum\n1\t7.0\n", "SELECT count(), sum(val) FROM x WHERE sym = 'zzz'");
+            assertQuery("SELECT count(), sum(val) FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n1\t7.0\n");
         });
     }
 

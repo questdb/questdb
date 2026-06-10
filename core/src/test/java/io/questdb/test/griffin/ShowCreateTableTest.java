@@ -116,7 +116,9 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year bypass wal;");
-            assertPlanNoLeakCheck("show create table foo", "show_create_table of: foo\n");
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .assertsPlan("show_create_table of: foo\n");
         });
     }
 

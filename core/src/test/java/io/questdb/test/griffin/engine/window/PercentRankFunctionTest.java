@@ -117,10 +117,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
 
             // Test plan for percent_rank() over () - no partition, no order
-            assertQuery("explain select ts, percent_rank() over () from tab")
+            assertQuery("select ts, percent_rank() over () from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [percent_rank() over ()]
                                 PageFrame
@@ -129,10 +128,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test plan for percent_rank() over (partition by s) - with partition, no order
-            assertQuery("explain select ts, percent_rank() over (partition by s) from tab")
+            assertQuery("select ts, percent_rank() over (partition by s) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Window
                               functions: [percent_rank() over (partition by [s])]
                                 PageFrame
@@ -141,10 +139,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test plan for percent_rank() over (order by ts) - no partition, with order
-            assertQuery("explain select ts, percent_rank() over (order by ts) from tab")
+            assertQuery("select ts, percent_rank() over (order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               unorderedFunctions: [percent_rank() over (order by [ts])]
                                 PageFrame
@@ -153,10 +150,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """);
 
             // Test plan for percent_rank() over (partition by s order by ts) - with partition and order
-            assertQuery("explain select ts, percent_rank() over (partition by s order by ts) from tab")
+            assertQuery("select ts, percent_rank() over (partition by s order by ts) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
                                 PageFrame
@@ -167,10 +163,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // ORDER BY non-timestamp -> dismissOrder=false (grouped) path. Before the
             // SqlCodeGenerator fix that forwards ac.getOrderBy() to initRecordComparator,
             // this branch left orderBy null and toPlan rendered "order by null".
-            assertQuery("explain select ts, percent_rank() over (order by i) from tab")
+            assertQuery("select ts, percent_rank() over (order by i) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
                                 PageFrame
@@ -178,10 +173,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """);
 
-            assertQuery("explain select ts, percent_rank() over (partition by s order by i) from tab")
+            assertQuery("select ts, percent_rank() over (partition by s order by i) from tab")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             CachedWindow
                               orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
                                 PageFrame
@@ -193,22 +187,16 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testPercentRankFramingNotSupported() throws Exception {
-        assertException(
-                "select ts, percent_rank() over (order by ts rows between unbounded preceding and current row) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                11,
-                "percent_rank() does not support framing; remove ROWS/RANGE clause"
-        );
+        assertQuery("select ts, percent_rank() over (order by ts rows between unbounded preceding and current row) from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(11, "percent_rank() does not support framing; remove ROWS/RANGE clause");
     }
 
     @Test
     public void testPercentRankIgnoreNullsNotSupported() throws Exception {
-        assertException(
-                "select ts, percent_rank() ignore nulls over (order by ts) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                26,
-                "RESPECT/IGNORE NULLS is not supported for current window function"
-        );
+        assertQuery("select ts, percent_rank() ignore nulls over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(26, "RESPECT/IGNORE NULLS is not supported for current window function");
     }
 
     @Test
@@ -223,7 +211,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // Row 501: (501-1)/(1000-1) = 500/999 = 0.5005005005...
             assertQuery("select min(pr), max(pr) from (select percent_rank() over (order by v) as pr from tab)")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             min\tmax
                             0.0\t1.0
                             """);
@@ -348,12 +338,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testPercentRankNoOverClause() throws Exception {
-        assertException(
-                "select ts, percent_rank() from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                11,
-                "window function called in non-window context, make sure to add OVER clause"
-        );
+        assertQuery("select ts, percent_rank() from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(11, "window function called in non-window context, make sure to add OVER clause");
     }
 
     @Test
@@ -461,12 +448,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testPercentRankRespectNullsNotSupported() throws Exception {
-        assertException(
-                "select ts, percent_rank() respect nulls over (order by ts) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                26,
-                "RESPECT/IGNORE NULLS is not supported for current window function"
-        );
+        assertQuery("select ts, percent_rank() respect nulls over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(26, "RESPECT/IGNORE NULLS is not supported for current window function");
     }
 
     @Test

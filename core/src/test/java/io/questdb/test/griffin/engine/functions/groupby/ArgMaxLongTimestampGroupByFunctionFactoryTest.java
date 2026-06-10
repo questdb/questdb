@@ -56,7 +56,8 @@ public class ArgMaxLongTimestampGroupByFunctionFactoryTest extends AbstractCairo
                         .withEngine(engine)
                         .withContext(sqlExecutionContext)
                         .noLeakCheck()
-                        .returnsOnce("sym\targ_max\nA\tnull\nB\tnull\nC\tnull\nD\tnull\nE\tnull\n");
+                        .expectSize()
+                        .returns("sym\targ_max\nA\tnull\nB\tnull\nC\tnull\nD\tnull\nE\tnull\n");
             }, configuration, LOG);
         }
     }

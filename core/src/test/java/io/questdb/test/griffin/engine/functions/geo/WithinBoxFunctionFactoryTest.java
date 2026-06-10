@@ -150,10 +150,9 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0)");
 
             // Query plan should show constant false (the function is optimized away)
-            assertQuery("explain select * from points where within_box(x, y, 10.0, 0.0, 0.0, 10.0)")
+            assertQuery("select * from points where within_box(x, y, 10.0, 0.0, 0.0, 10.0)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Empty table
                             """);
         });
@@ -327,10 +326,9 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0)");
 
             // Query plan should show constant false (the function is optimized away)
-            assertQuery("explain select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)")
+            assertQuery("select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Empty table
                             """);
 
@@ -350,10 +348,9 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (x double, y double)");
 
             // Plan should show constant box values, not function references
-            assertQuery("explain select * from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)")
+            assertQuery("select * from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: within_box(x,y,0.0,0.0,10.0,10.0)
                                 PageFrame

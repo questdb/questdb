@@ -49,6 +49,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -304,21 +305,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TestUtils.drainWalQueue(serverMain.getEngine());
 
                 // Wait for WAL transactions to be applied
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select wait_wal_table('tracker_test1')",
-                        sink,
-                        "wait_wal_table('tracker_test1')\ntrue\n"
-                );
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "select wait_wal_table('tracker_test2')",
-                        sink,
-                        "wait_wal_table('tracker_test2')\ntrue\n"
-                );
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select wait_wal_table('tracker_test1')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("wait_wal_table('tracker_test1')\ntrue\n");
+                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                }, "select wait_wal_table('tracker_test2')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("wait_wal_table('tracker_test2')\ntrue\n");
             }
 
             // Second server: verify tracker is hydrated from existing tables
@@ -991,7 +987,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
                                     "qwp.egress.compression.force.level\tQDB_QWP_EGRESS_COMPRESSION_FORCE_LEVEL\t0\tdefault\tfalse\ttrue\n" +
                                     "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
-                                    "qwp.max.schemas.per.connection\tQDB_QWP_MAX_SCHEMAS_PER_CONNECTION\t65535\tdefault\tfalse\tfalse\n" +
                                     "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                                     "qwp.max.uncommitted.rows\tQDB_QWP_MAX_UNCOMMITTED_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +

@@ -69,10 +69,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts between '1970-01-01T00:00:01.000000Z' and '1970-01-01T00:00:02.000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:01.000000Z","1970-01-01T00:00:02.000000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             assertQuery("select * from x where ts between '1970-01-01T00:00:01.000000000Z' and '1970-01-01T00:00:02.000000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:01.000000Z","1970-01-01T00:00:02.000000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts1", "1970-01-01T00:00:01.000000Z");
@@ -87,24 +99,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts between '1970-01-01T00:00:01.000000Z' and '1970-01-01T00:00:02.000000Z'",
-                    replaceTimestampSuffix("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:01.000000Z","1970-01-01T00:00:02.000000Z")]
-                            """, timestampType.getTypeName())
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts between '1970-01-01T00:00:01.000000000Z' and '1970-01-01T00:00:02.000000000Z'",
-                    replaceTimestampSuffix("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:01.000000Z","1970-01-01T00:00:02.000000Z")]
-                            """, timestampType.getTypeName())
-            );
         });
     }
 
@@ -128,10 +122,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -144,24 +150,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts = '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:00.010000Z","1970-01-01T00:00:00.010000Z")]
-                            """, timestampType.getTypeName())
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts = '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:00.010000Z","1970-01-01T00:00:00.010000Z")]
-                            """, timestampType.getTypeName())
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -171,10 +159,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n"))
                     .returns(expected);
             assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -187,24 +187,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts != '1970-01-01T00:00:00.010000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts != '1970-01-01T00:00:00.010000000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
-            );
             expected = replaceTimestampSuffix1("""
                     a\tts
                     80.43224099968394\t1970-01-01T00:00:00.000000Z
@@ -213,10 +195,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"1970-01-01T23:59:59.999999999Z\")]\n"))
                     .returns(expected);
             assertQuery("select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"1970-01-01T23:59:59.999999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("date", "1970-01-01");
@@ -230,33 +224,17 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
-            );
 
             expected = "a\tts\n";
             assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -269,23 +247,17 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts = '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'",
-                    "Empty table\n"
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts = '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'",
-                    "Empty table\n"
-            );
 
             expected = "a\tts\n";
             assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -298,14 +270,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts != '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'",
-                    "Empty table\n"
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts != '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'",
-                    "Empty table\n"
-            );
 
             assertQuery("select * from x where ts = (-9223372036854775808)::timestamp")
                     .noLeakCheck()
@@ -333,19 +297,16 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts = (select max(ts) from x)")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(replaceTimestampSuffix1("""
-                            a\tts
-                            8.43832076262595\t1970-01-01T00:00:00.020000Z
-                            """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts = (select max(ts) from x)",
-                    replaceTimestampSuffix1("""
+                    .withPlan(replaceTimestampSuffix1("""
                             PageFrame
                                 Row forward scan
                                 Interval forward scan on: x
                                   intervals: [("1970-01-01T00:00:00.020000Z","1970-01-01T00:00:00.020000Z")]
-                            """, timestampType.getTypeName())
-            );
+                            """, timestampType.getTypeName()))
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.43832076262595\t1970-01-01T00:00:00.020000Z
+                            """, timestampType.getTypeName()));
         });
     }
 
@@ -369,10 +330,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n"))
                     .returns(expected);
             assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -385,26 +358,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts > '1970-01-01T00:00:00.010000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
-
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts > '1970-01-01T00:00:00.010000000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
-
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -414,10 +367,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts <= '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("MIN","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             assertQuery("select * from x where ts <= '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("MIN","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -430,24 +395,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts <= '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("MIN","1970-01-01T00:00:00.010000Z")]
-                            """, timestampType.getTypeName())
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts <= '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("MIN","1970-01-01T00:00:00.010000Z")]
-                            """, timestampType.getTypeName())
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -457,10 +404,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             assertQuery("select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("date", "1970-01-01");
@@ -474,33 +433,17 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.010000Z")]
-                            """, timestampType.getTypeName())
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.010000Z")]
-                            """, timestampType.getTypeName())
-            );
 
             expected = "a\tts\n";
             assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -513,14 +456,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts > '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'",
-                    "Empty table\n"
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts > '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'",
-                    "Empty table\n"
-            );
         });
     }
 
@@ -539,39 +474,33 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts > (select min(ts) from x)")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000001Z\",\"MAX\")]\n"))
                     .returns(replaceTimestampSuffix1("""
                             a\tts
                             8.486964232560668\t1970-01-01T00:00:00.010000Z
                             8.43832076262595\t1970-01-01T00:00:00.020000Z
                             """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts > (select min(ts) from x)",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000001Z\",\"MAX\")]\n")
-            );
 
             assertQuery("select * from x where ts >= (select min(ts) from x)")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                            """, timestampType.getTypeName()))
                     .returns(replaceTimestampSuffix1("""
                             a\tts
                             80.43224099968394\t1970-01-01T00:00:00.000000Z
                             8.486964232560668\t1970-01-01T00:00:00.010000Z
                             8.43832076262595\t1970-01-01T00:00:00.020000Z
                             """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts >= (select min(ts) from x)",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
-                            """, timestampType.getTypeName())
-            );
         });
     }
 
@@ -589,37 +518,31 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:03.000000Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:03.000000000Z\")]\n"))
                     .returns(replaceTimestampSuffix("""
                             a\tts
                             8.486964232560668\t1970-01-01T00:00:01.000000Z
                             8.43832076262595\t1970-01-01T00:00:02.000000Z
                             65.08594025855301\t1970-01-01T00:00:03.000000Z
                             """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:03.000000Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:03.000000000Z\")]\n")
-            );
             assertQuery("select * from x where ts not in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(replaceTimestampSuffix("""
-                            a\tts
-                            80.43224099968394\t1970-01-01T00:00:00.000000Z
-                            """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts not in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')",
-                    "PageFrame\n" +
+                    .withPlan("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
                             (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:03.000001Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:03.000000001Z\",\"MAX\")]\n")
-            );
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:03.000000001Z\",\"MAX\")]\n"))
+                    .returns(replaceTimestampSuffix("""
+                            a\tts
+                            80.43224099968394\t1970-01-01T00:00:00.000000Z
+                            """, timestampType.getTypeName()));
         });
     }
 
@@ -642,6 +565,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01T00:00:01'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:01.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
@@ -649,15 +578,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01T00:00:01'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:01.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n")
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -667,6 +587,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts not in '1970-01-01T00:00:01'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:02.000000Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:02.000000000Z\",\"MAX\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
@@ -674,15 +600,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts not in '1970-01-01T00:00:01'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:02.000000Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:02.000000000Z\",\"MAX\")]\n")
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -692,6 +609,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:01'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:02.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:02.000000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("d", "1970-01-01");
@@ -700,20 +623,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:01'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:02.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:02.000000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
-            );
 
             expected = "a\tts\n";
             assertQuery("select * from x where ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
@@ -721,15 +636,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'",
-                    "Empty table\n"
-            );
 
             expected = "a\tts\n";
             assertQuery("select * from x where ts not in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
@@ -737,10 +649,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts not in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'",
-                    "Empty table\n"
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -749,6 +657,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:01'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:01.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i1", "1970-01-01T00:00");
@@ -757,15 +671,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:01'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:01.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n")
-            );
 
             assertQuery("select * from x where ts in ('1970-01-01T00:00:01', '1970-01-01T00:00:02')")
                     .noLeakCheck()
@@ -827,6 +732,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01T00:00:00.1'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.100000Z\",\"1970-01-01T00:00:00.199999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.100000000Z\",\"1970-01-01T00:00:00.199999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
@@ -834,15 +745,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01T00:00:00.1'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.100000Z\",\"1970-01-01T00:00:00.199999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.100000000Z\",\"1970-01-01T00:00:00.199999999Z\")]\n")
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -852,6 +754,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts not in '1970-01-01T00:00:00.1'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.099999Z\"),(\"1970-01-01T00:00:00.200000Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.099999999Z\"),(\"1970-01-01T00:00:00.200000000Z\",\"MAX\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
@@ -859,15 +767,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts not in '1970-01-01T00:00:00.1'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.099999Z\"),(\"1970-01-01T00:00:00.200000Z\",\"MAX\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.099999999Z\"),(\"1970-01-01T00:00:00.200000000Z\",\"MAX\")]\n")
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -877,6 +776,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:00.1'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.099999Z\"),(\"1970-01-01T00:00:00.200000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.099999999Z\"),(\"1970-01-01T00:00:00.200000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("d", "1970-01-01");
@@ -885,20 +790,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:00.1'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.099999Z\"),(\"1970-01-01T00:00:00.200000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.099999999Z\"),(\"1970-01-01T00:00:00.200000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
-            );
 
             expected = "a\tts\n";
             assertQuery("select * from x where ts in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
@@ -906,15 +803,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'",
-                    "Empty table\n"
-            );
 
             expected = "a\tts\n";
             assertQuery("select * from x where ts not in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
@@ -922,10 +816,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts not in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'",
-                    "Empty table\n"
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -934,6 +824,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:00.1'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.100000Z\",\"1970-01-01T00:00:00.199999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.100000000Z\",\"1970-01-01T00:00:00.199999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i1", "1970-01-01T00:00");
@@ -942,15 +838,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:00.1'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.100000Z\",\"1970-01-01T00:00:00.199999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.100000000Z\",\"1970-01-01T00:00:00.199999999Z\")]\n")
-            );
 
             assertQuery("select * from x where ts in ('1970-01-01T00:00:00.11', '1970-01-01T00:00:00.22')")
                     .noLeakCheck()
@@ -1036,10 +923,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\")]\n"))
                     .returns(expected);
             assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -1052,24 +951,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts < '1970-01-01T00:00:00.010000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\")]\n")
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts < '1970-01-01T00:00:00.010000000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\")]\n")
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -1079,10 +960,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts >= '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","MAX")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             assertQuery("select * from x where ts >= '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","MAX")]
+                            """, timestampType.getTypeName()))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -1095,24 +988,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts >= '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:00.010000Z","MAX")]
-                            """, timestampType.getTypeName())
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts >= '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("1970-01-01T00:00:00.010000Z","MAX")]
-                            """, timestampType.getTypeName())
-            );
 
             expected = replaceTimestampSuffix1("""
                     a\tts
@@ -1122,10 +997,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.010000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n"))
                     .returns(expected);
             assertQuery("select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:00.010000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n"))
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("date", "1970-01-01");
@@ -1139,34 +1026,16 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.010000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
-
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000000Z'",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.010000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
-
-            );
             expected = "a\tts\n";
             assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("Empty table\n")
                     .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
@@ -1179,14 +1048,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected);
-            assertPlanNoLeakCheck(
-                    "select * from x where ts < '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'",
-                    "Empty table\n"
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where ts < '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'",
-                    "Empty table\n"
-            );
         });
     }
 
@@ -1205,39 +1066,33 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts < (select max(ts) from x)")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan("PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.019999Z\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.019999999Z\")]\n"))
                     .returns(replaceTimestampSuffix1("""
                             a\tts
                             80.43224099968394\t1970-01-01T00:00:00.000000Z
                             8.486964232560668\t1970-01-01T00:00:00.010000Z
                             """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts < (select max(ts) from x)",
-                    "PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            (timestampType == TestTimestampType.MICRO ?
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.019999Z\")]\n" :
-                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.019999999Z\")]\n")
-            );
 
             assertQuery("select * from x where ts <= (select max(ts) from x)")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .withPlan(replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("MIN","1970-01-01T00:00:00.020000Z")]
+                            """, timestampType.getTypeName()))
                     .returns(replaceTimestampSuffix1("""
                             a\tts
                             80.43224099968394\t1970-01-01T00:00:00.000000Z
                             8.486964232560668\t1970-01-01T00:00:00.010000Z
                             8.43832076262595\t1970-01-01T00:00:00.020000Z
                             """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts <= (select max(ts) from x)",
-                    replaceTimestampSuffix1("""
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: x
-                                  intervals: [("MIN","1970-01-01T00:00:00.020000Z")]
-                            """, timestampType.getTypeName())
-            );
         });
     }
 
@@ -1256,19 +1111,16 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertQuery("select * from x where ts > (select min(ts) from x) and ts < (select max(ts) from x)")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns(replaceTimestampSuffix1("""
-                            a\tts
-                            8.486964232560668\t1970-01-01T00:00:00.010000Z
-                            """, timestampType.getTypeName()));
-            assertPlanNoLeakCheck(
-                    "select * from x where ts > (select min(ts) from x) and ts < (select max(ts) from x)",
-                    "PageFrame\n" +
+                    .withPlan("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
                             (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.019999Z\")]\n" :
-                                    "      intervals: [(\"1970-01-01T00:00:00.000000001Z\",\"1970-01-01T00:00:00.019999999Z\")]\n")
-            );
+                                    "      intervals: [(\"1970-01-01T00:00:00.000000001Z\",\"1970-01-01T00:00:00.019999999Z\")]\n"))
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:00.010000Z
+                            """, timestampType.getTypeName()));
         });
     }
 }
