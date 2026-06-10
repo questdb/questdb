@@ -4339,8 +4339,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     ) {
                         final RecordMetadata metadata = factory.getMetadata();
                         createTableOp.validateAndUpdateMetadataFromSelect(metadata, factory.getScanDirection());
-                        // Reject a bad EXPIRE ROWS predicate before the table (and its CTAS data) exists.
-                        validateCreateExpiryPredicate(executionContext, createTableOp, metadata);
                         boolean keepLock = !createTableOp.isWalEnabled();
 
                         // todo: test create table if exists with select
@@ -4398,8 +4396,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                             try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
                                 createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
-                                // Reject a bad EXPIRE ROWS predicate before the LIKE table exists.
-                                validateCreateExpiryPredicate(executionContext, createTableOp, null);
                                 tableToken = engine.createTable(
                                         executionContext.getSecurityContext(),
                                         mem,
@@ -4412,8 +4408,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 );
                             }
                         } else {
-                            // Reject a bad EXPIRE ROWS predicate before the table exists.
-                            validateCreateExpiryPredicate(executionContext, createTableOp, null);
                             tableToken = engine.createTable(
                                     executionContext.getSecurityContext(),
                                     mem,
@@ -5305,31 +5299,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (predicate == null) {
             return;
         }
-        final RecordMetadata metadata;
-        if (selectMetadata != null) {
-            metadata = selectMetadata;
-        } else {
-            // Only name + type matter for binding the predicate; the 6-arg ctor tolerates symbol columns
-            // (the 2-arg one asserts against them), and index/symbol-table details are irrelevant here.
-            final GenericRecordMetadata m = new GenericRecordMetadata();
-            for (int i = 0, n = createTableOp.getColumnCount(); i < n; i++) {
-                m.add(new TableColumnMetadata(
-                        Chars.toString(createTableOp.getColumnName(i)),
-                        createTableOp.getColumnType(i),
-                        IndexType.NONE,
-                        0,
-                        false,
-                        null
-                ));
-            }
-            metadata = m;
-        }
+        // Only reachable for a CREATE MATERIALIZED VIEW scalar WHEN policy (EXPIRE ROWS is rejected on plain
+        // CREATE TABLE / CTAS / LIKE), so selectMetadata is always the view's defining-SELECT metadata.
         // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
         // The error caret points at the table name rather than the predicate: the predicate's source
         // position is not threaded through CreateTableOperation, and the message already names the cause.
         try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
             validationCompiler.validateExpiryPredicateOnMetadata(
-                    executionContext, metadata, predicate, createTableOp.getTableNamePosition());
+                    executionContext, selectMetadata, predicate, createTableOp.getTableNamePosition());
         }
     }
 

@@ -113,6 +113,31 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepTopNNullsSortFirstWithinN() throws Exception {
+        // Documents top-N NULL handling: QuestDB has no NULLS LAST and DESC sorts NULLs FIRST, so under
+        // KEEP <N> HIGHEST a NULL occupies a leading rank and is kept while there is room within N, ahead of
+        // real values. Here N=2 with one NULL: the NULL takes rank 1 and the single highest value rank 2, so
+        // 8.0 and 7.0 are expired. (Use KEEP HIGHEST without N when every NULL must be kept.)
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 9.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 8.0, '2024-01-02T00:00:00.000000Z')," +
+                    "('A', 7.0, '2024-01-03T00:00:00.000000Z')," +
+                    "('A', null, '2024-01-04T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest v partition by k");
+            drainWalAndMatViewQueues();
+            assertSql(
+                    "k\tv\n" +
+                            "A\t9.0\n" +
+                            "A\tnull\n",
+                    "select k, v from mv order by v"
+            );
+        });
+    }
+
+    @Test
     public void testKeepHighestNoPartition() throws Exception {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep highest v");
@@ -243,6 +268,19 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertCreateFails(
                     "create materialized view mvbad as (select * from base) expire rows keep 0 highest v partition by k",
                     "positive row count"
+            );
+        });
+    }
+
+    @Test
+    public void testRejectedEmptyPartitionBy() throws Exception {
+        // KEEP HIGHEST/LOWEST with a PARTITION BY keyword but no column list must be rejected, not silently
+        // treated as a global (un-partitioned) window (which would change the retention semantics).
+        assertMemoryLeak(() -> {
+            createBase();
+            assertCreateFails(
+                    "create materialized view mvbad as (select * from base) expire rows keep highest v partition by cleanup every 1h",
+                    "requires a column list"
             );
         });
     }

@@ -245,7 +245,11 @@ public final class RowExpiryUtil {
             sink.put(')');
         } else {
             // keep the top-N per group by the column; the designated timestamp makes the order total so the
-            // boundary is deterministic (and the policy monotonic).
+            // boundary is deterministic (and the policy monotonic). NULL handling note: QuestDB's window
+            // ORDER BY has no NULLS LAST and sorts NULLs FIRST under DESC, so NULL-valued rows occupy the
+            // leading ranks and are kept while there is room within N (they cannot be pushed to the tail to
+            // rank only real values -- "<col> IS NULL" is not a legal window sort key). Top-N therefore keeps
+            // up to N NULLs ahead of real values; use KEEP HIGHEST/LOWEST (no N) when every NULL must be kept.
             sink.putAscii("row_number() OVER (");
             if (k.keys.length() > 0) {
                 sink.putAscii("PARTITION BY ").put(k.keys).putAscii(' ');

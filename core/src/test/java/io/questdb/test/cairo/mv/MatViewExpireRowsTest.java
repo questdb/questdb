@@ -140,6 +140,99 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireScalarKeepsNullPredicateRows() throws Exception {
+        // A row whose predicate evaluates to NULL/UNKNOWN (here a NULL v under "v < 2.0") is KEPT, not
+        // expired: the read filter is CASE WHEN (pred) THEN false ELSE true, so FALSE and NULL both keep.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-05T00:00:00.000000Z')," +   // v < 2 -> expired
+                    "('B', 5.0, '2024-01-06T00:00:00.000000Z')," +   // v >= 2 -> kept
+                    "('C', null, '2024-01-07T00:00:00.000000Z')");   // v NULL -> kept (UNKNOWN predicate)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertSql(
+                    "sym\tv\n" +
+                            "B\t5.0\n" +
+                            "C\tnull\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testExpireScalarCleanupIsIdempotent() throws Exception {
+        // A second cleanup sweep over already-compacted data must be a no-op (no REPLACE, partitions
+        // unchanged): otherwise it would re-churn the WAL and re-replicate deletions on every sweep.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // expired (d1 partial)
+                    "('B', 5.0, '2024-01-01T00:00:00.000000Z')," +   // kept
+                    "('C', 1.5, '2024-01-02T00:00:00.000000Z')," +   // d2 fully expired
+                    "('D', 9.0, '2024-01-03T00:00:00.000000Z')");    // active partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            final boolean first;
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                first = job.cleanupTable(token, predicate, 0);
+            }
+            drainWalAndMatViewQueues();
+            org.junit.Assert.assertTrue("first sweep should reclaim", first);
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+
+            // Second sweep: nothing expired remains -> no work, partitions unchanged.
+            final boolean second;
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                second = job.cleanupTable(token, predicate, 0);
+            }
+            drainWalAndMatViewQueues();
+            org.junit.Assert.assertFalse("second sweep must be a no-op", second);
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+        });
+    }
+
+    @Test
+    public void testExpireScalarLessEqualThresholdCleanup() throws Exception {
+        // "<=" exercises the inclusive bounds fast-path: a partition whose nextFloor <= T is wiped without a
+        // scan (01-01), and a boundary partition whose rows are exactly == T is expired too (01-02).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
+                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when ts <= '2024-01-02T00:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate, 0);
+            }
+            drainWalAndMatViewQueues();
+
+            // 01-01 (nextFloor <= T) wiped by bounds; 01-02 (ts == T, ts <= T) expired by the scan; 01-03 is
+            // the active partition and is retained. Only C remains.
+            assertSql("p\n1\n", "select count() p from table_partitions('mv')");
+            assertSql("sym\tv\nC\t3.0\n", "select sym, v from mv order by sym");
+        });
+    }
+
+    @Test
     public void testAlterMatViewDropExpire() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");

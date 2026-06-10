@@ -1244,16 +1244,6 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 't';
     }
 
-    public static boolean isLowestKeyword(CharSequence tok) {
-        return tok.length() == 6
-                && (tok.charAt(0) | 32) == 'l'
-                && (tok.charAt(1) | 32) == 'o'
-                && (tok.charAt(2) | 32) == 'w'
-                && (tok.charAt(3) | 32) == 'e'
-                && (tok.charAt(4) | 32) == 's'
-                && (tok.charAt(5) | 32) == 't';
-    }
-
     public static boolean isLeftKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'l'
@@ -1322,6 +1312,16 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'o'
                 && (tok.charAt(2) | 32) == 'c'
                 && (tok.charAt(3) | 32) == 'k';
+    }
+
+    public static boolean isLowestKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'w'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 't';
     }
 
     public static boolean isManualKeyword(CharSequence tok) {

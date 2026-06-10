@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
-import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -500,6 +500,9 @@ public class SqlParser {
                 if (tok != null && isPartitionKeyword(tok)) {
                     expectTok(lexer, "by");
                     final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable);
+                    if (cap.csv.isEmpty()) {
+                        throw SqlException.$(cap.startPos, "EXPIRE ROWS KEEP ... PARTITION BY requires a column list");
+                    }
                     keysCsv = cap.csv;
                     foundCleanup = cap.foundCleanup;
                     tok = cap.nextTok;
@@ -946,13 +949,21 @@ public class SqlParser {
     /**
      * Builds the quoted, comma-separated base column list of a policied table, for the window read-filter's
      * outer projection (so the synthetic {@link RowExpiryUtil#KEEP_COLUMN} is not exposed through SELECT *).
-     * Read from the in-memory metadata cache.
+     * Reads from the in-memory metadata cache, falling back to the authoritative table metadata on a cache
+     * miss — exactly as {@link #lookupExpiryPredicate} does. The two MUST agree: the read path reaches this
+     * only after {@code lookupExpiryPredicate} returned a (window/keep-by) predicate, which itself uses the
+     * fallback, so during the brief startup window before the cache hydrates the predicate is non-null while
+     * the cache has no entry; without the same fallback here the column list would be empty and the rewrite
+     * would emit {@code SELECT  FROM (...)} and fail every read of the view until hydration caught up.
      */
     private String buildQuotedColumnList(CharSequence tableName) {
         final StringSink sink = new StringSink();
+        final TableToken tt = cairoEngine.getTableTokenIfExists(tableName);
+        if (tt == null) {
+            return sink.toString();
+        }
         try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
-            final TableToken tt = cairoEngine.getTableTokenIfExists(tableName);
-            final CairoTable table = tt == null ? null : metadataRO.getTable(tt);
+            final CairoTable table = metadataRO.getTable(tt);
             if (table != null) {
                 final ObjList<CharSequence> names = table.getColumnNames();
                 for (int i = 0, n = names.size(); i < n; i++) {
@@ -961,7 +972,21 @@ public class SqlParser {
                     }
                     sink.putAscii('"').put(names.getQuick(i)).putAscii('"');
                 }
+                return sink.toString();
             }
+        }
+        // Cache miss (brief startup window before MetadataCache hydration): fall back to the authoritative
+        // table metadata so the column list matches the predicate that lookupExpiryPredicate already resolved.
+        try (TableMetadata metadata = cairoEngine.getTableMetadata(tt)) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    sink.putAscii(',');
+                }
+                sink.putAscii('"').put(metadata.getColumnName(i)).putAscii('"');
+            }
+        } catch (CairoException ignore) {
+            // Table concurrently dropped/renamed: return what we have; the caller's read fails closed rather
+            // than exposing rows (same posture as lookupExpiryPredicate treating this as "no policy").
         }
         return sink.toString();
     }

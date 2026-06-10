@@ -261,7 +261,8 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
         }
 
-        // overridden in ent, do not remove!
+        // protected extension point (parallel to ttlToSink); ent may override, but currently does not --
+        // EXPIRE ROWS renders identically in OSS and ent. Keep it protected so an override stays possible.
         protected void expireToSink(CharSink<?> sink) {
             ShowCreateTableRecordCursorFactory.expireToSink(table.getExpiryPredicate(), table.getExpiryCleanupIntervalMicros(), sink);
         }

@@ -24,11 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.RecordToRowCopier;
@@ -36,6 +35,7 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -157,6 +157,12 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         final boolean keepLatest = RowExpiryUtil.isKeepLatest(predicate);
         final boolean window = RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate);
 
+        // Freeze now() once per sweep for ALL modes, BEFORE any survivor query runs (the bounds threshold,
+        // the one-pass scan, and the per-partition count/select). A window WHEN predicate may reference now();
+        // without this its survivor query would evaluate now() against an uninitialised clock and diverge from
+        // the authoritative read filter (which freezes now() per query), risking deletion of visible rows.
+        initNow();
+
         partitionFloors.clear();
         partitionNextFloors.clear();
         partitionRowCounts.clear();
@@ -214,11 +220,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 }
             }
 
-            // Resolve the fast-path timestamp threshold once per table (now() must be initialised first).
+            // Resolve the fast-path timestamp threshold once per table (now() was already frozen above).
             // Only a scalar "<ts> < T" WHEN predicate has a bounds threshold; KEEP LATEST / window modes
             // always fall to the survivor-count scan.
             if (!keepLatest && !window && partitionFloors.size() > 0) {
-                initNow();
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     timestampThreshold = compiler.expiryTimestampThresholdMicros(
                             sqlExecutionContext, metadata, predicate, timestampColumnName);
@@ -366,11 +371,21 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                     cleanupCompiler = engine.getSqlCompiler();
                                 }
                                 bindPartitionRange(floorTs, nextFloorTs);
-                                selectFactory = cleanupCompiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
-                                selectTsIndex = selectFactory.getMetadata().getColumnIndex(timestampColumnName);
-                                columnFilter.of(selectFactory.getMetadata().getColumnCount());
-                                survivorCopier = RecordToRowCopierUtils.generateCopier(asm,
-                                        selectFactory.getMetadata(), walWriter.getMetadata(), columnFilter, engine.getConfiguration());
+                                // Build the factory into a local and assign the field ONLY after the copier
+                                // is built: if generateCopier() throws, selectFactory must stay null so the
+                                // next partition rebuilds it cleanly (otherwise a non-null factory with a null
+                                // copier would NPE in replacePartition), and the local is freed so it can't leak.
+                                final RecordCursorFactory f = cleanupCompiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
+                                try {
+                                    selectTsIndex = f.getMetadata().getColumnIndex(timestampColumnName);
+                                    columnFilter.of(f.getMetadata().getColumnCount());
+                                    survivorCopier = RecordToRowCopierUtils.generateCopier(asm,
+                                            f.getMetadata(), walWriter.getMetadata(), columnFilter, engine.getConfiguration());
+                                } catch (Throwable th) {
+                                    Misc.free(f);
+                                    throw th;
+                                }
+                                selectFactory = f;
                             }
                             if (replacePartition(selectFactory, survivorCopier, selectTsIndex, walWriter,
                                     tableName, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
@@ -629,8 +644,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // Concurrency gate: commit the REPLACE only if NO external transaction was sequenced since the
         // survivor scan's baseline (our own prior commits are accounted for in expectedSeqTxn). Unlike a
         // reader-based recount, the sequencer txn reflects committed-but-not-yet-applied writes too, so a
-        // concurrent back-fill into this partition cannot slip through unseen. Residual: a write sequenced
-        // between this check and the commit just below — a sub-microsecond window with no I/O in between.
+        // concurrent back-fill into this partition cannot slip through unseen.
+        // RESIDUAL RACE (known, best-effort): this check and the sequencer-txn allocation inside
+        // commitWithParams() are not atomic. The window spans commitWithParams()'s segment finalisation
+        // (which may fsync) before it calls the sequencer, so a writer that sequences a txn in that window
+        // takes a LOWER seqTxn than this REPLACE; on apply its rows land in [floorTs, nextFloorTs) just before
+        // this REPLACE_RANGE deletes the range, dropping rows the survivor scan did not see. This needs an O3
+        // back-fill into the exact non-active partition being swept, in that narrow window. The read filter
+        // stays authoritative for query VISIBILITY regardless, and a full refresh re-derives any such row from
+        // the base; a fully atomic gate would require a sequencer-level conditional commit (out of scope here).
         // An empty survivor set is a legitimate fully-expired partition: the gate proves nothing was
         // back-filled into the range, so it is committed as a pure-delete REPLACE_RANGE (DROP PARTITION via
         // SQL is rejected for materialized views).

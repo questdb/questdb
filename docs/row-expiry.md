@@ -56,7 +56,10 @@ the clause, and `tables()` / `materialized_views()` expose it (`expire_predicate
 
 - **NULLs.** The three-valued CASE keep-filter means a `NULL` value is never *less than* the group max (the
   comparison is `UNKNOWN`), so `KEEP HIGHEST/LOWEST` and value-based `WHEN` predicates **keep** rows whose
-  value is `NULL`. `KEEP LATEST` uses the designated timestamp, which is never `NULL`.
+  value is `NULL`. `KEEP LATEST` uses the designated timestamp, which is never `NULL`. **`KEEP <N>` is the
+  exception:** it ranks with `row_number()`, and because QuestDB's window `ORDER BY` has no `NULLS LAST` and
+  sorts `NULL` **first** under `DESC`, `NULL`-valued rows take the leading ranks and are kept only while there
+  is room within `N` (ahead of real values). Use `KEEP HIGHEST/LOWEST` (no `N`) when every `NULL` must be kept.
 - **Ties / determinism.** `KEEP HIGHEST/LOWEST` keeps *all* rows tied at the max/min — monotonic and
   deterministic. `KEEP <N> …` makes the order total by appending the designated timestamp as a tiebreak, so
   the N-th boundary is deterministic (assuming `(col, ts)` is effectively unique; pair with `DEDUP UPSERT
