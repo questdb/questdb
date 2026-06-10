@@ -4297,6 +4297,10 @@ mod tests {
             err.to_string().contains("too short to hold"),
             "unexpected error: {err}"
         );
+        // The rejected decode must free everything it allocated on the way to the
+        // error: no leak across JNI on the abort-class path it replaces.
+        drop(bufs);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
     }
 
     #[test]
@@ -4335,6 +4339,10 @@ mod tests {
             err.to_string().contains("exceeds"),
             "unexpected error: {err}"
         );
+        // The rejected decode must free everything it allocated on the way to the
+        // error: no leak across JNI on the abort-class path it replaces.
+        drop(bufs);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
     }
 
     #[test]

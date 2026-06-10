@@ -1215,16 +1215,17 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     // Reaching a clean CairoException here -- rather than a JVM
                     // abort via the bitpacked decoder's unreachable!() -- is the
-                    // contract. The message differs by reader: the parallel reader
-                    // surfaces the "exceeds" bit-width detail, the non-parallel
-                    // reader reports a generic "corrupted". The Rust
+                    // contract. The message depends on which reader runs, and this
+                    // test is parameterized on `parallel`, so assert the exact
+                    // message for the active reader rather than accepting either:
+                    // a regression in one reader's path must not be masked by the
+                    // other's wording. The parallel reader surfaces the "exceeds"
+                    // bit-width detail from the guard; the non-parallel reader
+                    // reports a generic "corrupted". The Rust
                     // generate_rle_dict_index_bitwidth_fixture test pins the exact
-                    // guard; here we accept either phrasing.
+                    // guard message.
                     final String message = e.getMessage();
-                    Assert.assertTrue(
-                            "unexpected error: " + message,
-                            message.contains("exceeds") || message.contains("corrupted")
-                    );
+                    TestUtils.assertContains(message, parallel ? "exceeds" : "corrupted");
                 }
             }
         });

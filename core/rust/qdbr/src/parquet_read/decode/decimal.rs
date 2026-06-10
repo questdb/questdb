@@ -1216,4 +1216,39 @@ mod tests {
         let mut slicer = Slicer::new(&data, 4);
         assert_eq!(slicer.next_raw_slice(1).unwrap(), &data[..]);
     }
+
+    #[test]
+    fn try_new_decimal256_src_len_1_decodes_through_fallible_reservation() {
+        // src_len == 1 -> Decimal256 is the 32x amplification the fallible
+        // try_reserve_dict_values reservation guards: one buffer byte per value,
+        // a 32-byte value each. Existing FLBA-dict tests cover larger src_len /
+        // target pairs but not this shape, so drive a valid such dict through the
+        // try_new_decimal256 call site -- the reservation succeeds and the loop
+        // fills exactly num_values entries, sign-extending each 1-byte big-endian
+        // decimal. The unsatisfiable-count failure is covered deterministically by
+        // the decoders::tests helper test; it cannot be forced through this call
+        // site, because validate_flba_dict pins num_values to the buffer length,
+        // which a test cannot make large enough to overflow the reservation.
+        let buffer = [0x00u8, 0x01, 0x7f, 0xff]; // four 1-byte big-endian decimals
+        let dict_page = DictPage {
+            buffer: &buffer,
+            num_values: buffer.len(),
+            is_sorted: false,
+        };
+
+        let dict =
+            PreconvertedFlbaDecimalDict::<Decimal256>::try_new_decimal256(&dict_page, 1).unwrap();
+
+        assert_eq!(dict.values.len(), buffer.len());
+        // 0x01 -> +1. Decimal256(w0..w3) orders its words most-significant-first,
+        // so the value lands in the least-significant word w3.
+        let one = dict.values[1];
+        assert_eq!((one.0, one.1, one.2, one.3), (0, 0, 0, 1));
+        // 0xff sign-extends to -1: every word all-ones.
+        let neg_one = dict.values[3];
+        assert_eq!(
+            (neg_one.0, neg_one.1, neg_one.2, neg_one.3),
+            (-1, u64::MAX, u64::MAX, u64::MAX)
+        );
+    }
 }

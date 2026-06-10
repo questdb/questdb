@@ -785,5 +785,9 @@ mod tests {
             matches!(err.reason(), ParquetErrorReason::OutOfMemory(_)),
             "allocation failure must be classified OutOfMemory: {err:?}"
         );
+        // The aborted decode must free everything it allocated before the limit
+        // was hit -- the error path must not leak across JNI.
+        drop(buffers);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
     }
 }
