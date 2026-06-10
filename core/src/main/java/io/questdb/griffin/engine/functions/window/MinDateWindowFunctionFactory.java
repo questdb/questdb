@@ -24,17 +24,50 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
 /**
- * min() over a DATE argument. Registers the {@code min(M)} signature and reuses the value
- * functions of {@link MinTimestampWindowFunctionFactory}: they read the argument through
- * {@code getLong()} and operate in the argument's native unit (DATE milliseconds here), so both
- * the streaming and cached read paths return correct DATE values.
+ * min() over a DATE argument. Registers the {@code min(M)} signature and reuses the DATE subclasses
+ * of {@link MaxDateWindowFunctionFactory} with a {@code LESS_THAN} comparator.
  */
-public class MinDateWindowFunctionFactory extends MinTimestampWindowFunctionFactory {
-    private static final String SIGNATURE = NAME + "(M)";
+public class MinDateWindowFunctionFactory extends AbstractWindowFunctionFactory {
+    private static final String SIGNATURE = MinTimestampWindowFunctionFactory.NAME + "(M)";
 
     @Override
     public String getSignature() {
         return SIGNATURE;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return MaxMinWindowFunctionFactoryHelper.newInstance(
+                position,
+                args,
+                configuration,
+                sqlExecutionContext,
+                supportNullsDesc(),
+                MinTimestampWindowFunctionFactory.LESS_THAN,
+                MinTimestampWindowFunctionFactory.NAME,
+                MaxDateWindowFunctionFactory.CurrentRowDate::new,
+                MaxDateWindowFunctionFactory.PartitionDate::new,
+                MaxDateWindowFunctionFactory.PartitionRangeDate::new,
+                MaxDateWindowFunctionFactory.PartitionRowsDate::new,
+                MaxDateWindowFunctionFactory.UnboundedPartitionRowsDate::new,
+                MaxDateWindowFunctionFactory.RangeDate::new,
+                MaxDateWindowFunctionFactory.RowsDate::new,
+                MaxDateWindowFunctionFactory.UnboundedRowsDate::new,
+                MaxDateWindowFunctionFactory.WholeResultSetDate::new
+        );
     }
 }
