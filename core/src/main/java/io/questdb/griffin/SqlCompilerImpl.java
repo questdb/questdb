@@ -5247,8 +5247,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
         }
-        if (RowExpiryUtil.isKeepLatest(clause.predicate)) {
-            validateAlterKeepLatestPolicy(tableToken, tableMetadata, clause.predicate, clause.predicatePos);
+        if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
+            validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
         } else {
             validateExpiryPredicate(executionContext, tableToken, clause.predicate, clause.predicatePos);
         }
@@ -5349,34 +5349,81 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (predicate == null) {
             return;
         }
+        final int pos = createTableOp.getTableNamePosition();
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             if (!createMatViewOp.isPassthrough()) {
-                throw SqlException.$(createTableOp.getTableNamePosition(),
-                        "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views");
+                throw SqlException.$(pos, "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views");
             }
-            validateKeepLatestColumns(selectMetadata, RowExpiryUtil.keepLatestKeys(predicate), createTableOp.getTableNamePosition());
+            validateKeepLatestColumns(selectMetadata, RowExpiryUtil.keepLatestKeys(predicate), pos);
+            return;
+        }
+        if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
+            if (!createMatViewOp.isPassthrough()) {
+                throw SqlException.$(pos, "EXPIRE ROWS KEEP / window retention is only supported on passthrough (non-aggregating) materialized views");
+            }
+            // Validate by compiling the projection-CASE keep query against the view's defining SELECT (the
+            // view does not exist yet); this validates the window predicate, its columns and types.
+            validateWindowPolicy(executionContext, "(" + createTableOp.getSelectText() + ")", tsName(selectMetadata), predicate, pos);
             return;
         }
         validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
     }
 
     /**
-     * Validates the body of an ALTER ... SET EXPIRE ROWS KEEP LATEST policy: the target must be a
-     * passthrough materialized view and the key columns must resolve. (ALTER ... SET EXPIRE on a base table
-     * is rejected earlier in the grammar, so this only runs for materialized-view targets.)
+     * Validates the body of an ALTER ... SET EXPIRE ROWS relative/window policy (KEEP LATEST / KEEP
+     * HIGHEST|LOWEST / window WHEN): the target must be a passthrough materialized view, and the policy must
+     * resolve against its columns. (ALTER ... SET EXPIRE on a base table is rejected earlier in the grammar,
+     * so this only runs for materialized-view targets.)
      */
-    private void validateAlterKeepLatestPolicy(
+    private void validateAlterRelativePolicy(
+            SqlExecutionContext executionContext,
             TableToken tableToken,
             TableRecordMetadata tableMetadata,
-            CharSequence predicate,
+            String predicate,
             int position
     ) throws SqlException {
         final MatViewDefinition def = tableToken.isMatView() ? engine.getMatViewGraph().getViewDefinition(tableToken) : null;
         if (def == null || !def.isPassthrough()) {
             throw SqlException.$(position,
-                    "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views");
+                    "EXPIRE ROWS KEEP / window retention is only supported on passthrough (non-aggregating) materialized views");
         }
-        validateKeepLatestColumns(tableMetadata, RowExpiryUtil.keepLatestKeys(predicate), position);
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            validateKeepLatestColumns(tableMetadata, RowExpiryUtil.keepLatestKeys(predicate), position);
+        } else {
+            validateWindowPolicy(executionContext, "\"" + tableToken.getTableName() + "\"", tsName(tableMetadata), predicate, position);
+        }
+    }
+
+    /**
+     * Validates a window/keep-by policy by compiling (and opening) the projection-CASE keep query against
+     * {@code source} (the view's defining SELECT, parenthesised, at CREATE; the view name at ALTER). Surfaces
+     * any compile/bind error (bad column, type, window syntax) as a clear "invalid EXPIRE ROWS policy".
+     */
+    private void validateWindowPolicy(
+            SqlExecutionContext executionContext,
+            String source,
+            CharSequence designatedTs,
+            String predicate,
+            int position
+    ) throws SqlException {
+        final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
+        final String sql = "SELECT * FROM (SELECT *, CASE WHEN (" + windowPred + ") THEN false ELSE true END "
+                + RowExpiryUtil.KEEP_COLUMN + " FROM " + source + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                // Open the cursor so column references and types are fully resolved/validated.
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    cursor.hasNext();
+                }
+            }
+        } catch (SqlException | CairoException e) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(e.getFlyweightMessage());
+        }
+    }
+
+    private static CharSequence tsName(RecordMetadata metadata) {
+        final int i = metadata.getTimestampIndex();
+        return i >= 0 ? metadata.getColumnName(i) : null;
     }
 
     /**

@@ -1223,11 +1223,32 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'l';
     }
 
+    public static boolean isHighestKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'h'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'g'
+                && (tok.charAt(3) | 32) == 'h'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 's'
+                && (tok.charAt(6) | 32) == 't';
+    }
+
     public static boolean isLatestKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'l'
                 && (tok.charAt(1) | 32) == 'a'
                 && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 't';
+    }
+
+    public static boolean isLowestKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'w'
                 && (tok.charAt(3) | 32) == 'e'
                 && (tok.charAt(4) | 32) == 's'
                 && (tok.charAt(5) | 32) == 't';

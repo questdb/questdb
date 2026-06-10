@@ -47,6 +47,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -152,12 +153,16 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // set, intersected with each partition) and have no "<ts> < T" bounds fast-path; a plain WHEN
         // predicate uses the CASE keep-filter plus the bounds fast-path.
         final boolean keepLatest = RowExpiryUtil.isKeepLatest(predicate);
+        final boolean window = RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate);
 
         partitionFloors.clear();
         partitionNextFloors.clear();
         partitionRowCounts.clear();
 
         final String timestampColumnName;
+        // For a window/keep-by survivor query: the quoted base column list, so the synthetic keep column is
+        // projected away (built from the reader metadata while it is open).
+        String windowColsCsv = null;
         // Fast-path threshold for a "<ts> < T"/"<ts> <= T" predicate: lets each partition be classified by
         // its [floor, nextFloor) bounds with no survivor scan (LONG_NULL = not applicable -> scan instead).
         long timestampThreshold = Numbers.LONG_NULL;
@@ -173,6 +178,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 return false; // non-timestamp table; nothing to expire (should not happen for a WAL table)
             }
             timestampColumnName = metadata.getColumnName(timestampIndex);
+            if (window) {
+                windowColsCsv = buildQuotedColumnList(metadata);
+            }
 
             final int partitionCount = reader.getPartitionCount();
             // Active-partition protection: with < 2 partitions there is only the active partition.
@@ -205,8 +213,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             }
 
             // Resolve the fast-path timestamp threshold once per table (now() must be initialised first).
-            // KEEP LATEST has no "<ts> < T" threshold, so it always falls to the survivor-count scan.
-            if (!keepLatest && partitionFloors.size() > 0) {
+            // Only a scalar "<ts> < T" WHEN predicate has a bounds threshold; KEEP LATEST / window modes
+            // always fall to the survivor-count scan.
+            if (!keepLatest && !window && partitionFloors.size() > 0) {
                 initNow();
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     timestampThreshold = compiler.expiryTimestampThresholdMicros(
@@ -247,6 +256,17 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             final String tail = " WHERE \"" + timestampColumnName + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
             countSql = "SELECT count() FROM " + latestSource + tail;
             selectSql = "SELECT * FROM " + latestSource + tail;
+        } else if (window) {
+            // Window/keep-by: survivors are the NOT-expired rows per the window keep-filter, computed over the
+            // WHOLE view (inner projection) and intersected with the partition range by the OUTER predicate.
+            // Base columns are enumerated so the synthetic keep column is projected away for the REPLACE copier.
+            final String windowPred = RowExpiryUtil.windowPredicate(predicate, timestampColumnName);
+            final String source = "(SELECT *, CASE WHEN (" + windowPred + ") THEN false ELSE true END "
+                    + RowExpiryUtil.KEEP_COLUMN + " FROM \"" + tableName + "\")";
+            final String tail = " WHERE " + RowExpiryUtil.KEEP_COLUMN + " AND \"" + timestampColumnName
+                    + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
+            countSql = "SELECT count() FROM " + source + tail;
+            selectSql = "SELECT " + windowColsCsv + " FROM " + source + tail;
         } else {
             final String keepFilter = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
             final String tail = " WHERE (" + keepFilter + ") AND \"" + timestampColumnName
@@ -474,6 +494,18 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
 
     private void initNow() {
         sqlExecutionContext.initNow();
+    }
+
+    /** Quoted, comma-separated base column list (for the window survivor query's outer projection). */
+    private static String buildQuotedColumnList(TableReaderMetadata metadata) {
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(',');
+            }
+            sink.putAscii('"').put(metadata.getColumnName(i)).putAscii('"');
+        }
+        return sink.toString();
     }
 
     private boolean replacePartition(

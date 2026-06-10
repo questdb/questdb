@@ -28,19 +28,26 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 /**
- * Shared helper for the row-expiry feature's background cleanup job ({@link RowExpiryCleanupJob}).
- * The stored expiry predicate describes WHEN a row expires; the cleanup job needs the complementary
- * "keep" filter (the rows that have NOT expired) to select the surviving rows.
+ * Shared helpers + codec for the row-expiry feature (read filter in {@code SqlParser}, cleanup in
+ * {@link RowExpiryCleanupJob}, validation/SHOW CREATE/catalogue in the compiler).
  * <p>
- * A row expires only when the predicate is TRUE, so the keep-filter is
- * {@code CASE WHEN (predicate) THEN false ELSE true END}, which keeps rows for which the predicate is
- * FALSE or NULL. A plain {@code NOT(predicate)} would be wrong: QuestDB filtering is three-valued, so for
- * a NULL predicate operand the predicate is UNKNOWN and {@code NOT(UNKNOWN)} is UNKNOWN — the row would be
- * dropped (deleted) even though it never expired. ({@code (predicate) IS NOT TRUE} handles NULL but is
- * unreliable for composite booleans such as {@code IN}, so the CASE form is used.) This matches the
- * read-time filter (see {@code SqlParser.buildKeepFilter}); the read filter additionally flips a
- * designated-timestamp comparison to a bare comparison so the optimiser can prune partitions, which the
- * cleanup's already-single-partition survivor query does not need.
+ * An {@code EXPIRE ROWS} policy is persisted as a single string in the table's {@code _meta}
+ * {@code expiryPredicate} slot. Encoding the relative modes into that string (rather than adding a new
+ * {@code _meta} field) keeps the storage, replication and metadata-interface plumbing unchanged. The
+ * encodings, distinguished by a non-printable unit-separator (0x1F) sentinel + a mode char, are:
+ * <ul>
+ *     <li><b>scalar WHEN</b> — a plain (un-prefixed) boolean predicate. A row expires when it is TRUE.</li>
+ *     <li><b>KEEP LATEST</b> ({@code 0x1F 'L'} + raw PARTITION BY column list) — keep only the latest row per
+ *         key (a {@code LATEST ON} rewrite).</li>
+ *     <li><b>KEEP [N] HIGHEST/LOWEST</b> ({@code 0x1F 'N'} + {@code n 0x1F dir 0x1F col 0x1F keys}) — keep the
+ *         group max/min ({@code n==0}, all ties) or the top-N by a column ({@code n>0}); desugars to a window
+ *         predicate at use (the designated timestamp is needed only for the top-N tiebreak, known then).</li>
+ *     <li><b>window WHEN</b> ({@code 0x1F 'W'} + predicate) — an arbitrary boolean predicate that references
+ *         window functions (e.g. {@code v < max(v) OVER (PARTITION BY k)}).</li>
+ * </ul>
+ * The sentinel cannot occur in a real predicate, so a legacy raw predicate always decodes as a scalar WHEN
+ * (backward compatible). Scalar WHEN is the only mode usable on a plain table — every other mode is
+ * passthrough-materialized-view-only.
  */
 public final class RowExpiryUtil {
 
@@ -50,16 +57,22 @@ public final class RowExpiryUtil {
      */
     public static final long DEFAULT_CLEANUP_INTERVAL_MICROS = 3_600_000_000L;
 
-    // The EXPIRE ROWS policy is persisted as a single string in the table's _meta {@code expiryPredicate}
-    // slot. A plain (legacy) string is a boolean WHEN predicate. The relative "KEEP LATEST" mode (a
-    // passthrough mat view keeping only the latest row per key) cannot be expressed as a per-row predicate,
-    // so it is encoded with a non-printable sentinel prefix (unit-separator 0x1F, then 'L') followed by the
-    // raw PARTITION BY column-list text. Encoding here (rather than adding a new _meta field) keeps the
-    // storage, replication and metadata-interface plumbing unchanged. The sentinel cannot occur in a real
-    // predicate, so a legacy raw predicate always decodes as a WHEN predicate (backward compatible).
-    private static final char KEEP_LATEST_MODE = 'L';
+    /**
+     * Synthetic boolean column name used by the projection-CASE read filter / cleanup for window and keep-by
+     * policies: the inner projection computes {@code CASE WHEN (<pred>) THEN false ELSE true END} as this
+     * column and the outer query filters on it. Unlikely to collide with a real user column.
+     */
+    public static final String KEEP_COLUMN = "__qdb_re_keep";
+
+    private static final char DIR_HIGHEST = 'H';
+    private static final char DIR_LOWEST = 'O';
+    private static final char MODE_KEEP_BY = 'N';     // keep-max/min (n=0) or top-N (n>0), structural
+    private static final char MODE_KEEP_LATEST = 'L'; // keep only the latest row per key
+    private static final char MODE_WINDOW = 'W';      // an arbitrary window-function WHEN predicate
     private static final char POLICY_SENTINEL = (char) 0x1F;
-    private static final String KEEP_LATEST_PREFIX = String.valueOf(POLICY_SENTINEL) + KEEP_LATEST_MODE;
+    private static final String KEEP_BY_PREFIX = "" + POLICY_SENTINEL + MODE_KEEP_BY;
+    private static final String KEEP_LATEST_PREFIX = "" + POLICY_SENTINEL + MODE_KEEP_LATEST;
+    private static final String WINDOW_PREFIX = "" + POLICY_SENTINEL + MODE_WINDOW;
 
     private RowExpiryUtil() {
     }
@@ -82,12 +95,27 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Builds the keep-rows filter (the rows that have NOT expired) for the cleanup job:
+     * Appends the human-readable clause body of a stored policy (everything after {@code EXPIRE ROWS}) to
+     * {@code sink}: {@code WHEN <predicate>} for scalar/window, or the {@code KEEP ...} form for the relative
+     * modes. Used by SHOW CREATE; the rendering round-trips through the grammar.
+     */
+    public static void appendClause(CharSink<?> sink, CharSequence stored) {
+        if (isKeepLatest(stored)) {
+            sink.putAscii("KEEP LATEST PARTITION BY ").put(keepLatestKeys(stored));
+        } else if (isKeepBy(stored)) {
+            appendKeepByClause(sink, stored);
+        } else if (isWindow(stored)) {
+            sink.putAscii("WHEN ").put(windowBody(stored));
+        } else {
+            sink.putAscii("WHEN ").put(stored);
+        }
+    }
+
+    /**
+     * Builds the keep-rows filter (the rows that have NOT expired) for the cleanup job's scalar-WHEN path:
      * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, which keeps rows for which the predicate is
      * FALSE or NULL. The predicate is wrapped in parentheses so its internal operator precedence cannot
-     * leak. Correct for any predicate shape, including compound ones, {@code IN}, and NULL operands (see
-     * the class note on why a plain {@code NOT(...)} would wrongly delete not-expired rows whose predicate
-     * column is NULL).
+     * leak. Correct for any predicate shape, including compound ones, {@code IN}, and NULL operands.
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
         return "CASE WHEN (" + predicate.trim() + ") THEN false ELSE true END";
@@ -95,8 +123,8 @@ public final class RowExpiryUtil {
 
     /**
      * Human-readable rendering of a stored policy for catalogue functions ({@code tables()},
-     * {@code materialized_views()}): the KEEP LATEST clause body for the relative mode, or the raw predicate
-     * (unchanged) otherwise. Returns null for no policy.
+     * {@code materialized_views()}): the predicate for scalar/window, or the {@code KEEP ...} clause for the
+     * relative modes. Returns null for no policy.
      */
     public static String displayPredicate(CharSequence stored) {
         if (stored == null) {
@@ -105,23 +133,34 @@ public final class RowExpiryUtil {
         if (isKeepLatest(stored)) {
             return "KEEP LATEST PARTITION BY " + keepLatestKeys(stored);
         }
+        if (isKeepBy(stored)) {
+            final StringSink sink = new StringSink();
+            appendKeepByClause(sink, stored);
+            return sink.toString();
+        }
+        if (isWindow(stored)) {
+            return windowBody(stored).toString();
+        }
         return stored.toString();
     }
 
-    /**
-     * Encodes a {@code KEEP LATEST PARTITION BY <keysCsv>} policy for storage in the {@code expiryPredicate}
-     * slot (see the {@link #KEEP_LATEST_PREFIX} note). {@code keysCsv} is the raw, comma-separated column
-     * list as written by the user (quoting preserved).
-     */
+    public static String encodeKeepBy(int n, boolean highest, CharSequence col, CharSequence keysCsv) {
+        return KEEP_BY_PREFIX + n + POLICY_SENTINEL + (highest ? DIR_HIGHEST : DIR_LOWEST)
+                + POLICY_SENTINEL + col + POLICY_SENTINEL + keysCsv;
+    }
+
     public static String encodeKeepLatest(CharSequence keysCsv) {
         return KEEP_LATEST_PREFIX + keysCsv;
+    }
+
+    public static String encodeWindow(CharSequence predicate) {
+        return WINDOW_PREFIX + predicate;
     }
 
     /**
      * Renders the cleanup cadence as a stride string (e.g. {@code 30m}, {@code 1h}, {@code 2d}), or null
      * when there is no policy ({@code micros <= 0}). Shared by the {@code tables()} and
-     * {@code materialized_views()} catalogue functions. Allocates a String — acceptable on the cold
-     * catalogue path; use {@link #appendCleanupEvery} to render into an existing sink.
+     * {@code materialized_views()} catalogue functions.
      */
     public static String formatCleanupEvery(long micros) {
         if (micros <= 0) {
@@ -132,14 +171,105 @@ public final class RowExpiryUtil {
         return sink.toString();
     }
 
-    /** True if {@code stored} is an encoded KEEP LATEST policy (vs a plain WHEN predicate or no policy). */
-    public static boolean isKeepLatest(CharSequence stored) {
-        return stored != null && stored.length() >= 2
-                && stored.charAt(0) == POLICY_SENTINEL && stored.charAt(1) == KEEP_LATEST_MODE;
+    /** True if {@code stored} is an encoded KEEP [N] HIGHEST/LOWEST policy. */
+    public static boolean isKeepBy(CharSequence stored) {
+        return hasMode(stored, MODE_KEEP_BY);
     }
 
-    /** The raw PARTITION BY column-list text of an encoded KEEP LATEST policy (check {@link #isKeepLatest} first). */
+    /** True if {@code stored} is an encoded KEEP LATEST policy. */
+    public static boolean isKeepLatest(CharSequence stored) {
+        return hasMode(stored, MODE_KEEP_LATEST);
+    }
+
+    /** True if {@code stored} is an encoded window-function WHEN policy. */
+    public static boolean isWindow(CharSequence stored) {
+        return hasMode(stored, MODE_WINDOW);
+    }
+
+    /** The raw PARTITION BY column-list text of an encoded KEEP LATEST policy (check {@link #isKeepLatest}). */
     public static CharSequence keepLatestKeys(CharSequence stored) {
         return stored.subSequence(2, stored.length());
+    }
+
+    /**
+     * The window-function WHEN predicate text of a window policy: the stored predicate for {@link #isWindow},
+     * or the desugared keep-max/min/top-N predicate for {@link #isKeepBy} (the {@code designatedTs} is used
+     * only for the top-N ordering tiebreak; pass null to omit it). Returns null when {@code stored} is not a
+     * window/keep-by policy.
+     */
+    public static String windowPredicate(CharSequence stored, CharSequence designatedTs) {
+        if (isWindow(stored)) {
+            return windowBody(stored).toString();
+        }
+        if (isKeepBy(stored)) {
+            return buildKeepByPredicate(stored, designatedTs);
+        }
+        return null;
+    }
+
+    private static void appendKeepByClause(CharSink<?> sink, CharSequence stored) {
+        final KeepBy k = new KeepBy(stored);
+        sink.putAscii("KEEP ");
+        if (k.n > 0) {
+            sink.put(k.n).putAscii(' ');
+        }
+        sink.putAscii(k.highest ? "HIGHEST " : "LOWEST ").put(k.col);
+        if (k.keys.length() > 0) {
+            sink.putAscii(" PARTITION BY ").put(k.keys);
+        }
+    }
+
+    private static String buildKeepByPredicate(CharSequence stored, CharSequence designatedTs) {
+        final KeepBy k = new KeepBy(stored);
+        final StringSink sink = new StringSink();
+        if (k.n == 0) {
+            // keep every row tied at the group max/min: a row expires when its value is strictly past it.
+            sink.put('"').put(k.col).put('"').putAscii(k.highest ? " < max(\"" : " > min(\"")
+                    .put(k.col).putAscii("\") OVER (");
+            if (k.keys.length() > 0) {
+                sink.putAscii("PARTITION BY ").put(k.keys);
+            }
+            sink.put(')');
+        } else {
+            // keep the top-N per group by the column; the designated timestamp makes the order total so the
+            // boundary is deterministic (and the policy monotonic).
+            sink.putAscii("row_number() OVER (");
+            if (k.keys.length() > 0) {
+                sink.putAscii("PARTITION BY ").put(k.keys).putAscii(' ');
+            }
+            sink.putAscii("ORDER BY \"").put(k.col).putAscii(k.highest ? "\" DESC" : "\" ASC");
+            if (designatedTs != null) {
+                sink.putAscii(", \"").put(designatedTs).putAscii("\" DESC");
+            }
+            sink.putAscii(") > ").put(k.n);
+        }
+        return sink.toString();
+    }
+
+    private static boolean hasMode(CharSequence s, char mode) {
+        return s != null && s.length() >= 2 && s.charAt(0) == POLICY_SENTINEL && s.charAt(1) == mode;
+    }
+
+    private static CharSequence windowBody(CharSequence stored) {
+        return stored.subSequence(2, stored.length());
+    }
+
+    /** Decoded view of a KEEP [N] HIGHEST/LOWEST policy ({@code 0x1F 'N' n 0x1F dir 0x1F col 0x1F keys}). */
+    private static final class KeepBy {
+        final String col;
+        final boolean highest;
+        final String keys;
+        final int n;
+
+        KeepBy(CharSequence stored) {
+            final String body = stored.subSequence(2, stored.length()).toString();
+            final int s1 = body.indexOf(POLICY_SENTINEL);
+            final int s2 = body.indexOf(POLICY_SENTINEL, s1 + 1);
+            final int s3 = body.indexOf(POLICY_SENTINEL, s2 + 1);
+            this.n = Integer.parseInt(body.substring(0, s1));
+            this.highest = body.charAt(s1 + 1) == DIR_HIGHEST;
+            this.col = body.substring(s2 + 1, s3);
+            this.keys = body.substring(s3 + 1);
+        }
     }
 }

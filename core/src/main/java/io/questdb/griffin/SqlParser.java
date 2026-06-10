@@ -85,6 +85,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -448,48 +449,64 @@ public class SqlParser {
         boolean foundCleanup = false;
 
         if (isKeepKeyword(tok)) {
-            // EXPIRE ROWS KEEP LATEST [ON <ts>] PARTITION BY <col> [, <col> ...]
-            // Relative retention (keep only the latest row per key) — passthrough-mat-view-only, validated
-            // at create. The PARTITION BY column list is captured as raw text and stored encoded
-            // (RowExpiryUtil.encodeKeepLatest) in the predicate slot; the read filter rewrites a reference
-            // into "<ref> LATEST ON <designated ts> PARTITION BY <cols>".
+            // Relative retention modes (passthrough-mat-view-only, validated at create), stored encoded in
+            // the predicate slot and rewritten by the read filter:
+            //   KEEP LATEST [ON <ts>] PARTITION BY <cols>      -> latest row per key (LATEST ON)
+            //   KEEP [<N>] HIGHEST|LOWEST <col> [PARTITION BY <cols>] -> group max/min (or top-N) by a column
             predicateStart = lexer.lastTokenPosition();
-            expectTok(lexer, "latest");
-            tok = tok(lexer, "'on' or 'partition'");
-            if (isOnKeyword(tok)) {
-                // Optional "ON <ts>": consumed and ignored. A table-input LATEST ON requires the designated
-                // timestamp, so the read filter always uses it (the named column is validated at create).
-                tok(lexer, "timestamp column name");
-                tok = tok(lexer, "'partition'");
-            }
-            if (!isPartitionKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
-            }
-            expectTok(lexer, "by");
-            final int keysStart = lexer.getPosition();
-            int keysEnd;
-            while (true) {
+            tok = tok(lexer, "'latest', 'highest', 'lowest' or a row count");
+            if (isLatestKeyword(tok)) {
+                tok = tok(lexer, "'on' or 'partition'");
+                if (isOnKeyword(tok)) {
+                    // Optional "ON <ts>": consumed and ignored. A table-input LATEST ON requires the
+                    // designated timestamp, so the read filter always uses it.
+                    tok(lexer, "timestamp column name");
+                    tok = tok(lexer, "'partition'");
+                }
+                if (!isPartitionKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                }
+                expectTok(lexer, "by");
+                final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable);
+                if (cap.csv.isEmpty()) {
+                    throw SqlException.$(cap.startPos, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
+                }
+                predicateSql = RowExpiryUtil.encodeKeepLatest(cap.csv);
+                foundCleanup = cap.foundCleanup;
+                tok = cap.nextTok;
+            } else {
+                // KEEP [<N>] HIGHEST|LOWEST <col> [PARTITION BY <cols>]. Stored structurally and desugared to
+                // a window predicate at use (the designated timestamp is needed only for the top-N tiebreak).
+                int n = 0;
+                if (!isHighestKeyword(tok) && !isLowestKeyword(tok)) {
+                    try {
+                        n = Numbers.parseInt(tok);
+                    } catch (NumericException e) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'latest', 'highest', 'lowest' or a row count expected");
+                    }
+                    if (n < 1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS KEEP <N> requires a positive row count");
+                    }
+                    tok = tok(lexer, "'highest' or 'lowest'");
+                }
+                final boolean highest = isHighestKeyword(tok);
+                if (!highest && !isLowestKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'highest' or 'lowest' expected");
+                }
+                final String col = Chars.toString(unquote(tok(lexer, "column name")));
                 tok = optTok(lexer);
-                if (tok == null || Chars.equals(tok, ';')) {
-                    keysEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
-                    break;
-                }
-                if (isCleanupKeyword(tok)) {
-                    keysEnd = lexer.lastTokenPosition();
+                String keysCsv = "";
+                if (tok != null && isPartitionKeyword(tok)) {
+                    expectTok(lexer, "by");
+                    final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable);
+                    keysCsv = cap.csv;
+                    foundCleanup = cap.foundCleanup;
+                    tok = cap.nextTok;
+                } else if (tok != null && isCleanupKeyword(tok)) {
                     foundCleanup = true;
-                    break;
                 }
-                // A column list cannot contain WITH/IN/DEDUP, so each unambiguously ends it (e.g. IN VOLUME).
-                if (inCreateTable && (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
-                    keysEnd = lexer.lastTokenPosition();
-                    break;
-                }
+                predicateSql = RowExpiryUtil.encodeKeepBy(n, highest, col, keysCsv);
             }
-            final String keysCsv = Chars.toString(lexer.getContent(), keysStart, keysEnd).trim();
-            if (keysCsv.isEmpty()) {
-                throw SqlException.$(keysStart, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
-            }
-            predicateSql = RowExpiryUtil.encodeKeepLatest(keysCsv);
         } else {
             lexer.unparseLast();
             expectTok(lexer, "when");
@@ -536,10 +553,13 @@ public class SqlParser {
                 }
             }
 
-            predicateSql = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
-            if (predicateSql.isEmpty()) {
+            final String rawPredicate = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
+            if (rawPredicate.isEmpty()) {
                 throw SqlException.$(predicateStart, "EXPIRE ROWS WHEN predicate is empty");
             }
+            // A predicate referencing a window function (e.g. v < max(v) OVER (...)) is illegal in a plain
+            // WHERE, so flag it for the projection-CASE read filter / cleanup instead.
+            predicateSql = predicateHasWindowFunction(rawPredicate) ? RowExpiryUtil.encodeWindow(rawPredicate) : rawPredicate;
         }
 
         final long cleanupIntervalMicros;
@@ -556,6 +576,60 @@ public class SqlParser {
             // tok already holds the boundary token (WITH / IN / DEDUP / ';' / null) — hand it back as-is.
         }
         return new ExpireRowsClause(predicateSql, predicateStart, cleanupIntervalMicros, tok);
+    }
+
+    /**
+     * Captures the raw column-list text after {@code PARTITION BY} in a KEEP clause, up to the next clause
+     * boundary (CLEANUP / ';' / EOF, plus WITH / IN VOLUME / DEDUP in CREATE TABLE). Shared by KEEP LATEST
+     * and KEEP HIGHEST/LOWEST.
+     */
+    private ColumnListCapture captureKeepColumnList(GenericLexer lexer, boolean inCreateTable) throws SqlException {
+        final int startPos = lexer.getPosition();
+        int end;
+        boolean foundCleanup = false;
+        CharSequence tok;
+        while (true) {
+            tok = optTok(lexer);
+            if (tok == null || Chars.equals(tok, ';')) {
+                end = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                break;
+            }
+            if (isCleanupKeyword(tok)) {
+                end = lexer.lastTokenPosition();
+                foundCleanup = true;
+                break;
+            }
+            // A column list cannot contain WITH/IN/DEDUP, so each unambiguously ends it (e.g. IN VOLUME).
+            if (inCreateTable && (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+                end = lexer.lastTokenPosition();
+                break;
+            }
+        }
+        final ColumnListCapture capture = new ColumnListCapture();
+        capture.csv = Chars.toString(lexer.getContent(), startPos, end).trim();
+        capture.foundCleanup = foundCleanup;
+        capture.nextTok = tok;
+        capture.startPos = startPos;
+        return capture;
+    }
+
+    /**
+     * Whether {@code predicate} references a window function, detected by an {@code OVER (} token sequence.
+     * Window functions are illegal in a plain WHERE, so such a predicate is routed to the projection-CASE
+     * read filter. Re-lexes the predicate text only (no binding/metadata needed).
+     */
+    private boolean predicateHasWindowFunction(String predicate) throws SqlException {
+        final GenericLexer probe = viewLexers.next();
+        probe.of(predicate);
+        boolean prevOver = false;
+        CharSequence tok;
+        while ((tok = SqlUtil.fetchNext(probe)) != null) {
+            if (prevOver && Chars.equals(tok, '(')) {
+                return true;
+            }
+            prevOver = isOverKeyword(tok);
+        }
+        return false;
     }
 
     public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
@@ -827,6 +901,26 @@ public class SqlParser {
             return;
         }
 
+        if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
+            // Window-based retention (keep-max/min, top-N, or an explicit window WHEN). The keep-filter
+            // references a window function, illegal in a plain WHERE, so compute it as a boolean column in an
+            // inner projection over the WHOLE view and filter on it in the outer query. Base columns are
+            // enumerated so the synthetic keep column never leaks through the caller's SELECT *.
+            final String windowPredicate = RowExpiryUtil.windowPredicate(predicate, designatedTimestampColumn);
+            final String windowSql = "SELECT " + buildQuotedColumnList(tableName) + " FROM (SELECT *, CASE WHEN ("
+                    + windowPredicate + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM \""
+                    + tableName + "\") WHERE " + RowExpiryUtil.KEEP_COLUMN;
+            final GenericLexer windowLexer = viewLexers.next();
+            windowLexer.of(windowSql);
+            final IQueryModel windowSubQuery = parseAsSubQuery(windowLexer, null, false, sqlParserCallback, model.getDecls(), true);
+            model.setNestedModel(windowSubQuery);
+            model.setNestedModelIsSubQuery(true);
+            if (model.getAlias() == null) {
+                model.setAlias(literal(tableName, position));
+            }
+            return;
+        }
+
         // Quote the table name so names that need quoting (or look like keywords) parse correctly. The
         // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
         // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
@@ -846,6 +940,29 @@ public class SqlParser {
         if (model.getAlias() == null) {
             model.setAlias(literal(tableName, position));
         }
+    }
+
+    /**
+     * Builds the quoted, comma-separated base column list of a policied table, for the window read-filter's
+     * outer projection (so the synthetic {@link RowExpiryUtil#KEEP_COLUMN} is not exposed through SELECT *).
+     * Read from the in-memory metadata cache.
+     */
+    private String buildQuotedColumnList(CharSequence tableName) {
+        final StringSink sink = new StringSink();
+        try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
+            final TableToken tt = cairoEngine.getTableTokenIfExists(tableName);
+            final CairoTable table = tt == null ? null : metadataRO.getTable(tt);
+            if (table != null) {
+                final ObjList<CharSequence> names = table.getColumnNames();
+                for (int i = 0, n = names.size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.putAscii(',');
+                    }
+                    sink.putAscii('"').put(names.getQuick(i)).putAscii('"');
+                }
+            }
+        }
+        return sink.toString();
     }
 
     /**
@@ -5975,6 +6092,14 @@ public class SqlParser {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
         return viewSql;
+    }
+
+    /** Result of {@link #captureKeepColumnList}: the raw PARTITION BY column list and the trailing boundary. */
+    private static final class ColumnListCapture {
+        String csv;
+        boolean foundCleanup;
+        CharSequence nextTok;
+        int startPos;
     }
 
     /**
