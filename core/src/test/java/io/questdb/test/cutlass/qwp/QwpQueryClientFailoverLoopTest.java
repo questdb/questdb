@@ -46,7 +46,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * End-to-end coverage of the {@link QwpQueryClient#execute} failover loop
- * (failover.md §4.3). Drives the loop against a real {@link TestServerMain}
+ * (see the QWP client-failover reference at
+ * {@code https://questdb.com/docs/high-availability/client-failover/concepts/}).
+ * Drives the loop against a real {@link TestServerMain}
  * so the post-reconnect query path is exercised faithfully (the unit-only
  * tests in the client repo can't follow that branch without a real QWP
  * egress server).
@@ -271,7 +273,7 @@ public class QwpQueryClientFailoverLoopTest extends AbstractQwpBootstrapTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
     public void testAuthFailureDuringReconnectSurfacesTerminalNoLoop() throws Exception {
-        // failover.md §6 AuthError: a 401 / 403 on a reconnect attempt
+        // AuthError (QWP client-failover spec): a 401 / 403 on a reconnect attempt
         // is terminal -- the loop must NOT keep walking through it
         // (auth credentials are cluster-wide, retrying every host
         // floods server logs without recovery).
