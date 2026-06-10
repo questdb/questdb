@@ -6823,6 +6823,7 @@ public class JoinTest extends AbstractCairoTest {
 
             // Literal form: correct result and a post-join Filter over a full master scan
             // (no predicate pushed into the master sub-query).
+            bindVariableService.clear();
             assertQuery(query)
                     .noLeakCheck()
                     .withPlanContaining("Filter filter: a.sym='s2'")

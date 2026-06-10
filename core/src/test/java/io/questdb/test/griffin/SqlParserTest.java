@@ -15002,13 +15002,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     private void assertQueryWithOuterJoinType(String expected, String query, TableModel... tableModels) throws SqlException {
-        for (String outerJoinType : outerJoinTypes) {
-            assertQuery(
-                    expected.replaceAll("#OUTER_JOIN_TYPE", outerJoinType),
-                    query.replaceAll("#OUTER_JOIN_TYPE", outerJoinType),
-                    tableModels
-            );
-        }
+        assertQueryWithOuterJoinType(expected, expected, query, tableModels);
     }
 
     // LEFT OUTER keeps every master (left) row, so a master-side WHERE predicate pushes

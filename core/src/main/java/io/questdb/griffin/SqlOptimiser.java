@@ -612,19 +612,22 @@ public class SqlOptimiser implements Mutable {
      * {@code homogenizeCrossJoins} rewrites a RIGHT/FULL OUTER join whose ON clause produced
      * no equi-join context (a non-equi condition such as {@code ON a.x > b.y}) into
      * JOIN_CROSS_RIGHT / JOIN_CROSS_FULL before {@code assignFilters} runs. Those CROSS
-     * variants still NULL-extend the master (NestedLoopRight/FullJoin build the null record
-     * from the master metadata), so they are matched here too. JOIN_CROSS_LEFT keeps every
-     * master row and is excluded for the same reason as LEFT OUTER.
+     * variants still NULL-extend the master (NestedLoopRightJoinRecordCursorFactory /
+     * NestedLoopFullJoinRecordCursorFactory emit a SqlCodeGenerator-built master null record),
+     * so they are matched here too. JOIN_CROSS_LEFT keeps every master row and is excluded for
+     * the same reason as LEFT OUTER.
+     * <p>
+     * Scans backward from the last join, returning the first (hence highest-index, outermost)
+     * match so the loop stops early.
      */
     private static int masterNullingJoinIndex(IQueryModel parent, int tableIndex) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
-        int result = -1;
-        for (int i = tableIndex + 1, n = joinModels.size(); i < n; i++) {
+        for (int i = joinModels.size() - 1; i > tableIndex; i--) {
             if (isMasterNullingJoinType(joinModels.getQuick(i).getJoinType())) {
-                result = i;
+                return i;
             }
         }
-        return result;
+        return -1;
     }
 
     /**
@@ -638,14 +641,14 @@ public class SqlOptimiser implements Mutable {
     private static int lastNullingJoinAfterOrderedPosition(IQueryModel parent, int orderedPos) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         final IntList ordered = parent.getOrderedJoinModels();
-        int result = -1;
-        for (int p = orderedPos + 1, n = ordered.size(); p < n; p++) {
+        // Scan backward, returning the first (hence last in execution order) match.
+        for (int p = ordered.size() - 1; p > orderedPos; p--) {
             final int modelIndex = ordered.getQuick(p);
             if (isMasterNullingJoinType(joinModels.getQuick(modelIndex).getJoinType())) {
-                result = modelIndex;
+                return modelIndex;
             }
         }
-        return result;
+        return -1;
     }
 
     /**
@@ -1943,9 +1946,10 @@ public class SqlOptimiser implements Mutable {
                         // we don't have to wait until "our" table comes along
                         addWhereNode(parent, refs.get(0), node);
                     } else {
-                        // the table sits on the master side of a downstream SPLICE/FULL/RIGHT OUTER
-                        // join, which NULL-extends it; keep the predicate as a post-join filter so
-                        // NULL-master rows are removed rather than pushing it into the sub-query
+                        // the table sits on the master side of a downstream master-nulling join
+                        // (SPLICE/FULL/RIGHT OUTER or its homogenized CROSS variant), which
+                        // NULL-extends it; keep the predicate as a post-join filter so NULL-master
+                        // rows are removed rather than pushing it into the sub-query
                         addPostJoinWhereClause(parent.getJoinModels().getQuick(nullingJoinIndex), node);
                     }
                     postFilterRemoved.add(k);
@@ -1960,10 +1964,11 @@ public class SqlOptimiser implements Mutable {
                     }
                     if (qualifies) {
                         postFilterRemoved.add(k);
-                        // Hold a WHERE predicate past any later SPLICE/FULL/RIGHT OUTER join that
-                        // NULL-extends the tables joined so far; anchoring at i (where the last
-                        // referenced table joins) would leak its NULL-master rows. An ON conjunct
-                        // gates its own join, which runs first, so it stays anchored at i.
+                        // Hold a WHERE predicate past any later master-nulling join (SPLICE/FULL/
+                        // RIGHT OUTER or its homogenized CROSS variant) that NULL-extends the tables
+                        // joined so far; anchoring at i (where the last referenced table joins) would
+                        // leak its NULL-master rows. An ON conjunct gates its own join, which runs
+                        // first, so it stays anchored at i.
                         int anchorIndex = index;
                         if (!node.innerPredicate) {
                             final int nullingIndex = lastNullingJoinAfterOrderedPosition(parent, i);
