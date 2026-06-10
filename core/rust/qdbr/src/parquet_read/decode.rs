@@ -2185,11 +2185,11 @@ pub(super) fn decompress_sliced_data<'a>(
                 decompress_buffer
             }
             DataPageHeader::V2(header) => {
-                resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
                 let offset = (header.definition_levels_byte_length
                     + header.repetition_levels_byte_length) as usize;
                 let can_decompress = header.is_compressed.unwrap_or(true);
                 if can_decompress {
+                    resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
                     if offset > decompress_buffer.len() || offset > page.buffer.len() {
                         return Err(fmt_err!(
                             Layout,
@@ -2204,7 +2204,12 @@ pub(super) fn decompress_sliced_data<'a>(
                     )?;
                     decompress_buffer
                 } else {
-                    if decompress_buffer.len() != page.buffer.len() {
+                    // is_compressed=false: the page body is already uncompressed and
+                    // returned as-is, so the decompress buffer is never read. Compare
+                    // the header's uncompressed_size against the actual body directly
+                    // -- sizing (and zeroing) an i32::MAX-capable buffer only to read
+                    // back its length is pure waste with no decompression to amortize.
+                    if page.uncompressed_size != page.buffer.len() {
                         return Err(fmt_err!(
                             Layout,
                             "V2 Page Header reported incorrect decompressed size"
@@ -2288,7 +2293,9 @@ pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> Parque
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_page, decode_page_filtered, resize_decompress_buffer};
+    use super::{
+        decode_page, decode_page_filtered, decompress_sliced_data, resize_decompress_buffer,
+    };
     use crate::allocator::{AcVec, TestAllocatorState};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
@@ -2302,11 +2309,13 @@ mod tests {
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
     use arrow::datatypes::ToByteSlice;
+    use parquet2::compression::Compression;
     use parquet2::encoding::hybrid_rle::encode_u32;
     use parquet2::encoding::Encoding;
     use parquet2::metadata::Descriptor;
-    use parquet2::page::{DataPageHeader, DataPageHeaderV1};
+    use parquet2::page::{DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
     use parquet2::read::levels::get_bit_width;
+    use parquet2::read::SlicedDataPage;
     use parquet2::schema::types::{FieldInfo, PhysicalType, PrimitiveLogicalType, PrimitiveType};
     use parquet2::schema::Repetition;
     use parquet2::write::Version;
@@ -4361,6 +4370,68 @@ mod tests {
 
         resize_decompress_buffer(&mut buf, 2).unwrap();
         assert_eq!(buf.as_slice(), &[0xAB; 2], "shrink must truncate in place");
+    }
+
+    #[test]
+    fn decompress_sliced_data_v2_uncompressed_does_not_size_buffer() {
+        fn v2_uncompressed_page(body: &[u8], uncompressed_size: usize) -> SlicedDataPage<'_> {
+            SlicedDataPage {
+                header: DataPageHeader::V2(DataPageHeaderV2 {
+                    num_values: 1,
+                    num_nulls: 0,
+                    num_rows: 1,
+                    encoding: Encoding::Plain.into(),
+                    definition_levels_byte_length: 0,
+                    repetition_levels_byte_length: 0,
+                    is_compressed: Some(false),
+                    statistics: None,
+                }),
+                buffer: body,
+                compression: Compression::Snappy,
+                uncompressed_size,
+                descriptor: Descriptor {
+                    primitive_type: PrimitiveType::from_physical(
+                        "c".to_string(),
+                        PhysicalType::Int32,
+                    ),
+                    max_def_level: 0,
+                    max_rep_level: 0,
+                },
+            }
+        }
+
+        // A V2 page with is_compressed=false is already uncompressed: the body is
+        // returned as-is and the decompress buffer is never read. It must not be
+        // sized -- the pre-hoist code resized it to the attacker-controlled
+        // uncompressed_size (up to i32::MAX, unbounded by max_page_size) purely to
+        // compare its length, memsetting a buffer with no decompression to amortize.
+        let body = [10u8, 20, 30, 40];
+        let page = v2_uncompressed_page(&body, body.len());
+        let mut decompress_buffer = Vec::new();
+        {
+            let data_page = decompress_sliced_data(&page, &mut decompress_buffer).unwrap();
+            assert_eq!(data_page.buffer, &body[..]);
+            assert_eq!(
+                data_page.buffer.as_ptr(),
+                body.as_ptr(),
+                "must return the page body itself, not a decompressed copy"
+            );
+        }
+        assert_eq!(
+            decompress_buffer.capacity(),
+            0,
+            "is_compressed=false must not allocate or size the decompress buffer"
+        );
+
+        // The length check is preserved, now compared directly against the body:
+        // a header whose uncompressed_size disagrees with the body still errors.
+        let bad = v2_uncompressed_page(&body, body.len() + 1);
+        let mut scratch = Vec::new();
+        let err = decompress_sliced_data(&bad, &mut scratch).unwrap_err();
+        assert!(
+            err.to_string().contains("incorrect decompressed size"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
