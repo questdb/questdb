@@ -25,6 +25,9 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.RowExpiryCleanupJob;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -185,6 +188,84 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                     "k\tv\tts\n" +
                             "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
                             "B\t6.0\t2024-01-03T00:00:00.000000Z\n",
+                    "select k, v, ts from mv order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testKeepLatestCleanupReclaimsSupersededPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // superseded by A@01-03
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +   // superseded by B@01-03
+                    "('A', 3.0, '2024-01-03T00:00:00.000000Z')," +   // latest A (active partition)
+                    "('B', 4.0, '2024-01-03T00:00:00.000000Z')");    // latest B (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep latest partition by k");
+            drainWalAndMatViewQueues();
+
+            // Three logical partitions physically present before cleanup.
+            assertSql("c\n3\n", "select count() c from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate, 0);
+            }
+            drainWalAndMatViewQueues();
+
+            // 01-01 (A superseded) and 01-02 (B superseded) are fully expired -> dropped; the active 01-03
+            // (both latest) is protected. The read-filter result is unchanged.
+            assertSql("c\n1\n", "select count() c from table_partitions('mv')");
+            assertSql(
+                    "k\tv\tts\n" +
+                            "A\t3.0\t2024-01-03T00:00:00.000000Z\n" +
+                            "B\t4.0\t2024-01-03T00:00:00.000000Z\n",
+                    "select k, v, ts from mv order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testKeepLatestCleanupCompactsPartialPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // superseded by A@01-02
+                    "('C', 9.0, '2024-01-01T00:00:00.000000Z')," +   // latest C (survives in 01-01)
+                    "('A', 2.0, '2024-01-02T00:00:00.000000Z')," +   // latest A
+                    "('B', 5.0, '2024-01-03T00:00:00.000000Z')");    // latest B (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep latest partition by k");
+            drainWalAndMatViewQueues();
+
+            // 4 physical rows across 3 partitions before cleanup.
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate, 0);
+            }
+            drainWalAndMatViewQueues();
+
+            // 01-01 is PARTIALLY expired (A superseded, C latest) -> compacted to 1 row (REPLACE_RANGE);
+            // 01-02 (A latest) and active 01-03 untouched. Partition count stays 3; the superseded A@01-01
+            // row is physically removed (4 -> 3). The read-filter result is unchanged.
+            assertSql("p\tr\n3\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql(
+                    "k\tv\tts\n" +
+                            "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
+                            "B\t5.0\t2024-01-03T00:00:00.000000Z\n" +
+                            "C\t9.0\t2024-01-01T00:00:00.000000Z\n",
                     "select k, v, ts from mv order by k"
             );
         });

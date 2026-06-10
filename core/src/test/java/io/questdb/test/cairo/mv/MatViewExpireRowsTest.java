@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.test.AbstractCairoTest;
@@ -62,6 +63,44 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         super.setUp();
         // Mat views are gated behind dev mode, exactly as MatViewTest enables them.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testExpireScalarCleanupReclaimsOldPartition() throws Exception {
+        // The physical cleanup reclaims on a mat view via REPLACE_RANGE (DROP PARTITION via SQL is rejected
+        // for mat views). Here a wholly-below-threshold partition is wiped.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
+                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+
+            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate, 0);
+            }
+            drainWalAndMatViewQueues();
+
+            // 01-01 lies wholly below the threshold -> reclaimed; 01-02 (active-protected check aside) and
+            // 01-03 retained. The read filter already hid A; now its storage is gone too.
+            assertSql("p\n2\n", "select count() p from table_partitions('mv')");
+            assertSql(
+                    "sym\tv\n" +
+                            "B\t2.0\n" +
+                            "C\t3.0\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
     }
 
     @Test
