@@ -166,6 +166,41 @@ fn checked_len(value: i64) -> ParquetResult<i32> {
     Ok(len)
 }
 
+/// Collects up to `limit` delta-encoded lengths into a `Vec<i32>`, reserving the
+/// buffer fallibly so an oversized or amplified foreign page surfaces a
+/// recoverable `OutOfMemory` error instead of aborting the JVM.
+///
+/// The DELTA length/prefix/suffix streams decode up front into a `Vec`. `limit`
+/// is the slicer's row count -- the page's `num_values`, an attacker-controlled
+/// header field up to `i32::MAX`. A bit-width-0 delta miniblock expands to
+/// `values_per_mini_block` entries while consuming no buffer bytes, so a tiny
+/// page can declare billions of values; `take(limit)` caps the iteration at the
+/// page's row count and `try_reserve_exact(limit)` makes the up-front sizing
+/// fallible. A plain `collect` reserves the same capacity infallibly and aborts
+/// the process when the allocator refuses the resulting multi-gigabyte request.
+/// `checked_len` validates each value's range, not the count, so this reservation
+/// is the only guard against the allocation. Classified `OutOfMemory` (not
+/// `Layout`) so a parquet merge under `ApplyWal2TableJob` backs off and retries
+/// on transient memory pressure rather than suspending the table.
+fn collect_checked_lengths<E>(
+    iter: impl Iterator<Item = Result<i64, E>>,
+    limit: usize,
+    what: &str,
+) -> ParquetResult<Vec<i32>> {
+    let mut lengths: Vec<i32> = Vec::new();
+    lengths.try_reserve_exact(limit).map_err(|_| {
+        fmt_err!(
+            OutOfMemory(None),
+            "cannot allocate {limit} delta {what} values"
+        )
+    })?;
+    for value in iter.take(limit) {
+        let value = value.map_err(|_| fmt_err!(Layout, "not enough {what} values to iterate"))?;
+        lengths.push(checked_len(value)?);
+    }
+    Ok(lengths)
+}
+
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
     sliced_row_count: usize,
@@ -269,14 +304,7 @@ impl<'a> DeltaLengthArraySlicer<'a> {
             });
         }
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
-        let lengths: Vec<i32> = decoder
-            .by_ref()
-            .take(row_count)
-            .map(|r| {
-                let v = r.map_err(|_| fmt_err!(Layout, "not enough length values to iterate"))?;
-                checked_len(v)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let lengths = collect_checked_lengths(decoder.by_ref(), row_count, "length")?;
 
         let data_offset = decoder.consumed_bytes();
         Ok(Self {
@@ -390,22 +418,16 @@ impl<'a> DeltaBytesArraySlicer<'a> {
         }
         let values = data;
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
-        let prefix: Vec<i32> = (&mut decoder)
-            .take(row_count)
-            .map(|r| {
-                let v = r.map_err(|_| fmt_err!(Layout, "not enough prefix values to iterate"))?;
-                checked_len(v)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let prefix = collect_checked_lengths(&mut decoder, row_count, "prefix")?;
 
         let mut data_offset = decoder.consumed_bytes();
         let mut decoder = delta_bitpacked::Decoder::try_new(&values[decoder.consumed_bytes()..])?;
-        let suffix = (&mut decoder)
-            .map(|r| {
-                let v = r.map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))?;
-                checked_len(v)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        // Bound the suffix by row_count: previously it collected every value the
+        // delta stream declared (its own attacker-controlled total_count),
+        // independent of the page's row count. With the fallible growth in
+        // collect_checked_lengths this closes the last infallible-collect abort on
+        // the DELTA read path.
+        let suffix = collect_checked_lengths(&mut decoder, row_count, "suffix")?;
         data_offset += decoder.consumed_bytes();
 
         Ok(Self {

@@ -106,6 +106,49 @@ fn test_delta_length_array_slicer_out_of_range_length_errors() {
 }
 
 #[test]
+fn collect_checked_lengths_rejects_unsatisfiable_count_instead_of_aborting() {
+    // `limit` is the page's row count (num_values, attacker-controlled up to
+    // i32::MAX). A bit-width-0 delta miniblock expands to that many values from
+    // almost no buffer bytes, so the up-front reservation can be multi-gigabyte and
+    // an infallible collect would abort the JVM when the allocator refuses it. A
+    // real i32::MAX request may succeed on a large host, so pin the fallible path
+    // with usize::MAX: try_reserve_exact fails with CapacityOverflow without
+    // attempting (and aborting on) a real allocation. Proves the up-front sizing
+    // surfaces a clean error rather than the process-aborting infallible collect.
+    let empty = std::iter::empty::<Result<i64, ()>>();
+    let err = collect_checked_lengths(empty, usize::MAX, "suffix")
+        .expect_err("an unsatisfiable length count must error, not abort");
+    assert!(
+        err.to_string().contains("cannot allocate"),
+        "unexpected error: {err}"
+    );
+    // Classify OutOfMemory, not Layout: on the write path (a parquet merge under
+    // ApplyWal2TableJob) a Layout error suspends the table, whereas OutOfMemory
+    // backs off and retries -- the correct response to transient memory pressure.
+    assert!(
+        matches!(
+            err.reason(),
+            crate::parquet::error::ParquetErrorReason::OutOfMemory(_)
+        ),
+        "allocation failure must be classified OutOfMemory, not Layout: {err:?}"
+    );
+}
+
+#[test]
+fn collect_checked_lengths_bounds_count_at_limit() {
+    // The suffix collect previously had no take() and materialized every value the
+    // delta stream declared (its own attacker-controlled total_count), independent
+    // of the page's row count. Pin that collect_checked_lengths now caps the count
+    // at `limit`: an iterator yielding far more values than the limit must produce
+    // exactly `limit` entries, leaving the rest unread.
+    let values = (0..1_000_000i64).map(Ok::<i64, ()>);
+    let out = collect_checked_lengths(values, 8, "suffix").unwrap();
+    assert_eq!(out.len(), 8, "count must be bounded by the limit");
+    assert_eq!(out.first().copied(), Some(0));
+    assert_eq!(out.last().copied(), Some(7));
+}
+
+#[test]
 fn test_plain_var_slicer_oversized_length_errors() {
     // Length prefix claims 100 bytes but only 2 follow. next()/next_into() must
     // return a clean error rather than slicing out of bounds and aborting the JVM.
