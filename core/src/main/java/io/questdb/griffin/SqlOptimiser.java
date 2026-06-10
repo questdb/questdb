@@ -356,7 +356,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
-        clearForUnionModelInJoin();
+        clearConstNameToMaps();
         contextPool.clear();
         intHashSetPool.clear();
         joinClausesSwap1.clear();
@@ -390,7 +390,7 @@ public class SqlOptimiser implements Mutable {
         lateralJoinRewriter.clear();
     }
 
-    public void clearForUnionModelInJoin() {
+    public void clearConstNameToMaps() {
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
@@ -5857,12 +5857,17 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0; i < n; i++) {
             IQueryModel m = model.getJoinModels().getQuick(i).getNestedModel();
             if (m != null) {
+                // The constNameTo* maps are keyed by bare column name and consumed by this model's
+                // addTransitiveFilters above. Clear them before recursing so a constant this model
+                // registered (or, after the master-nulling guard, declined to register) does not
+                // leak into a nested model that happens to reuse the same column name and index.
+                clearConstNameToMaps();
                 optimiseJoins(m);
             }
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
-                clearForUnionModelInJoin();
+                clearConstNameToMaps();
                 optimiseJoins(m);
             }
         }

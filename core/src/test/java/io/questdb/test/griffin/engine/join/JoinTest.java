@@ -5918,8 +5918,8 @@ public class JoinTest extends AbstractCairoTest {
                 final String bind = "SELECT i, j FROM t1 " + joinType + " JOIN t2 ON i > 4 AND j < -3 WHERE i = :v::INT ORDER BY j";
                 bindVariableService.clear();
                 bindVariableService.setInt("v", 5);
-                printSql(bind);
-                TestUtils.assertEquals(expected, sink);
+                // Bind-variable form must produce the identical result under the full assertion battery.
+                assertQuery(bind).noLeakCheck().returns(expected);
             }
         });
     }
@@ -5946,6 +5946,35 @@ public class JoinTest extends AbstractCairoTest {
                         .withPlanContaining("Filter filter: m.c1<100")
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testOuterConstFilterDoesNotLeakIntoNestedNullingJoin() throws Exception {
+        // The outer query filters tc.k = 2 and the nested subquery RIGHT JOINs ta a to tb b under a
+        // master-only WHERE a.k = 1. That WHERE references the NULL-extended master, so the
+        // master-nulling guard keeps it post-join and skips registering a's constant in the
+        // constNameTo* maps. Those maps are instance state keyed by bare column name; without a clear
+        // between join-model levels the outer query's stale "k -> 2" entry survived into the nested
+        // model, and addTransitiveFilters injected b.k = 2 into the nested slave, dropping the matching
+        // row (0 rows instead of 1). optimiseJoins now clears the maps before recursing into nested
+        // and union models, so the foreign constant no longer leaks.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (q INT, k INT)");
+            execute("INSERT INTO tc VALUES (1, 2)");
+            execute("CREATE TABLE ta (k INT)");
+            execute("INSERT INTO ta VALUES (1)");
+            execute("CREATE TABLE tb (k INT, v INT)");
+            execute("INSERT INTO tb VALUES (1, 10)");
+
+            assertQuery("SELECT * FROM tc " +
+                    "JOIN (SELECT a.k k1, b.v FROM ta a RIGHT JOIN tb b ON a.k = b.k WHERE a.k = 1) x " +
+                    "  ON tc.q = x.k1 " +
+                    "WHERE tc.k = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("q\tk\tk1\tv\n1\t2\t1\t10\n");
         });
     }
 
@@ -6030,12 +6059,11 @@ public class JoinTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 assertQuery(lhs).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: a.sym='s2'").returns(expected);
 
-                // Bind-variable form must produce the identical result.
+                // Bind-variable form must produce the identical result under the full assertion battery.
                 final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
                 bindVariableService.clear();
                 bindVariableService.setStr("sym", "s2");
-                printSql(bind);
-                TestUtils.assertEquals(expected, sink);
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
             }
         });
     }
@@ -6063,10 +6091,10 @@ public class JoinTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 assertQuery(literal).noLeakCheck().noRandomAccess().returns(empty);
 
+                // Bind-variable form must produce the identical result under the full assertion battery.
                 bindVariableService.clear();
                 bindVariableService.setStr("sym", "s2");
-                printSql(bind);
-                TestUtils.assertEquals(empty, sink);
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(empty);
             }
         });
     }
@@ -6663,10 +6691,10 @@ public class JoinTest extends AbstractCairoTest {
             // Bind-variable form evaluates the same NULL/FALSE predicate per row and must agree.
             bindVariableService.clear();
             bindVariableService.setStr("b1", "2024-03-06T20:54:00.000000Z");
-            printSql("SELECT (a.c0)::STRING AS e0, true AS e1 " +
+            assertQuery("SELECT (a.c0)::STRING AS e0, true AS e1 " +
                     "FROM t1 a SPLICE JOIN t0 b " +
-                    "WHERE ((a.c0 + null))::TIMESTAMP < :b1::TIMESTAMP");
-            TestUtils.assertEquals(expected, sink);
+                    "WHERE ((a.c0 + null))::TIMESTAMP < :b1::TIMESTAMP")
+                    .noLeakCheck().noRandomAccess().returns(expected);
         });
     }
 
@@ -6742,11 +6770,11 @@ public class JoinTest extends AbstractCairoTest {
                     .withPlanContaining("Filter filter: a.sym='s2'")
                     .returns(expected);
 
-            // Bind-variable form must produce the identical result.
+            // Bind-variable form must produce the identical result under the full assertion battery.
             bindVariableService.clear();
             bindVariableService.setStr("sym", "s2");
-            printSql("SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = :sym::SYMBOL ORDER BY e1");
-            TestUtils.assertEquals(expected, sink);
+            assertQuery("SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = :sym::SYMBOL ORDER BY e1")
+                    .noLeakCheck().returns(expected);
         });
     }
 
