@@ -2670,11 +2670,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     /**
-     * Multiple flushes with the same tables. The second flush should use
-     * schema references since the schema was sent in the first flush.
+     * Multiple flushes with the same tables. Every flush re-sends the full
+     * inline schema for each table.
      */
     @Test
-    public void testMultiTable_multipleFlushesWithSchemaRef() throws Exception {
+    public void testMultiTable_multipleFlushesResendSchema() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
                 // First flush: full schema sent
@@ -3334,15 +3334,14 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     /**
-     * Opens two successive connections to the same server. Each connection
-     * resets the client's maxSentSchemaId, so the second sender must
-     * re-send the full schema (not a reference) on its first batch. This
-     * verifies that the reset-on-reconnect logic works end-to-end.
+     * Opens two successive connections to the same server. The second sender
+     * sends the full schema inline on its first batch, just as every batch
+     * does, verifying a fresh connection ingests correctly end-to-end.
      */
     @Test
-    public void testSchemaReference_newConnectionResendsFull() throws Exception {
+    public void testSchemaResentOnNewConnection() throws Exception {
         runInContext((port) -> {
-            // Connection 1: send two batches (batch 1 = full schema, batch 2 = reference)
+            // Connection 1: send two batches (each carries the full inline schema)
             try (QwpWebSocketSender sender = createSender(port)) {
                 for (int batch = 0; batch < 2; batch++) {
                     for (int i = 0; i < 5; i++) {
@@ -3357,7 +3356,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            // Connection 2: new sender must resend full schema, then schema ref
+            // Connection 2: a fresh sender carries the full inline schema on every batch
             try (QwpWebSocketSender sender = createSender(port)) {
                 for (int batch = 0; batch < 2; batch++) {
                     for (int i = 0; i < 5; i++) {
@@ -3385,13 +3384,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     /**
-     * Sends 5 batches with the same schema on a single connection. Batch 1 sends
-     * the full schema; batches 2-5 implicitly use schema reference mode (varint
-     * schemaId only) because the schema ID is already below maxSentSchemaId
-     * after the first successful ACK.
+     * Sends 5 batches with the same schema on a single connection. Every batch
+     * carries the full column schema inline (there is no schema-reference mode),
+     * so this exercises repeated same-schema ingestion over one connection.
      */
     @Test
-    public void testSchemaReference_registryHitAfterMultipleBatches() throws Exception {
+    public void testSchemaResentOnRepeatedBatches() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
                 for (int batch = 0; batch < 5; batch++) {
