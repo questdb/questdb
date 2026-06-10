@@ -5,6 +5,7 @@ mod tests;
 
 use crate::allocator::{AcVec, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_read::decoders::MiniblockIterator;
 use parquet2::encoding::delta_bitpacked;
 
 use std::mem::size_of;
@@ -201,6 +202,30 @@ fn collect_checked_lengths<E>(
     Ok(lengths)
 }
 
+/// Returns the byte length of a DELTA_BINARY_PACKED length stream, i.e. the
+/// offset at which the concatenated value bytes that follow it begin.
+///
+/// The slicers must skip the WHOLE length stream to reach the data region.
+/// Deriving the offset from `delta_bitpacked::Decoder::consumed_bytes()` after a
+/// `take(row_count)` is wrong for a partial range read (`row_count` < the page's
+/// `num_values`): `take` stops before entering the later delta blocks, so
+/// `consumed_bytes()` omits their bytes and the data slice starts inside the
+/// length stream, shifting every value (silent corruption) or tripping a
+/// "length exceeds values buffer" error on a valid page.
+///
+/// `MiniblockIterator::get_end_pointer` instead steps over the whole block/
+/// miniblock structure, so the result does not depend on how many values a
+/// caller later reads. The walk is bounded by the buffer size -- every block
+/// consumes at least its header bytes -- not by the attacker-controlled declared
+/// value count, so it cannot be amplified into an unbounded loop by a foreign
+/// page. This is the same primitive the VarcharSlice decoder uses to locate its
+/// data region.
+fn delta_stream_byte_len(data: &[u8]) -> ParquetResult<usize> {
+    let (iter, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(data)?;
+    let end = iter.get_end_pointer()?;
+    Ok(end as usize - data.as_ptr() as usize)
+}
+
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
     sliced_row_count: usize,
@@ -303,10 +328,14 @@ impl<'a> DeltaLengthArraySlicer<'a> {
                 pos: 0,
             });
         }
-        let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
-        let lengths = collect_checked_lengths(decoder.by_ref(), row_count, "length")?;
+        let decoder = delta_bitpacked::Decoder::try_new(data)?;
+        let lengths = collect_checked_lengths(decoder, row_count, "length")?;
 
-        let data_offset = decoder.consumed_bytes();
+        // Skip the entire length stream, not just the delta blocks the truncated
+        // take(row_count) in collect_checked_lengths entered. See
+        // delta_stream_byte_len: consumed_bytes() here would under-count on a
+        // partial range read and start the data slice inside the length stream.
+        let data_offset = delta_stream_byte_len(data)?;
         Ok(Self {
             data: &data[data_offset..],
             sliced_row_count,
@@ -417,18 +446,27 @@ impl<'a> DeltaBytesArraySlicer<'a> {
             });
         }
         let values = data;
-        let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
-        let prefix = collect_checked_lengths(&mut decoder, row_count, "prefix")?;
 
-        let mut data_offset = decoder.consumed_bytes();
-        let mut decoder = delta_bitpacked::Decoder::try_new(&values[decoder.consumed_bytes()..])?;
-        // Bound the suffix by row_count: previously it collected every value the
-        // delta stream declared (its own attacker-controlled total_count),
-        // independent of the page's row count. With the fallible growth in
-        // collect_checked_lengths this closes the last infallible-collect abort on
-        // the DELTA read path.
-        let suffix = collect_checked_lengths(&mut decoder, row_count, "suffix")?;
-        data_offset += decoder.consumed_bytes();
+        // A DELTA_BYTE_ARRAY page lays out [prefix lengths][suffix lengths][bytes].
+        // Locate both stream boundaries by walking the full block structure
+        // (delta_stream_byte_len) so a partial range read still finds the value
+        // bytes; reading consumed_bytes() after the truncated take(row_count)
+        // below under-counts the blocks it never entered, and using it to start
+        // the suffix stream would compound the error. The walk also fixes the
+        // suffix stream's start offset, not just the final data offset.
+        let prefix_len = delta_stream_byte_len(values)?;
+        let suffix_buf = &values[prefix_len..];
+        let data_offset = prefix_len + delta_stream_byte_len(suffix_buf)?;
+
+        // Materialize only the first row_count prefix/suffix lengths for the
+        // reads; collect_checked_lengths bounds the allocation by row_count. The
+        // suffix collect is bounded by row_count as well -- previously it
+        // collected every value the delta stream declared (its own
+        // attacker-controlled total_count), independent of the page's row count.
+        let prefix_decoder = delta_bitpacked::Decoder::try_new(values)?;
+        let prefix = collect_checked_lengths(prefix_decoder, row_count, "prefix")?;
+        let suffix_decoder = delta_bitpacked::Decoder::try_new(suffix_buf)?;
+        let suffix = collect_checked_lengths(suffix_decoder, row_count, "suffix")?;
 
         Ok(Self {
             prefix: prefix.into_iter(),

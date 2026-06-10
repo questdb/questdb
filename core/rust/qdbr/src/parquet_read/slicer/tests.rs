@@ -390,6 +390,46 @@ fn test_delta_length_array_slicer_skip() {
 }
 
 #[test]
+fn test_delta_length_array_slicer_partial_range_constant_len() {
+    // Regression for silent STRING corruption on a partial range read: when
+    // row_count < num_values and the length stream spans more than one delta
+    // block, the data offset must still skip the whole length stream. 200
+    // constant-length values span two blocks; reading only the first 100 used to
+    // start the data slice 2 bytes early (the unread second block's header),
+    // yielding "\0\0v0" instead of "v000".
+    let strings: Vec<String> = (0..200).map(|i| format!("v{i:03}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 100, 100).unwrap();
+    for expected in strings.iter().take(100) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_range_varying_len() {
+    // Same partial range read but with varying lengths, so the delta blocks carry
+    // a non-zero bit width and real miniblock bytes that the offset walk must skip
+    // too. 300 values span three blocks; reading the first 130 cuts inside the
+    // second block, leaving the third block entirely unread.
+    let strings: Vec<String> = (0..300).map(|i| "ab".repeat(1 + (i % 9))).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 130, 130).unwrap();
+    for expected in strings.iter().take(130) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
 fn test_delta_bytes_array_slicer_next_into() {
     let strings: Vec<&[u8]> = vec![b"Hello", b"Helicopter", b"Help"];
     let mut encoded = Vec::new();
@@ -430,6 +470,26 @@ fn test_delta_bytes_array_slicer_skip() {
     let mut sink = TestSink::new();
     slicer.next_into(&mut sink).unwrap();
     assert_eq!(sink.into_inner(), b"test3");
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_range_multi_block() {
+    // A partial range read of a DELTA_BYTE_ARRAY page: both the prefix and suffix
+    // length streams span multiple blocks, so the value bytes begin only after
+    // the full prefix and suffix streams. Reading the first 100 of 200 values
+    // must still locate that boundary -- the previous consumed_bytes()-after-take
+    // offset under-counted both streams.
+    let strings: Vec<String> = (0..200).map(|i| format!("item-{i:04}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 100, 100).unwrap();
+    for expected in strings.iter().take(100) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
 }
 
 struct TestDictDecoder {
