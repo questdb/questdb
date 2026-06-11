@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -39,8 +39,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testBindVarTypeChange() throws Exception {
         assertQuery("select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)").expectSize().returns("l2price\n9.825714285714286\n");
 
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "all doubles",
                 "l2price\n" +
                         "9.825714285714286\n",
@@ -51,7 +51,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "type change",
                 "l2price\n" +
                         "9.825714285714286\n",
@@ -62,7 +62,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                 }
         ));
 
-        assertSql("select l2price(35, $1, $2, $3, 9.3, 42, 22.1)", tuples);
+        assertQuery("select l2price(35, $1, $2, $3, 9.3, 42, 22.1)").expectSize().assertBinds(cases);
     }
 
     @Test
@@ -146,9 +146,9 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testBindVarTypeFailureErrorPosition() {
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarTypeFailureErrorPosition() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "type failure",
                 "l2price\n" +
                         "9.825714285714286\n",
@@ -161,7 +161,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
         ));
 
         try {
-            assertSql("select l2price(35, $1, $2, $3, 9.3, 42, 22.1), l2price(35, $4, 9.3, 42, 22.1)", tuples);
+            assertQuery("select l2price(35, $1, $2, $3, 9.3, 42, 22.1), l2price(35, $4, 9.3, 42, 22.1)").assertBinds(cases);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "[27] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`");
         }
@@ -260,11 +260,11 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "from long_sequence(10))");
             drainWalQueue();
 
-            assertPlanNoLeakCheck(
-                    "select avg(l2price(14, ask_size, ask_value)) " +
-                            "- avg(l2price(14, bid_size, bid_value))" +
-                            " as spread from x",
-                    "VirtualRecord\n" +
+            assertQuery("select avg(l2price(14, ask_size, ask_value)) " +
+                    "- avg(l2price(14, bid_size, bid_value))" +
+                    " as spread from x")
+                    .noLeakCheck()
+                    .assertsPlan("VirtualRecord\n" +
                             "  functions: [avg1-avg]\n" +
                             "    Async Group By workers: 1\n" +
                             "      vectorized: false\n" +
@@ -272,19 +272,17 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "      filter: null\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
-            );
+                            "            Frame forward scan on: x\n");
 
-            assertPlanNoLeakCheck(
-                    "select l2price(14, ask_size, ask_value) " +
-                            "- l2price(14, bid_size, bid_value)" +
-                            " as spread from x",
-                    "VirtualRecord\n" +
+            assertQuery("select l2price(14, ask_size, ask_value) " +
+                    "- l2price(14, bid_size, bid_value)" +
+                    " as spread from x")
+                    .noLeakCheck()
+                    .assertsPlan("VirtualRecord\n" +
                             "  functions: [l2price([14,ask_size,ask_value])-l2price([14,bid_size,bid_value])]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n"
-            );
+                            "        Frame forward scan on: x\n");
 
             assertQuery("select l2price(14, ask_size, ask_value) " +
                     "- l2price(14, bid_size, bid_value)" +

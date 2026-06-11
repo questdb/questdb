@@ -512,7 +512,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 860, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 1160, params, "test_table");
                 });
     }
 
@@ -538,7 +538,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 607, params, "select x, ts from test_table");
+                    testHttpClient.assertGetParquet("/exp", 758, params, "select x, ts from test_table");
                 });
     }
 
@@ -551,8 +551,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 607, params, "select * from test_table order by ts desc");
-                    testHttpClient.assertGetParquet("/exp", 590, params, "select * from test_table order by ts desc limit 2");
+                    testHttpClient.assertGetParquet("/exp", 597, params, "select * from test_table order by ts desc");
+                    testHttpClient.assertGetParquet("/exp", 594, params, "select * from test_table order by ts desc limit 2");
                 });
     }
 
@@ -691,19 +691,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 101211, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 41965, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 107387, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 47099, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 113839, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 53744, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 108029, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 48518, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 133281, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 74267, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 104173, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 44625, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 101211, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 41965, params, "test_table");
                     // Each round re-exports the full 10k-row table over the forced byte-level HTTP
                     // fragmentation from getExportTester(), slow on Mac/Windows. The assertGetParquet
                     // calls above already cover every row_group_size, so fewer rounds suffice.

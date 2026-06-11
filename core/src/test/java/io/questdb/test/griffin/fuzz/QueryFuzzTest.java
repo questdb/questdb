@@ -157,7 +157,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             FuzzColumn c = t.getColumn(j);
             sb.append(' ').append(c.getName()).append('=').append(c.getType().getDdl());
             if (c.isIndexed()) {
-                sb.append(" INDEX");
+                sb.append(c.getIndex().describe());
             }
         }
         LOG.info().$safe(sb.toString()).$();

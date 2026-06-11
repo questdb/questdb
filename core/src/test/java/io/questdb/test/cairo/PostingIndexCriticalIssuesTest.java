@@ -62,6 +62,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -484,6 +486,509 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Rollback reencode publishes a bumped sealTxn for the compacted
+     * {@code .pv.N}; it must also stage a sealed {@code .pc0.N} sidecar so a
+     * following incremental seal can copy clean strides without falling back
+     * to the historical append-layout misread.
+     */
+    @Test
+    public void testRollbackThenIncrementalSealUsesRebuiltSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            execute("""
+                    INSERT INTO t_rb_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition
+            execute("""
+                    INSERT INTO t_rb_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 0.0
+                    FROM long_sequence(100)
+                    """);
+
+            TableToken tableToken = engine.verifyTableName("t_rb_seal");
+            try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                // Stage one O3 row and roll it back. The posting rollback
+                // reencodes the .pv at a bumped sealTxn and must rebuild the
+                // matching sealed .pc sidecar at that txn.
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:30:00.000000Z"));
+                row.putSym(1, "k0");
+                row.putDouble(2, 1.0);
+                row.append();
+                writer.rollback();
+
+                // O3 append touching only key k0: stride 0 is dirty, stride 1
+                // stays clean, so the seal goes incremental and copies the
+                // clean stride verbatim from the rollback-rebuilt sidecar.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putDouble(2, i);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            // count() is served from the row-id index, sum(price) from the
+            // covering sidecar - the sum catches silent sidecar corruption
+            // that would otherwise leave row-id counts looking correct.
+            assertQuery("SELECT count(), sum(price) FROM t_rb_seal WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            60\t17725.0
+                            """);
+        });
+    }
+
+    /**
+     * Var-size sibling of {@link #testRollbackThenIncrementalSealUsesRebuiltSidecar}.
+     * Rollback reencodes rowids into one global decoded-values array, then rebuilds
+     * per-stride VARCHAR sidecars from global key offsets. The clean-stride assertion
+     * on k257 pins the shift < 0 branch to that global-offset contract.
+     */
+    @Test
+    public void testRollbackThenIncrementalSealUsesRebuiltVarSizeSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_var_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // k0 is assigned to stride 0 and k257 to stride 1.
+            execute("""
+                    INSERT INTO t_rb_var_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L),
+                           'k' || ((x - 1) % 300),
+                           ('lbl-' || x || '-' || (x % 17))::VARCHAR
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition.
+            execute("""
+                    INSERT INTO t_rb_var_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L),
+                           'k' || (100 + (x % 100)),
+                           ('o3-' || x)::VARCHAR
+                    FROM long_sequence(100)
+                    """);
+
+            TableToken tableToken = engine.verifyTableName("t_rb_var_seal");
+            try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:30:00.000000Z"));
+                row.putSym(1, "k0");
+                row.putVarchar(2, utf8("rolled-back"));
+                row.append();
+                writer.rollback();
+
+                // Only k0 is dirtied after rollback. k257 stays in the clean
+                // stride copied from the rollback-rebuilt VARCHAR sidecar.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putVarchar(2, utf8("new-" + i));
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            assertQuery("SELECT count() AS total, count(label) AS non_null FROM t_rb_var_seal WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),count(label)]
+                              filter: null
+                                CoveringIndex on: sym with: label
+                                  filter: sym='k0'
+                            """)
+                    .returns("""
+                            total\tnon_null
+                            60\t60
+                            """);
+            assertQuery("SELECT count() AS total, count(label) AS non_null FROM t_rb_var_seal WHERE sym = 'k257'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlan("""
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(*),count(label)]
+                              filter: null
+                                CoveringIndex on: sym with: label
+                                  filter: sym='k257'
+                            """)
+                    .returns("""
+                            total\tnon_null
+                            10\t10
+                            """);
+        });
+    }
+
+    /**
+     * Real-discard variant of
+     * {@link #testRollbackThenIncrementalSealUsesRebuiltSidecar}: the
+     * index holds rowids beyond the committed transient row count -- the
+     * state a crash between the posting-index publish and the txn commit
+     * leaves behind -- so the reopen-time {@code rollbackConditionally}
+     * eviction cannot no-op and must run the rollback reencode. The reencode
+     * must publish a bumped sealTxn with matching sealed {@code .pc}
+     * sidecars, then the following incremental seal must be able to copy a
+     * clean stride from that rebuilt sidecar.
+     */
+    @Test
+    public void testReopenEvictionThenIncrementalSealRebuildsSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_evict (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            execute("""
+                    INSERT INTO t_rb_evict
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition
+            execute("""
+                    INSERT INTO t_rb_evict
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 0.0
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            TableToken token = engine.verifyTableName("t_rb_evict");
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            // Plant index values beyond the committed transient row count
+            // (3_100 rows are committed), mimicking a crash that happened
+            // after the posting index published new generations but before
+            // the table txn committed.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                try (PostingIndexWriter planted = new PostingIndexWriter(configuration)) {
+                    planted.of(path, "sym", COLUMN_NAME_TXN_NONE, partitionTs, partitionNameTxn);
+                    for (int i = 0; i < 5; i++) {
+                        planted.add(0, 3_100 + i);
+                    }
+                    planted.setMaxValue(3_104);
+                    planted.commit();
+                }
+            }
+
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // Opening the writer ran rollbackConditionally(3_100) on the
+                // last partition: getMaxValue() == 3_104 forces a real
+                // discard, so the rollback reencode published a bumped
+                // sealTxn with rebuilt .pc sidecars at that txn.
+                // Covered reads in the rollback-to-next-seal window must
+                // still serve the committed data.
+                assertQuery("SELECT count(), sum(price) FROM t_rb_evict WHERE sym = 'k0'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                count\tsum
+                                10\t16500.0
+                                """);
+
+                // O3 append touching only key 'k0': one stride dirty, the
+                // other clean, so the seal goes incremental and reads the
+                // clean stride from the rollback-rebuilt sealed sidecar.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putDouble(2, i);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            assertQuery("SELECT count(), sum(price) FROM t_rb_evict WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            60\t17725.0
+                            """);
+            // 'k1' lives in the stride the post-rollback commit left clean;
+            // its covered values come from the sidecar the rollback reencode
+            // rebuilt.
+            assertQuery("SELECT count(), sum(price) FROM t_rb_evict WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            11\t13510.0
+                            """);
+        });
+    }
+
+    /**
+     * Defense-in-depth check for the snapshot validation in {@code seal()}:
+     * a published sealTxn whose {@code .pc} sidecar is missing on disk is
+     * exactly the state the rollback reencode left behind before this fix
+     * (and what a cover-sources-not-configured rollback still leaves), as
+     * well as what a database upgraded mid-incident carries. The next gen
+     * flush recreates the file in append layout; the following incremental
+     * seal must recognize it as untrusted and rebuild via {@code sealFull}
+     * instead of interpreting raw cover bytes as stride offsets.
+     */
+    @Test
+    public void testIncrementalSealDistrustsRecreatedSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_orphan (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            execute("""
+                    INSERT INTO t_rb_orphan
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition
+            execute("""
+                    INSERT INTO t_rb_orphan
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 0.0
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            // Simulate the pre-fix rollback state: the chain head references
+            // a sealTxn that has no .pc sidecar on disk.
+            java.io.File sidecar = newestSidecarFile(engine.verifyTableName("t_rb_orphan"));
+            Assert.assertTrue("failed to delete " + sidecar, sidecar.delete());
+
+            TableToken token = engine.verifyTableName("t_rb_orphan");
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // O3 append touching only key 'k0': the gen flush lazily
+                // recreates the missing .pc in append layout, one stride is
+                // dirty and the other clean, so the seal goes incremental
+                // and must distrust the recreated file.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putDouble(2, i);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            // 'k0' lives in the dirty stride, which the seal re-encodes
+            // from live data either way; 'k1' lives in the clean stride,
+            // whose covered data only survives when the seal refuses to
+            // copy it out of the append-layout file (the unfixed code
+            // either crashes with a multi-exabyte allocation or silently
+            // writes an empty stride block, returning NULL sums here).
+            assertQuery("SELECT count(), sum(price) FROM t_rb_orphan WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            60\t17725.0
+                            """);
+            assertQuery("SELECT count(), sum(price) FROM t_rb_orphan WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            11\t13510.0
+                            """);
+        });
+    }
+
+    /**
+     * The incremental seal's clean-stride copy used the snapshot length as
+     * the last stride's upper bound. Post-seal gen flushes append raw cover
+     * blocks to the same {@code .pc} file after its sealed region, so every
+     * incremental seal whose last stride stayed clean swept those gen blocks
+     * into the new sealed sidecar, growing it by the raw size of all data
+     * appended since the previous seal -- again on every following seal. The
+     * copy must stop at the stored stride-index sentinel.
+     */
+    @Test
+    public void testIncrementalSealLastCleanStrideStopsAtSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_tail (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides; 'k1' is key 0
+            // (stride 0), 'k0' is key 299 (stride 1, the last stride).
+            execute("""
+                    INSERT INTO t_tail
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+
+            TableToken token = engine.verifyTableName("t_tail");
+            long sealedSizeAfterFirstSeal;
+            long sealedSizeAfterSecondSeal;
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // Two O3-append commits on 'k1' only (descending timestamps
+                // past the committed max keep the last partition in
+                // append=true O3 mode, the shape that seals in place rather
+                // than rewriting the partition). The first commit runs the
+                // initial full seal; the second finds stride 0 dirty and
+                // stride 1 (the last) clean, so it seals incrementally. The
+                // 20_000 raw cover values (160_000 bytes) the second commit
+                // flushes before its seal sit as gen blocks after the first
+                // seal's stride data; copying the clean last stride must not
+                // sweep them into the new sealed file.
+                appendDescendingK1Batch(writer, "2024-01-01T01:00:00.000000Z");
+                writer.commit();
+                sealedSizeAfterFirstSeal = newestSidecarSize(token);
+
+                appendDescendingK1Batch(writer, "2024-01-01T02:00:00.000000Z");
+                writer.commit();
+                sealedSizeAfterSecondSeal = newestSidecarSize(token);
+            }
+
+            // The second sealed sidecar only grows by the ALP-compressed
+            // encoding of 20_000 constant doubles (a few KiB). Sweeping the
+            // raw gen blocks would grow it by at least 160_000 bytes.
+            long growth = sealedSizeAfterSecondSeal - sealedSizeAfterFirstSeal;
+            Assert.assertTrue(
+                    "incremental seal swept post-seal gen blocks into the last clean stride [growth=" + growth + ']',
+                    growth < 80_000);
+
+            // 'k1': 10 base rows (sum 13_510) + 40_000 rows at 1.0 each.
+            assertQuery("SELECT count(), sum(price) FROM t_tail WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            40010\t53510.0
+                            """);
+            // 'k0' lives in the clean last stride: its covered data is
+            // copied verbatim across both seals and must stay intact.
+            assertQuery("SELECT count(), sum(price) FROM t_tail WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            10\t16500.0
+                            """);
+        });
+    }
+
+    /**
+     * The sealed-sidecar validator bounded the sealed region with
+     * {@code sentinel + siSize <= fileLen}, which a corrupt
+     * near-{@code Long.MAX_VALUE} sentinel overflows past, marking the file
+     * trusted. The incremental seal sizes its snapshot copy and the last
+     * clean stride's copy from that sentinel, so one torn write turned into
+     * a negative-size allocation or an out-of-bounds read. The validator
+     * must reject a sentinel that places the sealed end past the file and
+     * route the seal to sealFull.
+     */
+    @Test
+    public void testIncrementalSealRejectsOverflowingSidecarSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ovf (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides; 'k1' is key 0
+            // (stride 0), 'k0' is key 299 (stride 1, the last stride).
+            execute("""
+                    INSERT INTO t_ovf
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), x::double
+                    FROM long_sequence(3_000)
+                    """);
+
+            TableToken token = engine.verifyTableName("t_ovf");
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                appendDescendingK1Batch(writer, "2024-01-01T01:00:00.000000Z");
+                writer.commit();
+            }
+            engine.releaseAllWriters();
+
+            // Overwrite the sealed sidecar's stride-index sentinel with a
+            // near-overflow offset. The value stays monotonic with the
+            // preceding entries, so only the sealed-end bound can reject it.
+            java.io.File sidecar = newestSidecarFile(token);
+            long sentinelSlot = PostingIndexUtils.PC_HEADER_SIZE
+                    + (long) PostingIndexUtils.strideCount(300) * Long.BYTES;
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(sidecar, "rw")) {
+                raf.seek(sentinelSlot);
+                // RandomAccessFile writes big-endian; the file is little-endian
+                raf.writeLong(Long.reverseBytes(Long.MAX_VALUE - 8));
+            }
+
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // O3 append touching only 'k1': stride 0 dirty, stride 1
+                // clean, so the seal goes incremental and must distrust the
+                // corrupt snapshot instead of trusting the overflowed bound.
+                appendDescendingK1Batch(writer, "2024-01-01T02:00:00.000000Z");
+                writer.commit();
+            }
+
+            // 'k1': 10 base rows (sum 13_510) + 40_000 rows at 1.0 each.
+            assertQuery("SELECT count(), sum(price) FROM t_ovf WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            40010\t53510.0
+                            """);
+            // 'k0' lives in the last stride, whose covered data the
+            // distrusted seal must rebuild from column files rather than
+            // copy out of the corrupt sidecar.
+            assertQuery("SELECT count(), sum(price) FROM t_ovf WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tsum
+                            10\t16500.0
+                            """);
+        });
+    }
+
+    /**
      * Field report reproduction: a covering POSTING index on a single
      * actively-growing partition fed by sequential (in-order) WAL/ILP commits.
      * Covered reads return wrong values (or SIGSEGV) once enough rows of a hot
@@ -536,10 +1041,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // covering sidecar. A healthy covering index keeps them consistent;
             // the orphaned-sidecar bug leaves count() right but sum(value) wrong
             // (and over-reads the .pc -- a bare SIGSEGV without assertions).
-            assertSql(
-                    "count\tsum\n" + total + "\t" + (double) total + "\n",
-                    "SELECT count(), sum(value) FROM flt WHERE ParameterID = 'KCAS'"
-            );
+            assertQuery("SELECT count(), sum(value) FROM flt WHERE ParameterID = 'KCAS'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + total + "\t" + (double) total + "\n");
         });
     }
 
@@ -562,14 +1068,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             drainWalQueue();
             // Fresh compile after the capacity change: the covering posting index
             // must still be chosen.
-            assertPlanNoLeakCheck(
-                    "SELECT ts, val FROM x WHERE sym = 'b'",
-                    """
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'b'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 CoveringIndex on: sym with: ts, val
                                   filter: sym='b'
-                            """
-            );
+                            """);
         });
     }
 
@@ -594,7 +1099,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 CoveringIndex on: sym with: ts, val
                                   filter: sym='zzz'
                             """;
-            assertPlanNoLeakCheck("SELECT ts, val FROM x WHERE sym = 'zzz'", coveringPlan);
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .assertsPlan(coveringPlan);
 
             final long dayMicros = 86_400_000_000L;
             for (int day = 0; day < 6; day++) {
@@ -608,9 +1115,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             drainWalQueue();
 
             // The planner must still choose the covering posting index after auto-scale.
-            assertPlanNoLeakCheck("SELECT ts, val FROM x WHERE sym = 'zzz'", coveringPlan);
+            assertQuery("SELECT ts, val FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .assertsPlan(coveringPlan);
             // The covered sidecar read must still return correct data.
-            assertSql("count\tsum\n1\t7.0\n", "SELECT count(), sum(val) FROM x WHERE sym = 'zzz'");
+            assertQuery("SELECT count(), sum(val) FROM x WHERE sym = 'zzz'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n1\t7.0\n");
         });
     }
 
@@ -3700,6 +4213,50 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * {@code rollbackConditionally(0)} routes to {@code truncate()}, whose
+     * path-based branch rewrites the .pk header pages ({@code initKeyMemory})
+     * and queues the superseded .pv for purge. {@code PostingSealPurgeOperator}
+     * unlinks queued files with no durability barrier against .pk writeback,
+     * so truncate() must msync .pk before recording the purge: under the
+     * default NOSYNC commit mode nothing else syncs it, and a power loss after
+     * the unlink journals but before the .pk page writes back would recover a
+     * committed chain head pointing at a deleted .pv -- readers fail hard
+     * (mapValueMem has no missing-file tolerance) until REINDEX.
+     */
+    @Test
+    public void testRollbackConditionallyToZeroSyncsKeyFileBeforePurgeUnlink() throws Exception {
+        final PkSyncCountingFacade pkSync = new PkSyncCountingFacade();
+        ff = pkSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_zero_pk_sync";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                    Assert.assertTrue("facade must have attributed the .pk mapping", pkSync.hasPkMapping());
+
+                    pkSync.arm();
+                    writer.rollbackConditionally(0);
+                    pkSync.disarm();
+
+                    Assert.assertEquals("rollbackConditionally(0) must run truncate()", -1L, writer.getMaxValue());
+                    Assert.assertTrue(
+                            "truncate() must sync .pk before queuing the old .pv for purge; without "
+                                    + "the barrier a power loss after the purge unlink recovers a chain "
+                                    + "head pointing at a deleted .pv",
+                            pkSync.armedPkSyncCount() > 0
+                    );
+                }
+            }
+        });
+    }
+
     @Test
     public void testRollbackDiscardsFutureDeferredPostingSealPurge() throws Exception {
         assertMemoryLeak(() -> {
@@ -3755,6 +4312,118 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 runPostingSealPurgeJob(purgeJob);
             }
             assertPostingSealFilesExist(oldFiles, true);
+        });
+    }
+
+    /**
+     * A real-discard rollback (indexed rowids above the rollback point) runs
+     * {@code reencodeMonolithic}: it syncs the new .pv, publishes the new
+     * sealTxn's chain entry into .pk and returns, and
+     * {@code rollbackToMaxValue} immediately queues the superseded .pv/.pc
+     * for purge. {@code PostingSealPurgeOperator} unlinks queued files with
+     * no durability barrier against .pk writeback, so the publish must be
+     * msynced before the purge is recorded -- mirroring seal()'s
+     * unconditional .pk sync. Under the default NOSYNC commit mode nothing
+     * else syncs .pk, and a power loss after the unlink journals but before
+     * the .pk page writes back would recover a committed chain head pointing
+     * at a deleted .pv.
+     */
+    @Test
+    public void testRollbackRealDiscardSyncsKeyFileBeforePurgeUnlink() throws Exception {
+        final PkSyncCountingFacade pkSync = new PkSyncCountingFacade();
+        ff = pkSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_discard_pk_sync";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 100; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    Assert.assertTrue("facade must have attributed the .pk mapping", pkSync.hasPkMapping());
+
+                    pkSync.arm();
+                    writer.rollbackValues(49);
+                    pkSync.disarm();
+
+                    Assert.assertEquals("rollback must take the real-discard reencode path", 49L, writer.getMaxValue());
+                    Assert.assertTrue(
+                            "the rollback reencode must sync .pk after publishing the new chain entry "
+                                    + "and before rollbackToMaxValue queues the old .pv/.pc for purge; "
+                                    + "without the barrier a power loss after the purge unlink recovers "
+                                    + "a chain head pointing at deleted files",
+                            pkSync.armedPkSyncCount() > 0
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackRealDiscardSidecarSyncFailureUnlinksStagedSealFiles() throws Exception {
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_discard_sidecar_sync_fail";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(
+                            coverNames,
+                            coverNameTxns,
+                            coverTops,
+                            coverShifts,
+                            coverIndices,
+                            coverTypes,
+                            -1
+                    );
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 100; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+
+                    pcSync.arm();
+                    try {
+                        writer.rollbackValues(49);
+                        Assert.fail("expected staged .pc sync failure");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "[test] staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one staged .pc sync", 1, pcSync.failureCount());
+
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged rollback .pv must be unlinked [path=" + pv + ']',
+                            configuration.getFilesFacade().exists(pv));
+
+                    LPSZ pc = PostingIndexUtils.coverDataFileName(
+                            path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged rollback .pc must be unlinked [path=" + pc + ']',
+                            configuration.getFilesFacade().exists(pc));
+                }
+            }
         });
     }
 
@@ -7792,6 +8461,61 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         return false;
     }
 
+    /**
+     * Appends 20_000 'k1' rows at price 1.0 with strictly descending
+     * timestamps starting just above {@code baseTimestamp}. Descending rows
+     * past the committed max keep the last partition in append=true O3
+     * mode, which seals the posting index in place on commit.
+     */
+    private static void appendDescendingK1Batch(TableWriter writer, String baseTimestamp) throws NumericException {
+        long base = MicrosFormatUtils.parseTimestamp(baseTimestamp);
+        for (int i = 0; i < 20_000; i++) {
+            TableWriter.Row r = writer.newRow(base + (19_999 - i));
+            r.putSym(1, "k1");
+            r.putDouble(2, 1.0);
+            r.append();
+        }
+    }
+
+    /**
+     * The newest (highest sealTxn) {@code sym.pc0.0.N} covering sidecar in
+     * the table's first partition. Superseded sidecars linger until the
+     * async seal purge runs, so the highest txn picks the live one.
+     */
+    private static java.io.File newestSidecarFile(TableToken token) {
+        long partitionTs;
+        long partitionNameTxn;
+        try (TableReader reader = engine.getReader(token)) {
+            partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+            partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+        }
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+            java.io.File dir = new java.io.File(path.toString());
+            String[] names = dir.list();
+            Assert.assertNotNull("partition dir must exist: " + dir, names);
+            String prefix = "sym.pc0.0.";
+            long bestTxn = -1;
+            java.io.File best = null;
+            for (String n : names) {
+                if (n.startsWith(prefix)) {
+                    long txn = Long.parseLong(n.substring(prefix.length()));
+                    if (txn > bestTxn) {
+                        bestTxn = txn;
+                        best = new java.io.File(dir, n);
+                    }
+                }
+            }
+            Assert.assertNotNull("no " + prefix + "* sidecar found in " + dir, best);
+            return best;
+        }
+    }
+
+    private static long newestSidecarSize(TableToken token) {
+        return newestSidecarFile(token).length();
+    }
+
     private static String timestampAtMinute(int minuteOfDay) {
         StringBuilder timestamp = new StringBuilder("2022-02-25T");
         if (minuteOfDay < 0) {
@@ -8138,6 +8862,165 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         int getFailureCount() {
             return failureCount;
+        }
+    }
+
+    private static class PcSyncFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pcFds = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pcMappings = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            pcFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && pcFds.containsKey(fd)) {
+                pcMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pcMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armed.set(false);
+                        failures.incrementAndGet();
+                        throw CairoException.critical(0).put("[test] staged .pc sync failed");
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pcMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pcMappings.remove(addr) != null && newAddr != -1) {
+                pcMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pc0")) {
+                pcFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        int failureCount() {
+            return failures.get();
+        }
+    }
+
+    /**
+     * Counts msync calls that target the posting index .pk mapping while
+     * armed. The openRW/mmap/mremap/munmap overrides map the .pk file's fd
+     * to its live mapping address range so msync(addr, ...) can be
+     * attributed back to the file. The rollback durability tests use it to
+     * assert that the rollback publish paths sync .pk before queuing the
+     * superseded files for purge.
+     */
+    private static class PkSyncCountingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger armedPkSyncs = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pkFds = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pkMappings = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            pkFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && pkFds.containsKey(fd)) {
+                pkMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pkMappings.remove(addr) != null && newAddr != -1) {
+                pkMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pkMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armedPkSyncs.incrementAndGet();
+                        break;
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pkMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pk")) {
+                pkFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            armedPkSyncs.set(0);
+            armed.set(true);
+        }
+
+        int armedPkSyncCount() {
+            return armedPkSyncs.get();
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        boolean hasPkMapping() {
+            return !pkMappings.isEmpty();
         }
     }
 

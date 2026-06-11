@@ -139,7 +139,7 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || destValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putChar(valueIndex + 1, srcVal);
         }

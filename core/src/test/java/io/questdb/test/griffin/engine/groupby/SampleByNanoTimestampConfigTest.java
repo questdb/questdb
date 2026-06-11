@@ -29,8 +29,8 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -109,7 +109,19 @@ public class SampleByNanoTimestampConfigTest extends AbstractBootstrapTest {
                 engine.execute(dml, sqlExecutionContext);
                 drainWalQueue(engine);
 
-                TestUtils.assertSql(engine, sqlExecutionContext, query, Misc.getThreadLocalSink(), expected);
+                // CALENDAR alignment produces a fixed, indexable grid (random
+                // access + known size); FIRST OBSERVATION streams (neither). The
+                // effective alignment is the query's explicit ALIGN clause if
+                // present, otherwise the configured default.
+                final boolean calendarAligned = Chars.contains(query, "ALIGN TO CALENDAR")
+                        || (!Chars.contains(query, "ALIGN TO FIRST OBSERVATION") && expectedConfig);
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .supportsRandomAccess(calendarAligned)
+                        .expectSize(calendarAligned)
+                        .returns(expected);
             }
         }
     }

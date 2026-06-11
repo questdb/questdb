@@ -117,9 +117,9 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // in query plans and SHOW FUNCTIONS output.
         assertMemoryLeak(() -> {
             execute("create table tbl1 (x double, y double)");
-            assertPlanNoLeakCheck(
-                    "select regr_r2(y, x) from tbl1",
-                    """
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: false
                               values: [regr_r2(y,x)]
@@ -127,8 +127,7 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tbl1
-                            """
-            );
+                            """);
         });
     }
 
