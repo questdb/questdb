@@ -27,8 +27,10 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -774,6 +776,56 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             r9994\t9994\ts1
                             """);
         });
+    }
+
+    @Test
+    public void testOrderByLimitParquetFilterWideProjectionMultiWorker() throws Exception {
+        // Same wide-projection encoded top-K over Parquet as
+        // testOrderByLimitParquetFilterWideProjection, but driven through a real
+        // 4-worker pool over many Parquet partitions (one page frame each). The async
+        // filter reduces frames across worker threads, so the encoded sort's
+        // setParentUsedColumns publication of AsyncFilterAtom.lateMatSkipColumnIndexes
+        // is read cross-thread instead of inline. The selective sym filter (10%) keeps
+        // late materialization engaged on every frame. Only the encoded path declares
+        // the used columns; the legacy path runs the same query for a correctness check.
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            """
+                                    CREATE TABLE pq AS (
+                                        SELECT
+                                            x v,
+                                            ('r' || x)::varchar note,
+                                            ARRAY[x::double, (x * 2)::double] arr,
+                                            ('s' || (x % 10))::symbol sym,
+                                            timestamp_sequence(0, 172_800_000) ts
+                                        FROM long_sequence(6000)
+                                    ) TIMESTAMP(ts) PARTITION BY DAY""",
+                            sqlExecutionContext
+                    );
+                    engine.execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')", sqlExecutionContext);
+                    engine.execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", sqlExecutionContext);
+
+                    assertQuery("SELECT note, v, arr, sym FROM pq WHERE sym = 's7' AND length(note) > 1 ORDER BY v DESC LIMIT 0,5")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(limitedSortPlanType(), "Async")
+                            .returns("""
+                                    note\tv\tarr\tsym
+                                    r5997\t5997\t[5997.0,11994.0]\ts7
+                                    r5987\t5987\t[5987.0,11974.0]\ts7
+                                    r5977\t5977\t[5977.0,11954.0]\ts7
+                                    r5967\t5967\t[5967.0,11934.0]\ts7
+                                    r5957\t5957\t[5957.0,11914.0]\ts7
+                                    """);
+                },
+                configuration,
+                LOG
+        );
     }
 
     @Test
