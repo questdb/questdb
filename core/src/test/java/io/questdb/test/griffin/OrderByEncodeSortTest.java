@@ -791,7 +791,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
         final WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             """
                                     CREATE TABLE pq AS (
