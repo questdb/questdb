@@ -6859,6 +6859,48 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinMasterFilterProjectsSlaveColumn() throws Exception {
+        // Regression: the transitive slave-const prune that is result-neutral for RIGHT/FULL OUTER
+        // set joins is NOT neutral for SPLICE. SPLICE is a temporal prevailing join, so removing
+        // slave rows of other keys (pushing s.k = 'A' into the slave) shifts which slave row
+        // prevails at a master timestamp. The master-side literal predicate stays a post-join filter,
+        // but the const must NOT be pushed into the slave; addTransitiveFilters skips SPLICE. The
+        // bug only surfaces when a SLAVE column is projected: testSpliceJoinMasterFilterStaysPostJoin
+        // projects master columns only, hiding the diverging slave value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, mv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('A',1,1),('B',2,2),('A',3,5)");
+            execute("CREATE TABLE s (k SYMBOL, sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The B-key slave rows (99@1, 88@4) prevail at master timestamps for key A; pruning them
+            // would change the prevailing slave value, so the literal and bind forms would diverge.
+            execute("INSERT INTO s VALUES ('A',10,0),('B',99,1),('A',20,3),('B',88,4),('A',30,6)");
+
+            final String expected = """
+                    k\tmv\tsv
+                    A\t1\tnull
+                    A\t1\t20
+                    A\t3\t20
+                    A\t3\t30
+                    """;
+
+            // Literal form: the predicate stays a post-join Filter over a full slave scan (no
+            // filter: k='A' pushed into the slave sub-query).
+            bindVariableService.clear();
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE m.k = 'A' ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: m.k='A'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result.
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "A");
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE m.k = :v::SYMBOL ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testSpliceJoinMasterFilterStaysPostJoin() throws Exception {
         // Regression for a query-fuzzer bind-variable divergence. A WHERE predicate that
         // references only the master (left) table of a SPLICE join used to be pushed into

@@ -1532,6 +1532,15 @@ public class SqlOptimiser implements Mutable {
             if (joinFilterBarriers.contains(joinModel.getJoinType())) {
                 continue;
             }
+            // SPLICE is a temporal prevailing join: pushing a key-equality const into its slave drops
+            // slave rows of other keys, shifting which slave row prevails at a master timestamp. Unlike
+            // the RIGHT/FULL OUTER set joins, that prune is not result-neutral, so skip it. Guarding
+            // here (rather than at the const registration in analyseEquals) also covers join chains
+            // where the const is registered against a non-SPLICE nulling join but a separate SPLICE
+            // join in the same level shares the key.
+            if (joinModel.getJoinType() == IQueryModel.JOIN_SPLICE) {
+                continue;
+            }
             JoinContext jc = joinModel.getJoinContext();
             if (jc != null) {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
@@ -1682,10 +1691,11 @@ public class SqlOptimiser implements Mutable {
                         // master-nulled table: keep the predicate post-join so NULL-master rows are
                         // removed, but still register a non-null literal constant so
                         // addTransitiveFilters can prune the slave through the join key. That prune is
-                        // result-neutral for RIGHT/FULL/keyed SPLICE (the post-join filter already
-                        // drops the NULL-master rows) and matches the regex path. A bind variable is
-                        // excluded: it can be NULL at runtime, and `null = null` is TRUE, so pushing
-                        // it would change which rows survive.
+                        // result-neutral for the RIGHT/FULL OUTER set joins (the post-join filter
+                        // already drops the NULL-master rows) and matches the regex path;
+                        // addTransitiveFilters skips SPLICE, where the prune is not neutral. A bind
+                        // variable is excluded: it can be NULL at runtime, and `null = null` is TRUE,
+                        // so pushing it would change which rows survive.
                         parent.addParsedWhereNode(node, innerPredicate);
                         if (node.lhs.type == CONSTANT) {
                             constNameToIndex.put(cs, bColIndex);
@@ -1782,8 +1792,9 @@ public class SqlOptimiser implements Mutable {
                         constNameToToken.put(cs, node.token);
                     } else {
                         // master-nulled table: keep post-join, but still register a non-null literal
-                        // constant for the result-neutral transitive slave prune (see the case 0
-                        // branch); a bind variable is excluded for the same reason.
+                        // constant for the transitive slave prune (result-neutral for RIGHT/FULL
+                        // OUTER, skipped for SPLICE in addTransitiveFilters; see the case 0 branch);
+                        // a bind variable is excluded for the same reason.
                         parent.addParsedWhereNode(node, innerPredicate);
                         if (node.rhs.type == CONSTANT) {
                             constNameToIndex.put(cs, lhi);
