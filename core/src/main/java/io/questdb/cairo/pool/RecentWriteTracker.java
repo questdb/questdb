@@ -31,6 +31,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import org.jetbrains.annotations.NotNull;
@@ -124,9 +125,31 @@ public class RecentWriteTracker {
     }
 
     public WriteStats getOrCreateStats(@NotNull TableToken tableToken) {
+        return getOrCreateStats(
+                tableToken,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL
+        );
+    }
+
+    private WriteStats getOrCreateStats(
+            @NotNull TableToken tableToken,
+            long timestamp,
+            long rowCount,
+            long writerTxn,
+            long sequencerTxn,
+            long walTimestamp,
+            long tableMinTimestamp,
+            long tableMaxTimestamp
+    ) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats == null) {
-            WriteStats newStats = new WriteStats(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             stats = existing != null ? existing : newStats;
         }
@@ -278,7 +301,9 @@ public class RecentWriteTracker {
      */
     public void recordMergeStats(@NotNull TableToken tableToken, double amplification, long throughput, long tableMinTimestamp, long tableMaxTimestamp) {
         try {
-            getOrCreateStats(tableToken).recordMergeStats(amplification, throughput, tableMinTimestamp, tableMaxTimestamp);
+            WriteStats stats = getOrCreateStats(tableToken);
+            stats.touch();
+            stats.recordMergeStats(amplification, throughput, tableMinTimestamp, tableMaxTimestamp);
         } catch (Throwable th) {
             LOG.error().$("could not record merge stats [table=").$(tableToken).$(", error=").$(th).I$();
         }
@@ -298,6 +323,7 @@ public class RecentWriteTracker {
     public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long dedupRowsRemoved) {
         try {
             WriteStats stats = getOrCreateStats(tableToken);
+            stats.touch();
             // Only subtract if seqTxn is above the floor (rows added after tracking started)
             if (seqTxn > stats.getFloorSeqTxn()) {
                 stats.walRowCount.add(-walRowCount);
@@ -329,7 +355,8 @@ public class RecentWriteTracker {
     @SuppressWarnings("unused")
     public void recordReplicaDownload(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long batchRowCount, boolean morePending) {
         try {
-            getOrCreateStats(tableToken).updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount, morePending);
+            getOrCreateStats(tableToken, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, sequencerTxn, walTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL)
+                    .updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount, morePending);
 
             // Lazy eviction
             if (writeStats.size() > maxCapacity * 2) {
@@ -347,8 +374,7 @@ public class RecentWriteTracker {
      * writers can update the same table concurrently; the highest values win for
      * sequencerTxn and walTimestamp, while txnRowCount is accumulated.
      * <p>
-     * If no entry exists, creates a "blank" entry with LONG_NULL for writer fields.
-     * This blank entry will be overwritten by the real writer when it updates.
+     * If no entry exists, inserts a new entry with the WAL fields already populated.
      *
      * @param tableToken   the table that was written to
      * @param sequencerTxn the sequencer transaction number
@@ -357,7 +383,8 @@ public class RecentWriteTracker {
      */
     public void recordWalWrite(@NotNull TableToken tableToken, long sequencerTxn, long walTimestamp, long txnRowCount) {
         try {
-            getOrCreateStats(tableToken).updateWal(sequencerTxn, walTimestamp, txnRowCount);
+            getOrCreateStats(tableToken, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, sequencerTxn, walTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL)
+                    .updateWal(sequencerTxn, walTimestamp, txnRowCount);
 
             // Lazy eviction
             if (writeStats.size() > maxCapacity * 2) {
@@ -383,7 +410,8 @@ public class RecentWriteTracker {
      */
     public void recordWrite(@NotNull TableToken tableToken, long writeTimestamp, long rowCount, long writerTxn) {
         try {
-            getOrCreateStats(tableToken).updateWriter(writeTimestamp, rowCount, writerTxn);
+            getOrCreateStats(tableToken, writeTimestamp, rowCount, writerTxn, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL)
+                    .updateWriter(writeTimestamp, rowCount, writerTxn);
 
             // Lazy eviction: only clean up when we exceed 2x capacity
             // This amortizes the cleanup cost and reduces contention
@@ -470,7 +498,9 @@ public class RecentWriteTracker {
      * @param floorSeqTxn the floor seqTxn value
      */
     public void setFloorSeqTxn(@NotNull TableToken tableToken, long floorSeqTxn) {
-        getOrCreateStats(tableToken).setFloorSeqTxn(floorSeqTxn);
+        WriteStats stats = getOrCreateStats(tableToken);
+        stats.touch();
+        stats.setFloorSeqTxn(floorSeqTxn);
     }
 
     /**
@@ -611,6 +641,7 @@ public class RecentWriteTracker {
         // Protected by mergeStatsLock
         private long tableMaxTimestamp;
         private long tableMinTimestamp;
+        private volatile long fallbackTimestamp;
         // Writer fields - updated by TableWriter only
         private volatile long rowCount;
         private volatile long timestamp;
@@ -624,6 +655,7 @@ public class RecentWriteTracker {
             this.walTimestamp = new AtomicLong(walTimestamp);
             this.tableMinTimestamp = tableMinTimestamp;
             this.tableMaxTimestamp = tableMaxTimestamp;
+            this.fallbackTimestamp = MicrosecondClockImpl.INSTANCE.getTicks();
             this.batchSizeHistogram.setAutoResize(true);
             this.mergeThroughputHistogram.setAutoResize(true);
             this.txnSizeHistogram.setAutoResize(true);
@@ -782,14 +814,16 @@ public class RecentWriteTracker {
         /**
          * Returns the maximum of writer timestamp and WAL timestamp.
          * Used for eviction and sorting - considers both writer and WAL activity.
-         * Treats {@link Numbers#LONG_NULL} as Long.MIN_VALUE for comparison.
+         * Falls back to the entry creation time when both timestamps are {@link Numbers#LONG_NULL}.
          *
          * @return max timestamp in microseconds
          */
         public long getMaxTimestamp() {
             long ts = timestamp;
             long walTs = walTimestamp.get();
-            // Treat LONG_NULL as very old (it's Long.MIN_VALUE)
+            if (ts == Numbers.LONG_NULL && walTs == Numbers.LONG_NULL) {
+                return fallbackTimestamp;
+            }
             return Math.max(ts, walTs);
         }
 
@@ -1165,6 +1199,10 @@ public class RecentWriteTracker {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
+        }
+
+        private void touch() {
+            fallbackTimestamp = MicrosecondClockImpl.INSTANCE.getTicks();
         }
 
         /**

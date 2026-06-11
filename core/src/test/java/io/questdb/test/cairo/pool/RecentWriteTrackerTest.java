@@ -31,6 +31,7 @@ import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -352,6 +353,27 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
+    public void testEvictionWaitsForUninitializedEntryToPopulate() throws Exception {
+        RecentWriteTracker tracker = new RecentWriteTracker(2);
+
+        for (int i = 0; i < 4; i++) {
+            tracker.recordWrite(createTableToken("old" + i, i), i + 1L, 10L, 1L);
+        }
+
+        TableToken fresh = createTableToken("fresh", 100);
+        RecentWriteTracker.WriteStats stats = tracker.getOrCreateStats(fresh);
+
+        tracker.recordWrite(createTableToken("trigger", 101), 1_000L, 42L, 1L);
+
+        Method updateWriter = RecentWriteTracker.WriteStats.class.getDeclaredMethod("updateWriter", long.class, long.class, long.class);
+        updateWriter.setAccessible(true);
+        updateWriter.invoke(stats, 1_000L, 42L, 1L);
+
+        Assert.assertNotNull("fresh entry should not be evicted while it is still being populated", tracker.getWriteStats(fresh));
+        Assert.assertEquals(1_000L, tracker.getWriteTimestamp(fresh));
+    }
+
+    @Test
     public void testGetMaxTimestamp() {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
@@ -382,6 +404,23 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals(Numbers.LONG_NULL, stats.getTimestamp());
         Assert.assertEquals(5000L, stats.getLastWalTimestamp());
         Assert.assertEquals(5000L, stats.getMaxTimestamp());
+    }
+
+    @Test
+    public void testRecordWalProcessedCreatesEntryThatSurvivesEviction() {
+        RecentWriteTracker tracker = new RecentWriteTracker(2);
+
+        for (int i = 0; i < 4; i++) {
+            tracker.recordWrite(createTableToken("old" + i, i), i + 1L, 10L, 1L);
+        }
+
+        TableToken fresh = createTableToken("fresh", 100);
+        tracker.recordWalProcessed(fresh, 10L, 5L, 1L);
+        tracker.recordWrite(createTableToken("trigger", 101), 1_000L, 42L, 1L);
+
+        RecentWriteTracker.WriteStats stats = tracker.getWriteStats(fresh);
+        Assert.assertNotNull("WAL processed entry should survive the eviction that follows insertion", stats);
+        Assert.assertEquals(1L, stats.getDedupRowCount());
     }
 
     @Test
