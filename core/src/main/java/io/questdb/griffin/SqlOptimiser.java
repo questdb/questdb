@@ -1776,13 +1776,9 @@ public class SqlOptimiser implements Mutable {
                                 && (masterNullingJoinIndex(lhi) >= 0
                                 || masterNullingJoinIndex(rhi) >= 0
                                 || hasNonEquiNullingJoin)) {
-                            // A two-table WHERE equality (t0.a = t1.b) otherwise folds into an inner-join
-                            // key, applied before a downstream master-nulling join (SPLICE/FULL/RIGHT OUTER
-                            // or its homogenized CROSS variant) NULL-extends t0/t1. The NULL-master rows
-                            // that join synthesizes then bypass the folded equality and leak. Defer to
-                            // assignFilters, whose multi-table branch anchors the predicate post-join in
-                            // execution order. An inner-join ON conjunct (joinIndex >= 0) gates its own
-                            // join, which runs first, so it still folds.
+                            // A two-table WHERE equality folds into an inner-join key, applied before a
+                            // downstream master-nulling join NULL-extends t0/t1; the NULL-master rows then
+                            // bypass it and leak. Defer to assignFilters, which anchors it post-join.
                             parent.addParsedWhereNode(node, innerPredicate);
                         } else {
                             addJoinContext(parent, jc);
