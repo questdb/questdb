@@ -307,6 +307,9 @@ mod tests {
         // Boundary: exactly the target width is valid and must not error.
         assert!(Decoder::<u32>::try_new(&data, 32, 8).is_ok());
         assert!(Decoder::<u64>::try_new(&data, 64, 8).is_ok());
+        // A width in (32, 64] is rejected for u32 (above) but valid for u64: the
+        // bound is per target type, not a fixed 32.
+        assert!(Decoder::<u64>::try_new(&data, 40, 8).is_ok());
     }
 
     #[test]

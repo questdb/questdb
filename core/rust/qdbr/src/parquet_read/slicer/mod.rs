@@ -328,14 +328,22 @@ impl<'a> DeltaLengthArraySlicer<'a> {
                 pos: 0,
             });
         }
-        let decoder = delta_bitpacked::Decoder::try_new(data)?;
-        let lengths = collect_checked_lengths(decoder, row_count, "length")?;
+        let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
+        let lengths = collect_checked_lengths(decoder.by_ref(), row_count, "length")?;
 
-        // Skip the entire length stream, not just the delta blocks the truncated
-        // take(row_count) in collect_checked_lengths entered. See
-        // delta_stream_byte_len: consumed_bytes() here would under-count on a
-        // partial range read and start the data slice inside the length stream.
-        let data_offset = delta_stream_byte_len(data)?;
+        // Locate the value bytes that follow the entire length stream. On a full
+        // read the decoder consumed every block, so its own byte count is exact
+        // and O(1) -- the same decoder that produced the lengths also reports
+        // where they end, with no separate structural walk. Only a partial range
+        // read needs delta_stream_byte_len: take(row_count) stopped before the
+        // later blocks, so consumed_bytes() would under-count the un-entered
+        // blocks and start the data slice inside the length stream. A 0 lower
+        // size_hint means the take exhausted the decoder (a full read).
+        let data_offset = if decoder.size_hint().0 == 0 {
+            decoder.consumed_bytes()
+        } else {
+            delta_stream_byte_len(data)?
+        };
         Ok(Self {
             data: &data[data_offset..],
             sliced_row_count,
@@ -448,25 +456,31 @@ impl<'a> DeltaBytesArraySlicer<'a> {
         let values = data;
 
         // A DELTA_BYTE_ARRAY page lays out [prefix lengths][suffix lengths][bytes].
-        // Locate both stream boundaries by walking the full block structure
-        // (delta_stream_byte_len) so a partial range read still finds the value
-        // bytes; reading consumed_bytes() after the truncated take(row_count)
-        // below under-counts the blocks it never entered, and using it to start
-        // the suffix stream would compound the error. The walk also fixes the
-        // suffix stream's start offset, not just the final data offset.
-        let prefix_len = delta_stream_byte_len(values)?;
-        let suffix_buf = &values[prefix_len..];
-        let data_offset = prefix_len + delta_stream_byte_len(suffix_buf)?;
+        // Decode each length stream and locate where it ends from the same
+        // decoder: collect_checked_lengths materializes only the first row_count
+        // values (bounding the allocation -- the suffix previously collected its
+        // whole attacker-controlled total_count), then the stream's byte length
+        // comes from consumed_bytes() when the decoder was exhausted (a full read,
+        // O(1)) or from the structural walk when take(row_count) stopped early (a
+        // partial range read, where consumed_bytes() would under-count the
+        // un-entered blocks and shift both the suffix start and the value bytes).
+        let mut prefix_decoder = delta_bitpacked::Decoder::try_new(values)?;
+        let prefix = collect_checked_lengths(prefix_decoder.by_ref(), row_count, "prefix")?;
+        let prefix_len = if prefix_decoder.size_hint().0 == 0 {
+            prefix_decoder.consumed_bytes()
+        } else {
+            delta_stream_byte_len(values)?
+        };
 
-        // Materialize only the first row_count prefix/suffix lengths for the
-        // reads; collect_checked_lengths bounds the allocation by row_count. The
-        // suffix collect is bounded by row_count as well -- previously it
-        // collected every value the delta stream declared (its own
-        // attacker-controlled total_count), independent of the page's row count.
-        let prefix_decoder = delta_bitpacked::Decoder::try_new(values)?;
-        let prefix = collect_checked_lengths(prefix_decoder, row_count, "prefix")?;
-        let suffix_decoder = delta_bitpacked::Decoder::try_new(suffix_buf)?;
-        let suffix = collect_checked_lengths(suffix_decoder, row_count, "suffix")?;
+        let suffix_buf = &values[prefix_len..];
+        let mut suffix_decoder = delta_bitpacked::Decoder::try_new(suffix_buf)?;
+        let suffix = collect_checked_lengths(suffix_decoder.by_ref(), row_count, "suffix")?;
+        let suffix_len = if suffix_decoder.size_hint().0 == 0 {
+            suffix_decoder.consumed_bytes()
+        } else {
+            delta_stream_byte_len(suffix_buf)?
+        };
+        let data_offset = prefix_len + suffix_len;
 
         Ok(Self {
             prefix: prefix.into_iter(),

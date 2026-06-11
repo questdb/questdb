@@ -4745,7 +4745,7 @@ mod tests {
 
     // Regenerates the committed end-to-end fixture
     // core/src/test/resources/sqllogictest/data/parquet-testing/broken/rle_dict_index_bitwidth_over_32.parquet
-    // read by the Java `ParquetTest` sqllogictest. Ignored by default; run with
+    // read by the Java `ReadParquetFunctionTest`. Ignored by default; run with
     // `cargo test -p qdbr -- --ignored generate_rle_dict_index_bitwidth_fixture`
     // after the on-disk page layout changes. It writes a valid dictionary-encoded
     // parquet, locates the RLE_DICTIONARY index bit-width byte (the first byte of

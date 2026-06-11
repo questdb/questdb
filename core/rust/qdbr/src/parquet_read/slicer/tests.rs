@@ -430,6 +430,47 @@ fn test_delta_length_array_slicer_partial_range_varying_len() {
 }
 
 #[test]
+fn test_delta_length_array_slicer_full_range_multi_block() {
+    // Full read of a multi-block length stream: row_count == the page's value
+    // count, so the take exhausts the decoder and the data offset comes from
+    // consumed_bytes() (the O(1) path) rather than the structural walk. 300
+    // varying-length values span three blocks with non-zero miniblock bit widths,
+    // so a wrong full-stream byte count would start the data slice inside the
+    // length stream and shift every value -- pins the consumed_bytes() branch for
+    // a multi-block page.
+    let strings: Vec<String> = (0..300).map(|i| "ab".repeat(1 + (i % 9))).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 300, 300).unwrap();
+    for expected in &strings {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_full_range_multi_block() {
+    // DELTA_BYTE_ARRAY counterpart: a full read of a multi-block prefix+suffix
+    // stream takes the consumed_bytes() branch for both stream boundaries. 300
+    // shared-prefix values span multiple blocks; a wrong byte count for either
+    // stream would mislocate the suffix start or the value bytes.
+    let strings: Vec<String> = (0..300).map(|i| format!("item-{i:04}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 300, 300).unwrap();
+    for expected in &strings {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
 fn test_delta_bytes_array_slicer_next_into() {
     let strings: Vec<&[u8]> = vec![b"Hello", b"Helicopter", b"Help"];
     let mut encoded = Vec::new();

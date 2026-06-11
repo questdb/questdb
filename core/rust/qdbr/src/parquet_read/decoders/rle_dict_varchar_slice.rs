@@ -2111,5 +2111,10 @@ mod tests {
             format!("{err}").contains("exceeds"),
             "expected a clean bit-width error, got: {err}"
         );
+        // The rejected decode must free everything it allocated on the way to the
+        // error: no leak across JNI on the abort-class path it replaces.
+        drop(decoder);
+        drop(buffers);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
     }
 }
