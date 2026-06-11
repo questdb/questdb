@@ -2006,6 +2006,52 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOverParquetVarLenColumns() throws Exception {
+        // Partial row-group decode (LIMIT pushdown, interval scans) used to
+        // compute the var data offset from a partially consumed
+        // DELTA_LENGTH_BYTE_ARRAY lengths block and serve garbage strings. The
+        // row group must span multiple delta blocks (128 lengths each), hence
+        // 1000 rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::string, x::varchar, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(1_000)");
+            // trailing active partition so 2024-01-01 can convert
+            execute("INSERT INTO x VALUES ('next', 'next', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+
+            // LIMIT decodes a 2-row window of the 1000-row group
+            assertQuery("SELECT s, v FROM x LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            1\t1
+                            2\t2
+                            """);
+            // skip lands mid-group, take ends mid-group
+            assertQuery("SELECT s, v FROM x LIMIT 500, 503")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            501\t501
+                            502\t502
+                            503\t503
+                            """);
+            // interval scan ending mid-group decodes a partial window without
+            // any LIMIT involved (rows 481..483 of the row group)
+            assertQuery("SELECT s, v FROM x WHERE ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T08:02:00'")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tv
+                            481\t481
+                            482\t482
+                            483\t483
+                            """);
+        });
+    }
+
+    @Test
     public void testLimitRightFrameFormat() throws Exception {
         assertMemoryLeak(() -> {
             execute(

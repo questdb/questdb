@@ -347,6 +347,91 @@ fn test_delta_length_array_slicer_skip() {
 }
 
 #[test]
+fn test_delta_length_array_slicer_partial_row_count_skip() {
+    // Partial decode (row_count < the page's total value count, e.g. a LIMIT
+    // query) driven through skip() + next() the way decode_page0 consumes a
+    // page with row_lo > 0. The page spans multiple delta blocks (128 values
+    // each) with varying lengths so the data offset depends on draining the
+    // full lengths block; see test_delta_length_array_slicer_partial_window
+    // for the plain next() variant.
+    let strings: Vec<String> = (0..300).map(|i| "y".repeat(i % 5 + 1)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 10, 10).unwrap();
+    slicer.skip(7).unwrap();
+    assert_eq!(slicer.next().unwrap(), strings[7].as_bytes());
+    assert_eq!(slicer.next().unwrap(), strings[8].as_bytes());
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_truncated_tail_block_errors() {
+    // The partial-decode drain walks the lengths block past the decoded prefix
+    // to locate the value bytes; a block truncated in that region must surface
+    // a clean error from the drain rather than a bogus data offset.
+    let strings: Vec<String> = (0..300).map(|i| "z".repeat(i % 7 + 1)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    // Locate the end of the lengths block by draining a throwaway decoder,
+    // then cut inside the block's tail, beyond the take(5) prefix.
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let lengths_end = decoder.consumed_bytes();
+    encoded.truncate(lengths_end - 10);
+
+    assert!(DeltaLengthArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_truncated_tail_block_errors() {
+    // DELTA_BYTE_ARRAY variant: a truncation inside the suffix-lengths block,
+    // beyond the decoded prefix, must error out of the suffix drain.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let prefix_end = decoder.consumed_bytes();
+    let mut decoder =
+        parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded[prefix_end..]).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let suffix_end = prefix_end + decoder.consumed_bytes();
+    encoded.truncate(suffix_end - 10);
+
+    assert!(DeltaBytesArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_row_count() {
+    // Partial-decode variant for DELTA_BYTE_ARRAY: the suffix-lengths block
+    // starts after the FULL prefix-lengths block, and the suffix bytes after
+    // the FULL suffix-lengths block. Pre-fix, a partial prefix decode made
+    // try_new parse the suffix block from inside the prefix block.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 5, 5).unwrap();
+    for expected in strings.iter().take(5) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
 fn test_delta_bytes_array_slicer_next_into() {
     let strings: Vec<&[u8]> = vec![b"Hello", b"Helicopter", b"Help"];
     let mut encoded = Vec::new();
