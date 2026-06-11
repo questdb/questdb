@@ -240,6 +240,28 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectedOnUnpartitionedTable() throws Exception {
+        // EXPIRE on an un-partitioned CREATE TABLE must give the SPECIFIC message; the rejection used to live
+        // inside the PARTITION BY block, so this case fell through to a generic "unexpected token".
+        assertMemoryLeak(() -> assertCreateFails(
+                "create table t (a int, ts timestamp) timestamp(ts) expire rows when a < 2",
+                "EXPIRE ROWS is only supported on materialized views"
+        ));
+    }
+
+    @Test
+    public void testRejectedOnCtas() throws Exception {
+        // Same for CREATE TABLE ... AS SELECT (the PARTITION BY block is likewise skipped here).
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertCreateFails(
+                    "create table cp as (select * from base) expire rows when v < 2.0",
+                    "EXPIRE ROWS is only supported on materialized views"
+            );
+        });
+    }
+
+    @Test
     public void testRejectedOnAggregatingView() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
@@ -418,6 +440,37 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                             "A\t9.0\t2024-01-03T00:00:00.000000Z\n" +
                             "B\t8.0\t2024-01-01T00:00:00.000000Z\n",
                     "select k, v, ts from mv order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testCleanupKeepsNullValueGroup() throws Exception {
+        // A group whose values are all NULL is KEPT (v < max(v) is UNKNOWN). Physical cleanup must NOT delete
+        // those rows: the partial partition compacts but retains the NULL row; the all-NULL partition is
+        // skipped (all survivors).
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // expired (A max=9)
+                    "('C', null, '2024-01-01T00:00:00.000000Z')," +  // NULL group -> kept (d1 partial)
+                    "('C', null, '2024-01-02T00:00:00.000000Z')," +  // NULL group -> kept (d2 all-kept -> skipped)
+                    "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // A max (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            runCleanup();
+
+            // d1 partial (A expired, C null kept) -> 1 row; d2 all-NULL kept -> skipped; d3 active untouched.
+            assertSql("p\tr\n3\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql(
+                    "k\tv\tts\n" +
+                            "C\tnull\t2024-01-01T00:00:00.000000Z\n" +
+                            "C\tnull\t2024-01-02T00:00:00.000000Z\n" +
+                            "A\t9.0\t2024-01-03T00:00:00.000000Z\n",
+                    "select k, v, ts from mv order by ts"
             );
         });
     }

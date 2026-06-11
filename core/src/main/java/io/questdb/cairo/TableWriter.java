@@ -3140,6 +3140,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
         commit();
         if (predicate != null) {
+            if (!getTableToken().isMatView()) {
+                // Defense-in-depth: EXPIRE ROWS is materialized-view-only and the compiler enforces it. Never
+                // persist a policy onto a non-mat-view at apply time, even from a malformed/forged WAL alter.
+                // Skip rather than throw -- a throw during WAL apply would suspend the table; a clear
+                // (predicate == null) still proceeds below so DROP EXPIRE always works.
+                LOG.error().$("ignoring EXPIRE ROWS policy on non-materialized-view [table=")
+                        .$safe(getTableToken().getTableName()).I$();
+                return;
+            }
             // Open the read-filter gate before the policy is written/hydrated, so a query racing this
             // SET (e.g. the first policy on the database) cannot skip the filter and expose expired rows.
             engine.getMetadataCache().markExpiryPolicyPossible(getTableToken().getTableId());

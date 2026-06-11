@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -498,6 +499,24 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // Advance now() beyond the future row's ts: it reappears (it was only hidden, never deleted).
             setCurrentMicros(1706140800000000L); // 2024-01-25T00:00:00Z
             assertSql("sym\n" + "PAST\n" + "FUTURE\n", "select sym from mv order by ts");
+        });
+    }
+
+    @Test
+    public void testApplyTimeGuardIgnoresExpireOnPlainTable() throws Exception {
+        // Defense-in-depth (apply/write side): setMetaExpiry must NOT persist a policy onto a non-mat-view,
+        // even if a malformed/forged alter reaches the writer (the SQL compiler already rejects this; here we
+        // bypass it by calling the writer directly). It logs + skips rather than throwing -- a throw on WAL
+        // apply would suspend the table.
+        assertMemoryLeak(() -> {
+            execute("create table t (a int, ts timestamp) timestamp(ts) partition by day bypass wal");
+            final TableToken token = engine.verifyTableName("t");
+            try (TableWriter writer = getWriter("t")) {
+                writer.setMetaExpiry("a < 2", 3_600_000_000L);
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                org.junit.Assert.assertNull("policy must not persist on a plain table", metadata.getExpiryPredicate());
+            }
         });
     }
 

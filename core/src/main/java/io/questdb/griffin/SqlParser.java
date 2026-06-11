@@ -2344,12 +2344,14 @@ public class SqlParser {
                     }
                 }
             }
+        }
 
-            // EXPIRE ROWS is only supported on materialized views (see CREATE MATERIALIZED VIEW). Base
-            // tables use TTL + storage policies for retention.
-            if (tok != null && isExpireKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
-            }
+        // EXPIRE ROWS is only supported on materialized views (see CREATE MATERIALIZED VIEW); base tables use
+        // TTL + storage policies for retention. Checked here (outside the PARTITION BY block) so the specific
+        // message also fires for an un-partitioned CREATE TABLE / CTAS, where that block is skipped and EXPIRE
+        // would otherwise fall through to a generic "unexpected token".
+        if (tok != null && isExpireKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
         }
         final boolean isWalEnabled = configuration.isWalSupported()
                 && PartitionBy.isPartitioned(builder.getPartitionByFromExpr())
