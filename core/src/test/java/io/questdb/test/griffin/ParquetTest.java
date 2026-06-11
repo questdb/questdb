@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Record;
@@ -39,6 +40,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.Objects;
 
 /**
  * Miscellaneous tests for tables with partitions in Parquet format.
@@ -1847,6 +1850,92 @@ public class ParquetTest extends AbstractCairoTest {
                             aa	6
                             aa	7
                             """);
+        });
+    }
+
+    @Test
+    public void testLimitOffsetSkipsLandingFramePrefixDecode() throws Exception {
+        // The landing frame decodes only [skipTarget, skipTarget + take); published
+        // addresses are rebased so absolute frame-relative indexes stay valid.
+        // Verified for every column kind against an identical native table.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                      SELECT
+                        x::INT i,
+                        x::LONG l,
+                        x::DOUBLE d,
+                        (x % 5 = 0) b,
+                        ('s' || (x % 3))::SYMBOL sym,
+                        ('str' || x)::STRING str,
+                        ('vch_' || x)::VARCHAR vch,
+                        rnd_uuid4() u,
+                        rnd_long256() l256,
+                        ARRAY[[x::DOUBLE, x + 0.5], [x * 2.0, x * 3.0]] arr,
+                        timestamp_sequence('2024-01-01', 60_000_000) ts
+                      FROM long_sequence(40)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO x SELECT 0, 0, 0, false, 's0', 'str0', 'vch_0', rnd_uuid4(), rnd_long256(), " +
+                    "ARRAY[[0.0, 0.0], [0.0, 0.0]], '2024-01-02' FROM long_sequence(1)");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            // skip lands mid row group; take stays within it
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native LIMIT 18, 24",
+                    "SELECT * FROM x LIMIT 18, 24",
+                    LOG);
+            // skip lands mid row group; take crosses into the next row groups
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native LIMIT 5, 35",
+                    "SELECT * FROM x LIMIT 5, 35",
+                    LOG);
+            // interval starts mid row group and the skip lands inside the interval frame
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native WHERE ts >= '2024-01-01T00:10:00' LIMIT 3, 9",
+                    "SELECT * FROM x WHERE ts >= '2024-01-01T00:10:00' LIMIT 3, 9",
+                    LOG);
+            // descending scan must not clamp the decode window
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native ORDER BY ts DESC LIMIT 7, 12",
+                    "SELECT * FROM x ORDER BY ts DESC LIMIT 7, 12",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testLimitOffsetThenToTopWidensDecodeWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, vch VARCHAR, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, ARRAY[x::DOUBLE], timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (
+                    RecordCursorFactory factory = select("SELECT i, vch, arr FROM x");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(5);
+                cursor.skipRows(counter, 2);
+                Assert.assertEquals(0, counter.get());
+                Record record = cursor.getRecord();
+                int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+                for (int i = 6; i <= 7; i++) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(i, record.getInt(0));
+                    Assert.assertEquals("v" + i, Objects.requireNonNull(record.getVarcharA(1)).toString());
+                    Assert.assertEquals(i, record.getArray(2, arrayType).getDouble(0), 0.0);
+                }
+                cursor.toTop();
+                for (int i = 1; i <= 8; i++) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(i, record.getInt(0));
+                    Assert.assertEquals("v" + i, Objects.requireNonNull(record.getVarcharA(1)).toString());
+                    Assert.assertEquals(i, record.getArray(2, arrayType).getDouble(0), 0.0);
+                }
+                Assert.assertFalse(cursor.hasNext());
+            }
         });
     }
 

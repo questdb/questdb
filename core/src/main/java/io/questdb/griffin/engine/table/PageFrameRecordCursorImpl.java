@@ -232,10 +232,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             final long roomInFrame = frameSize - skipTarget;
             final long takeFromFrame = Math.min(roomInFrame, this.maxRowsAfterSkip);
-            // decoded parquet buffers are frame-origin and reads use absolute
-            // frame-relative row indexes, so the decode window must start at row 0
-            final int inFrameHi = takeFromFrame == 0 ? 0 : (int) (skipTarget + takeFromFrame);
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameHi);
+            // The skipped frame prefix is never read, so the decode window starts at
+            // the skip landing row; the pool rebases published addresses to keep
+            // frame-relative row indexes valid. Only a forward 1:1 scan may do this.
+            final int inFrameLo = canClamp ? (int) skipTarget : 0;
+            final int inFrameHi = (int) (skipTarget + takeFromFrame);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameLo, inFrameHi);
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
