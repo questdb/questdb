@@ -55,6 +55,14 @@ impl FlatValidity {
         self.null_count += 1;
     }
 
+    /// Number of nulls pushed since the last [`reset`](Self::reset). The
+    /// bitmap accumulates this as rows arrive, so callers can read it back
+    /// instead of re-scanning the source values.
+    #[inline]
+    pub fn null_count(&self) -> usize {
+        self.null_count
+    }
+
     pub fn encode_def_levels(
         &self,
         buffer: &mut Vec<u8>,

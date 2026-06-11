@@ -54,7 +54,6 @@ public class QwpEgressMetrics implements Mutable {
     private final Counter bytesCompressedSavedCounter;
     private final Counter bytesSentCounter;
     private final Counter cacheResetDictCounter;
-    private final Counter cacheResetSchemasCounter;
     private final AtomicLongGauge connectionCountGauge;
     private final Counter queriesCancelledCounter;
     private final Counter queriesErroredCounter;
@@ -72,7 +71,6 @@ public class QwpEgressMetrics implements Mutable {
         this.bytesCompressedSavedCounter = metricsRegistry.newCounter("qwp_egress_bytes_zstd_saved");
         this.rowsStreamedCounter = metricsRegistry.newCounter("qwp_egress_rows_streamed");
         this.cacheResetDictCounter = metricsRegistry.newCounter("qwp_egress_cache_reset_dict");
-        this.cacheResetSchemasCounter = metricsRegistry.newCounter("qwp_egress_cache_reset_schemas");
     }
 
     @TestOnly
@@ -98,11 +96,6 @@ public class QwpEgressMetrics implements Mutable {
         return cacheResetDictCounter.getValue();
     }
 
-    @TestOnly
-    public long cacheResetSchemasCount() {
-        return cacheResetSchemasCounter.getValue();
-    }
-
     @Override
     public void clear() {
         connectionCountGauge.setValue(0);
@@ -115,7 +108,6 @@ public class QwpEgressMetrics implements Mutable {
         bytesCompressedSavedCounter.reset();
         rowsStreamedCounter.reset();
         cacheResetDictCounter.reset();
-        cacheResetSchemasCounter.reset();
     }
 
     public AtomicLongGauge connectionCountGauge() {
@@ -140,10 +132,6 @@ public class QwpEgressMetrics implements Mutable {
 
     public void markCacheResetDict() {
         cacheResetDictCounter.inc();
-    }
-
-    public void markCacheResetSchemas() {
-        cacheResetSchemasCounter.inc();
     }
 
     public void markQueryCancelled() {
