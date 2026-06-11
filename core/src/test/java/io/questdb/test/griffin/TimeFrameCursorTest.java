@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.table.TimeFrameCursorImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
@@ -953,6 +954,79 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinFactoryPushesMonotonicHint() throws Exception {
+        // A real ASOF join over parquet must leave every base page-frame pool at MONOTONIC:
+        // the slave is probed forward-only by row id (the factory pushes MONOTONIC) and the
+        // master is a plain forward scan (stays at the MONOTONIC default). The end-to-end cache
+        // tests are hint-blind (the hint changes only the budget, never results), so a join that
+        // forgot to push would still ship green. This pins the factory's push to the base pool.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT x1.a, x2.a AS a2 FROM x x1 ASOF JOIN x x2")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    ObjList<PageFrameMemoryPool> pools = new ObjList<>();
+                    collectFrameMemoryPools(cursor, pools);
+                    Assert.assertTrue("expected the master and slave base pools under the join", pools.size() >= 2);
+                    final long expectedBudget = configuration.getSqlParquetCacheMemorySize() >>> 2;
+                    for (int i = 0, n = pools.size(); i < n; i++) {
+                        PageFrameMemoryPool pool = pools.getQuick(i);
+                        Assert.assertEquals(ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
+                        Assert.assertEquals(expectedBudget, pool.getEffectiveBudgetBytes());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHashJoinFactoryPushesScatteredHint() throws Exception {
+        // A keyed inner join builds a hash map over the slave then probes it at scattered row
+        // ids, so the factory pushes SCATTERED to the slave's base pool. Walk every base cursor
+        // under the join and assert at least one runs at the full (SCATTERED) budget, proving the
+        // join's push reaches the base; the build-side master stays at the MONOTONIC default.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT x1.a, x2.a AS a2 FROM x x1 JOIN x x2 ON (s)")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    ObjList<PageFrameMemoryPool> pools = new ObjList<>();
+                    collectFrameMemoryPools(cursor, pools);
+                    Assert.assertTrue("expected the master and slave base pools under the join", pools.size() >= 2);
+                    final long fullBudget = configuration.getSqlParquetCacheMemorySize();
+                    boolean foundScattered = false;
+                    for (int i = 0, n = pools.size(); i < n; i++) {
+                        PageFrameMemoryPool pool = pools.getQuick(i);
+                        if (pool.getDecodeHint() == ParquetDecodeHint.SCATTERED) {
+                            Assert.assertEquals(fullBudget, pool.getEffectiveBudgetBytes());
+                            foundScattered = true;
+                        }
+                    }
+                    Assert.assertTrue("the join must push SCATTERED to the slave base pool", foundScattered);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderBySortFactoryPushesScatteredHint() throws Exception {
+        // A real ORDER BY on a non-timestamp column over parquet random-accesses the base out of
+        // order, so the sort factory must push SCATTERED to the base page-frame pool (the full
+        // configured budget). The end-to-end cache tests are hint-blind, so a sort that forgot to
+        // push would still ship green at the MONOTONIC default; this pins the push to the base.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT a, s, t FROM x ORDER BY a")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    AbstractPageFrameRecordCursor base = findBasePageFrameCursor(cursor);
+                    Assert.assertNotNull("expected a page-frame cursor under the sort", base);
+                    PageFrameMemoryPool pool = base.getFrameMemoryPool();
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    Assert.assertEquals(configuration.getSqlParquetCacheMemorySize(), pool.getEffectiveBudgetBytes());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetDecodeCacheReleaseResetsAccounting() throws Exception {
         // After a random-access sweep the cache holds bytes; releaseParquetBuffers() (the path
         // of()/clear()/close() take) must zero both the byte and frame accounting, and neither
@@ -1635,6 +1709,37 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
             }
         }
         return null;
+    }
+
+    // Walks the live cursor graph and gathers every base parquet decode pool, reaching both the
+    // RecordCursor side (page-frame scans, hash-join slaves) and the TimeFrameCursor side (the
+    // fast ASOF/Lt/Splice slaves). Lets a test assert which hint each base pool ended up with.
+    private static void collectFrameMemoryPools(RecordCursor cursor, ObjList<PageFrameMemoryPool> out) throws Exception {
+        collectFrameMemoryPools(cursor, out, new IdentityHashMap<>(), 0);
+    }
+
+    private static void collectFrameMemoryPools(Object obj, ObjList<PageFrameMemoryPool> out, IdentityHashMap<Object, Object> seen, int depth) throws Exception {
+        if (obj == null || depth > 32 || seen.put(obj, obj) != null) {
+            return;
+        }
+        if (obj instanceof AbstractPageFrameRecordCursor pageFrameCursor) {
+            out.add(pageFrameCursor.getFrameMemoryPool());
+            return;
+        }
+        if (obj instanceof TimeFrameCursorImpl timeFrameCursor) {
+            out.add(timeFrameCursor.getFrameMemoryPool());
+            return;
+        }
+        for (Class<?> k = obj.getClass(); k != null && k != Object.class; k = k.getSuperclass()) {
+            for (Field f : k.getDeclaredFields()) {
+                final Class<?> fieldType = f.getType();
+                if (!RecordCursor.class.isAssignableFrom(fieldType) && !TimeFrameCursor.class.isAssignableFrom(fieldType)) {
+                    continue;
+                }
+                f.setAccessible(true);
+                collectFrameMemoryPools(f.get(obj), out, seen, depth + 1);
+            }
+        }
     }
 
     private static int countFrames(TimeFrameCursorImpl cursor) {
