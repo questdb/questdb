@@ -1185,6 +1185,90 @@ mod tests {
         }
     }
 
+    // Builds a MULTI-block DELTA_BINARY_PACKED stream with miniblocks_per_block=4 --
+    // a foreign shape, since QuestDB's writer always emits 1. Every block but the
+    // last is fully populated (all 4 miniblocks carry a body); the last block is
+    // partial and its UNUSED trailing miniblocks carry a non-zero garbage bit-width
+    // byte (the spec permits any value there) and NO body bytes. Unlike
+    // build_multi_miniblock_stream this spans more than one block. Requires
+    // value_count-1 > 128.
+    fn build_multi_block_multi_miniblock_stream(value_count: u64) -> Vec<u8> {
+        const MINIBLOCKS: usize = 4;
+        const MINIBLOCK_SIZE: usize = 32;
+        const BLOCK_SIZE: usize = MINIBLOCKS * MINIBLOCK_SIZE; // 128
+        let total_deltas = (value_count as usize).saturating_sub(1);
+        let total_blocks = total_deltas.div_ceil(BLOCK_SIZE);
+        assert!(total_blocks >= 2, "test builds more than one block");
+
+        let mut data = Vec::new();
+        write_uleb128(&mut data, BLOCK_SIZE as u64); // block_size = 128
+        write_uleb128(&mut data, MINIBLOCKS as u64);
+        write_uleb128(&mut data, value_count);
+        write_zigzag(&mut data, 0); // first_value
+
+        let mut remaining = total_deltas;
+        for _ in 0..total_blocks {
+            // Only the last block can be partial; every earlier block fills all
+            // MINIBLOCKS miniblocks.
+            let block_deltas = remaining.min(BLOCK_SIZE);
+            let populated = block_deltas.div_ceil(MINIBLOCK_SIZE);
+            write_zigzag(&mut data, 0); // min_delta
+            for i in 0..MINIBLOCKS {
+                // bit width 1 for a populated miniblock (a 4-byte body follows), a
+                // non-zero garbage value for the unused trailing ones (no body).
+                data.push(if i < populated { 1 } else { 7 });
+            }
+            for _ in 0..populated {
+                // 1-bit body: MINIBLOCK_SIZE bits = 4 bytes, all ones (delta == 1).
+                data.extend_from_slice(&[0xFF; MINIBLOCK_SIZE / 8]);
+            }
+            remaining -= block_deltas;
+        }
+        data
+    }
+
+    #[test]
+    fn get_end_pointer_multi_block_partial_last_block() {
+        // The single-block get_end_pointer_ignores_unused_trailing_miniblocks only
+        // reaches get_end_pointer's FIRST miniblock walk (the current block). With
+        // miniblocks_per_block > 1 AND more than one block AND a partial last block,
+        // get_end_pointer must also bound the last block INSIDE its remaining-blocks
+        // loop to last_block_miniblocks -- otherwise it adds phantom bodies for the
+        // unused trailing miniblocks (whose bit-width bytes are arbitrary per spec)
+        // and overshoots the length stream, shifting every value on a partial range
+        // read (silent corruption) or tripping a spurious "exceeds page size" error.
+        // get_end_pointer_multiple_remaining_blocks does span multiple blocks but
+        // uses the well-formed encoder (no garbage trailing miniblocks), so old and
+        // new code agree there; only a foreign multi-block page with garbage trailing
+        // bit-widths exercises this branch. QuestDB's own writer never emits this
+        // shape (always 1 miniblock/block), so it is a foreign-input path reachable
+        // from read_parquet(). The trusted parquet2 decoder's consumed_bytes() after
+        // a full decode is the true stream end; get_end_pointer must equal it.
+        //
+        // Cases: 2 blocks, last block 1 delta (1 populated + 3 garbage); 2 blocks,
+        // last block 40 deltas (2 populated + 2 garbage); 2 blocks, last block FULL
+        // (4 populated, no garbage -- a multi-block sanity check); 3 blocks, last
+        // block 40 deltas (the loop walks two full blocks before the partial one).
+        for value_count in [130u64, 169, 257, 297] {
+            let data = build_multi_block_multi_miniblock_stream(value_count);
+
+            let mut dec = parquet2::encoding::delta_bitpacked::Decoder::try_new(&data).unwrap();
+            let decoded = dec.by_ref().count();
+            assert_eq!(decoded, value_count as usize, "value_count={value_count}");
+            let true_end = dec.consumed_bytes();
+
+            let (iter, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(&data).unwrap();
+            let end = iter.get_end_pointer().unwrap();
+            let walk = end as usize - data.as_ptr() as usize;
+            assert_eq!(
+                walk, true_end,
+                "get_end_pointer must equal parquet2 consumed_bytes (value_count={value_count})"
+            );
+            // The builder emits only the delta stream, so the true end is the whole buffer.
+            assert_eq!(walk, data.len(), "value_count={value_count}");
+        }
+    }
+
     // ─── Unhappy path tests ───
 
     #[test]
