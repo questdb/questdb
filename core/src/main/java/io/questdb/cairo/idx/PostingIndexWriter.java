@@ -2683,37 +2683,6 @@ public class PostingIndexWriter implements IndexWriter {
         return peak;
     }
 
-    private int estimateMaxPerKey(long gen0Addr, int gen0KeyCount, int gen0SiSize) {
-        int max = 0;
-        int sc = PostingIndexUtils.strideCount(gen0KeyCount);
-        for (int s = 0; s < sc; s++) {
-            long strideOff = Unsafe.getLong(gen0Addr + (long) s * Long.BYTES);
-            long nextStrideOff = Unsafe.getLong(gen0Addr + (long) (s + 1) * Long.BYTES);
-            // Empty stride: writer records strideOff[s] == strideOff[s+1] when
-            // stride s contributed no bytes. Reading on would interpret the next
-            // stride's bytes here.
-            if (nextStrideOff == strideOff) continue;
-            long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, s);
-            byte mode = Unsafe.getByte(strideAddr);
-            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                for (int j = 0; j < ks; j++) {
-                    int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
-                            - Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
-                    if (count > max) max = count;
-                }
-            } else {
-                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                for (int j = 0; j < ks; j++) {
-                    int count = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
-                    if (count > max) max = count;
-                }
-            }
-        }
-        return max;
-    }
-
     /**
      * Conservative upper bound on the anonymous-heap footprint of the
      * streaming compaction. Streaming encodes directly into sealTarget
@@ -4248,11 +4217,36 @@ public class PostingIndexWriter implements IndexWriter {
             int maxStrideTotal = (int) maxStrideTotalL;
 
             if (maxValueCutoff < Long.MAX_VALUE) {
-                // Rollback path: monolithic decode + filter + re-encode to new file.
-                // Rollback is rare and operates on small data volumes, so the
-                // monolithic buffer is acceptable here. Pre-size packedResiduals
-                // for the rollback's downstream encoder; outside the seal
-                // path the auto-grow inside writePackedStride handles it.
+                // Rollback path: monolithic decode + filter + re-encode to new
+                // file. Rollback is rare and operates on small data volumes, so
+                // the whole-index decode buffer is acceptable -- but bound it
+                // with a pre-flight so a large index degrades to a clear,
+                // actionable error instead of a raw mid-allocation RSS failure
+                // (the seal paths already pre-flight; this one did not). The
+                // monolithic decode holds every value at once
+                // (totalValueCount * 8) plus the per-key offsets table, the
+                // packedResiduals scratch and one stride's encode trial.
+                final long rssLimit = Unsafe.getRssMemLimit();
+                if (rssLimit > 0) {
+                    long rollbackPeak = totalValueCount * Long.BYTES                 // allValuesAddr (fresh)
+                            + (long) keyCount * Long.BYTES                           // keyOffsetsAddr (fresh)
+                            + (long) Math.max(0, maxStrideTotal - packedResidualsCapacity) * Long.BYTES  // packedResiduals (marginal; persists)
+                            + maxStrideTrialSize                                     // worst-stride bpTrialBuf (fresh)
+                            + encodeCtxPeakBytes(maxKeyCount)
+                            + sealAuxiliaryBufferBytes();
+                    long headroom = Math.max(0L, rssLimit - Unsafe.getRssMemUsed());
+                    if (rollbackPeak > headroom) {
+                        throw CairoException.critical(0)
+                                .put("posting index rollback would exceed RSS limit [totalValues=").put(totalValueCount)
+                                .put(", rollbackPeak=").put(rollbackPeak)
+                                .put(", rssUsed=").put(Unsafe.getRssMemUsed())
+                                .put(", rssLimit=").put(rssLimit)
+                                .put("]; reduce partition size or raise RSS_MEM_LIMIT");
+                    }
+                }
+                // Pre-size packedResiduals for the rollback's downstream
+                // encoder; outside the seal path the auto-grow inside
+                // writePackedStride handles it.
                 if (maxStrideTotal > packedResidualsCapacity) {
                     packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
                             (long) packedResidualsCapacity * Long.BYTES,
@@ -5298,7 +5292,6 @@ public class PostingIndexWriter implements IndexWriter {
         int sc = PostingIndexUtils.strideCount(keyCount);
         long dirtyStridesAddr = Unsafe.malloc(sc, MemoryTag.NATIVE_INDEX_READER);
         int dirtyCount;
-        int sparseMaxPerKey = 0;
         try {
             Unsafe.setMemory(dirtyStridesAddr, sc, (byte) 0);
             dirtyCount = 0;
@@ -5313,7 +5306,6 @@ public class PostingIndexWriter implements IndexWriter {
                 int activeKeyCount = -genKeyCount;
                 valueMem.extend(genFileOffset + gDataSize);
                 long genAddr = valueMem.addressOf(genFileOffset);
-                long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
                 for (int i = 0; i < activeKeyCount; i++) {
                     int key = Unsafe.getInt(genAddr + (long) i * Integer.BYTES);
@@ -5321,10 +5313,6 @@ public class PostingIndexWriter implements IndexWriter {
                     if (stride < sc && Unsafe.getByte(dirtyStridesAddr + stride) == 0) {
                         Unsafe.putByte(dirtyStridesAddr + stride, (byte) 1);
                         dirtyCount++;
-                    }
-                    int c = Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                    if (c > sparseMaxPerKey) {
-                        sparseMaxPerKey = c;
                     }
                 }
             }
@@ -5334,18 +5322,8 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         // If all strides are dirty, fall back to full seal (no savings).
-        // Free savedSidecarBufs since sealFull rebuilds sidecars from scratch.
         if (dirtyCount == sc) {
-            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
-            if (savedSidecarBufs != null) {
-                for (int c = 0; c < savedSidecarBufs.length; c++) {
-                    if (savedSidecarBufs[c] != 0) {
-                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
-                        savedSidecarBufs[c] = 0;
-                    }
-                }
-            }
-            sealFull(newSealTxn);
+            sealIncrementalFallBackToFull(newSealTxn, dirtyStridesAddr, sc, savedSidecarBufs, savedSidecarSizes);
             return;
         }
 
@@ -5362,17 +5340,162 @@ public class PostingIndexWriter implements IndexWriter {
         // Allocate output buffers — initialize to 0 so the finally block
         // can conditionally free only those that were successfully allocated.
         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
-        int maxPerKey = estimateMaxPerKey(valueMem.addressOf(gen0FileOffset), gen0KeyCount, gen0SiSize);
-        int preAllocPerKey = maxPerKey + sparseMaxPerKey * (genCount - 1);
-        long perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(preAllocPerKey, PostingIndexUtils.BLOCK_CAPACITY));
-        long maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
         int maxHeaderSize = Math.max(
                 PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE),
                 PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE)
         );
-        long maxPerStride = (long) PostingIndexUtils.DENSE_STRIDE * preAllocPerKey;
-        long mergedValuesSize = Math.max(maxPerStride, 1024) * Long.BYTES;
         long copyBufAllocSize = copyBufSize > 0 ? copyBufSize : 1;
+
+        // Size the per-stride merge/trial buffers from the ACTUAL aggregate row
+        // counts of the dirty strides, not a DENSE_STRIDE * maxPerKey worst
+        // case. The old bound assumed every one of the 256 keys in a stride held
+        // the single hottest key's count, over-allocating by up to ~256x on
+        // skewed symbol columns and tripping the RSS limit with no fallback
+        // (sealFull has the streaming pre-flight; this branch did not).
+        // Aggregate gen 0 (dense, all keys) plus every sparse gen into a per-key
+        // total, then take the max dirty-stride sum (sizes mergedValuesAddr /
+        // packedResiduals), the max dirty-stride encoded trial total (sizes
+        // bpTrialBuf) and the max single-key count (sizes unpackBatch /
+        // encodeCtx). mergeKeyValues below re-derives the same gen 0 + sparse
+        // counts, so these bounds match what it writes exactly.
+        long maxDirtyStrideTotalL = 0;
+        long maxDirtyStrideTrialL = 0;
+        int maxDirtyKeyCount = 0;
+        long totalCountsSize = (long) keyCount * Integer.BYTES;
+        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            Unsafe.setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
+            // Sparse gens 1..N: add each key's count. Sparse gens only touch
+            // dirty strides, so clean strides keep a 0 here and are skipped.
+            for (int g = 1; g < genCount; g++) {
+                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                long gDataSize = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                if (genKeyCount >= 0 || gDataSize == 0) {
+                    continue;
+                }
+                int activeKeyCount = -genKeyCount;
+                valueMem.extend(genFileOffset + gDataSize);
+                long genAddr = valueMem.addressOf(genFileOffset);
+                long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+                for (int i = 0; i < activeKeyCount; i++) {
+                    int key = Unsafe.getInt(genAddr + (long) i * Integer.BYTES);
+                    int count = Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
+                    Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES,
+                            Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES) + count);
+                }
+            }
+            // gen 0 (dense, covers every key): add each dirty stride's per-key
+            // counts. valueMem is only written from openSealValueFile onward, so
+            // gen0Addr is stable across this read-only pass.
+            long gen0Addr = valueMem.addressOf(gen0FileOffset);
+            for (int s = 0; s < sc; s++) {
+                if (Unsafe.getByte(dirtyStridesAddr + s) == 0) {
+                    continue;
+                }
+                long strideOff = Unsafe.getLong(gen0Addr + (long) s * Long.BYTES);
+                long nextStrideOff = Unsafe.getLong(gen0Addr + (long) (s + 1) * Long.BYTES);
+                if (nextStrideOff == strideOff) {
+                    continue; // empty stride in gen 0
+                }
+                long strideAddr = gen0Addr + gen0SiSize + strideOff;
+                int ks = PostingIndexUtils.keysInStride(gen0KeyCount, s);
+                byte mode = Unsafe.getByte(strideAddr);
+                if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                    long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                    for (int j = 0; j < ks; j++) {
+                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                        int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
+                                - Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
+                        Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES,
+                                Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES) + count);
+                    }
+                } else {
+                    long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                    for (int j = 0; j < ks; j++) {
+                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                        int count = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
+                        Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES,
+                                Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES) + count);
+                    }
+                }
+            }
+            // Per dirty stride: actual aggregate (mergedValues / packedResiduals),
+            // exact encoded trial total (bpTrialBuf) and max single-key count.
+            for (int s = 0; s < sc; s++) {
+                if (Unsafe.getByte(dirtyStridesAddr + s) == 0) {
+                    continue;
+                }
+                int ks = PostingIndexUtils.keysInStride(keyCount, s);
+                long strideTotal = 0;
+                long strideTrial = 0;
+                for (int j = 0; j < ks; j++) {
+                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                    int c = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                    strideTotal += c;
+                    if (c > 0) {
+                        strideTrial += PostingIndexUtils.computeMaxEncodedSize(c);
+                    }
+                    if (c > maxDirtyKeyCount) {
+                        maxDirtyKeyCount = c;
+                    }
+                }
+                if (strideTotal > maxDirtyStrideTotalL) maxDirtyStrideTotalL = strideTotal;
+                if (strideTrial > maxDirtyStrideTrialL) maxDirtyStrideTrialL = strideTrial;
+            }
+        } finally {
+            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+
+        // A single dirty stride holding >= 2^31 merged values would overflow the
+        // int stride sizing the encoder relies on; only the full seal's per-key
+        // streaming path (bounded by max single-key count, not the stride
+        // aggregate) can encode it, so defer.
+        if (maxDirtyStrideTotalL > Integer.MAX_VALUE) {
+            sealIncrementalFallBackToFull(newSealTxn, dirtyStridesAddr, sc, savedSidecarBufs, savedSidecarSizes);
+            return;
+        }
+        int maxDirtyStrideTotal = (int) maxDirtyStrideTotalL;
+
+        // bpTrialBuf and mergedValuesAddr are written directly (no auto-grow),
+        // so they must cover the largest dirty stride exactly. unpackBatch and
+        // packedResiduals auto-grow at their use sites, so their pre-allocation
+        // below is only a per-stride realloc saver.
+        long maxBPStrideDataSize = Math.max(maxDirtyStrideTrialL, maxHeaderSize);
+        long mergedValuesSize = Math.max((long) maxDirtyStrideTotal, 1024L) * Long.BYTES;
+
+        // Pre-flight: if even the correctly-sized incremental buffers would
+        // breach the RSS limit (one stride genuinely too large for this box),
+        // defer to the full seal, which streams per key or throws an
+        // operator-actionable diagnostic. Mirrors reencodeAllGenerations.
+        final long rssLimit = Unsafe.getRssMemLimit();
+        if (rssLimit > 0) {
+            final long maxColValueSize = peakCoverColumnValueSize();
+            long incrementalPeak = maxBPStrideDataSize
+                    + mergedValuesSize
+                    + (long) maxDirtyStrideTotal * Long.BYTES        // packedResiduals (auto-grows to stride total)
+                    + (long) maxDirtyKeyCount * Long.BYTES           // unpackBatch (auto-grows to max single key)
+                    + encodeCtxPeakBytes(maxDirtyKeyCount)
+                    + sealAuxiliaryBufferBytes();
+            if (coverCount > 0 && maxColValueSize > 0) {
+                incrementalPeak += (long) maxDirtyStrideTotal * maxColValueSize;     // incrSidecarBuf (worst dirty stride)
+                incrementalPeak += peakCoverColumnCompressBufBytes(maxDirtyKeyCount);
+                incrementalPeak += (long) coverCount * siSize;                       // incrSidecarSiBufs
+            }
+            final long headroom = Math.max(0L, rssLimit - Unsafe.getRssMemUsed());
+            if (incrementalPeak > headroom) {
+                LOG.info().$("posting incremental seal falling back to full seal under RSS pressure ")
+                        .$("[maxDirtyStrideTotal=").$(maxDirtyStrideTotal)
+                        .$(", incrementalPeak=").$(incrementalPeak)
+                        .$(", headroom=").$(headroom)
+                        .$(", dirtyCount=").$(dirtyCount)
+                        .$(", strideCount=").$(sc)
+                        .I$();
+                sealIncrementalFallBackToFull(newSealTxn, dirtyStridesAddr, sc, savedSidecarBufs, savedSidecarSizes);
+                return;
+            }
+        }
 
         long strideIndexBuf = 0;
         long bpTrialBuf = 0;
@@ -5392,19 +5515,20 @@ public class PostingIndexWriter implements IndexWriter {
             mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_INDEX_READER);
             copyBuf = Unsafe.malloc(copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
 
-            // Pre-allocate seal-path arrays to avoid per-stride allocations
-            if (preAllocPerKey > unpackBatchCapacity) {
+            // Pre-allocate seal-path arrays to avoid per-stride reallocations.
+            // Both auto-grow at their use sites if a stride needs more, so these
+            // bounds are a perf optimization, not a correctness floor.
+            if (maxDirtyKeyCount > unpackBatchCapacity) {
                 unpackBatchAddr = Unsafe.realloc(unpackBatchAddr,
                         (long) unpackBatchCapacity * Long.BYTES,
-                        (long) preAllocPerKey * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                unpackBatchCapacity = preAllocPerKey;
+                        (long) maxDirtyKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                unpackBatchCapacity = maxDirtyKeyCount;
             }
-            int preAllocPerStride = (int) Math.min(maxPerStride, Integer.MAX_VALUE);
-            if (preAllocPerStride > packedResidualsCapacity) {
+            if (maxDirtyStrideTotal > packedResidualsCapacity) {
                 packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
                         (long) packedResidualsCapacity * Long.BYTES,
-                        (long) preAllocPerStride * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                packedResidualsCapacity = preAllocPerStride;
+                        (long) maxDirtyStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                packedResidualsCapacity = maxDirtyStrideTotal;
             }
 
             // Write sealed data to a NEW value file — the old .pv is untouched
@@ -5640,6 +5764,24 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
         }
+    }
+
+    // Release the incremental seal's detection scratch (and any covered-column
+    // sidecar snapshot, which the full seal rebuilds from scratch) before
+    // deferring to sealFull. Used when there are no clean strides to save, when
+    // a dirty stride is too large for int stride sizing, or when the
+    // correctly-sized incremental buffers would breach the RSS limit.
+    private void sealIncrementalFallBackToFull(long newSealTxn, long dirtyStridesAddr, int sc, long[] savedSidecarBufs, long[] savedSidecarSizes) {
+        Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
+        if (savedSidecarBufs != null) {
+            for (int c = 0; c < savedSidecarBufs.length; c++) {
+                if (savedSidecarBufs[c] != 0) {
+                    Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
+                    savedSidecarBufs[c] = 0;
+                }
+            }
+        }
+        sealFull(newSealTxn);
     }
 
     private void spillKey(int key, int count) {

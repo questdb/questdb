@@ -275,6 +275,202 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
     }
 
     /**
+     * Regression for the production OOM in the WAL fast-lag commit path
+     * ("posting-index fast-lag commit failed ... global RSS memory limit
+     * exceeded ... memoryTag=62"). The fast-lag path appends one sparse gen
+     * per commit and fires an inline seal() once genCount hits MAX_GEN_COUNT.
+     * The FIRST seal re-encodes a sparse gen 0 via sealFull, leaving a DENSE
+     * gen 0; every subsequent seal then takes the sealIncremental branch.
+     * <p>
+     * That branch used to size its per-stride scratch to
+     * {@code DENSE_STRIDE(256) * preAllocPerKey}, assuming all 256 keys in a
+     * stride hold the single hottest key's count -- a ~256x over-allocation on
+     * skewed columns, with no RSS pre-flight. Here a dense gen 0 with one hot
+     * key (300k rows) plus a sparse gen (another 300k on the same key) made the
+     * incremental seal try to malloc ~1.2 GiB ({@code 256 * 600_000 * 8}) to
+     * merge a stride holding only ~4.8 MiB of values, OOMing under a 64 MiB
+     * headroom. After the fix the buffers are sized to the dirty stride's real
+     * aggregate, so the seal fits and round-trips correctly.
+     */
+    @Test
+    public void testSealIncrementalRightSizedSucceedsUnderRssPressure() throws Exception {
+        final int hotKey = 0;
+        // > 256 keys so there are >= 2 strides; the hot key's single dirty
+        // stride stays a strict subset (dirtyCount < strideCount), keeping the
+        // seal on the sealIncremental branch rather than the "all strides
+        // dirty" fall-back to sealFull.
+        final int numKeys = 300;
+        final int phase1HotRows = 300_000;
+        final int phase2HotRows = 300_000;
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "incremental_rss";
+                final LongList hotExpected = new LongList();
+                final long[] coldRowId = new long[numKeys];
+
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    // Phase 1: hot key + cold keys, then seal into a single
+                    // dense gen 0 covering every key.
+                    long row = 0;
+                    for (int i = 0; i < phase1HotRows; i++) {
+                        writer.add(hotKey, row);
+                        hotExpected.add(row);
+                        row++;
+                    }
+                    for (int k = 1; k < numKeys; k++) {
+                        writer.add(k, row);
+                        coldRowId[k] = row;
+                        row++;
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                    Assert.assertEquals("phase 1 seal should leave a single dense gen 0",
+                            1, writer.getGenCount());
+
+                    // Phase 2: more rows on the same hot key, committed (not
+                    // sealed) into a sparse gen 1 -> the incremental-seal trigger.
+                    for (int i = 0; i < phase2HotRows; i++) {
+                        writer.add(hotKey, row);
+                        hotExpected.add(row);
+                        row++;
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    Assert.assertEquals("phase 2 commit should append a sparse gen 1",
+                            2, writer.getGenCount());
+
+                    // 64 MiB headroom: far more than the ~4.8 MiB the hot stride
+                    // actually merges, but far below the 256 * 600_000 * 8 ~=
+                    // 1.2 GiB the old worst-case sizing demanded.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 64L * 1024L * 1024L);
+                    try {
+                        writer.seal();
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+                    Assert.assertEquals("incremental seal should compact into one dense gen 0",
+                            1, writer.getGenCount());
+                }
+
+                // Read-back: the hot key returns every rowid in order; each
+                // cold key returns exactly its single rowid.
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor hot = reader.getCursor(hotKey, 0, Long.MAX_VALUE);
+                    for (int i = 0; i < hotExpected.size(); i++) {
+                        Assert.assertTrue("hot key exhausted early at " + i, hot.hasNext());
+                        Assert.assertEquals("hot key rowid " + i, hotExpected.getQuick(i), hot.next());
+                    }
+                    Assert.assertFalse("hot key has unexpected extra rows", hot.hasNext());
+                    Misc.free(hot);
+
+                    for (int k = 1; k < numKeys; k++) {
+                        RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE);
+                        Assert.assertTrue("cold key " + k + " missing its row", c.hasNext());
+                        Assert.assertEquals("cold key " + k + " rowid", coldRowId[k], c.next());
+                        Assert.assertFalse("cold key " + k + " has extra rows", c.hasNext());
+                        Misc.free(c);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Companion to {@link #testSealIncrementalRightSizedSucceedsUnderRssPressure}
+     * that exercises the incremental seal's NEW pre-flight fallback. When a
+     * single dirty stride genuinely holds too many values for the RSS headroom
+     * -- here 256 keys in one stride each with ~8k rows, ~16 MiB of merged
+     * values plus a same-sized trial buffer -- the correctly-sized incremental
+     * buffers still will not fit a tight limit. Rather than OOM, the seal now
+     * defers to sealFull, whose per-key streaming compaction is bounded by the
+     * max single-key count (~8k * 8 bytes), so the seal completes and the data
+     * round-trips. The clean stride (stride 1) is left untouched so the seal
+     * stays on the incremental branch up to the pre-flight decision.
+     */
+    @Test
+    public void testSealIncrementalFallsBackToFullSealWhenStrideTooLarge() throws Exception {
+        final int strideKeys = 256;     // keys 0..255 -> all of stride 0
+        final int cleanKeys = 44;       // keys 256..299 -> stride 1, kept clean
+        final int numKeys = strideKeys + cleanKeys;
+        final int phase1PerKey = 4_000;
+        final int phase2PerKey = 4_000; // only on stride-0 keys
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "incremental_fallback";
+                final ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < numKeys; k++) {
+                    oracle.add(new LongList());
+                }
+
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    long row = 0;
+                    // Phase 1: every key (both strides) -> dense gen 0.
+                    for (int r = 0; r < phase1PerKey; r++) {
+                        for (int k = 0; k < numKeys; k++) {
+                            writer.add(k, row);
+                            oracle.getQuick(k).add(row);
+                            row++;
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                    Assert.assertEquals(1, writer.getGenCount());
+
+                    // Phase 2: only stride-0 keys -> sparse gen 1 dirties stride
+                    // 0 alone (dirtyCount < strideCount keeps it incremental).
+                    for (int r = 0; r < phase2PerKey; r++) {
+                        for (int k = 0; k < strideKeys; k++) {
+                            writer.add(k, row);
+                            oracle.getQuick(k).add(row);
+                            row++;
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    Assert.assertEquals(2, writer.getGenCount());
+
+                    // 24 MiB headroom: below the incremental peak (~50 MiB for a
+                    // 2M-value dirty stride) so the pre-flight defers, but well
+                    // above the streaming peak (~max single-key count * 8).
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 24L * 1024L * 1024L);
+                    try {
+                        writer.seal();
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+                    Assert.assertEquals("fallback full seal should leave one dense gen 0",
+                            1, writer.getGenCount());
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < numKeys; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE);
+                        int idx = 0;
+                        while (c.hasNext()) {
+                            Assert.assertTrue("key " + k + " extra row at " + idx, idx < expected.size());
+                            Assert.assertEquals("key " + k + " rowid " + idx, expected.getQuick(idx), c.next());
+                            idx++;
+                        }
+                        Assert.assertEquals("key " + k + " short-count", expected.size(), idx);
+                        Misc.free(c);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * Streaming compaction explicitly refuses var-size cover columns
      * with an actionable error message. The fast path still handles
      * var-size cover data; this guard only applies when the pre-flight
