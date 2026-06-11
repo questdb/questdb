@@ -46,7 +46,8 @@ import static org.junit.Assert.assertTrue;
  *     <li>{@code ALTER MATERIALIZED VIEW ... DROP EXPIRE}</li>
  * </ul>
  * Mat views are WAL tables, so the _meta persistence and the read-time row-expiry filter are shared
- * with plain tables (the filter excludes only {@code isView()}, and mat views are {@code isMatView()}).
+ * with plain tables; the filter is materialized-view-only ({@code isMatView()}), excluding plain tables
+ * and plain views alike.
  * These tests confirm the grammar/threading and that querying a policied mat view hides expired rows.
  * EXPIRE ROWS is passthrough-only: an aggregating (SAMPLE BY) view is rejected at CREATE
  * ({@link #testCreateAggregatingMatViewWithExpireRejected()}).

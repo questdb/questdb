@@ -1162,8 +1162,9 @@ public class SqlParser {
     }
 
     /**
-     * Returns the EXPIRE ROWS predicate for the given table token, or null if the table is unknown,
-     * is not a regular table, or carries no policy. Uses the in-memory metadata cache
+     * Returns the EXPIRE ROWS predicate for the given table token, or null if the token is null, is not a
+     * materialized view (the only object type that can carry a policy), or carries no policy. Uses the
+     * in-memory metadata cache
      * ({@link io.questdb.cairo.MetadataCache#readLock()} + map lookup): a shared read lock plus a
      * hash-map get, no pool borrow, no file I/O on a cache hit. See class/PR notes for the
      * cache-miss caveat.
