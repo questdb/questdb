@@ -485,6 +485,16 @@ public final class QueryRunner {
      *       inspects cursor metadata; an indexed-symbol lookup loses TS-ASC
      *       where a full scan preserves it, so primary and shadow legitimately
      *       differ.</li>
+     *   <li>"RANGE is supported only for queries ordered by designated
+     *       timestamp" - the window-function variant of the same check. A
+     *       RANGE-framed window ordered by the designated timestamp needs its
+     *       base to deliver rows in timestamp order. A full scan does so
+     *       naturally and the window dismisses its order, but an indexed-symbol
+     *       predicate routes through {@code FilterOnExcludedValues} with a
+     *       per-key sequential cursor that reports {@code SCAN_DIRECTION_OTHER},
+     *       so the window rejects the RANGE frame at compile time. The primary
+     *       (no index) compiles and returns rows. Planner choice driven by the
+     *       access path's ordering guarantee, not a data divergence.</li>
      *   <li>"left/right side of splice join doesn't support random access" -
      *       SPLICE JOIN requires both inputs to support random access. When
      *       the filtered SYMBOL column on either side carries a POSTING (or
@@ -549,6 +559,7 @@ public final class QueryRunner {
             return false;
         }
         return o.exceptionMessage.contains("doesn't have ASC timestamp order")
+                || o.exceptionMessage.contains("RANGE is supported only for queries ordered by designated timestamp")
                 || o.exceptionMessage.contains("side of splice join doesn't support random access")
                 || o.exceptionMessage.contains("column must appear in GROUP BY clause")
                 || o.exceptionMessage.contains("constant expected")
