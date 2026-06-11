@@ -36,6 +36,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.BufferedWriter;
@@ -130,6 +131,52 @@ public class QueryFuzzTest extends AbstractCairoTest {
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
+
+    @Test
+    public void testDecimalAggregationOverflowToleratedByOracle() throws Exception {
+        // Bug #1 from the window-function fuzzing: a sum/avg over a high-precision
+        // DECIMAL (Decimal256-backed) whose running total exceeds Decimal256's
+        // 256-bit capacity raises a CairoException "... aggregation failed: an
+        // overflow occurred". This is a genuine, data-dependent arithmetic limit --
+        // the plain group-by sum/avg overflows identically on the same data, and
+        // WindowDecimalFunctionTest pins it -- so the oracle must treat it as an
+        // accepted skip rather than reporting it as an engine defect. Drive the
+        // repro queries straight through QueryRunner.run() to exercise the real
+        // classification path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g SYMBOL, d DECIMAL(76, 3)) TIMESTAMP(ts) PARTITION BY HOUR");
+            // 73 integer nines + 3 fractional nines == DECIMAL(76, 3) maximum; two in
+            // one partition overflow the Decimal256 accumulator at add time.
+            String nearMax = "9".repeat(73) + ".999m";
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
+                    "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
+
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, true, new ObjList<>());
+
+            QueryRunner.Result avgResult = runner.run(
+                    new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
+            Assert.assertTrue("avg overflow must be tolerated, not failed: "
+                    + (avgResult.getFailure() != null ? avgResult.getFailure().getMessage() : ""), avgResult.isSkipped());
+            Assert.assertFalse(avgResult.isFailed());
+
+            QueryRunner.Result sumResult = runner.run(
+                    new GeneratedQuery("SELECT sum(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
+            Assert.assertTrue("sum overflow must be tolerated, not failed: "
+                    + (sumResult.getFailure() != null ? sumResult.getFailure().getMessage() : ""), sumResult.isSkipped());
+            Assert.assertFalse(sumResult.isFailed());
+
+            // A query that does not overflow still runs to completion: the carve-out
+            // is narrow and does not turn a clean run into a skip.
+            execute("CREATE TABLE small (ts TIMESTAMP, g SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("INSERT INTO small VALUES " +
+                    "('2024-01-01T00:00:00', 'a', 1.00m), ('2024-01-01T00:01:00', 'a', 2.00m)");
+            QueryRunner.Result okResult = runner.run(
+                    new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM small", true));
+            Assert.assertFalse(okResult.isSkipped());
+            Assert.assertFalse(okResult.isFailed());
+        });
+    }
 
     @Test
     public void testQueryFuzz() throws Exception {

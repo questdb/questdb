@@ -630,6 +630,31 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAvgDecimal256OverPartitionGenuineOverflow() throws Exception {
+        // Bug #1 from the query fuzzer (window shapes): avg() over a high-precision
+        // DECIMAL (Decimal256-backed) running over a partition raises an overflow.
+        // It is genuine, not a window defect: the running sum of two values near the
+        // DECIMAL(76, 3) maximum exceeds Decimal256's 256-bit capacity, and the plain
+        // group-by avg() produces the identical overflow on the same data. Pin both so
+        // the fuzzer's tolerance of this CairoException stays justified.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g SYMBOL, d DECIMAL(76, 3)) TIMESTAMP(ts) PARTITION BY HOUR");
+            // 73 integer nines + 3 fractional nines == the DECIMAL(76, 3) maximum; two of
+            // them in one partition overflow the Decimal256 accumulator at add time.
+            String nearMax = "9".repeat(73) + ".999m";
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
+                    "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
+            assertQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT avg(".length(), "avg aggregation failed");
+            assertQuery("SELECT g, avg(d) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT g, ".length(), "avg aggregation failed");
+        });
+    }
+
+    @Test
     public void testAvgDecimal256OverflowAtAdd() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t2 (ts TIMESTAMP, v decimal(76, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
@@ -8712,6 +8737,26 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             assertQuery("SELECT sum(v) OVER () AS sum_v FROM t LIMIT 1")
                     .noLeakCheck()
                     .returns("sum_v\n1000000000000000000000000000000000000000000000000000000000000000000001\n");
+        });
+    }
+
+    @Test
+    public void testSumDecimal256OverPartitionGenuineOverflow() throws Exception {
+        // Companion to testAvgDecimal256OverPartitionGenuineOverflow for sum(). The sum
+        // of two values near the DECIMAL(76, 3) maximum is genuinely unrepresentable, so
+        // both the window-over-partition form and the plain group-by form overflow.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g SYMBOL, d DECIMAL(76, 3)) TIMESTAMP(ts) PARTITION BY HOUR");
+            String nearMax = "9".repeat(73) + ".999m";
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
+                    "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
+            assertQuery("SELECT sum(d) OVER (PARTITION BY g ORDER BY ts) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT sum(".length(), "sum aggregation failed");
+            assertQuery("SELECT g, sum(d) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT g, ".length(), "sum aggregation failed");
         });
     }
 
