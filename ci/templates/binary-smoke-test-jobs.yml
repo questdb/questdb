@@ -1,0 +1,81 @@
+# Build the QuestDB distribution from source and smoke-test it: start the
+# packaged server and run a query. This exercises the full from-source native
+# build (Rust libquestdbr + the committed C++ lib) and the packaged runtime's
+# native-lib loading from its own lib/ directory -- i.e. the exact artifact
+# users download and run.
+#
+# Runs on self-hosted Linux boxes (x64 + arm64), which carry the Rust toolchain
+# and a C compiler -- both now required because the native libraries are built
+# from source rather than committed.
+jobs:
+  - job: BuildAndSmokeTest
+    displayName: "build + smoke test on"
+    workspace:
+      clean: all
+    strategy:
+      matrix:
+        linux-x64:
+          poolName: "hetzner-incus"
+          JAVA_HOME: "/opt/graalvm-25"
+          JAVA_HOME_25_X64: "/opt/graalvm-25"
+        linux-arm64:
+          poolName: "hetzner-incus-arm"
+          JAVA_HOME: "/usr/lib/jvm/java-25-openjdk-arm64"
+          JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-arm64"
+    pool:
+      name: $(poolName)
+    timeoutInMinutes: 60
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    variables:
+      jdk: "1.25"
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: true
+      - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+        displayName: "Ensure Rust is installed"
+      - task: Maven@3
+        displayName: "Build distribution (native libs from source)"
+        inputs:
+          mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+          mavenPomFile: "pom.xml"
+          mavenOptions: "$(MAVEN_OPTS)"
+          goals: "clean package"
+          options:
+            "-pl core -am -DskipTests -Dhttp.keepAlive=false
+            -P build-web-console,build-binaries $(MAVEN_RUN_OPTS)"
+          jdkVersionOption: "$(jdk)"
+      - bash: |
+          set -eux
+          cd core/target
+          archive="$(ls questdb-*-rt-*.gz 2>/dev/null | head -1)"
+          if [ -z "$archive" ]; then
+            echo "No rt-* distribution archive found in core/target"
+            ls -la
+            exit 1
+          fi
+          echo "Smoke-testing distribution: $archive"
+          tar -xzf "$archive"
+          dist_dir="$(ls -d questdb-*-rt-*/ | head -1)"
+          root="$PWD/smoke-root"
+          rm -rf "$root"
+          "${dist_dir}bin/questdb.sh" start -d "$root"
+          ok=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -G --data-urlencode "query=SELECT 1 AS smoke" \
+                 "http://127.0.0.1:9000/exp" -o exp.out; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          echo "--- /exp response ---"; cat exp.out 2>/dev/null || true; echo
+          "${dist_dir}bin/questdb.sh" stop || true
+          if [ "$ok" -ne 1 ]; then
+            echo "ERROR: packaged QuestDB did not serve a query within the timeout"
+            echo "--- server logs ---"; tail -n 200 "$root"/log/*.txt 2>/dev/null || true
+            exit 1
+          fi
+          echo "Smoke test passed: distribution built from source, started, and served a query."
+        displayName: "Smoke test: start packaged server and run a query"
