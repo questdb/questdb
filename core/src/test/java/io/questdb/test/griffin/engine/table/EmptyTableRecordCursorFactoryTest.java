@@ -91,13 +91,9 @@ public class EmptyTableRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testEmptySymbolColumnInNullMatches() throws Exception {
-        // End-to-end coverage for EmptySymbolMapReader.keyOf(null) == VALUE_IS_NULL. The empty-master
-        // SPLICE pairs every slave row with an all-NULL master, so the projected master SYMBOL (e0)
-        // is always NULL and its static symbol table is EmptySymbolMapReader.INSTANCE. The post-join
-        // "e0 IN (NULL)" routes through InSymbolVarcharArrayFunctionFactory's IntSetFunc, which stores
-        // keyOf(null) as the match key. When keyOf(null) returned VALUE_NOT_FOUND (-2) the key never
-        // matched the NULL column value (VALUE_IS_NULL = INT_NULL) and the filter dropped every row;
-        // now that keyOf(null) returns VALUE_IS_NULL it matches, consistent with null=null being true.
+        // Regression for EmptySymbolMapReader.keyOf(null) == VALUE_IS_NULL: the empty-master SPLICE
+        // gives every row an all-NULL master SYMBOL backed by EmptySymbolMapReader, and "e0 IN (NULL)"
+        // matches it via keyOf(null). With the old VALUE_NOT_FOUND key the filter dropped every row.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
