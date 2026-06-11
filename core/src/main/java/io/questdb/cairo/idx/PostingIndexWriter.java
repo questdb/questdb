@@ -4197,11 +4197,18 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (maxValueCutoff < Long.MAX_VALUE) {
                 if (coverCount == 0) {
-                    // Streaming rollback: decode each key once to find the
-                    // cutoff (filterCountsForRollback), then re-encode the
-                    // surviving prefix per key via reencodeWithPerKeyStreaming.
+                    // Streaming rollback (non-covering): decode each key once to
+                    // find the cutoff (filterCountsForRollback), then re-encode
+                    // the surviving prefix per key via reencodeWithPerKeyStreaming.
                     // Peak heap is one key (maxKeyCount longs, the full per-key
-                    // max), not the whole index -- so no pre-flight is needed.
+                    // max), not the whole index, so no pre-flight is needed.
+                    //
+                    // Covering rollback stays on the monolithic path below: the
+                    // covered sidecar's reopen/recovery semantics (cover-source
+                    // read at reopen, staged-file cleanup on sidecar-sync
+                    // failure) are not satisfied by the seal streaming encoder
+                    // and would return null covered values on the recovery path.
+                    // Streaming the covered rollback is a focused follow-up.
                     long keyBuffer = Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     try {
                         int newKeyCount = filterCountsForRollback(maxValueCutoff, totalCountsAddr, keyBuffer, maxKeyCount);
@@ -4229,14 +4236,12 @@ public class PostingIndexWriter implements IndexWriter {
                         Unsafe.free(keyBuffer, (long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     }
                 } else {
-                    // Covering rollback keeps the monolithic decode + filter:
-                    // the streaming sidecar writer would need the cutoff woven
-                    // in (and refuses var-size covers). Bound the whole-index
-                    // decode with a pre-flight so a large covered index degrades
-                    // to a clear, actionable error instead of a raw OOM. The
-                    // monolithic decode holds every value at once
-                    // (totalValueCount * 8) plus the per-key offsets table, the
-                    // packedResiduals scratch and one stride's encode trial.
+                    // Covering rollback keeps the monolithic decode + filter.
+                    // Bound the whole-index decode with a pre-flight so a large
+                    // covered index degrades to a clear, actionable error instead
+                    // of a raw OOM. The monolithic decode holds every value at
+                    // once (totalValueCount * 8) plus the per-key offsets table,
+                    // the packedResiduals scratch and one stride's encode trial.
                     final long rssLimit = Unsafe.getRssMemLimit();
                     if (rssLimit > 0) {
                         long rollbackPeak = totalValueCount * Long.BYTES                 // allValuesAddr (fresh)
@@ -4344,8 +4349,9 @@ public class PostingIndexWriter implements IndexWriter {
      * affects stride layout. Rollback is rare and operates on small data.
      */
     /**
-     * Pass 1 of the streaming (non-covering) rollback. Decodes each key from
-     * every generation into {@code keyBuffer}, binary-searches the rollback
+     * Pass 1 of the streaming (non-covering) rollback.
+     * Decodes each key from every generation into {@code keyBuffer},
+     * binary-searches the rollback
      * cutoff (the per-key run is sorted ascending, so survivors are the leading
      * prefix &lt;= {@code maxValueCutoff}), and overwrites
      * {@code totalCountsAddr[key]} with the surviving count. Returns the new key
