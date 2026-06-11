@@ -4979,6 +4979,175 @@ mod tests {
         std::fs::write(path, &file).unwrap();
     }
 
+    // Regenerates the committed end-to-end fixture
+    // core/src/test/resources/sqllogictest/data/parquet-testing/broken/dict_num_values_over_buffer.parquet
+    // read by the Java `ReadParquetFunctionTest`. Ignored by default; run with
+    // `cargo test -p qdbr -- --ignored generate_dict_num_values_over_buffer_fixture`
+    // after the on-disk page layout changes. It writes a valid dictionary-encoded
+    // BYTE_ARRAY column, then patches the dictionary page header's num_values to a
+    // count the dict buffer cannot hold (each value needs at least a 4-byte length
+    // prefix). BaseVarDictDecoder::try_new now rejects that up front with "too short
+    // to hold"; before the guard it reserved a Vec sized by the attacker-controlled
+    // num_values (up to ~2.1 billion entries), and the allocator refusing that
+    // multi-gigabyte request aborted the JVM over JNI. Asserts the patched bytes trip
+    // the guard with a clean error before committing them. The magnitude that
+    // actually drives the abort (i32::MAX) is covered by the Rust unit tests; this
+    // fixture pins that the guard's rejection crosses the JNI boundary as a clean
+    // CairoException rather than an abort.
+    #[test]
+    #[ignore = "regenerates a committed test fixture on disk"]
+    fn generate_dict_num_values_over_buffer_fixture() {
+        // Low cardinality (4 distinct short values) so the writer dictionary-encodes
+        // it; UNCOMPRESSED so the on-disk dict page buffer is the raw dict bytes the
+        // num_values guard measures against.
+        let strings = ["aa", "bb", "cc", "dd", "aa", "cc", "bb", "dd"];
+        let values: Vec<parquet::data_type::ByteArray> = strings
+            .iter()
+            .map(|s| parquet::data_type::ByteArray::from(s.as_bytes().to_vec()))
+            .collect();
+
+        let col = std::sync::Arc::new(
+            parquet::schema::types::Type::primitive_type_builder(
+                "v",
+                parquet::basic::Type::BYTE_ARRAY,
+            )
+            .with_id(Some(0))
+            .with_repetition(parquet::basic::Repetition::REQUIRED)
+            // STRING logical type so QuestDB infers VARCHAR (the common foreign-string
+            // case), whose dictionary decode routes through BaseVarDictDecoder.
+            .with_logical_type(Some(parquet::basic::LogicalType::String))
+            .build()
+            .unwrap(),
+        );
+        let schema = std::sync::Arc::new(
+            parquet::schema::types::Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()
+                .unwrap(),
+        );
+        let props = std::sync::Arc::new(
+            parquet::file::properties::WriterProperties::builder()
+                .set_dictionary_enabled(true)
+                .set_compression(parquet::basic::Compression::UNCOMPRESSED)
+                .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_1_0)
+                .build(),
+        );
+
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut file_writer =
+                parquet::file::writer::SerializedFileWriter::new(&mut cursor, schema, props)
+                    .unwrap();
+            let mut row_group_writer = file_writer.next_row_group().unwrap();
+            let mut col_writer = row_group_writer.next_column().unwrap().unwrap();
+            col_writer
+                .typed::<parquet::data_type::ByteArrayType>()
+                .write_batch(&values, None, None)
+                .unwrap();
+            col_writer.close().unwrap();
+            row_group_writer.close().unwrap();
+            file_writer.close().unwrap();
+        }
+        let mut file = cursor.into_inner();
+
+        // Locate the dictionary page header (from dictionary_page_offset to the dict
+        // page body the reader hands back) and its real num_values.
+        let (dict_offset, body_start, dict_num_values, dict_buf_len) = {
+            let metadata =
+                parquet2::read::read_metadata(&mut Cursor::new(file.as_slice())).unwrap();
+            let column = &metadata.row_groups[0].columns()[0];
+            let dict_offset = column
+                .dictionary_page_offset()
+                .expect("column was not dictionary-encoded; adjust the values")
+                as usize;
+            let reader = parquet2::read::SlicePageReader::new(&file, column, 1 << 20).unwrap();
+            let mut found = None;
+            for page in reader {
+                if let parquet2::read::SlicedPage::Dict(dict) = page.unwrap() {
+                    let body_start = (dict.buffer.as_ptr() as usize) - (file.as_ptr() as usize);
+                    found = Some((body_start, dict.num_values, dict.buffer.len()));
+                    break;
+                }
+            }
+            let (body_start, num_values, buf_len) = found.expect("expected a dictionary page");
+            (dict_offset, body_start, num_values, buf_len)
+        };
+
+        // The original count must fit the buffer (a valid page) and encode in a
+        // single zigzag byte so the in-place patch preserves the header length: for a
+        // small non-negative i32 the thrift-compact zigzag varint is one byte equal
+        // to num_values * 2.
+        assert!(
+            dict_num_values <= dict_buf_len / 4,
+            "expected a valid dict (num_values {dict_num_values} <= buffer/4 {})",
+            dict_buf_len / 4
+        );
+        assert!(
+            dict_num_values < 64,
+            "num_values must be a 1-byte zigzag varint"
+        );
+
+        // A patched count that overflows the buffer guard yet still fits one zigzag
+        // byte. 63 * 4 bytes per value far exceeds the few-dozen-byte dict buffer.
+        const PATCHED: usize = 63;
+        assert!(
+            PATCHED > dict_buf_len / 4,
+            "patched num_values {PATCHED} must exceed buffer/4 {}",
+            dict_buf_len / 4
+        );
+
+        // Find the num_values byte: in thrift-compact the PageHeader encodes the
+        // DictionaryPageHeader as a struct field (low nibble 0xC), whose first field
+        // is num_values (i32 field header 0x15) followed by its zigzag byte.
+        let header = &file[dict_offset..body_start];
+        let expect_byte = (dict_num_values as u8) * 2;
+        let mut hits = header
+            .windows(3)
+            .enumerate()
+            .filter(|(_, w)| (w[0] & 0x0F) == 0x0C && w[1] == 0x15 && w[2] == expect_byte);
+        let (rel, _) = hits
+            .next()
+            .expect("could not locate the dictionary num_values field in the page header");
+        assert!(
+            hits.next().is_none(),
+            "ambiguous num_values field location; tighten the search"
+        );
+        let num_values_byte = dict_offset + rel + 2;
+        assert_eq!(file[num_values_byte], expect_byte);
+        file[num_values_byte] = (PATCHED as u8) * 2;
+
+        // The patched bytes must trip the num_values guard with a clean error, not abort.
+        {
+            let tas = TestAllocatorState::new();
+            let allocator = tas.allocator();
+            let buf_len = file.len() as u64;
+            let mut reader = Cursor::new(&file);
+            let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len).unwrap();
+            let mut rgb = RowGroupBuffers::new(allocator);
+            let mut ctx = DecodeContext::new(file.as_ptr(), buf_len);
+            let err = decoder
+                .decode_row_group(
+                    &mut ctx,
+                    &mut rgb,
+                    &[(0, ColumnTypeTag::Varchar.into_type())],
+                    0,
+                    0,
+                    strings.len() as u32,
+                )
+                .expect_err("the patched fixture must error, not abort");
+            assert!(
+                err.to_string().contains("too short to hold"),
+                "fixture must trip the num_values guard, got: {err}"
+            );
+        }
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../src/test/resources/sqllogictest/data/parquet-testing/broken/dict_num_values_over_buffer.parquet"
+        );
+        std::fs::write(path, &file).unwrap();
+    }
+
     #[test]
     fn test_decode_flba_decimal_sign_extended_filtered() {
         let tas = TestAllocatorState::new();
