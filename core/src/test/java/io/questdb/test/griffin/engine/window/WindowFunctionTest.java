@@ -16792,6 +16792,55 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeFrameTimestampIndexInCachedWindow() throws Exception {
+        // A RANGE-framed window function reads the designated timestamp from the record it is
+        // given. When two window functions order differently (here count by ts DESC, min by ts
+        // ASC) the query takes the CachedWindow path and the functions read a record chain whose
+        // columns are reordered: window outputs occupy the leading slots and the base columns
+        // (including the non-projected ts) follow. The min function used to read the timestamp at
+        // the base cursor's ts index, which in the chain landed on its own as-yet-unwritten output
+        // slot, so its RANGE frame was computed over garbage and the min came out wrong. The fix
+        // remaps the timestamp index to where ts actually sits in the chain.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (g symbol, x long, v long, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            // The small early 'a' value (1) sits more than 1 HOUR before the later 'a' rows, so the
+            // correct RANGE frame excludes it. Reading the wrong (zero-initialised) chain slot as the
+            // timestamp instead collapses the frame to the whole partition prefix, which would keep
+            // that 1 as the running minimum -- so the data deliberately separates the two outcomes.
+            execute("insert into tab values " +
+                    "('a', 0, 1, '2024-01-01T00:00:00')," +
+                    "('b', 0, 4, '2024-01-01T01:00:00')," +
+                    "('b', 0, 2, '2024-01-01T01:30:00')," +
+                    "('a', 0, 8, '2024-01-01T02:00:00')," +
+                    "('a', 0, 6, '2024-01-01T02:30:00')," +
+                    "('a', 0, 9, '2024-01-01T05:00:00')");
+
+            // ts is not projected, so in the chain it is appended after the window outputs and the
+            // streaming-vs-cached timestamp index differs. The CachedWindow min must still frame on
+            // the real timestamp.
+            assertQuery("SELECT g, " +
+                    "count(v) OVER (PARTITION BY g ORDER BY ts DESC) cnt, " +
+                    "min(v) OVER (PARTITION BY g ORDER BY ts RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW) mn " +
+                    "FROM tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            g\tcnt\tmn
+                            a\t4\t1
+                            b\t2\t4
+                            b\t1\t2
+                            a\t3\t8
+                            a\t2\t6
+                            a\t1\t9
+                            """);
+        });
+    }
+
+    @Test
     public void testRankFunction() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, s symbol) timestamp(ts)", timestampType.getTypeName());
