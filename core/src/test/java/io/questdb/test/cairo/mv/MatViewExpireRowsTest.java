@@ -47,18 +47,10 @@ import static org.junit.Assert.assertTrue;
  * Mat views are WAL tables, so the _meta persistence and the read-time row-expiry filter are shared
  * with plain tables (the filter excludes only {@code isView()}, and mat views are {@code isMatView()}).
  * These tests confirm the grammar/threading and that querying a policied mat view hides expired rows.
- * <p>
- * The read filter never runs during a mat-view refresh (refresh reads the base, writes the view), so a
- * base-table policy is a separate concern from the view: {@code testMatViewRefreshIgnores*BasePolicy}
- * verify a now()-based and a value-based base policy are both ignored by the refresh.
- * <p>
- * {@code now()} is pinned via {@link #setCurrentMicros(long)} so time-based predicates are
- * deterministic. 2024-01-10T00:00:00Z = 1704844800000000 micros; now()-1d = 2024-01-09T00:00:00Z.
+ * EXPIRE ROWS is passthrough-only: an aggregating (SAMPLE BY) view is rejected at CREATE
+ * ({@link #testCreateAggregatingMatViewWithExpireRejected()}).
  */
 public class MatViewExpireRowsTest extends AbstractCairoTest {
-
-    // 2024-01-10T00:00:00.000000Z
-    private static final long NOW_MICROS = 1704844800000000L;
 
     @Before
     public void setUp() {
@@ -112,7 +104,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate, 0);
+                job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
 
@@ -148,7 +140,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate, 0);
+                job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
 
@@ -208,7 +200,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
             final boolean first;
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                first = job.cleanupTable(token, predicate, 0);
+                first = job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
             assertTrue("first sweep should reclaim", first);
@@ -217,7 +209,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // Second sweep: nothing expired remains -> no work, partitions unchanged.
             final boolean second;
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                second = job.cleanupTable(token, predicate, 0);
+                second = job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
             assertFalse("second sweep must be a no-op", second);
@@ -246,7 +238,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate, 0);
+                job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
 
@@ -388,37 +380,124 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateSampleByMatViewWithExpire() throws Exception {
+    public void testCreateAggregatingMatViewWithExpireRejected() throws Exception {
+        // EXPIRE ROWS is passthrough-only, for EVERY mode (scalar WHEN included): the cleanup job physically
+        // reclaims rows, which only makes sense when the view mirrors base rows 1:1. An aggregating (SAMPLE BY)
+        // view's rows are derived, so the policy is rejected at CREATE and the view must not be left behind.
         assertMemoryLeak(() -> {
-            setCurrentMicros(NOW_MICROS);
             execute("create table base (sym symbol, price double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (" +
+                            "select sym, last(price) price, ts from base sample by 1h" +
+                            ") partition by day EXPIRE ROWS WHEN ts < dateadd('d', -1, now())",
+                    25,
+                    "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
 
-            // SAMPLE BY 1h aggregating view with a time-based policy on the bucket timestamp.
-            execute("create materialized view mv as (" +
-                    "select sym, last(price) price, ts from base sample by 1h" +
-                    ") partition by day EXPIRE ROWS WHEN ts < dateadd('d', -1, now())");
+    @Test
+    public void testAlterAggregatingMatViewSetExpireRejected() throws Exception {
+        // The passthrough-only rule also applies to ALTER ... SET EXPIRE: an existing aggregating (SAMPLE BY)
+        // view cannot have a policy attached after the fact.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, price double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view agg as (select sym, last(price) price, ts from base sample by 1h) partition by day");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view agg set expire rows when ts < dateadd('d', -1, now())",
+                    24,
+                    "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views"
+            );
+            // The view must be left without a policy.
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("agg"))) {
+                org.junit.Assert.assertNull(metadata.getExpiryPredicate());
+            }
+        });
+    }
 
-            // Old buckets (2024-01-05) become expired; recent buckets (2024-01-09T12) survive.
-            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
-            execute("insert into base values ('AAA', 2.0, '2024-01-09T12:30:00.000000Z')");
-            execute("insert into base values ('BBB', 3.0, '2024-01-09T06:15:00.000000Z')");
-            execute("insert into base values ('CCC', 5.0, '2024-01-01T00:00:00.000000Z')");
+    @Test
+    public void testCreateTableLikeMatViewDoesNotInheritExpire() throws Exception {
+        // CREATE TABLE (LIKE <mat view with EXPIRE ROWS>) must NOT copy the policy onto the new PLAIN table:
+        // EXPIRE is mat-view-only, and a policy on a plain table would silently hide + physically delete rows.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0");
             drainWalAndMatViewQueues();
 
-            // Predicate persisted.
-            final TableToken token = engine.verifyTableName("mv");
-            try (TableMetadata metadata = engine.getTableMetadata(token)) {
-                assertEquals("ts < dateadd('d', -1, now())", metadata.getExpiryPredicate());
-                assertEquals(3_600_000_000L, metadata.getExpiryCleanupIntervalMicros());
+            // Sanity: the source view does carry the policy.
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
             }
 
-            // now() pinned: ts < 2024-01-09 hides the 01-05 and 01-01 buckets, keeps the 01-09 ones.
-            assertSql(
-                    "sym\tprice\tts\n" +
-                            "BBB\t3.0\t2024-01-09T06:00:00.000000Z\n" +
-                            "AAA\t2.0\t2024-01-09T12:00:00.000000Z\n",
-                    "select sym, price, ts from mv order by ts, sym"
+            execute("create table cloned (like mv)");
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("cloned"))) {
+                org.junit.Assert.assertNull(metadata.getExpiryPredicate());
+                assertEquals(0L, metadata.getExpiryCleanupIntervalMicros());
+            }
+
+            // A v < 2 row in the clone must remain visible -- the leaked read filter would have hidden it.
+            execute("insert into cloned values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalQueue();
+            assertSql("sym\tv\n" + "AAA\t1.0\n", "select sym, v from cloned");
+        });
+    }
+
+    @Test
+    public void testCreateKeepColumnCollisionRejected() throws Exception {
+        // The window/keep-by read filter projects a synthetic boolean column __qdb_re_keep. A view that already
+        // exposes that name (here inherited from the base via select *) would make every read ambiguous, so the
+        // policy is rejected at CREATE.
+        assertMemoryLeak(() -> {
+            execute("create table base (__qdb_re_keep int, v double, k symbol, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows keep highest v partition by k",
+                    25,
+                    "cannot be used on a view with a column named '__qdb_re_keep'"
             );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testAlterKeepColumnCollisionRejected() throws Exception {
+        // Same __qdb_re_keep collision guard on the ALTER ... SET EXPIRE path (error points at the keep clause).
+        assertMemoryLeak(() -> {
+            execute("create table base (__qdb_re_keep int, v double, k symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows keep highest v partition by k",
+                    43,
+                    "cannot be used on a view with a column named '__qdb_re_keep'"
+            );
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                org.junit.Assert.assertNull(metadata.getExpiryPredicate());
+            }
+        });
+    }
+
+    @Test
+    public void testReadFilterCorrectForNonMonotonicFuturePredicate() throws Exception {
+        // ts > now() is NON-MONOTONIC: a future-dated row is hidden now but must REAPPEAR once now() advances
+        // past its timestamp. The read filter recomputes now() on every read, so it stays correct regardless.
+        // (Physical cleanup is documented as unsafe for such predicates -- this locks in the read-side invariant
+        // that the row is only hidden, never logically gone.)
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1704844800000000L); // 2024-01-10T00:00:00Z
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when ts > now()");
+            execute("insert into base values ('PAST', '2024-01-05T00:00:00.000000Z')");   // < now -> kept
+            execute("insert into base values ('FUTURE', '2024-01-20T00:00:00.000000Z')"); // > now -> hidden
+            drainWalAndMatViewQueues();
+
+            // At 2024-01-10 only the past row is visible.
+            assertSql("sym\n" + "PAST\n", "select sym from mv order by ts");
+
+            // Advance now() beyond the future row's ts: it reappears (it was only hidden, never deleted).
+            setCurrentMicros(1706140800000000L); // 2024-01-25T00:00:00Z
+            assertSql("sym\n" + "PAST\n" + "FUTURE\n", "select sym from mv order by ts");
         });
     }
 

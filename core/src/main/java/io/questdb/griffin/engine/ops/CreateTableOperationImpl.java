@@ -624,8 +624,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
-        this.expiryPredicate = likeTableMetadata.getExpiryPredicate();
-        this.expiryCleanupIntervalMicros = likeTableMetadata.getExpiryCleanupIntervalMicros();
+        // Deliberately DO NOT inherit an EXPIRE ROWS policy: EXPIRE is materialized-view-only and CREATE
+        // TABLE (LIKE ...) always creates a plain table. Copying it would put a policy on a plain table that
+        // the read filter and cleanup job would then apply -- silently hiding and physically deleting rows on
+        // a table type the feature forbids. Leave expiryPredicate/expiryCleanupIntervalMicros at their default.
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();

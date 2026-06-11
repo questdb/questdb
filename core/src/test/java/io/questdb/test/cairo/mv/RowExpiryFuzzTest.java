@@ -124,7 +124,7 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
             predicate = m.getExpiryPredicate();
         }
         try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-            job.cleanupTable(token, predicate, 0);
+            job.cleanupTable(token, predicate);
         }
         drainWalAndMatViewQueues();
         try {

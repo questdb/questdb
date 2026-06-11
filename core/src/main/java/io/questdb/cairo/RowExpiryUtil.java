@@ -212,6 +212,9 @@ public final class RowExpiryUtil {
     }
 
     private static void appendKeepByClause(CharSink<?> sink, CharSequence stored) {
+        // Column refs are rendered UNQUOTED to match the rest of SHOW CREATE TABLE (designated timestamp(col),
+        // DEDUP UPSERT KEYS(col), column defs are all unquoted). Do not quote here -- the executable-SQL path
+        // that DOES need quoting is buildKeepByPredicate, which feeds an expression back to the compiler.
         final KeepBy k = new KeepBy(stored);
         sink.putAscii("KEEP ");
         if (k.n > 0) {

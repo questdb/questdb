@@ -134,7 +134,7 @@ public class RowExpiryReadBenchmark {
                 final long before = rowCount(compiler, ctx, "select count() from table_partitions('mv_latest')");
                 final long t0 = System.nanoTime();
                 try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                    job.cleanupTable(token, predicate, 0);
+                    job.cleanupTable(token, predicate);
                 }
                 drainWal(engine);
                 final double sweepMs = (System.nanoTime() - t0) / 1_000_000.0;

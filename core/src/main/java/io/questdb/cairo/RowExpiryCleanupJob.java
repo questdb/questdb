@@ -148,8 +148,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * Physically reclaims expired rows from a single policied object, in place (no copy, no populate).
      * Snapshots non-active LOGICAL partition totals from a reader, classifies each as DROP/REPLACE/SKIP
      * via the keep-filter, then compacts via REPLACE_RANGE and batch-drops fully expired partitions.
+     * <p>
+     * Assumes <b>monotonic</b> expiry: a row classified as expired now must stay expired. This holds by
+     * construction for the relative/window modes and for a designated-timestamp predicate (e.g. {@code ts <
+     * now()}). A non-monotonic scalar {@code WHEN} predicate (e.g. {@code ts > now()}, which un-expires future
+     * rows as time advances) is NOT rejected at definition time, but cleanup may then physically delete a row a
+     * later read would show — the read filter stays correct, the deleted row is recoverable only by a full
+     * refresh. See docs/row-expiry.md ("Monotonicity = cleanup safety").
      */
-    public boolean cleanupTable(TableToken tableToken, String predicate, long cleanupIntervalMicros) {
+    public boolean cleanupTable(TableToken tableToken, String predicate) {
         final String tableName = tableToken.getTableName();
         // KEEP LATEST (relative) policies reclaim via a different survivor query (the global latest-per-key
         // set, intersected with each partition) and have no "<ts> < T" bounds fast-path; a plain WHEN
@@ -404,7 +411,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     // range). A fresh writer is acquired on the next REPLACE.
                     walWriter = Misc.free(walWriter);
                     LOG.error().$("row-expiry partition cleanup failed [table=").$safe(tableName)
-                            .$(", partitionTs=").$(floorTs)
+                            .$(", partitionTs=").$ts(floorTs)
                             .$(", msg=").$safe(th.getMessage())
                             .I$();
                 }
@@ -482,7 +489,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 continue;
             }
             try {
-                if (cleanupTable(tableToken, predicate, cleanupIntervalMicros)) {
+                if (cleanupTable(tableToken, predicate)) {
                     workDone = true;
                 }
             } catch (Throwable th) {

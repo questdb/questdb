@@ -5241,6 +5241,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
         }
+        // EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views, for EVERY mode
+        // (scalar WHEN included). (ALTER ... SET EXPIRE on a plain table is rejected earlier in the grammar.)
+        final MatViewDefinition def = tableToken.isMatView() ? engine.getMatViewGraph().getViewDefinition(tableToken) : null;
+        if (def == null || !def.isPassthrough()) {
+            throw SqlException.$(tableNamePosition, "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views");
+        }
         if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
             validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
         } else {
@@ -5328,17 +5334,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
         final int pos = createTableOp.getTableNamePosition();
+        // EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views, for EVERY mode
+        // (scalar WHEN included): the cleanup job physically reclaims rows, which only makes sense when the
+        // view mirrors base rows 1:1. An aggregating view's rows are derived, so deleting them would diverge
+        // from the defining query until a full refresh.
+        if (!createMatViewOp.isPassthrough()) {
+            throw SqlException.$(pos, "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views");
+        }
         if (RowExpiryUtil.isKeepLatest(predicate)) {
-            if (!createMatViewOp.isPassthrough()) {
-                throw SqlException.$(pos, "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views");
-            }
             validateKeepLatestColumns(selectMetadata, predicate, pos);
             return;
         }
         if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
-            if (!createMatViewOp.isPassthrough()) {
-                throw SqlException.$(pos, "EXPIRE ROWS KEEP / window retention is only supported on passthrough (non-aggregating) materialized views");
-            }
+            rejectKeepColumnCollision(selectMetadata, pos);
             // Validate by compiling the projection-CASE keep query against the view's defining SELECT (the
             // view does not exist yet); this validates the window predicate, its columns and types.
             validateWindowPolicy(executionContext, "(" + createTableOp.getSelectText() + ")", tsName(selectMetadata), predicate, pos);
@@ -5360,15 +5368,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             String predicate,
             int position
     ) throws SqlException {
-        final MatViewDefinition def = tableToken.isMatView() ? engine.getMatViewGraph().getViewDefinition(tableToken) : null;
-        if (def == null || !def.isPassthrough()) {
-            throw SqlException.$(position,
-                    "EXPIRE ROWS KEEP / window retention is only supported on passthrough (non-aggregating) materialized views");
-        }
+        // The passthrough-only check is enforced for ALL modes by the caller (alterTableSetExpire).
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             validateKeepLatestColumns(tableMetadata, predicate, position);
         } else {
+            rejectKeepColumnCollision(tableMetadata, position);
             validateWindowPolicy(executionContext, "\"" + tableToken.getTableName() + "\"", tsName(tableMetadata), predicate, position);
+        }
+    }
+
+    /**
+     * The window/keep-by read filter projects a synthetic boolean column named {@link RowExpiryUtil#KEEP_COLUMN}.
+     * If the view already has a column with that name, {@code SELECT *, CASE ... <KEEP_COLUMN>} would be
+     * ambiguous and every read of the view would fail, so reject the policy at definition time instead.
+     */
+    private void rejectKeepColumnCollision(RecordMetadata metadata, int position) throws SqlException {
+        if (metadata.getColumnIndexQuiet(RowExpiryUtil.KEEP_COLUMN) >= 0) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP / window retention cannot be used on a view with a column named '")
+                    .put(RowExpiryUtil.KEEP_COLUMN).put('\'');
         }
     }
 

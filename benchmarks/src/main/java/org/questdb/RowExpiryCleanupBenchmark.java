@@ -248,7 +248,7 @@ public class RowExpiryCleanupBenchmark {
         snapshot(compiler, ctx, view, beforeTs, beforeRows);
         final long t0 = System.nanoTime();
         try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-            job.cleanupTable(token, predicate, 0);
+            job.cleanupTable(token, predicate);
         }
         drainWal(engine);
         final long nanos = System.nanoTime() - t0;

@@ -307,12 +307,111 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate, 0);
+                job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
 
             // d1 partial (A@d1 expired, B@d1 kept) -> compacted to 1 row; d2 fully expired -> wiped; active
             // d3 untouched. 3 partitions/4 rows -> 2 partitions/2 rows. The read result is unchanged.
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql(
+                    "k\tv\tts\n" +
+                            "A\t9.0\t2024-01-03T00:00:00.000000Z\n" +
+                            "B\t8.0\t2024-01-01T00:00:00.000000Z\n",
+                    "select k, v, ts from mv order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testCleanupKeepLowest() throws Exception {
+        // Physical cleanup for the LOWEST direction (mirror of testCleanupCompactsAndWipes, inverted values).
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 9.0, '2024-01-01T00:00:00.000000Z')," +   // expired (A min=1)
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +   // B min -> survives in d1
+                    "('A', 5.0, '2024-01-02T00:00:00.000000Z')," +   // expired (A min=1)
+                    "('A', 1.0, '2024-01-03T00:00:00.000000Z')");    // A min (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep lowest v partition by k");
+            drainWalAndMatViewQueues();
+
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            runCleanup();
+
+            // d1 partial (A@d1 expired, B@d1 kept) -> 1 row; d2 fully expired -> wiped; active d3 untouched.
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql(
+                    "k\tv\tts\n" +
+                            "A\t1.0\t2024-01-03T00:00:00.000000Z\n" +
+                            "B\t2.0\t2024-01-01T00:00:00.000000Z\n",
+                    "select k, v, ts from mv order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testCleanupTopN() throws Exception {
+        // Physical cleanup for KEEP <N> (the row_number() ranking path, distinct from the max/min keep-by path).
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 9.0, '2024-01-01T00:00:00.000000Z')," +   // rank2 -> survives in d1
+                    "('A', 5.0, '2024-01-01T00:00:00.000000Z')," +   // rank3 -> expired (d1 partial)
+                    "('A', 4.0, '2024-01-02T00:00:00.000000Z')," +   // rank4 -> expired (d2 wiped)
+                    "('A', 10.0, '2024-01-03T00:00:00.000000Z')");   // rank1 (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            runCleanup();
+
+            // top-2 by v desc = {10@d3, 9@d1}. d1 partial (9 kept, 5 expired) -> 1 row; d2 wiped; active d3 kept.
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql(
+                    "k\tv\tts\n" +
+                            "A\t10.0\t2024-01-03T00:00:00.000000Z\n" +
+                            "A\t9.0\t2024-01-01T00:00:00.000000Z\n",
+                    "select k, v, ts from mv order by v desc"
+            );
+        });
+    }
+
+    @Test
+    public void testCleanupRawWindowWhenIdempotent() throws Exception {
+        // Physical cleanup for a RAW window WHEN (the isWindow survivor-query branch, not isKeepBy), and that a
+        // second sweep is a no-op once nothing expired remains.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // expired (A max=9)
+                    "('B', 8.0, '2024-01-01T00:00:00.000000Z')," +   // B max -> survives in d1
+                    "('A', 5.0, '2024-01-02T00:00:00.000000Z')," +   // expired (A max=9)
+                    "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // A max (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < max(v) over (partition by k)");
+            drainWalAndMatViewQueues();
+
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertTrue("first sweep should reclaim", job.cleanupTable(token, predicate));
+            }
+            drainWalAndMatViewQueues();
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+
+            // Second sweep: nothing expired remains -> no work, partitions unchanged.
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse("second sweep must be a no-op", job.cleanupTable(token, predicate));
+            }
+            drainWalAndMatViewQueues();
             assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
             assertSql(
                     "k\tv\tts\n" +
@@ -330,6 +429,19 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), contains);
         }
+    }
+
+    // Runs one cleanup sweep over "mv" and asserts it reclaimed (returned true).
+    private void runCleanup() throws Exception {
+        final TableToken token = engine.verifyTableName("mv");
+        final String predicate;
+        try (TableMetadata m = engine.getTableMetadata(token)) {
+            predicate = m.getExpiryPredicate();
+        }
+        try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+            Assert.assertTrue("sweep should reclaim", job.cleanupTable(token, predicate));
+        }
+        drainWalAndMatViewQueues();
     }
 
     private void createBase() throws Exception {

@@ -118,7 +118,8 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             assertCreateFails(
                     "create materialized view mvagg as (select k, last(v) v, ts from base sample by 1d) " +
                             "partition by day expire rows keep latest partition by k",
-                    "EXPIRE ROWS KEEP LATEST is only supported on passthrough (non-aggregating) materialized views"
+                    // Universal passthrough check (M2): the message is no longer mode-specific.
+                    "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views"
             );
         });
     }
@@ -215,7 +216,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate, 0);
+                job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
 
@@ -253,7 +254,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.cleanupTable(token, predicate, 0);
+                job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
 

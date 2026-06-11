@@ -206,7 +206,7 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
 
         // Final cleanup on quiescent data (no ingestion racing the commit), then settle.
         try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-            job.cleanupTable(viewToken, predicate, 0);
+            job.cleanupTable(viewToken, predicate);
         }
         drainWalAndMatViewQueues();
 
@@ -241,7 +241,7 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         final Thread th = new Thread(() -> {
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 while (!stop.get() && errors.isEmpty()) {
-                    job.cleanupTable(viewToken, predicate, 0);
+                    job.cleanupTable(viewToken, predicate);
                     Os.sleep(rnd.nextInt(15));
                 }
             } catch (Throwable th2) {

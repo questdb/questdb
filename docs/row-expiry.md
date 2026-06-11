@@ -67,9 +67,15 @@ the clause, and `tables()` / `materialized_views()` expose it (`expire_predicate
   deterministic. `KEEP <N> …` makes the order total by appending the designated timestamp as a tiebreak, so
   the N-th boundary is deterministic (assuming `(col, ts)` is effectively unique; pair with `DEDUP UPSERT
   KEYS` if needed).
-- **Monotonicity = cleanup safety.** In all modes a row that becomes expired never becomes un-expired (the
-  "best" row per group is kept, so removing the others cannot change it), which is why best-effort physical
-  deletion can never remove a row the read filter would show.
+- **Monotonicity = cleanup safety.** Physical deletion is only safe when expiry is **monotonic**: a row that
+  is expired now must stay expired forever. The relative/window modes are monotonic by construction (the
+  "best" row per group is kept, so removing the others cannot change it), as is a designated-timestamp
+  predicate like `ts < now()` (a row only gets older). A scalar `WHEN <predicate>`, however, is arbitrary
+  SQL and **monotonicity is the author's responsibility**. A non-monotonic predicate such as `WHEN ts >
+  now()` expires *future* rows that **un-expire** as `now()` advances past them: the read filter recomputes
+  `now()` on every read and is always correct, but the cleanup job could physically delete a row that a later
+  read would show. Use only monotonic `WHEN` predicates (time-in-the-past or fixed value thresholds); see the
+  limitation below.
 
 ## Known limitations & operational notes
 
@@ -82,6 +88,13 @@ the clause, and `tables()` / `materialized_views()` expose it (`expire_predicate
   continuously defers reclamation to a quiescent sweep. The read filter stays authoritative meanwhile.
 - **`KEEP LATEST [ON <ts>]`.** The optional `ON <ts>` is accepted for familiarity but the view's designated
   timestamp is always used (a table-input `LATEST ON` requires it).
+- **Non-monotonic `WHEN` predicates are unsupported for cleanup.** EXPIRE does not reject a non-monotonic
+  scalar predicate (detecting it in general would mean statically reasoning about arbitrary SQL, including
+  `now()` nested anywhere in the expression), but the cleanup job assumes monotonicity. With a predicate like
+  `WHEN ts > now()` the read filter stays correct — a future row reappears once `now()` passes its timestamp —
+  while physical cleanup may have already removed it (recoverable only by a full refresh). Treat `now()` as
+  "expire things in the past" (`ts < now()`); do not write predicates that expire rows the passage of time
+  will later keep.
 - **Cleanup runs on the primary only — but reclamation still replicates.** The `REPLACE_RANGE` commits are
   ordinary WAL transactions shipped down the normal stream; a replica reclaims the identical rows by applying
   them. A read-only replica neither runs the job nor needs to.
