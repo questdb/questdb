@@ -9501,6 +9501,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
+                        if (ColumnType.tagOf(f.getType()) == ColumnType.NULL) {
+                            Misc.free(f);
+                            throw SqlException.$(ast.position, "window function ").put(ast.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
+                        }
 
                         functions.extendAndSet(i, f);
 
@@ -9740,6 +9744,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (!(f instanceof WindowFunction)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
+                        }
+                        if (ColumnType.tagOf(f.getType()) == ColumnType.NULL) {
+                            Misc.free(f);
+                            throw SqlException.$(ast.position, "window function ").put(ast.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
                         }
                     } finally {
                         executionContext.clearWindowContext();

@@ -16512,6 +16512,59 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullLiteralArgumentRejectedWithCleanError() throws Exception {
+        // A window value/navigation function whose argument is the untyped null literal resolves to a
+        // NULL output column type. The cached window path could not build a record sink over a NULL
+        // column and leaked an internal "IllegalArgumentException: Unexpected column type: NULL". The
+        // code generator now rejects a NULL-typed window function with a user-facing SqlException, and
+        // the rejection is consistent across frames (streaming and cached paths alike).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, g SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1.0, 'A', 1_000_000), (2.0, 'A', 2_000_000), (3.0, 'B', 3_000_000)");
+
+            final String contains = "does not support an untyped NULL argument";
+
+            // lead reads ahead, so it always takes the cached path - the original repro from the fuzzer.
+            assertExceptionNoLeakCheck("SELECT lead(null, 2) OVER (ORDER BY ts) FROM t", 7, contains);
+            assertExceptionNoLeakCheck("SELECT lead(null) OVER (ORDER BY ts) FROM t", 7, contains);
+
+            // min(null) resolves to a NULL output type; the DESC ROWS frame is the original repro
+            // (cached path), while the ascending and default frames take the streaming path. All three
+            // now reject consistently rather than crashing on one and silently returning nulls on another.
+            assertExceptionNoLeakCheck(
+                    "SELECT min(null) OVER (ORDER BY ts DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                    7,
+                    contains
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT min(null) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                    7,
+                    contains
+            );
+            assertExceptionNoLeakCheck("SELECT min(null) OVER (ORDER BY ts) FROM t", 7, contains);
+
+            // The rejection is independent of the timestamp type wrapping in this suite, and a
+            // PARTITION BY does not change it.
+            assertExceptionNoLeakCheck("SELECT lead(null, 1) OVER (PARTITION BY g ORDER BY ts) FROM t", 7, contains);
+
+            // A pre-existing guard rejects nth_value over an untyped NULL with its own message; it must
+            // keep working and never leak the internal exception.
+            assertExceptionNoLeakCheck("SELECT nth_value(null, 2) OVER (ORDER BY ts) FROM t", 17, "nth_value is not yet implemented for NULL");
+
+            // The error message points at a concrete cast as the fix, so the cast must actually work and
+            // compute over NULL, returning a NULL column.
+            assertQuery("SELECT lead(null::double, 2) OVER (ORDER BY ts) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("lead\nnull\nnull\nnull\n");
+            assertQuery("SELECT min(null::double) OVER (ORDER BY ts DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("min\nnull\nnull\nnull\n");
+        });
+    }
+
+    @Test
     public void testPartitionByAndOrderByColumnPushdown() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
