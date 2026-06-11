@@ -46,8 +46,16 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class QueryRegistryLifecycleTest extends AbstractCairoTest {
 
+    /**
+     * Cancelling an id that is no longer registered returns false. The entry is
+     * already gone from the registry map, so cancel() short-circuits at the
+     * registry lookup before it ever reaches the lifecycle guard. This covers
+     * the plain registry-miss path; the lifecycle guard itself is covered by
+     * {@link #testRecycledEntryReportsStaleLifecycle()} and
+     * {@link #testStaleCancellerCannotTouchRecycledEntry()}.
+     */
     @Test
-    public void testCancelReturnsFalseForRetiredId() throws Exception {
+    public void testCancelReturnsFalseForUnregisteredId() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
             try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
@@ -77,6 +85,42 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
 
                 registry.unregister(queryId, context);
                 Assert.assertNull(registry.getEntry(queryId));
+            }
+        });
+    }
+
+    /**
+     * After an entry is unregistered and the pooled object is reused for a new
+     * query, its lifecycle word no longer matches the old query id. This is the
+     * invariant the whole fix relies on: a stale canceller (or a
+     * query_activity() snapshot) holding the recycled entry sees
+     * isActiveLifecycle() return false for the old id and rejects it, while the
+     * new id is reported active. Single-threaded, so the recycle is
+     * deterministic - register() pops the very same entry back from the
+     * thread-local pool.
+     */
+    @Test
+    public void testRecycledEntryReportsStaleLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long oldId = registry.register("SELECT old", context);
+                final QueryRegistry.Entry entry = registry.getEntry(oldId);
+                Assert.assertNotNull(entry);
+                Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(oldId, entry.getLifecycle()));
+
+                registry.unregister(oldId, context);
+
+                final long newId = registry.register("SELECT new", context);
+                Assert.assertNotEquals(oldId, newId);
+                // the thread-local pool hands the very same Entry object back
+                Assert.assertSame(entry, registry.getEntry(newId));
+
+                // the recycled entry is active for the new id and stale for the old one
+                Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(newId, entry.getLifecycle()));
+                Assert.assertFalse(QueryRegistry.Entry.isActiveLifecycle(oldId, entry.getLifecycle()));
+
+                registry.unregister(newId, context);
             }
         });
     }

@@ -30,17 +30,27 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
@@ -211,6 +221,120 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
             if (error.get() != null) {
                 throw error.get();
             }
+        });
+    }
+
+    @Test
+    public void testQueryActivitySnapshotUnderChurn() throws Exception {
+        // A reader runs query_activity() in a tight loop while several producers
+        // register and unregister queries, recycling pooled Entry objects under
+        // the reader. The optimistic snapshot in QueryActivityRecord.of()/copy()
+        // must never expose a torn query string nor crash: every producer row the
+        // reader accepts must carry one of the complete, known producer texts.
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final int producerCount = 4;
+            final int iterations = 20_000;
+
+            // Producer texts alternate between a short and a long, distinctly-keyed
+            // string so recycling an entry changes the StringSink length and
+            // exercises copy()'s shrink/grow rejection. They start with 'A'/'B' so
+            // the reader's own "SELECT ... query_activity()" text can never be
+            // mistaken for a producer row.
+            final String[][] producerTexts = new String[producerCount][2];
+            final Set<String> validQueries = new HashSet<>();
+            for (int p = 0; p < producerCount; p++) {
+                final StringBuilder longText = new StringBuilder();
+                for (int k = 0, n = 40 + p * 7; k < n; k++) {
+                    longText.append('B').append(p);
+                }
+                producerTexts[p][0] = "A" + p;
+                producerTexts[p][1] = longText.toString();
+                validQueries.add(producerTexts[p][0]);
+                validQueries.add(producerTexts[p][1]);
+            }
+
+            final AtomicInteger runningProducers = new AtomicInteger(producerCount);
+            final AtomicLong producerRowsObserved = new AtomicLong();
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+            final CyclicBarrier startBarrier = new CyclicBarrier(producerCount + 1);
+            final ObjList<Thread> threads = new ObjList<>();
+
+            for (int p = 0; p < producerCount; p++) {
+                final int slot = p;
+                final Thread thread = new Thread(() -> {
+                    try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                        startBarrier.await();
+                        for (int i = 0; i < iterations && fault.get() == null; i++) {
+                            final long queryId = registry.register(producerTexts[slot][i & 1], context);
+                            // brief window for the reader to snapshot the entry
+                            for (int j = 0; j < 8; j++) {
+                                Os.pause();
+                            }
+                            registry.unregister(queryId, context);
+                        }
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    } finally {
+                        runningProducers.decrementAndGet();
+                    }
+                }, "producer-" + slot);
+                threads.add(thread);
+            }
+
+            final Thread reader = new Thread(() -> {
+                try (
+                        SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = CairoEngine.select(compiler, "SELECT query_id, worker_pool, username, state, query FROM query_activity()", context)
+                ) {
+                    startBarrier.await();
+                    while (runningProducers.get() > 0 && fault.get() == null) {
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                // force every snapshot column to be materialized
+                                record.getLong(0);
+                                record.getStrA(1);
+                                record.getStrA(2);
+                                record.getStrA(3);
+                                final CharSequence query = record.getStrA(4);
+                                if (query == null) {
+                                    continue;
+                                }
+                                final String text = Chars.toString(query);
+                                // producer texts are "A<digit>" or "B<digit>...": require the
+                                // leading digit so an unrelated registry entry (e.g. an internal
+                                // "ALTER ...") is never mistaken for a producer row, and charAt(1)
+                                // stays in bounds.
+                                if (text.length() >= 2 && (text.charAt(0) == 'A' || text.charAt(0) == 'B')
+                                        && text.charAt(1) >= '0' && text.charAt(1) <= '9') {
+                                    if (!validQueries.contains(text)) {
+                                        throw new AssertionError("query_activity exposed a torn query: '" + text + "'");
+                                    }
+                                    producerRowsObserved.incrementAndGet();
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    fault.compareAndSet(null, t);
+                }
+            }, "query_activity_reader");
+            threads.add(reader);
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).start();
+            }
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join(120_000);
+                Assert.assertFalse("worker thread hung", threads.getQuick(i).isAlive());
+            }
+
+            if (fault.get() != null) {
+                throw new AssertionError("worker thread failed", fault.get());
+            }
+            Assert.assertTrue("reader never observed a live query", producerRowsObserved.get() > 0);
         });
     }
 
