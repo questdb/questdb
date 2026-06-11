@@ -154,9 +154,11 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
-            // The master recordAt() access slides forward over a small window of rows (the
-            // offset grid), so at frame granularity it is sequential: monotonic, not scattered.
-            masterCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+            // emitJoinRecord() revisits master rows via recordAt() in output (master_ts +
+            // offset) order, so the set of simultaneously active master rows spans the offset
+            // grid. A wide horizon over fine partitions can keep more than MONOTONIC's 4 frames
+            // live at once, so SCATTERED avoids re-decode thrash (at the cost of the full budget).
+            masterCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             slaveCursor = slaveFactory.getCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;

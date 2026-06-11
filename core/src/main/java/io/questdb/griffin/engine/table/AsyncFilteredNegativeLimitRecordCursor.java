@@ -83,15 +83,22 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private DirectLongList rows;
 
     public AsyncFilteredNegativeLimitRecordCursor(@NotNull CairoConfiguration configuration, int scanDirection) {
+        // close() only frees these once isOpen (set in of()), so a ctor failure must free the
+        // already-allocated natives here; build them into locals so the catch can release them.
+        PageFrameMemoryRecord record = null;
+        PageFrameMemoryPool frameMemoryPool = null;
         try {
-            this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-            this.frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
-            this.dispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
+            record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
         } catch (Throwable th) {
-            close();
+            Misc.free(record);
+            Misc.free(frameMemoryPool);
             throw th;
         }
+        this.record = record;
+        this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+        this.frameMemoryPool = frameMemoryPool;
+        this.dispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
     }
 
     @Override

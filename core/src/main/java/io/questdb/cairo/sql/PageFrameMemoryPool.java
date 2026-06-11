@@ -341,6 +341,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.free(parquetMetaDecoder);
         Misc.free(legacyDecoder);
         activeDecoder = null;
+        hasFullProjectionMap = false;
     }
 
     @Override
@@ -357,8 +358,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * bits, so any {@link PageFrameMemoryRecord} or {@code frameMemory}
      * flyweight still bound to a cached entry will hold a dangling pointer
      * after this returns. Callers must ensure all records are abandoned
-     * before invoking. Used from {@link #clear()} / {@link #close()} and
-     * from cursor lifecycle points (toTop, close).
+     * before invoking. Used from {@link #clear()} / {@link #close()} /
+     * {@link #of(PageFrameAddressCache)} and from the async reduce paths that
+     * release decoded frames between dispatch rounds.
      */
     public void releaseParquetBuffers() {
         ParquetBuffers b = lruHead;
@@ -390,6 +392,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
+        // A shrink (SCATTERED -> MONOTONIC) can leave cachedBytes above the new ceiling.
+        trimToBudget();
     }
 
     private void accountDecode(ParquetBuffers parquetBuffers) {
@@ -531,6 +535,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 yield null;
             }
         };
+    }
+
+    // Zero-budget pools (per-worker parallel reduce slots, new PageFrameMemoryPool(0L)) never
+    // cache, so they skip the per-decode byte sum: cachedBytes is unused for them.
+    private boolean isAccountingEnabled() {
+        return effectiveBudgetBytes != 0;
     }
 
     private void lruAppend(ParquetBuffers b) {
@@ -909,9 +919,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
                 slotCount = (int) (parquetColumns.size() / 2);
-                // Zero-budget pools (per-worker parallel reduce slots) never cache, so
-                // skip the per-decode byte sum: cachedBytes is unused for them.
-                decodedBytes = effectiveBudgetBytes != 0 ? rowGroupBuffers.sumChunkBytes(0, slotCount) : 0;
+                decodedBytes = isAccountingEnabled() ? rowGroupBuffers.sumChunkBytes(0, slotCount) : 0;
             } else {
                 slotCount = 0;
                 decodedBytes = 0;
@@ -939,7 +947,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
             }
             final int extraSlots = (int) (parquetColumns.size() / 2);
-            final long extra = effectiveBudgetBytes != 0 ? rowGroupBuffers.sumChunkBytes(columnOffset, extraSlots) : 0;
+            final long extra = isAccountingEnabled() ? rowGroupBuffers.sumChunkBytes(columnOffset, extraSlots) : 0;
             if (extraSlots > 0) {
                 slotCount += extraSlots;
             }
