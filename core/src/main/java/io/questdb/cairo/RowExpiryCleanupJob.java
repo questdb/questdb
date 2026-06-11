@@ -470,11 +470,24 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             return false;
         }
 
+        // Bound the throttle map over a long process lifetime: a dropped/renamed view never removes its
+        // entry, so if it has accumulated far more entries than there are live policied views, reset it. The
+        // throttle is best-effort (cleanup is idempotent and globally rate-limited), so the only effect is one
+        // extra sweep per live view this round before each CLEANUP EVERY cadence re-applies.
+        if (lastRunByTable.size() > 4 * discoveredTokens.size()) {
+            lastRunByTable.clear();
+        }
+
         boolean workDone = false;
         for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
             final TableToken tableToken = discoveredTokens.getQuick(i);
             final String predicate = discoveredPredicates.getQuick(i);
-            final long cleanupIntervalMicros = discoveredCleanupIntervals.getQuick(i);
+            long cleanupIntervalMicros = discoveredCleanupIntervals.getQuick(i);
+            if (cleanupIntervalMicros <= 0) {
+                // Only reachable from a truncated/legacy _meta (DDL always stores a positive default); fall
+                // back to the default cadence so a degenerate interval does not sweep on every global tick.
+                cleanupIntervalMicros = RowExpiryUtil.DEFAULT_CLEANUP_INTERVAL_MICROS;
+            }
             final CharSequence tableKey = tableToken.getTableName();
 
             final long lastRun = lastRunByTable.get(tableKey);

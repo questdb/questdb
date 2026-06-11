@@ -209,6 +209,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isRowExpiryEnabled());
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
@@ -1956,6 +1957,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
+            Assert.assertFalse(configuration.getCairoConfiguration().isRowExpiryEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
