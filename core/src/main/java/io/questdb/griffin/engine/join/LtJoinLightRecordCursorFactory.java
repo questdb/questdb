@@ -40,10 +40,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -52,6 +54,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     private final LtJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private final long toleranceInterval;
 
     public LtJoinLightRecordCursorFactory(
@@ -65,9 +68,14 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordSink slaveKeySink,
             int columnSplit,
             JoinContext joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                : null;
         Map joinKeyMap = null;
         try {
             this.masterKeySink = masterKeySink;
@@ -126,6 +134,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("Lt Join Light");
         sink.attr("condition").val(joinContext);
+        if (symbolTranslatingRecord != null) {
+            sink.attr("symbolKeyJoin").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -136,6 +147,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(cursor);
+        Misc.free(symbolTranslatingRecord);
     }
 
     private class LtJoinLightRecordCursor extends AbstractJoinCursor {
@@ -234,8 +246,22 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                     this.slaveTimestamp = slaveTimestamp;
                     this.lastSlaveRowID = slaveRowID;
                 }
+
                 key = joinKeyMap.withKey();
-                key.put(masterRecord, masterKeySink);
+                // Use the translating record (if available) so that getInt() on symbol
+                // key columns returns slave symbol IDs for integer-based map lookup.
+                if (symbolTranslatingRecord != null) {
+                    symbolTranslatingRecord.resetNonExistentKeyFlag();
+                    key.put(symbolTranslatingRecord, masterKeySink);
+                    // Skip map probe when master symbol keys don't exist in slave.
+                    if (symbolTranslatingRecord.hadNonExistentKey()) {
+                        record.hasSlave(false);
+                        return true;
+                    }
+                } else {
+                    key.put(masterRecord, masterKeySink);
+                }
+
                 value = key.findValue();
                 if (value != null) {
                     slaveCursor.recordAt(slaveRecord, value.getLong(0));
@@ -274,12 +300,18 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                 isOpen = true;
                 joinKeyMap.reopen();
             }
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
             slaveTimestamp = Long.MIN_VALUE;
             lastSlaveRowID = Long.MIN_VALUE;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.of(masterRecord);
+            }
             record.of(masterRecord, slaveRecord);
         }
     }

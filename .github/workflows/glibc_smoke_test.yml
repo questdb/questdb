@@ -6,11 +6,11 @@ on:
   # Reasoning: cache are not shared across branches, but feature branches can read from the default branch cache
   # So we need to run the build on master to populate the cache.
   push:
-    branches: [ master ]
+    branches: [master]
     paths:
-      - '**/pom.xml'
+      - "**/pom.xml"
   pull_request:
-    types: [ synchronize, opened, reopened, edited ]
+    types: [synchronize, opened, reopened, edited]
     paths:
       - 'core/src/main/c/**'
       - 'core/CMakeLists.txt'
@@ -48,11 +48,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
-          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
+          key: java-temurin-25-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "25"
       - name: Cache Maven installation and repository
         id: maven-cache
         uses: actions/cache@v4
@@ -78,8 +78,11 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2025-09-24
           echo "PATH=$HOME/.cargo/bin:$PATH" >> $GITHUB_ENV
+      - name: Detect local client profile
+        id: client
+        uses: ./.github/actions/detect-local-client
       - name: Build distribution
-        run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core'
+        run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks' ${{ steps.client.outputs.client_profile }}
         env:
           MAVEN_OPTS: "-XX:+UseParallelGC"
       - name: Unpack distribution
@@ -114,11 +117,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
-          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
+          key: java-temurin-25-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "25"
       - name: Cache Maven installation and repository
         id: maven-cache
         uses: actions/cache@v4
@@ -144,8 +147,11 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2025-09-24
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Detect local client profile
+        id: client
+        uses: ./.github/actions/detect-local-client
       - name: Build distribution
-        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks' ${{ steps.client.outputs.client_profile }}
         env:
           MAVEN_OPTS: "-XX:+UseParallelGC"
       - name: Unpack distribution
@@ -164,6 +170,3 @@ jobs:
           path: ~/.questdb/log/*
           name: logs
           retention-days: 5
-
-        
-

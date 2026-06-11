@@ -155,12 +155,16 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     update.close();
                 }
 
-                assertSql("ts\tx\n" +
-                        "1970-01-01T00:00:00.000000Z\t5\n" +
-                        "1970-01-01T00:00:01.000000Z\t5\n" +
-                        "1970-01-01T00:00:02.000000Z\t5\n" +
-                        "1970-01-01T00:00:03.000000Z\t5\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\n", "testUpdateTimeout");
+                assertQuery("testUpdateTimeout")
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                ts\tx
+                                1970-01-01T00:00:00.000000Z\t5
+                                1970-01-01T00:00:01.000000Z\t5
+                                1970-01-01T00:00:02.000000Z\t5
+                                1970-01-01T00:00:03.000000Z\t5
+                                1970-01-01T00:00:04.000000Z\t5
+                                """);
             }
         });
     }

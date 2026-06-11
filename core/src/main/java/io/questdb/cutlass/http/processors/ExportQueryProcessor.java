@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -249,10 +250,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         // when unwrapped instanceof VirtualRecordCursorFactory.
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
-                        state.pageFrameCursor.setStreamingMode(true);
+                        state.pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
-                        state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
+                        if (unwrapped instanceof VirtualRecordCursorFactory vf) {
+                            state.materializer.setUpCursorBacked(vf);
+                        } else {
+                            state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                        }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
@@ -700,7 +706,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         null,
                         state.getExportModel().getBloomFilterColumns(),
                         0,
-                        state.getExportModel().getBloomFilterFpp()
+                        state.getExportModel().getBloomFilterFpp(),
+                        sqlExecutionContext.getBindVariableService()
                 );
                 exporter.of(state.task);
                 exporter.setExportMode(exportMode);
@@ -1175,7 +1182,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.columnValueFullySent = true;
         } catch (Throwable e) {
             // we have to disambiguate here if this is the first attempt to send the value, which failed,
-            // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+            // and we have any partial value we can send to the client, or our state did not bookmark anything?
             state.columnValueFullySent = state.arrayState.isNothingWritten();
             state.arrayState.reset(arrayView);
             throw e;

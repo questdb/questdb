@@ -25,7 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.ByteList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -54,13 +54,13 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
     private final DirectLongList auxPageSizes;
-    private final IntList columnIndexes = new IntList();
+    private final ColumnMapping columnMapping = new ColumnMapping();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
-    private final ObjList<PartitionDecoder> parquetPartitionDecoders = new ObjList<>();
+    private final ObjList<ParquetDecoder> parquetDecoders = new ObjList<>();
     private final IntList parquetRowGroupHis = new IntList();
     private final IntList parquetRowGroupLos = new IntList();
     private final IntList parquetRowGroups = new IntList();
@@ -107,9 +107,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
-        PartitionDecoder decoder = frame.getParquetPartitionDecoder();
-        parquetPartitionDecoders.add(decoder);
-        assert (decoder != null && (decoder.getFileSize() > 0)) || frame.getFormat() != PartitionFormat.PARQUET;
+        ParquetDecoder decoder = frame.getParquetDecoder();
+        parquetDecoders.add(decoder);
+        assert (decoder != null && decoder.getFileSize() > 0) || frame.getFormat() != PartitionFormat.PARQUET;
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
@@ -120,7 +120,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
-        parquetPartitionDecoders.clear();
+        parquetDecoders.clear();
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
@@ -160,9 +160,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return columnCount;
     }
 
-    // returns local (query) to table reader index mapping
-    public IntList getColumnIndexes() {
-        return columnIndexes;
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
     }
 
     public IntList getColumnTypes() {
@@ -193,10 +192,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return pageSizes;
     }
 
-    public PartitionDecoder getParquetPartitionDecoder(int frameIndex) {
-        final PartitionDecoder decoder = parquetPartitionDecoders.getQuick(frameIndex);
-        assert decoder != null;
-        return decoder;
+    public ParquetDecoder getParquetDecoder(int frameIndex) {
+        return parquetDecoders.getQuick(frameIndex);
     }
 
     public int getParquetRowGroup(int frameIndex) {
@@ -223,7 +220,11 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
     }
 
-    public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes, boolean external) {
+    public void of(
+            @Transient RecordMetadata metadata,
+            @Transient ColumnMapping columnMapping,
+            boolean external
+    ) {
         // Reopen off-heap lists in case they were closed.
         pageAddresses.reopen();
         pageSizes.reopen();
@@ -237,8 +238,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
-        this.columnIndexes.clear();
-        this.columnIndexes.addAll(columnIndexes);
+        this.columnMapping.copyFrom(columnMapping);
         this.external = external;
     }
 
@@ -248,5 +248,27 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      */
     public int toColumnOffset(int frameIndex) {
         return frameIndex * columnCount;
+    }
+
+    /**
+     * Updates column addresses and parquet decoder for an existing frame entry.
+     * Called during lazy partition opening to patch zero-address skeleton entries
+     * with real mmap addresses. Does not change frame structure (size, format,
+     * rowIdOffset, parquet row group indices).
+     */
+    public void updateAddresses(int frameIndex, @Transient PageFrame frame) {
+        final int offset = frameIndex * columnCount;
+        if (frame.getFormat() == PartitionFormat.NATIVE) {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                pageAddresses.set(offset + columnIndex, frame.getPageAddress(columnIndex));
+                pageSizes.set(offset + columnIndex, frame.getPageSize(columnIndex));
+                if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
+                    auxPageAddresses.set(offset + columnIndex, frame.getAuxPageAddress(columnIndex));
+                    auxPageSizes.set(offset + columnIndex, frame.getAuxPageSize(columnIndex));
+                }
+            }
+        } else {
+            parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
+        }
     }
 }

@@ -46,6 +46,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -54,6 +55,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -74,7 +76,9 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, int opts) {
-            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+            boolean isSymIndexValueFile = Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v")
+                    || Utf8s.containsAscii(name, Files.SEPARATOR + "sym.pv.");
+            if (isSymIndexValueFile && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name, opts);
@@ -592,38 +596,12 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
-        counter.set(0);
-        executeWithPool(
-                0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
-                    @Override
-                    public boolean truncate(long fd, long size) {
-                        // First two calls to truncate are for varchar column
-                        if (size == 0 && counter.getAndIncrement() == 3) {
-                            return false;
-                        }
-                        return super.truncate(fd, size);
-                    }
-                }
-        );
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, newIndexFileFaultFF(true));
     }
 
     @Test
     public void testFailOnTruncateKeyValueContended() throws Exception {
-        counter.set(0);
-        // different number of calls to "truncate" on Windows and *Nix
-        // the number targets truncate of key file in BitmapIndexWriter
-        executeWithPool(
-                0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
-                    @Override
-                    public boolean truncate(long fd, long size) {
-                        // First two calls to truncate are for varchar column
-                        if (size == 0 && counter.getAndIncrement() == 3) {
-                            return false;
-                        }
-                        return super.truncate(fd, size);
-                    }
-                }
-        );
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, newIndexFileFaultFF(false));
     }
 
     @Test
@@ -656,37 +634,36 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("""
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("""
                                     x\tts
                                     496\t2022-02-24T00:00:00.495000Z
                                     497\t2022-02-24T00:00:00.496000Z
                                     498\t2022-02-24T00:00:00.497000Z
                                     499\t2022-02-24T00:00:00.498000Z
                                     500\t2022-02-24T00:00:00.499000Z
-                                    """, timestampTypeAndName)
-                    );
+                                    """, timestampTypeAndName));
 
                     // Insert ok after failure
                     o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext, "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("""
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("""
                                     x\tts
                                     497\t2022-02-24T00:00:00.496000Z
                                     498\t2022-02-24T00:00:00.497000Z
                                     -1\t2022-02-24T00:00:00.497000Z
                                     499\t2022-02-24T00:00:00.498000Z
                                     500\t2022-02-24T00:00:00.499000Z
-                                    """, timestampTypeAndName)
-                    );
+                                    """, timestampTypeAndName));
                 },
                 new TestFilesFacadeImpl() {
                     @Override
@@ -1017,33 +994,32 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("str\tts\n" +
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("str\tts\n" +
                                     strColVal + "\t2022-02-24T00:00:00.495000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
-                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
-                    );
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName));
 
                     // Insert ok after failure
                     o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext, "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("str\tts\n" +
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("str\tts\n" +
                                     strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
                                     "abcd\t2022-02-24T00:00:00.497000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
-                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
-                    );
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName));
                 },
                 new TestFilesFacadeImpl() {
                     @Override
@@ -1149,6 +1125,43 @@ public class O3FailureTest extends AbstractO3Test {
                     return -1;
                 }
                 return super.openRW(name, opts);
+            }
+        };
+    }
+
+    private static TestFilesFacadeImpl newIndexFileFaultFF(boolean isKey) {
+        final String bitmapSuffix = "1970-01-08.17" + Files.SEPARATOR + "sym." + (isKey ? "k" : "v");
+        final String postingSuffix = "1970-01-08.17" + Files.SEPARATOR + "sym." + (isKey ? "pk" : "pv.0");
+        return new TestFilesFacadeImpl() {
+            private boolean isArmed = true;
+            private long targetFd = -1;
+
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (isArmed && fd == targetFd) {
+                    isArmed = false;
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (isArmed && fd > -1
+                        && (Utf8s.endsWithAscii(name, bitmapSuffix) || Utf8s.endsWithAscii(name, postingSuffix))) {
+                    targetFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (isArmed && size == 0 && fd == targetFd) {
+                    isArmed = false;
+                    return false;
+                }
+                return super.truncate(fd, size);
             }
         };
     }
@@ -3689,46 +3702,43 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException {
+    ) throws Exception {
         engine.execute(
                 "create table x (ts " + timestampTypeName + ", block_nr long) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                "ts\tblock_nr\n"
-        );
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("ts\tblock_nr\n");
 
         engine.execute("insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)", sqlExecutionContext);
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                replaceTimestampSuffix1("""
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix1("""
                         ts\tblock_nr
                         2010-02-04T21:43:14.000000Z\t38304
-                        """, timestampTypeName)
-        );
+                        """, timestampTypeName));
 
         engine.execute("insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)", sqlExecutionContext);
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                replaceTimestampSuffix1("""
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix1("""
                         ts\tblock_nr
                         2010-02-04T21:43:14.000000Z\t38304
                         2010-02-14T23:52:59.000000Z\t40320
-                        """, timestampTypeName)
-        );
+                        """, timestampTypeName));
 
     }
 
@@ -3740,16 +3750,24 @@ public class O3FailureTest extends AbstractO3Test {
     ) throws SqlException {
 
         engine.execute("create table x (f symbol index, a string, b string, c string, d string, vc1 varchar, vc2 varchar, e symbol index, g int, t " + timestampTypeName + ") timestamp (t) partition by DAY", executionContext);
-        // max timestamp should be 100_000
-        engine.execute("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
+
+        // randomize workload; smaller ranges on slow CI runners (Mac, Windows)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int initialRowsMax = Os.isLinux() ? 3_000_000 : 500_000;
+        int initialRowsMin = initialRowsMax / 3;
+        int initialRows = initialRowsMin + rnd.nextInt(initialRowsMax - initialRowsMin + 1);
+        int batchCountMax = Os.isLinux() ? 75 : 30;
+        int batchCountMin = batchCountMax / 2;
+        int batchCount = batchCountMin + rnd.nextInt(batchCountMax - batchCountMin + 1);
+
+        // bulk-load the initial dataset; the O3 batches below use timestamps in [0, 100_000)
+        // to force out-of-order inserts into the earliest partitions
+        engine.execute("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(" + initialRows + ")", executionContext);
 
         String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
         final int symbolLen = symbols.length;
 
-
-        Rnd rnd = TestUtils.generateRandom(LOG);
         int batches = 0;
-        int batchCount = 75;
 
         Utf8StringSink utf8Sink = new Utf8StringSink();
         while (batches < batchCount) {

@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -44,6 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
@@ -184,6 +186,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
+            // SHOW CREATE TABLE rejects views and materialized views during parsing
+            // (see SqlParserCallback.getTableToken); guard against any future caller that bypasses it.
+            assert !tableToken.isView() && !tableToken.isMatView();
 
             toTop();
             return this;
@@ -205,10 +210,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             hasRun = false;
         }
 
-        private void putTtl() {
-            ttlToSink(table.getTtlHoursOrMonths(), sink);
-        }
-
         private void showCreateTable(CairoConfiguration config) {
             // CREATE TABLE table_name
             putCreateTable();
@@ -220,7 +221,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 // PARTITION BY unit
                 putPartitionBy();
                 // TTL n unit
-                putTtl();
+                ttlToSink(sink);
                 // (BYPASS) WAL
                 putWal();
             }
@@ -250,8 +251,38 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 }
 
                 if (column.isIndexed()) {
-                    // INDEX CAPACITY value
-                    sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
+                    byte idxType = column.getIndexType();
+                    if (idxType == IndexType.BITMAP) {
+                        sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
+                    } else {
+                        sink.putAscii(" INDEX TYPE ");
+                        IndexType.putName(sink, idxType);
+                        IntList coveringCols = column.getCoveringColumnIndices();
+                        // Drop tombstoned entries (dense -1 left behind by
+                        // DROP COLUMN). If no survivor remains, skip the
+                        // INCLUDE clause entirely — emitting "INCLUDE ()"
+                        // produces invalid DDL that the parser rejects.
+                        int survivors = countCoveringSurvivors(coveringCols, table);
+                        if (survivors > 0) {
+                            sink.putAscii(" INCLUDE (");
+                            int emitted = 0;
+                            for (int ci = 0, cn = coveringCols.size(); ci < cn; ci++) {
+                                int denseIdx = coveringCols.getQuick(ci);
+                                if (denseIdx < 0) {
+                                    continue;
+                                }
+                                CairoColumn covCol = table.getColumnQuiet(denseIdx);
+                                if (covCol != null) {
+                                    if (emitted > 0) {
+                                        sink.putAscii(", ");
+                                    }
+                                    sink.put(covCol.getName());
+                                    emitted++;
+                                }
+                            }
+                            sink.putAscii(')');
+                        }
+                    }
                 }
             }
 
@@ -260,17 +291,27 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 int encoding = TableUtils.getParquetConfigEncoding(parquetConfig);
                 int compression = TableUtils.getParquetConfigCompression(parquetConfig);
                 int level = TableUtils.getParquetConfigCompressionLevel(parquetConfig);
+                boolean hasBloomFilter = TableUtils.isParquetConfigBloomFilter(parquetConfig);
                 sink.putAscii(" PARQUET(");
-                if (encoding > 0) {
-                    sink.put(ParquetEncoding.getEncodingName(encoding));
+                if (encoding > 0 || compression > 0) {
+                    if (encoding > 0) {
+                        sink.put(ParquetEncoding.getEncodingName(encoding));
+                    } else {
+                        sink.putAscii("default");
+                    }
+                    if (compression > 0) {
+                        sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
+                        if (level > 0) {
+                            sink.putAscii('(').put(level - 1).putAscii(')');
+                        }
+                    }
+                    if (hasBloomFilter) {
+                        sink.putAscii(", bloom_filter");
+                    }
+                } else if (hasBloomFilter) {
+                    sink.putAscii("bloom_filter");
                 } else {
                     sink.putAscii("default");
-                }
-                if (compression > 0) {
-                    sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
-                    if (level > 0) {
-                        sink.putAscii('(').put(level - 1).putAscii(')');
-                    }
                 }
                 sink.putAscii(')');
             }
@@ -333,6 +374,25 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.putAscii(" BYPASS");
                 sink.putAscii(" WAL");
             }
+        }
+
+        // overridden in ent, do not remove!
+        protected void ttlToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        private static int countCoveringSurvivors(IntList coveringCols, CairoTable table) {
+            if (coveringCols == null || coveringCols.size() == 0) {
+                return 0;
+            }
+            int survivors = 0;
+            for (int ci = 0, cn = coveringCols.size(); ci < cn; ci++) {
+                int denseIdx = coveringCols.getQuick(ci);
+                if (denseIdx >= 0 && table.getColumnQuiet(denseIdx) != null) {
+                    survivors++;
+                }
+            }
+            return survivors;
         }
 
         public class ShowCreateTableRecord implements Record {

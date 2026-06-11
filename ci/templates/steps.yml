@@ -1,8 +1,24 @@
 steps:
+  - bash: |
+      # Apply only to Hetzner self-hosted agents. AGENT_MACHINENAME is the
+      # agent's self-configured name (e.g. "hetzner-incus-12"), distinct
+      # from the OS hostname and from the timeline's workerName.
+      if [[ "${AGENT_MACHINENAME:-}" != hetzner-incus-* ]]; then
+        echo "Skipping on ${AGENT_MACHINENAME:-unknown}; only applied to hetzner-incus-* agents"
+        exit 0
+      fi
+      # Abort any git HTTP transfer that averages below 100 KiB/s for 120s
+      # so Azure's checkout retry picks a fresh TCP connection instead of
+      # crawling for 30-60 min. Mitigates the per-flow upstream-network
+      # stalls observed on the FSN1 dedicated-server boxes.
+      git config --global http.lowSpeedLimit 102400
+      git config --global http.lowSpeedTime 120
+    displayName: "Set git low-speed abort thresholds"
   - checkout: self
     fetchDepth: 1
     lfs: false
     submodules: false
+  - template: detect-local-client.yml
   - bash: |
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
     displayName: "Cleanup dangling test artifacts from /tmp"
@@ -17,32 +33,33 @@ steps:
         ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - bash: |
-      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
-      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+      JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
       echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
       echo "JAVA_HOME will be set to: $JAVA_PATH"
-    displayName: "Install JDK and Maven"
+    displayName: "Activate JDK 25 (openjdk amd64)"
     condition: |
-      or(
-        eq(variables['poolName'], 'hetzner-incus'),
-        eq(variables['poolName'], 'hetzner-incus-zfs')
+      and(
+        ne(variables['System.JobName'], 'linux_x64_graal'),
+        or(
+          eq(variables['poolName'], 'hetzner-incus'),
+          eq(variables['poolName'], 'hetzner-incus-zfs')
+        )
       )
   - bash: |
-      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
-      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-arm64"
+      JAVA_PATH="/usr/lib/jvm/java-25-openjdk-arm64"
       echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
       echo "JAVA_HOME will be set to: $JAVA_PATH"
-    displayName: "Install JDK and Maven"
+    displayName: "Activate JDK 25 (openjdk arm64)"
     condition: |
       eq(variables['poolName'], 'hetzner-incus-arm')
   - bash: |
-      JAVA_PATH="/opt/graalvm"
+      JAVA_PATH="/opt/graalvm-25"
       echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
       echo "JAVA_HOME will be set to: $JAVA_PATH"
-    displayName: "Install JDK and Maven"
+    displayName: "Activate GraalVM 25"
     condition: |
       eq(variables['System.JobName'], 'linux_x64_graal')
   - task: Cache@2
@@ -93,12 +110,12 @@ steps:
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists (bash)"
     condition: ne(variables['os'], 'Windows')
-  - script: 'wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
+  - script: "wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip"
     displayName: "Get non-default Maven (bash)"
     condition: |
       and(
-        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
-        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
+        ne(variables.MVN_CACHE_RESTORED, 'true'),
         ne(variables['os'], 'Windows')
       )
   - pwsh: |
@@ -106,14 +123,14 @@ steps:
     displayName: "Get non-default Maven (PowerShell)"
     condition: |
       and(
-        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
-        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
+        ne(variables.MVN_CACHE_RESTORED, 'true'),
         eq(variables['os'], 'Windows')
       )
   - task: ExtractFiles@1
     inputs:
-      archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
-      destinationFolder: '$(build.sourcesdirectory)/maven'
+      archiveFilePatterns: "apache-maven-$(MAVEN_VERSION)-bin.zip"
+      destinationFolder: "$(build.sourcesdirectory)/maven"
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
   - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
@@ -180,12 +197,12 @@ steps:
     displayName: "Compile with Maven"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "compile"
       options:
-        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
+        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition: |
       or(
@@ -226,18 +243,17 @@ steps:
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
-      options:
-        "--batch-mode -Dtest.include=$(includeTests)
+      options: "--batch-mode --quiet $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-        -P build-web-console
-         $(MAVEN_RUN_OPTS)"
+        $(WEB_CONSOLE_PROFILE)
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -257,22 +273,40 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: Maven@3
+    displayName: "Pre-build for Coverage"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "install"
+      options: "--batch-mode -pl core -am -DskipTests
+        -P build-web-console
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+      jdkVersionOption: $(jdk)
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['System.PullRequest.IsFork'], 'false'),
+        or(
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        )
+      )
+  - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "core/pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
-      options:
-        "--batch-mode -Dtest.include=$(includeTests)
+      options: "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
-        -P qdbr-coverage,build-web-console
-        $(MAVEN_RUN_OPTS)"
+        -P jacoco,qdbr-coverage,build-web-console
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
-      codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
-      codeCoverageClassFilter: "$(COVERAGE_DIFF)"
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
@@ -281,7 +315,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['System.PullRequest.IsFork'], 'false'),
-        or( 
+        or(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
@@ -324,7 +358,7 @@ steps:
 
   - bash: |
       set -eux
-      mv core/CCReport43F6D5EF/jacoco.exec $(testset).exec
+      mv core/target/jacoco.exec $(testset).exec
     displayName: "Prepare partial JaCoCo report for upload"
     condition: |
       and(

@@ -45,7 +45,7 @@ public class PGCommitFailureTest extends BasePGTest {
 
     @Test
     public void testExplicitCommitFailure() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
             execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
@@ -94,17 +94,18 @@ public class PGCommitFailureTest extends BasePGTest {
                 ff = ffTmp;
             }
             TestUtils.drainWalQueue(engine);
-            assertSql(
-                    "count\n" +
-                            "0\n",
-                    "select count() from x"
-            );
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            count
+                            0
+                            """);
         });
     }
 
     @Test
     public void testImplicitCommitFailure() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
             execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
@@ -151,17 +152,18 @@ public class PGCommitFailureTest extends BasePGTest {
                 ff = ffTmp;
             }
             TestUtils.drainWalQueue(engine);
-            assertSql(
-                    "count\n" +
-                            "0\n",
-                    "select count() from x"
-            );
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            count
+                            0
+                            """);
         });
     }
 
     @Test
     public void testImplicitPipelineCommitFailure() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
             execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
@@ -214,11 +216,12 @@ public class PGCommitFailureTest extends BasePGTest {
                 ff = ffTmp;
             }
             TestUtils.drainWalQueue(engine);
-            assertSql(
-                    "count\n" +
-                            "0\n",
-                    "select count() from x"
-            );
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            count
+                            0
+                            """);
         });
     }
 }

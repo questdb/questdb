@@ -25,7 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -64,7 +64,7 @@ public class CharSequenceObjHashMapTest {
         Rnd rnd = new Rnd();
         for (int i = 0; i < 10_000; i++) {
             final CharSequenceObjHashMap<Object> map = new CharSequenceObjHashMap<>(8);
-            final ObjList<CharSequence> keys = map.keys();
+            final ReadOnlyObjList<CharSequence> keys = map.keys();
             for (int k = 0; k < collisionKeys.length; k++) {
                 // all four of these keys collide give the size of the hash map
                 map.put(collisionKeys[k], new Object());
@@ -78,7 +78,7 @@ public class CharSequenceObjHashMapTest {
         }
     }
 
-    private void assertKeys(CharSequenceObjHashMap<Object> map, ObjList<CharSequence> keys) {
+    private void assertKeys(CharSequenceObjHashMap<Object> map, ReadOnlyObjList<CharSequence> keys) {
         for (int j = 0, n = keys.size(); j < n; j++) {
             Assert.assertNotNull(map.get(keys.getQuick(j)));
         }

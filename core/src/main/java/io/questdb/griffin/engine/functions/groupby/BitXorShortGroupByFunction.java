@@ -26,25 +26,66 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class BitXorShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public BitXorShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SHORT);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putShort(valueIndex, arg.getShort(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // The etalon (all-zeros) is the identity element for XOR, so we can fold
+        // the first row and every subsequent row through the same branchless update.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct short column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final short value = Unsafe.getShort(argAddr + (rowIndex << 1));
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.putShort(addr, (short) (Unsafe.getShort(addr) ^ value));
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final short value = arg.getShort(record);
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.putShort(addr, (short) (Unsafe.getShort(addr) ^ value));
+            }
+        }
     }
 
     @Override
@@ -60,13 +101,13 @@ public class BitXorShortGroupByFunction extends ShortFunction implements GroupBy
     }
 
     @Override
-    public short getShort(Record rec) {
-        return rec.getShort(valueIndex);
+    public String getName() {
+        return "bit_xor";
     }
 
     @Override
-    public String getName() {
-        return "bit_xor";
+    public short getShort(Record rec) {
+        return rec.getShort(valueIndex);
     }
 
     @Override

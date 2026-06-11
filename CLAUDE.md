@@ -14,15 +14,20 @@ time-series SQL extensions.
 
 Java class members are grouped by kind (static vs. instance) and visibility, and
 sorted alphabetically. When adding new methods or fields, insert them in the
-correct alphabetical position among existing members of the same kind. Don't
-insert comments as "section headings" because methods won't stay together after
-auto-sorting.
+correct alphabetical position among existing members of the same kind.
 
-Use modern Java features:
+Never insert `// ===` or `// ---` banner comments as section headings in any
+Java file — not in production code, not in test code. Methods are sorted
+alphabetically and will not stay grouped by category.
+
+Use the modern Java 17 features:
 
 - enhanced switch
 - multiline string literal
 - pattern variables in instanceof checks
+
+However, the java-questdb-client module targets Java 11. When writing code in
+the client module, use only legacy Java features.
 
 Whenever dealing with column data, results of expressions, SQL statements, etc.,
 always consider what the behavior should be when something is NULL. Be careful
@@ -32,6 +37,15 @@ NULL value.
 When choosing a name for a boolean variable, field or method, always use the
 is... or has... prefix, as appropriate.
 
+**Log messages must use strictly ASCII characters.** QuestDB's log
+infrastructure does not reliably render non-ASCII (e.g., em dashes, curly
+quotes, Unicode symbols). Use only plain ASCII punctuation in all `LOG.info()`,
+`LOG.error()`, etc. calls.
+
+Use `ObjList<T>` instead of `T[]` object arrays. `ObjList` is QuestDB's
+standard resizable list and integrates with `Misc.freeObjList()` /
+`Misc.freeObjListIfCloseable()` for resource cleanup.
+
 ### Tests
 
 - write all tests using assertMemoryLeak(). This isn't needed for narrow unit
@@ -39,12 +53,26 @@ is... or has... prefix, as appropriate.
 - resource leaks are a pain point in QuestDB. Always think carefully about all
   possible code paths, especially error paths, and write tests that ensure
   correct resource cleanup on each path.
-- use assertQueryNoLeakCheck() to assert the results of queries. This method
-  asserts factory properties (supportsRandomAccess, expectSize, expectedTimestamp)
-  in addition to data correctness. Storage tests (typically in the cairo test
-  package) that only verify data persistence should use assertSql() instead,
-  because the factory properties are irrelevant for data-correctness checks and
-  can cause false failures.
+- assert query results with the fluent `assertQuery(query)` builder
+  (`AbstractCairoTest.assertQuery(...)`): `assertQuery(sql).returns(expected)`.
+  Chain factory-property assertions as the query warrants — `.timestamp(...)`,
+  `.expectSize()`, `.noRandomAccess()`, `.sizeMayVary()`, `.ddl(...)`,
+  `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)`. For execution
+  plans use `.assertsPlan(...)` / `.assertsPlanContaining(...)` or fold the plan
+  into a data assertion with `.withPlan(...)` / `.withPlanContaining(...)`.
+- the old `assertSql(...)` / `TestUtils.assertSql(...)` query-result helpers have
+  been REMOVED — `.returns(...)` runs a strictly stronger battery (a second
+  cursor pass, a `calculateSize()` cross-check, a variable-column check, and the
+  factory-property assertions) that catches bugs the old single-pass print/compare
+  silently missed. (`TestServerMain.assertSql(sql, expected)` is a separate
+  live-`ServerMain` convenience wrapper and is unrelated.)
+- **never use `.returnsOnce(...)` unless the query's projection is genuinely
+  non-deterministic across a re-read** — an unseeded `rnd_*` function, or
+  time-varying output such as `now()`/`sysdate()`/`systimestamp()`. `returnsOnce`
+  deliberately skips the second cursor pass and every check listed above, so for
+  any deterministic query it leaves real bugs untested. Default to `.returns(...)`;
+  reach for `.returnsOnce(...)` only with a stated reason that the output cannot be
+  stable across two reads.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive
@@ -75,6 +103,32 @@ offending character, not the start of the expression.
 
 ## Git & PR Conventions
 
+- **PRs are squash-merged. Commit history on a PR branch is throwaway** — only
+  the squashed commit message that lands on `master` is preserved. Do not
+  spend effort tidying the branch's history: no soft resets to "commit all at
+  once", no rewording prior commits, no force pushes to clean up. Adding a
+  fix-up commit on top is always fine. The squash flow folds the lot at merge
+  time anyway.
+- **Do not create worktrees or `pr-*` checkout branches when reviewing or
+  iterating on a PR.** All work belongs on `vi_api`. Even when a PR exists on a
+  separate branch (e.g. `pr-7128`), the canonical state to review and modify is
+  whatever is currently merged into `vi_api` — follow-up fixes routinely land
+  there directly, so `pr-*` branches lag and reviewing them in isolation gives
+  a misleading picture. If a `gh pr` command needs to fetch a PR's diff, fetch
+  the diff only (`gh pr diff`); do not check the branch out.
+
+## Investigating failures
+
+- **Never dismiss a failure as "pre-existing", "flaky", "unrelated", or "a
+  known issue" without actually proving it.** That label is a hypothesis,
+  not a conclusion. Treat any red test, red CI job, or surprising log line
+  as a live bug to investigate until the evidence — git log, reproduction
+  on master, a real timing constraint, an upstream report — forces a
+  different conclusion. Only after that proof can the issue be set aside,
+  and the proof itself should be reported back so it can be verified.
+- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
+  `cd` into it and commit there independently. Never commit it from the parent
+  repo as a submodule pointer update without also committing inside it first.
 - PR titles must follow Conventional Commits format: `type(scope): description`
   (e.g., `fix(sql): fix ...`, `feat(core): add ...`). The description part is
   copied to release notes, so it must read well on its own — repeat the verb
@@ -90,7 +144,8 @@ offending character, not the start of the expression.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
-  message body (not just the title).
+  message body (not just the title). Lines in the description can be longer than
+  in the commit title: up to 72 characters.
 - In PR test plans, use plain bullet points (`-`), not check marks or
   checkboxes.
 - Always add GitHub labels consistent with the PR title (e.g., a `perf(sql):` PR
@@ -123,7 +178,7 @@ offending character, not the start of the expression.
 
 ```bash
 # Build JAR without tests (fastest)
-mvn clean package -DskipTests
+mvn clean package -DskipTests -P local-client
 
 # Build with web console
 mvn clean package -DskipTests -P build-web-console
@@ -131,6 +186,16 @@ mvn clean package -DskipTests -P build-web-console
 # Build with web console and native binaries
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
+
+When you build just the core module with `mvn -pl core`, it will fall use a
+pre-built java-questdb-client module, installed in the local Maven cache. It may
+be stale and result in build errors. Fix this issue with:
+
+```bash
+cd java-questdb-client && mvn clean install -DskipTests && cd -
+```
+
+This should install a fresh version into the Maven cache.
 
 ### Running Tests
 
@@ -157,6 +222,35 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 # Web console at http://localhost:9000
 ```
 
+### Building and Validating Rust Code
+
+The Rust crate lives in `core/rust/qdbr/`. Before considering any Rust task
+complete, run all four checks from that directory:
+
+```bash
+cd core/rust/qdbr
+cargo fmt        # Fix formatting
+cargo check --all-targets  # Compile all targets including tests
+cargo clippy --all-targets  # Lint — zero warnings required
+cargo test --lib  # Run unit tests
+```
+
+All four must pass with zero errors and zero warnings.
+
+After writing or modifying tests, check coverage with:
+
+```bash
+cargo llvm-cov --lib --text -- <module_name>
+```
+
+For every uncovered line, either write a test that reaches it or prove it is
+unreachable and mark it with `expect()` / `debug_assert!`.
+
+A panic in Rust code called via JNI aborts the entire JVM with no recovery.
+Never use `unwrap()` or `expect()` on data derived from file contents or
+external input. Use `Result` / `Option` with proper error propagation (`?`)
+instead.
+
 ### Building Native C/C++ Libraries
 
 ```bash
@@ -176,6 +270,8 @@ cmake --build build/release --config Release
 - **utils/** - Build utilities
 - **examples/** - Usage examples
 - **win64svc/** - Windows service wrapper
+- **java-questdb-client** - Java client for data ingestion (legacy ILP and
+  QuestDB's QWP)
 
 ### Core Package Layout (`core/src/main/java/io/questdb/`)
 

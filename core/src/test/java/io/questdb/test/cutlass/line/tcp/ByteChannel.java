@@ -107,7 +107,7 @@ public class ByteChannel implements LineChannel {
             throw new IllegalStateException("remaining capacity: " + remainingCapacity + ", request: " + len);
         }
         for (int i = 0; i < len; i++) {
-            buffer[i + pos] = Unsafe.getUnsafe().getByte(ptr + i);
+            buffer[i + pos] = Unsafe.getByte(ptr + i);
         }
         pos += len;
     }

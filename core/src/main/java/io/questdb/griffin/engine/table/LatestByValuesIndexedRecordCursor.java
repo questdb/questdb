@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -68,11 +68,12 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public boolean hasNext() {
         buildTreeMapConditionally();
-        if (index > -1) {
-            final long rowId = rows.get(index);
-            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
+        if (index < rows.size()) {
+            final long rowId = rows.get(index++);
+            // Undo the partition-index inversion applied in addFoundKey().
+            final int frameIndex = Rows.MAX_SAFE_PARTITION_INDEX - Rows.toPartitionIndex(rowId);
+            frameMemoryPool.navigateTo(frameIndex, recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
-            index--;
             return true;
         }
         return false;
@@ -93,13 +94,13 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public long size() {
-        return isTreeMapBuilt ? rows.size() : -1;
+    public long preComputedStateSize() {
+        return (isTreeMapBuilt ? 1 : 0) + rows.size();
     }
 
     @Override
-    public long preComputedStateSize() {
-        return (isTreeMapBuilt ? 1 : 0) + rows.size();
+    public long size() {
+        return isTreeMapBuilt ? rows.size() : -1;
     }
 
     @Override
@@ -109,17 +110,18 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public void toTop() {
-        index = rows.size() - 1;
+        index = 0;
     }
 
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
+    private void addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
-            if (cursor.hasNext()) {
-                final long rowId = Rows.toRowID(frameIndex, cursor.next());
-                rows.add(rowId);
-                found.addAt(index, symbolKey);
+            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+                if (cursor.hasNext()) {
+                    final long rowId = Rows.toRowID(frameIndex, cursor.next());
+                    rows.add(rowId);
+                    found.addAt(index, symbolKey);
+                }
             }
         }
     }
@@ -136,28 +138,34 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
 
+            // Invert page frame indexes, so that they grow asc in time order.
+            // That's to be able to do post-processing (sorting) of the result set.
+            final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
+                addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
                     if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
+                        addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
                     }
                 }
             }
         }
 
-        index = rows.size() - 1;
+        // Sort the collected row ids (which carry inverted partition indexes) ascending so the cursor emits
+        // in ascending designated-timestamp order, matching the FORWARD scan direction the factory reports.
+        rows.sortAsUnsigned();
+        index = 0;
     }
 
     private void buildTreeMapConditionally() {

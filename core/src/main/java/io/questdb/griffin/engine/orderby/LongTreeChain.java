@@ -38,22 +38,35 @@ import io.questdb.std.Unsafe;
  */
 public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private static final long CHAIN_VALUE_SIZE = 12;
+    // Upper bound enforced by the compressed-offset encoding (offsets are 4-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     private final TreeCursor cursor = new TreeCursor();
     private final long initialValueHeapSize;
     private final long maxValueHeapSize;
+    private final String valueHeapConfigKey;
     private long valueHeapLimit;
     private long valueHeapPos;
     private long valueHeapSize;
     private long valueHeapStart;
 
-    public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
-        super(keyPageSize, keyMaxPages);
+    public LongTreeChain(
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey
+    ) {
+        super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey);
         try {
+            // value page must hold at least one chain entry (config rejects sub-block sizes).
+            assert valuePageSize >= CHAIN_VALUE_SIZE;
             valueHeapSize = initialValueHeapSize = valuePageSize;
             valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapLimit = valueHeapStart + valueHeapSize;
-            maxValueHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_VALUE_HEAP_SIZE_LIMIT);
+            maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
+            this.valueHeapConfigKey = valueHeapConfigKey;
         } catch (Throwable th) {
             close();
             throw th;
@@ -152,8 +165,8 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private int appendNewValue(long rowId) {
         checkValueCapacity();
         final int offset = compressValueOffset(valueHeapPos - valueHeapStart);
-        Unsafe.getUnsafe().putLong(valueHeapPos, rowId);
-        Unsafe.getUnsafe().putInt(valueHeapPos + 8, -1);
+        Unsafe.putLong(valueHeapPos, rowId);
+        Unsafe.putInt(valueHeapPos + 8, -1);
         valueHeapPos += CHAIN_VALUE_SIZE;
         return offset;
     }
@@ -162,7 +175,12 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
             final long newHeapSize = valueHeapSize << 1;
             if (newHeapSize > maxValueHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
+                if (valueHeapConfigKey != null) {
+                    ex.put(" (raise ").put(valueHeapConfigKey).put(')');
+                }
+                throw ex;
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 
@@ -176,7 +194,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private int nextValueOffset(int valueOffset) {
-        return Unsafe.getUnsafe().getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
+        return Unsafe.getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
     }
 
     private void putParent(long rowId) {
@@ -188,11 +206,11 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private long rowId(int valueOffset) {
-        return Unsafe.getUnsafe().getLong(valueHeapStart + uncompressValueOffset(valueOffset));
+        return Unsafe.getLong(valueHeapStart + uncompressValueOffset(valueOffset));
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        Unsafe.getUnsafe().putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
+        Unsafe.putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
     }
 
     public class TreeCursor {

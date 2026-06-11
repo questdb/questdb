@@ -1,0 +1,280 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.jit.CompiledFilter;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+/**
+ * Atom for keyed multi-slave HORIZON JOIN GROUP BY that uses Maps for aggregation.
+ * <p>
+ * This class extends {@link BaseAsyncMultiHorizonJoinAtom} and adds:
+ * - Per-worker aggregation Maps (key -> value) via {@link GroupByShardingContext}
+ * - Per-worker map sinks for populating map keys (supports expression keys)
+ * - Radix partitioning (sharding) for high-cardinality GROUP BY
+ */
+public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
+    private final ObjList<Function> ownerKeyFunctions;
+    private final RecordSink ownerMapSink;
+    private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
+    private final ObjList<RecordSink> perWorkerMapSinks;
+    private final GroupByShardingContext shardingCtx;
+
+    public AsyncMultiHorizonJoinAtom(
+            @Transient @NotNull BytecodeAssembler asm,
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata markoutMetadata,
+            @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
+            @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            int masterTimestampColumnIndex,
+            long @NotNull [] offsets,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
+            @Transient @NotNull ListColumnFilter groupByColumnFilter,
+            @NotNull ObjList<Function> keyFunctions,
+            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
+            int @NotNull [] columnSources,
+            int @NotNull [] columnIndexes,
+            @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
+            @Nullable Function ownerFilter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
+            @Nullable ObjList<Function> perWorkerFilters,
+            int workerCount
+    ) {
+        super(
+                asm,
+                configuration,
+                slaveStates,
+                perSlaveAsOfJoinKeyTypes,
+                masterAsOfJoinMapSinkClasses,
+                slaveAsOfJoinMapSinkClasses,
+                masterTimestampColumnIndex,
+                offsets,
+                columnSources,
+                columnIndexes,
+                ownerGroupByFunctions,
+                perWorkerGroupByFunctions,
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                ownerFilter,
+                filterUsedColumnIndexes,
+                perWorkerFilters,
+                workerCount
+        );
+
+        try {
+            // Store key functions for init() and close()
+            this.ownerKeyFunctions = keyFunctions;
+            this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+
+            // Create per-worker map sinks to support expression keys
+            // Each worker needs its own sink with its own key functions
+            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
+                    configuration,
+                    asm,
+                    markoutMetadata,
+                    groupByColumnFilter,
+                    keyFunctions,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+            ownerMapSink = RecordSinkFactory.getInstance(
+                    sinkClass,
+                    markoutMetadata,
+                    groupByColumnFilter,
+                    keyFunctions,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+
+            perWorkerMapSinks = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                final ObjList<Function> workerKeyFunctions = perWorkerKeyFunctions != null
+                        ? perWorkerKeyFunctions.getQuick(i)
+                        : ownerKeyFunctions;
+                perWorkerMapSinks.extendAndSet(i,
+                        RecordSinkFactory.getInstance(
+                                sinkClass,
+                                markoutMetadata,
+                                groupByColumnFilter,
+                                workerKeyFunctions,
+                                null,
+                                null,
+                                null,
+                                null
+                        )
+                );
+            }
+
+            // Create sharding context with stored key/value types.
+            // Reuse function updaters and per-worker locks from the base class.
+            final ColumnTypes storedKeyTypes = new ArrayColumnTypes().addAll(keyTypes);
+            final ColumnTypes storedValueTypes = new ArrayColumnTypes().addAll(valueTypes);
+            this.shardingCtx = new GroupByShardingContext(
+                    configuration,
+                    storedKeyTypes,
+                    storedValueTypes,
+                    ownerFunctionUpdater,
+                    perWorkerFunctionUpdaters,
+                    perWorkerLocks,
+                    workerCount
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    public GroupByMapFragment getFragment(int slotId) {
+        return shardingCtx.getFragment(slotId);
+    }
+
+    public RecordSink getMapSink(int slotId) {
+        if (slotId == -1) {
+            return ownerMapSink;
+        }
+        return perWorkerMapSinks.getQuick(slotId);
+    }
+
+    public GroupByShardingContext getShardingContext() {
+        return shardingCtx;
+    }
+
+    @Override
+    public void initGroupByFunctions(
+            SqlExecutionContext executionContext,
+            SymbolTableSource masterSource,
+            ObjList<SymbolTableSource> slaveSources
+    ) throws SqlException {
+        super.initGroupByFunctions(executionContext, masterSource, slaveSources);
+
+        // Initialize key functions (for expression keys) with combined symbol table source
+        final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
+        if (ownerKeyFunctions != null) {
+            Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
+        }
+
+        if (perWorkerKeyFunctions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    Function.init(perWorkerKeyFunctions.getQuick(i), horizonJoinSymbolTableSource, executionContext, null);
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+    }
+
+    public boolean isSharded() {
+        return shardingCtx.isSharded();
+    }
+
+    public void maybeEnableSharding(GroupByMapFragment fragment) {
+        shardingCtx.maybeEnableSharding(fragment, getTotalFunctionCardinality(fragment.slotId));
+    }
+
+    @Override
+    public void reopen() {
+        shardingCtx.reopen();
+        super.reopen();
+    }
+
+    public void resetLocalStats(int slotId) {
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).resetStats();
+        }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("AsyncMultiHorizonGroupByAtom");
+    }
+
+    @Override
+    protected void clearAggregationState() {
+        shardingCtx.clear();
+    }
+
+    @Override
+    protected void closeAggregationState() {
+        shardingCtx.close();
+        Misc.freeObjList(ownerKeyFunctions);
+        if (perWorkerKeyFunctions != null) {
+            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
+            }
+        }
+    }
+
+    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
+    }
+
+    private long getTotalFunctionCardinality(int slotId) {
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        long totalCardinality = 0;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
+        }
+        return totalCardinality;
+    }
+}

@@ -57,6 +57,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
@@ -172,11 +173,15 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             // After draining, it's all deleted.
             drainWalQueue();
-            assertSql("""
-                    x\tts\ts1
-                    1\t2022-02-24T00:00:00.000000Z\t
-                    2\t2022-02-24T00:00:01.000000Z\tx
-                    """, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts\ts1
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\tx
+                            """);
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
@@ -277,13 +282,17 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                     drainWalQueue();
 
-                    assertSql("""
-                            x\tts\ti1\ti2
-                            1\t2022-02-24T00:00:00.000000Z\tnull\tnull
-                            2\t2022-02-25T00:00:00.000000Z\t2\tnull
-                            3\t2022-02-26T00:00:00.000000Z\t3\tnull
-                            4\t2022-02-27T00:00:00.000000Z\t4\t4
-                            """, tableName);
+                    assertQuery(tableName)
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    x\tts\ti1\ti2
+                                    1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                                    2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                                    3\t2022-02-26T00:00:00.000000Z\t3\tnull
+                                    4\t2022-02-27T00:00:00.000000Z\t4\t4
+                                    """);
 
                     assertWalExistence(true, tableName, 1);
                     assertSegmentExistence(true, tableName, 1, 0);
@@ -339,6 +348,152 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             removePendingFile(tableToken);
             drainPurgeJob();
             assertExistence(false, tableToken);
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataNpeForDroppedTable() throws Exception {
+        // Regression test for a race where WalPurgeJob calls getTableMetadata()
+        // for a table that is concurrently dropped. A concurrent drop can close
+        // the metadata pool tenant's txFile during refresh, causing NPE rather
+        // than CairoException. fetchSequencerPairs() must catch NPE for dropped
+        // tables and return gracefully.
+        //
+        // We simulate this by clearing the metadata pool cache and intercepting
+        // FilesFacade.openRO: when the pool tries to re-create the metadata
+        // tenant, we drop the table and throw NPE.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldFail.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    // Simulate concurrent drop: drop the table, then throw NPE
+                    // like what happens when the metadata pool tenant's txFile
+                    // is closed during a concurrent drop's notifyDropped().
+                    try {
+                        execute("drop table " + testName.getMethodName());
+                    } catch (Exception ignored) {
+                    }
+                    throw new NullPointerException("simulated: txFile is null during concurrent drop");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            // Clear metadata pool so next getTableMetadata() creates a fresh tenant,
+            // which goes through FilesFacade (openRO for _meta file) where we intercept.
+            engine.releaseAllReaders();
+
+            shouldFail.set(true);
+
+            // This should not throw despite the NPE during metadata access:
+            // fetchSequencerPairs catches NPE, detects the table is dropped, and returns.
+            drainPurgeJob();
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            drainPurgeJob();
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataNpeForNonDroppedTableRethrows() throws Exception {
+        // When getTableMetadata() throws NPE and the table is NOT dropped,
+        // fetchSequencerPairs() re-throws. NPE bypasses the CairoException
+        // catch in forAllWalTables(), so it propagates to the caller.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldFail.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    throw new NullPointerException("simulated: non-drop-related NPE");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldFail.set(true);
+
+            // NPE must propagate because the table is not dropped.
+            try {
+                drainPurgeJob();
+                Assert.fail("Expected NullPointerException to propagate");
+            } catch (NullPointerException e) {
+                TestUtils.assertContains(e.getMessage(), "simulated");
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataPoolSlotReleasedAfterNpe() throws Exception {
+        // When newTenant() in AbstractMultiTenantPool.get0() throws a
+        // non-CairoException, the pool slot must be released so subsequent
+        // getTableMetadata() calls can succeed.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldThrowNpe.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    throw new NullPointerException("simulated: pool slot leak test");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldThrowNpe.set(true);
+
+            // First call throws NPE during tenant creation in get0().
+            TableToken tableToken = engine.verifyTableName(tableName);
+            try {
+                engine.getTableMetadata(tableToken).close();
+                Assert.fail("Expected NullPointerException");
+            } catch (NullPointerException e) {
+                Assert.assertTrue(e.getMessage().contains("simulated"));
+            }
+
+            // Second call must succeed, proving the pool slot was released
+            // by the Throwable catch in get0() and not permanently leaked.
+            try (var metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertTrue(metadata.getColumnCount() > 0);
+            }
         });
     }
 
@@ -513,14 +668,18 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("""
-                    x\tts
-                    1\t2022-02-24T00:00:00.000000Z
-                    2\t2022-02-24T00:00:01.000000Z
-                    3\t2022-02-24T00:00:02.000000Z
-                    4\t2022-02-24T00:00:03.000000Z
-                    5\t2022-02-24T00:00:04.000000Z
-                    """, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T00:00:01.000000Z
+                            3\t2022-02-24T00:00:02.000000Z
+                            4\t2022-02-24T00:00:03.000000Z
+                            5\t2022-02-24T00:00:04.000000Z
+                            """);
 
             drainPurgeJob();
 
@@ -758,10 +917,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         drainWalQueue();
         engine.releaseInactive();
         drainPurgeJob();
-        assertSql("""
-                x\tts\ti1
-                1\t2022-02-24T00:00:00.000000Z\tnull
-                """, tableName);
+        assertQuery(tableName)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        x\tts\ti1
+                        1\t2022-02-24T00:00:00.000000Z\tnull
+                        """);
         assertWalExistence(false, tableName, 1);
     }
 
@@ -870,12 +1033,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                 drainWalQueue();
 
-                assertSql("""
-                        x\tts\ti1
-                        1\t2022-02-24T00:00:00.000000Z\tnull
-                        11\t2022-02-24T00:00:00.000000Z\tnull
-                        2\t2022-02-25T00:00:00.000000Z\t2
-                        """, tableName);
+                assertQuery(tableName)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                x\tts\ti1
+                                1\t2022-02-24T00:00:00.000000Z\tnull
+                                11\t2022-02-24T00:00:00.000000Z\tnull
+                                2\t2022-02-25T00:00:00.000000Z\t2
+                                """);
 
 
                 // All applied, all segments can be deleted.
@@ -945,12 +1112,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                 drainWalQueue();
 
-                assertSql("""
-                        x\tts\ti1\ti2
-                        1\t2022-02-24T00:00:00.000000Z\tnull\tnull
-                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
-                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
-                        """, tableName);
+                assertQuery(tableName)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                x\tts\ti1\ti2
+                                1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                                2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                                2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                                """);
 
 
                 // All applied, all segments can be deleted.
@@ -1001,15 +1172,19 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             // After draining the wal queue, all the WAL data is still there.
             drainWalQueue();
-            assertSql("""
-                    x\tts\tsss
-                    1\t2022-02-24T00:00:00.000000Z\t
-                    2\t2022-02-24T00:00:01.000000Z\t
-                    3\t2022-02-24T00:00:02.000000Z\t
-                    4\t2022-02-24T00:00:03.000000Z\t
-                    5\t2022-02-24T00:00:04.000000Z\t
-                    6\t2022-02-24T00:00:05.000000Z\tx
-                    """, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts\tsss
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\t
+                            3\t2022-02-24T00:00:02.000000Z\t
+                            4\t2022-02-24T00:00:03.000000Z\t
+                            5\t2022-02-24T00:00:04.000000Z\t
+                            6\t2022-02-24T00:00:05.000000Z\tx
+                            """);
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -1114,14 +1289,18 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("""
-                    x\tts
-                    1\t2022-02-24T00:00:00.000000Z
-                    2\t2022-02-24T00:00:01.000000Z
-                    3\t2022-02-24T00:00:02.000000Z
-                    4\t2022-02-24T00:00:03.000000Z
-                    5\t2022-02-24T00:00:04.000000Z
-                    """, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T00:00:01.000000Z
+                            3\t2022-02-24T00:00:02.000000Z
+                            4\t2022-02-24T00:00:03.000000Z
+                            5\t2022-02-24T00:00:04.000000Z
+                            """);
 
             engine.releaseInactive();
 
@@ -1162,14 +1341,18 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("""
-                    x\tts
-                    1\t2022-02-24T00:00:00.000000Z
-                    2\t2022-02-24T00:00:01.000000Z
-                    3\t2022-02-24T00:00:02.000000Z
-                    4\t2022-02-24T00:00:03.000000Z
-                    5\t2022-02-24T00:00:04.000000Z
-                    """, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T00:00:01.000000Z
+                            3\t2022-02-24T00:00:02.000000Z
+                            4\t2022-02-24T00:00:03.000000Z
+                            5\t2022-02-24T00:00:04.000000Z
+                            """);
 
             engine.releaseInactive();
 
@@ -1254,8 +1437,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj instanceof DeletionEvent) {
-                DeletionEvent other = (DeletionEvent) obj;
+            if (obj instanceof DeletionEvent other) {
                 return walId == other.walId && Objects.equals(segmentId, other.segmentId);
             }
             return false;

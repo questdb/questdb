@@ -33,9 +33,12 @@ public class HyperLogLogTestUtils {
         // (https://hal.science/hal-00406166) the estimates provided by HyperLogLog are expected to be within
         // 3 standard errors of the exact count in 99% of all cases. The standard error is around 1.04 / sqrt(2^precision).
         // To mitigate the likelihood of unreliable tests, we opt for a slightly wider range (increasing from 3 to 5 standard errors).
+        // At the lowest precisions (4–5) only 16–32 registers are used, the estimator is known to be biased high
+        // and the error distribution has fatter tails, so we widen the bound further to 6 standard errors.
         double standardError = 1.04 / Math.sqrt(1 << precision);
-        double min = exact - (5 * standardError) * exact;
-        double max = exact + (5 * standardError) * exact;
+        int sigmas = precision <= 5 ? 6 : 5;
+        double min = exact - (sigmas * standardError) * exact;
+        double max = exact + (sigmas * standardError) * exact;
         assertTrue(
                 "Estimated cardinality " + estimated + " for precision " + precision + " is not within the expected range of " + min + " to " + max + ", std error " + standardError,
                 estimated >= min && estimated <= max

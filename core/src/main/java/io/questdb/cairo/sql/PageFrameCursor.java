@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.IntList;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
@@ -64,11 +64,10 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     void calculateSize(RecordCursor.Counter counter);
 
     /**
-     * Returns local (query) to table reader index mapping.
-     * Used to map local column indexes to indexes from the Parquet file.
-     * Such mapping requires knowing the corresponding table reader indexes.
+     * Returns column mapping that bundles local (query) column indexes
+     * and writer indexes (field_ids) for parquet column mapping.
      */
-    IntList getColumnIndexes();
+    ColumnMapping getColumnMapping();
 
     /**
      * Returns the number of rows remaining in the current interval that have not yet been
@@ -149,17 +148,18 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
-     * Enables or disables streaming mode for the cursor.
-     * When streaming mode is enabled, underlying resources (e.g., partitions) are opened
-     * with hints to release page cache after reading. This is useful for large sequential
-     * scans like Parquet export to avoid page cache exhaustion under memory pressure.
+     * Sets the scan profile of the underlying reader (kernel page-cache
+     * hints, partition retention on pool return). See
+     * {@link io.questdb.cairo.ReaderScanProfile} for the meaning of each
+     * value.
      * <p>
-     * Default implementation is a no-op. Subclasses backed by TableReader should override
-     * this method to delegate to the TableReader's streaming mode setting.
+     * Default implementation is a no-op for cursors that are not backed by a
+     * {@link io.questdb.cairo.TableReader}; backed cursors delegate to
+     * {@link io.questdb.cairo.TableReader#setScanProfile}.
      *
-     * @param enabled true to enable streaming mode, false to disable
+     * @param profile the profile to adopt (non-null)
      */
-    default void setStreamingMode(boolean enabled) {
+    default void setScanProfile(ReaderScanProfile profile) {
         // no-op by default
     }
 

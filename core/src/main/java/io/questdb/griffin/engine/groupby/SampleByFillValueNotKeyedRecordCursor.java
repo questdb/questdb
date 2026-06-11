@@ -137,18 +137,22 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
         endFill = false;
+        gapFill = false;
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        record.setActiveA();
     }
 
     @Override
     public void toTop() {
         super.toTop();
         endFill = false;
+        gapFill = false;
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        record.setActiveA();
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {

@@ -4,19 +4,21 @@ jobs:
     strategy:
       matrix:
         mac-griffin:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/griffin/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/**"
           # Exclude cairo fuzz tests: run in mac-cairo-fuzz
@@ -24,28 +26,33 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo-fuzz:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-pgwire:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
         mac-other:
+          # No WEB_CONSOLE_PROFILE override: this group runs ServerMainTest, whose
+          # testServerUpgradeDoesNotOverrideWebConsoleConfig needs the bundled web
+          # console, so it inherits the default build-web-console profile.
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           # Exclude griffin: run in mac-griffin
           # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
@@ -55,10 +62,11 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin-base:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/griffin/*"
           # Exclude O3 tests: run in windows-other-2
@@ -67,10 +75,11 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin-sub:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/griffin/**/*"
           # Exclude O3 tests: run in windows-other-2
@@ -80,19 +89,21 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-fuzz1:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-fuzz2:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/**Fuzz**"
           # Exclude cairo fuzz tests: run in windows-fuzz1
@@ -100,10 +111,11 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-1:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/**"
           # Exclude O3 tests: run in windows-other-2
@@ -113,10 +125,11 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-2:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/mv/**,**/cairo/o3/**"
           # Exclude Fuzz tests: run in windows-fuzz2
@@ -124,10 +137,11 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
           # Exclude O3 tests: run in windows-other-2
@@ -136,28 +150,35 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-1:
+          # No WEB_CONSOLE_PROFILE override: this group runs ServerMainTest, whose
+          # testServerUpgradeDoesNotOverrideWebConsoleConfig needs the bundled web
+          # console, so it inherits the default build-web-console profile.
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
           # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
           # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
           # Exclude pgwire: run in windows-pgwire
-          # Exclude cutlass/http: run in windows-other-2
+          # Exclude cutlass/http, cutlass/qwp, cutlass/text: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
           # Exclude O3 tests: run in windows-other-2
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/**Fuzz**,**/O3*Test**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/**Fuzz**,**/O3*Test**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-2:
+          # No test here needs the bundled web console (ServerMainTest runs in
+          # windows-other-1), so skip the build-web-console download.
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
-          includeTests: "**/cutlass/http/**,**/O3*Test**"
+          # Heavier cutlass groups (http, qwp, text) plus O3 tests; balances wall-clock with windows-other-1
+          includeTests: "**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/O3*Test**"
           # Exclude Fuzz tests: run in windows-fuzz2
           # Exclude cairo/o3 and cairo/mv: run in windows-cairo-2
           excludeTests: "**/**Fuzz**,**/cairo/o3/**,**/cairo/mv/**"
@@ -176,5 +197,7 @@ jobs:
       DIFF_COVER_THRESHOLD_PCT: 50
       ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
       MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
+      # Hosted groups only run core-module tests; compile just core and its deps.
+      TEST_REACTOR_ARGS: "-pl core -am"
     steps:
       - template: steps.yml

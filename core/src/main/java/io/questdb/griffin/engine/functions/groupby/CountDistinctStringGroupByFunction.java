@@ -41,7 +41,8 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     private final boolean earlyExit;
     private final int setInitialCapacity;
     private final double setLoadFactor;
-    private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
+    private boolean isShared;
+    private ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
     private int setIndex = 0;
     private int valueIndex;
 
@@ -54,6 +55,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
 
     @Override
     public void clear() {
+        if (isShared) return;
         sets.clear();
         setIndex = 0;
     }
@@ -120,6 +122,13 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.sets = ((CountDistinctStringGroupByFunction) primary).sets;
+        this.isShared = true;
     }
 
     @Override

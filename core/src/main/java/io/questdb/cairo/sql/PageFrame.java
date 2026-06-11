@@ -24,8 +24,8 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 
 /**
  * Represents a contiguous fragment of a table partition.
@@ -57,8 +57,6 @@ public interface PageFrame {
      */
     long getAuxPageSize(int columnIndex);
 
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
-
     /**
      * The count of columns in the page frame. In some cases it is possible to have
      * page frame with no columns.
@@ -73,6 +71,8 @@ public interface PageFrame {
      * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
      */
     byte getFormat();
+
+    IndexReader getIndexReader(int columnIndex, int direction);
 
     /**
      * Return the address of the start of the page frame or if this page represents
@@ -96,7 +96,9 @@ public interface PageFrame {
      */
     long getPageSize(int columnIndex);
 
-    PartitionDecoder getParquetPartitionDecoder();
+    default ParquetDecoder getParquetDecoder() {
+        return null;
+    }
 
     /**
      * Returns row group index corresponding to the Parquet page frame.
@@ -129,5 +131,4 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
-
 }

@@ -191,36 +191,36 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             ) timestamp (trade_timestamp) PARTITION BY DAY;"""
             );
 
-            assertPlanNoLeakCheck(
-                    """
-                            SELECT \s
-                                trade_timestamp as candle_st,
-                                venue,
-                                count(*) AS num_ticks,
-                                SUM(qty*price) AS quote_volume,
-                                SUM(qty*price)/SUM(qty) AS vwap
-                              FROM 'spot_trades'
-                              WHERE\s
-                                instrument_key like 'ETH_USD_S_%'
-                                AND trade_timestamp >= '2022-01-01 00:00'
-                                AND venue in ('CBS', 'FUS', 'LMX', 'BTS')
-                              SAMPLE BY 1h\s
-                              ALIGN TO CALENDAR TIME ZONE 'UTC'""",
-                    """
+            assertQuery("""
+                    SELECT \s
+                        trade_timestamp as candle_st,
+                        venue,
+                        count(*) AS num_ticks,
+                        SUM(qty*price) AS quote_volume,
+                        SUM(qty*price)/SUM(qty) AS vwap
+                      FROM 'spot_trades'
+                      WHERE\s
+                        instrument_key like 'ETH_USD_S_%'
+                        AND trade_timestamp >= '2022-01-01 00:00'
+                        AND venue in ('CBS', 'FUS', 'LMX', 'BTS')
+                      SAMPLE BY 1h\s
+                      ALIGN TO CALENDAR TIME ZONE 'UTC'""")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [candle_st]
                                 VirtualRecord
                                   functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]
                                     Async Group By workers: 1
                                       keys: [candle_st,venue]
+                                      keyFunctions: [timestamp_floor_utc('1h',trade_timestamp)]
                                       values: [count(*),sum(qty*price),sum(qty)]
                                       filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: spot_trades
                                               intervals: [("2022-01-01T00:00:00.000000Z","MAX")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -230,36 +230,48 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
     private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws Exception {
         try {
-            assertPlanNoLeakCheck(sink, expectedPlan);
+            assertQuery(sink)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan);
         } catch (AssertionError ae) {
             throwWithContext(typeName, function, ae);
         }
     }
 
     private void prepareExpectedPlan(int t, int f, String keys, String function, String expectedFunction) {
-        boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
+        // Single-key vectorized path uses the rosti-backed GroupByRecordCursorFactory.
+        boolean keyedVectorized = keys != null && (
+                (t >= INT && t <= TIMESTAMP && f > 1)
+                        || t == DOUBLE
+                        || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"))
+        );
 
-        // For non-keyed, non-rosti queries the factory is AsyncGroupByNotKeyedRecordCursorFactory
-        // which reports whether it uses vectorized (batch) computation. Batch is eligible when
-        // the function supports batch computation AND the batch arg type matches the physical column type.
-        boolean asyncVectorized = !rosti && keys == null
-                && ((t == CHAR && f >= 4)                    // min/max on char
-                || (t == FLOAT && (f == 2 || f >= 4)));      // sum/min/max on float
+        // Non-keyed queries always go through AsyncGroupByNotKeyedRecordCursorFactory, which
+        // reports vectorized=true when batch computation is eligible for every aggregate function.
+        // Batch is eligible when the function supports batch computation AND the batch arg type
+        // matches the physical column type.
+        boolean asyncNonKeyedVectorized = keys == null && (
+                (t >= INT && t <= TIMESTAMP && f > 1)
+                        || t == DOUBLE
+                        || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"))
+                        || (t == CHAR && f >= 4)
+                        || (t == FLOAT && (f == 2 || f >= 4))
+        );
 
         planSink.clear();
-        if (rosti) {
+        if (keyedVectorized) {
             planSink.put("GroupBy vectorized: true workers: 1\n");
         } else {
             planSink.put("Async Group By workers: 1\n");
             if (keys == null) {
-                planSink.put("  vectorized: ").put(asyncVectorized).put('\n');
+                planSink.put("  vectorized: ").put(asyncNonKeyedVectorized).put('\n');
             }
         }
         if (keys != null) {
             planSink.put("  keys: [").put(keys).put("]\n");
         }
         planSink.put("  values: [").put(expectedFunction).put("]\n");
-        if (!rosti) {
+        if (!keyedVectorized) {
             planSink.put("  filter: null\n");
         }
         planSink.put(

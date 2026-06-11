@@ -24,9 +24,14 @@ pub fn column_type_to_parquet_type(
 ) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
     // Types that don't have null values in QuestDB always use Required repetition.
-    // All other types use Optional so the file-level schema is stable across O3
-    // merges — this avoids a REQUIRED→OPTIONAL transition that would break
-    // copy_row_group (raw-copied pages already have def levels encoded).
+    // All other types — including Symbol — use Optional so the file-level schema
+    // is stable across O3 merges. This avoids a REQUIRED→OPTIONAL transition that
+    // would break copy_row_group (raw-copied pages already have def levels encoded).
+    //
+    // Symbol columns are always Optional even when Column::not_null_hint is true (no
+    // nulls). The `not_null_hint` flag is only a write-time hint that lets the encoder
+    // emit a fast all-ones RLE run for definition levels instead of computing
+    // per-row values. See encoders::symbol::encode().
     let is_notnull_type = matches!(
         column_type.tag(),
         ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
@@ -328,9 +333,12 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
-    /// Passed by QuestDB during writes to indicate that the column contains no null values.
-    /// Currently only Symbol dataType columns support this flag.
-    pub required: bool,
+    /// Hint from QuestDB indicating that the column currently contains no null values.
+    /// Only Symbol columns use this flag. It does NOT affect the parquet schema
+    /// Repetition (symbols are always Optional) — it only lets the encoder take a
+    /// fast path that writes an all-ones RLE run for definition levels instead of
+    /// computing per-row values.
+    pub not_null_hint: bool,
     pub designated_timestamp_ascending: bool,
     pub parquet_encoding_config: ParquetEncodingConfig,
 }
@@ -375,7 +383,7 @@ impl Column {
             ));
         }
 
-        let required = column_type < 0;
+        let not_null_hint = column_type < 0;
         let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
@@ -407,7 +415,7 @@ impl Column {
             secondary_data,
             symbol_offsets,
             designated_timestamp,
-            required,
+            not_null_hint,
             designated_timestamp_ascending,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(parquet_encoding_config),
         })
@@ -422,6 +430,7 @@ pub struct Partition {
 pub fn to_parquet_schema(
     partition: &Partition,
     raw_array_encoding: bool,
+    squash_tracker: i64,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
@@ -471,6 +480,8 @@ pub fn to_parquet_schema(
         });
     }
 
+    qdb_meta.squash_tracker = squash_tracker;
+
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);
 
@@ -487,6 +498,8 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
         .map(|c| {
             if let Some(enc) = c.parquet_encoding_config.encoding() {
                 validate_encoding(c.data_type, enc)
+            } else if c.designated_timestamp {
+                validate_encoding(c.data_type, Encoding::DeltaBinaryPacked)
             } else {
                 encoding_map(c.data_type)
             }
@@ -574,6 +587,7 @@ pub fn to_compressions(partition: &Partition) -> Vec<Option<CompressionOptions>>
 /// - Bits 8-15: compression codec id (matches ParquetCompression constants, offset +1)
 /// - Bits 16-23: compression level
 /// - Bit 24: explicit flag (1 = user-specified override, 0 = use defaults)
+/// - Bit 25: bloom filter flag (1 = column should have a bloom filter)
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ParquetEncodingConfig(i32);
 
@@ -679,9 +693,9 @@ impl From<i32> for ParquetEncodingConfig {
 pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type.tag() {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
-        ColumnTypeTag::Binary => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::String => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::Varchar => Encoding::RleDictionary,
+        ColumnTypeTag::Binary | ColumnTypeTag::Varchar | ColumnTypeTag::String => {
+            Encoding::DeltaLengthByteArray
+        }
         _ => Encoding::Plain,
     }
 }
@@ -908,10 +922,10 @@ mod tests {
             validate_encoding(col_type(ColumnTypeTag::Symbol), Encoding::Plain),
             Encoding::RleDictionary
         );
-        // VARCHAR should fall back to RleDictionary
+        // VARCHAR should fall back to DeltaLengthByteArray
         assert_eq!(
             validate_encoding(col_type(ColumnTypeTag::Varchar), Encoding::Plain),
-            Encoding::RleDictionary
+            Encoding::DeltaLengthByteArray
         );
     }
 

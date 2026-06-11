@@ -31,13 +31,9 @@ public class InformationSchemaFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInformationSchemaPivotFunc() throws Exception {
-        assertQuery(
-                "x\tn\n",
-                "information_schema._pg_expandarray(5);",
-                "create table x(a int)",
-                null,
-                false,
-                true
-        );
+        assertQuery("information_schema._pg_expandarray(5);")
+                .ddl("create table x(a int)")
+                .expectSize()
+                .returns("x\tn\n");
     }
 }

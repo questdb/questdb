@@ -77,9 +77,9 @@ public final class JavaTlsClientSocket implements Socket {
             // possible improvement: implement a fallback strategy when reflection is unavailable for any reason.
             throw new ExceptionInInitializerError(e);
         }
-        ADDRESS_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
-        LIMIT_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(limitField);
-        CAPACITY_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(capacityField);
+        ADDRESS_FIELD_OFFSET = Unsafe.objectFieldOffset(addressField);
+        LIMIT_FIELD_OFFSET = Unsafe.objectFieldOffset(limitField);
+        CAPACITY_FIELD_OFFSET = Unsafe.objectFieldOffset(capacityField);
     }
 
     private final Socket delegate;
@@ -143,9 +143,9 @@ public final class JavaTlsClientSocket implements Socket {
 
     private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
         assert buffer.isDirect();
-        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
-        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
-        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        Unsafe.putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
+        Unsafe.putLong(buffer, LIMIT_FIELD_OFFSET, len);
+        Unsafe.putLong(buffer, CAPACITY_FIELD_OFFSET, len);
         buffer.position(0);
     }
 
@@ -538,7 +538,7 @@ public final class JavaTlsClientSocket implements Socket {
             return 0;
         }
 
-        assert Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET) == unwrapInputBufferPtr;
+        assert Unsafe.getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET) == unwrapInputBufferPtr;
         long adjustedPtr = unwrapInputBufferPtr + writerPos;
 
         int n = delegate.recv(adjustedPtr, freeSpace);

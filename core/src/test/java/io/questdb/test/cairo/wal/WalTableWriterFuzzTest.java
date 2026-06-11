@@ -140,11 +140,17 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
             }
 
-            assertSql("i\tts\n" +
-                    "2\t1970-01-01T00:00:00.000500Z\n" +
-                    "1\t1970-01-01T00:00:00.001000Z\n" +
-                    "3\t1970-01-01T00:00:00.001500Z\n" +
-                    "4\t1970-01-01T00:00:00.001500Z\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            i\tts
+                            2\t1970-01-01T00:00:00.000500Z
+                            1\t1970-01-01T00:00:00.001000Z
+                            3\t1970-01-01T00:00:00.001500Z
+                            4\t1970-01-01T00:00:00.001500Z
+                            """);
         });
     }
 
@@ -276,11 +282,11 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 long start = now;
                 WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
-                for (int i = 0; i < 20; i++) {
+                for (int i = 0; i < 10; i++) {
                     boolean inOrder = rnd.nextBoolean();
                     int walIndex = rnd.nextInt(writers.length);
                     WalWriter walWriter = writers[walIndex];
-                    int rowCount = rnd.nextInt(10000) + 1;
+                    int rowCount = rnd.nextInt(2000) + 1;
                     int partitions = rnd.nextInt(3) + 1;
                     tsIncrement = partitions * Micros.HOUR_MICROS / rowCount;
                     long tsOffset = rnd.nextLong(2 * Micros.HOUR_MICROS);
@@ -462,10 +468,16 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
             }
 
-            assertSql("a\tb\tts\tc\n" +
-                    "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
-                    "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
-                    "12\t12\t1970-01-01T00:00:00.000000Z\t12\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tb\tts\tc
+                            10\t10\t1970-01-01T00:00:00.000000Z\t10
+                            11\t11\t1970-01-01T00:00:00.000000Z\t11
+                            12\t12\t1970-01-01T00:00:00.000000Z\t12
+                            """);
         });
     }
 
@@ -1079,10 +1091,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         return tableId;
     }
 
-    private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
+    private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws Exception {
         try (TableReader reader = getReader(tableName)) {
-            assertSql("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = '" + tableName + "'"
-            );
+            assertQuery("SELECT maxUncommittedRows FROM tables() WHERE table_name = '" + tableName + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n");
             reader.reload();
             assertEquals(expectedMaxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
         }

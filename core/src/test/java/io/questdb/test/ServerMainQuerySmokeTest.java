@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -385,8 +386,10 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "SELECT min(quantity), max(quantity) FROM tab",
                 """
                         QUERY PLAN[VARCHAR]
-                        GroupBy vectorized: true workers: 4
+                        Async Group By workers: 4
+                          vectorized: true
                           values: [min(quantity),max(quantity)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -414,6 +417,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                               functions: [day,key,vwap(price, quantity)]
                                 Async Group By workers: 4
                                   keys: [day,key]
+                                  keyFunctions: [day_of_week(ts)]
                                   values: [vwap(price,quantity)]
                                   filter: null
                                     PageFrame
@@ -501,7 +505,8 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
             }
 
             final int nThreads = 6;
-            final int nIterations = 80;
+            // Fewer iterations on slow CI runners; 6 oversubscribed threads still stress work stealing.
+            final int nIterations = Os.isLinux() ? 80 : 30;
 
             final CyclicBarrier startBarrier = new CyclicBarrier(nThreads);
             final SOCountDownLatch doneLatch = new SOCountDownLatch(nThreads);

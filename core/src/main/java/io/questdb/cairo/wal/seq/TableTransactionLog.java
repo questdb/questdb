@@ -232,7 +232,7 @@ public class TableTransactionLog implements Closeable {
 
     long endMetadataChangeEntry() {
         fullSync();
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
         maxMetadataVersion.incrementAndGet();
         return txn;
@@ -240,6 +240,10 @@ public class TableTransactionLog implements Closeable {
 
     TransactionLogCursor getCursor(long txnLo) {
         return txnLogFile.getCursor(txnLo, Path.getThreadLocal(rootPath));
+    }
+
+    long getMaxMetadataVersion() {
+        return maxMetadataVersion.get();
     }
 
     @NotNull
@@ -366,7 +370,7 @@ public class TableTransactionLog implements Closeable {
                     return;
                 }
 
-                throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
+                throw CairoException.critical(0).put("expected to read table structure changes but there is none saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
             } finally {
                 ff.close(txnMetaFd);
                 ff.close(txnMetaIndexFd);

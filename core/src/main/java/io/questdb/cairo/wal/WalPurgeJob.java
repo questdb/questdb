@@ -32,6 +32,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -267,6 +268,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", msg=").$((Throwable) ce)
                     .$(", errno=").$(ff.errno())
                     .I$();
+        } catch (TableReferenceOutOfDateException ignore) {
+            // forAllWalTables() works from a table token snapshot. A table may be
+            // renamed and a new table created with the old name before this sweep
+            // gets to verify the token; skip it and let the next purge pass see the
+            // current registry state.
+            LOG.debug().$("skipping stale table token during broad sweep [table=").$(tableToken).I$();
         }
     }
 
@@ -402,9 +409,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
                     txReader.ofRO(path.$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
                     TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                } catch (CairoException ex) {
+                } catch (CairoException | NullPointerException ex) {
                     if (engine.isTableDropped(tableToken)) {
-                        // This is ok, table dropped while we tried to read the txn
+                        // This is ok, table dropped while we tried to read the txn.
+                        // A concurrent drop can cause CairoException or NPE (when the
+                        // metadata pool tenant's txFile is closed during refresh).
                         return false;
                     }
                     throw ex;
@@ -802,19 +811,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         @Override
-        public boolean isSeqPartInUse(long seqPart) {
-            return walDirectoryPolicy.isSeqPartInUse(
-                    path.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR),
-                    seqPart
-            );
-        }
-
-        @Override
         public void deleteWalDirectory(int walId) {
             LOG.debug().$("deleting WAL directory [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .I$();
             recursiveDelete(setWalPath(tableToken, walId));
+        }
+
+        @Override
+        public boolean isSeqPartInUse(long seqPart) {
+            return walDirectoryPolicy.isSeqPartInUse(
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR),
+                    seqPart
+            );
         }
 
         @Override

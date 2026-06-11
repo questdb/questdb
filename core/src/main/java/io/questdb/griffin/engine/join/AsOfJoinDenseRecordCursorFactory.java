@@ -36,16 +36,20 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
     private final RecordSink masterKeyCopier;
     private final RecordSink slaveKeyCopier;
+    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public AsOfJoinDenseRecordCursorFactory(
             CairoConfiguration configuration,
@@ -57,11 +61,16 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             int columnSplit,
             @Transient ColumnTypes keyTypes,
             JoinContext joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
         this.masterKeyCopier = masterKeyCopier;
         this.slaveKeyCopier = slaveKeyCopier;
+        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                : null;
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
         try {
@@ -90,6 +99,20 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
     }
 
     @Override
+    protected void _close() {
+        super._close();
+        Misc.free(symbolTranslatingRecord);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        super.toPlan(sink);
+        if (symbolTranslatingRecord != null) {
+            sink.attr("symbolKeyJoin").val(true);
+        }
+    }
+
+    @Override
     protected void putFactoryType(PlanSink sink) {
         sink.type("AsOf Join Dense");
     }
@@ -97,6 +120,10 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
     private class AsOfJoinDenseRecordCursor extends AsOfJoinDenseRecordCursorBase {
         private final SingleRecordSink masterSinkTarget;
         private final SingleRecordSink slaveSinkTarget;
+        // Record used for master key serialization. Set once in of() to either
+        // masterRecord or SymbolTranslatingRecord wrapping it, so that getInt()
+        // on symbol key columns returns slave symbol IDs.
+        private Record masterKeyRecord;
 
         AsOfJoinDenseRecordCursor(
                 int columnSplit,
@@ -134,8 +161,14 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
+            masterKeyRecord = masterRecord;
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+                symbolTranslatingRecord.of(masterRecord);
+                masterKeyRecord = symbolTranslatingRecord;
+            }
         }
 
         @Override
@@ -157,13 +190,20 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
         @Override
         protected void putSlaveKeyToFind(MapKey key, int slaveKeyToFind) {
-            key.put(masterRecord, masterKeyCopier);
+            key.put(masterKeyRecord, masterKeyCopier);
         }
 
         @Override
         protected int setupSymbolKeyToFind() {
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
+            }
             masterSinkTarget.clear();
-            masterKeyCopier.copy(masterRecord, masterSinkTarget);
+            masterKeyCopier.copy(masterKeyRecord, masterSinkTarget);
+            // Check if any symbol key was VALUE_NOT_FOUND during copy.
+            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hadNonExistentKey()) {
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
             return DUMMY_VALUE;
         }
     }

@@ -27,9 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 
 /**
@@ -64,13 +62,8 @@ public interface ConcurrentTimeFrameCursor extends TimeFrameCursor {
     }
 
     ConcurrentTimeFrameCursor of(
+            ConcurrentTimeFrameState sharedState,
             TablePageFrameCursor frameCursor,
-            PageFrameAddressCache frameAddressCache,
-            DirectIntList framePartitionIndexes,
-            LongList frameRowCounts,
-            LongList partitionTimestamps,
-            LongList partitionCeilings,
-            int frameCount,
             int timestampIndex
     );
 }

@@ -29,12 +29,13 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
-public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
+public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -56,8 +57,18 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
+    public byte getIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
     }
 
     @Override
@@ -129,11 +140,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }
@@ -155,6 +161,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
         columnNameIndexMap.clear();
+        boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
             CharSequence name = metaMem.getStrA(offset);
@@ -164,7 +171,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             WriterTableColumnMetadata colMeta = new WriterTableColumnMetadata(
                     nameStr,
                     type,
-                    TableUtils.isColumnIndexed(metaMem, i),
+                    TableUtils.getColumnIndexType(metaMem, i),
                     TableUtils.getIndexBlockCapacity(metaMem, i),
                     true,
                     null,
@@ -174,7 +181,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     TableUtils.getReplacingColumnIndex(metaMem, i),
                     TableUtils.isSymbolCached(metaMem, i)
             );
-            colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, i));
+            colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
             columnMetadata.add(colMeta);
             if (type > -1) {
                 columnNameIndexMap.put(nameStr, i);
@@ -183,6 +190,28 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
             offset += Vm.getStorageLength(name);
+        }
+        long metaSize = metaMem.size();
+        if (offset < metaSize) {
+            for (int i = 0; i < columnCount; i++) {
+                if (TableUtils.isColumnCovering(metaMem, i)) {
+                    if (offset + Integer.BYTES > metaSize) {
+                        break;
+                    }
+                    int includeCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= metaSize) {
+                        IntList indices = new IntList(includeCount);
+                        for (int j = 0; j < includeCount; j++) {
+                            indices.add(metaMem.getInt(offset));
+                            offset += Integer.BYTES;
+                        }
+                        columnMetadata.getQuick(i).setCoveringColumnIndices(indices);
+                    } else if (includeCount > 0) {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -213,7 +242,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     void addColumn(
             CharSequence name,
             int type,
-            boolean indexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             int columnIndex,
             int symbolCapacity,
@@ -227,7 +256,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 new WriterTableColumnMetadata(
                         str,
                         type,
-                        indexFlag,
+                        indexType,
                         indexValueBlockCapacity,
                         true,
                         null,
@@ -273,7 +302,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         var newColumnMetadata = new WriterTableColumnMetadata(
                 oldMeta.getColumnName(),
                 ColumnType.SYMBOL,
-                oldMeta.isSymbolIndexFlag(),
+                oldMeta.getIndexType(),
                 oldMeta.getIndexValueBlockCapacity(),
                 oldMeta.isSymbolTableStatic(),
                 null,
@@ -284,6 +313,13 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 oldMeta.isSymbolCacheFlag()
         );
         newColumnMetadata.setParquetEncodingConfig(oldMeta.getParquetEncodingConfig());
+        // Preserve the covering-index schema across a symbol-capacity change.
+        // The covering column indices (and, derived from them, the column's
+        // covering flag) live on the column metadata; rebuilding the column to
+        // change its capacity must carry them over, otherwise the next
+        // rewriteAndSwapMetadata() persists a _meta with no covering flag/section
+        // and every reader thereafter sees the posting index as non-covering.
+        newColumnMetadata.setCoveringColumnIndices(oldMeta.getCoveringColumnIndices());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 
@@ -292,7 +328,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         public WriterTableColumnMetadata(
                 String nameStr,
                 int type,
-                boolean columnIndexed,
+                byte indexType,
                 int indexBlockCapacity,
                 boolean symbolTableStatic,
                 RecordMetadata parent,
@@ -305,7 +341,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             super(
                     nameStr,
                     type,
-                    columnIndexed,
+                    indexType,
                     indexBlockCapacity,
                     symbolTableStatic,
                     parent,

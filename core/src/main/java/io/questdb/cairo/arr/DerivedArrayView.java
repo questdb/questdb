@@ -290,6 +290,16 @@ public class DerivedArrayView extends ArrayView {
     }
 
     /**
+     * Repositions this view to a different offset in the backing flat array,
+     * keeping all other state (shape, strides, type, length) unchanged.
+     * Useful for iterating sub-arrays along dimension 0 without rebuilding
+     * the entire view each time.
+     */
+    public void setFlatViewOffset(int offset) {
+        this.flatViewOffset = offset;
+    }
+
+    /**
      * Transposes this array, reversing its shape and strides.
      */
     public void transpose() {

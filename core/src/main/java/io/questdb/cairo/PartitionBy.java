@@ -137,12 +137,14 @@ public final class PartitionBy {
                 }
                 break;
             case MONTH:
-                if (ttlHoursOrMonths < 0) {
+                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
+                if (ttlHoursOrMonths < 1) {
                     return;
                 }
                 break;
             case YEAR:
-                if (ttlHoursOrMonths < 0 && ttlHoursOrMonths % 12 == 0) {
+                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
+                if (ttlHoursOrMonths < 1 && ttlHoursOrMonths % 12 == 0) {
                     return;
                 }
                 break;
@@ -150,7 +152,7 @@ public final class PartitionBy {
                 return;
         }
         throw SqlException.position(ttlValuePos)
-                .put("TTL value must be an integer multiple of partition size");
+                .put("TTL value must be an integer multiple of the partition size (its time interval)");
     }
 
 

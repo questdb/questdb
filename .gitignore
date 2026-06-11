@@ -5,6 +5,7 @@
 .ignore
 out
 benchmarks/target
+benchmarks/*.png
 core/target
 utils/target
 utils/dependency-reduced-pom.xml
@@ -24,7 +25,7 @@ core/cmake-build-debug-coverage
 core/cmake-build-release
 core/cmake-build-minsizerel
 core/CMakeCache.txt
-core/rust/qdbr/parquet2/target
+core/rust/parquet2/target
 **/.project
 **/.settings
 **/.classpath
@@ -34,8 +35,8 @@ core/rust/qdbr/parquet2/target
 .vscode
 core/rust/qdb-core/target
 core/rust/qdbr/target
-core/rust/qdbr/parquet2/parquet-tools/target/
-core/rust/qdbr/parquet2/parquet-tools/Cargo.lock
+core/rust/parquet2/parquet-tools/target/
+core/rust/parquet2/parquet-tools/Cargo.lock
 core/rust/qdb-sqllogictest/target
 
 # Rust native binaries (libquestdbr) — built from source or cached in CI
@@ -47,9 +48,7 @@ core/src/main/bin/darwin-x86-64/
 
 # pgwire compatibility tests - build artifacts
 compat/src/test/rust-tokio/target/
-compat/src/test/rust-tokio/Cargo.lock
 compat/src/test/rust-sqlx/target/
-compat/src/test/rust-sqlx/Cargo.lock
 compat/src/test/python/__pycache__/
 venv/
 compat/src/test/csharp/bin/
@@ -61,4 +60,3 @@ compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
 compat/src/test/golang/gorunner
 compat/src/test/rust/scenarios/target/
-/core/rust/qdb-core/Cargo.lock

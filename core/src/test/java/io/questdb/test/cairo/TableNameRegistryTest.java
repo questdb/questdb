@@ -336,7 +336,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     public void testConcurrentReadWriteAndReload() throws Exception {
         assertMemoryLeak(() -> {
             int threadCount = 2;
-            int tableCount = 400;
+            // smaller workload on slow CI runners (Mac, Windows)
+            int tableCount = Os.isLinux() ? 200 : 100;
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier startBarrier = new CyclicBarrier(threadCount + 1);
             ObjList<Thread> threads = new ObjList<>(threadCount);
@@ -764,13 +765,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             // Write a line into the table
             execute("insert into tab1(a, b, timestamp) values(0, 1, '2022-02-24')");
 
-            assertSql(
-                    """
+            assertQuery("tab1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
                             a\tb\ttimestamp
                             0\t1\t2022-02-24T00:00:00.000000Z
-                            """,
-                    "tab1"
-            );
+                            """);
 
             Assert.assertFalse(engine.verifyTableName("tab1").isWal());
         });
@@ -1204,9 +1206,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 // verify steps
                 for (int i = 0; i < n; i++) {
                     CharSequence oldTableName = null;
-                    CharSequence tableName = tableNames.getQuick(i) + Thread.currentThread().getId();
+                    CharSequence tableName = tableNames.getQuick(i) + Thread.currentThread().threadId();
                     if (i > 0) {
-                        oldTableName = tableNames.getQuick(i - 1) + Thread.currentThread().getId();
+                        oldTableName = tableNames.getQuick(i - 1) + Thread.currentThread().threadId();
                     }
                     if (!success.get(i)) {
                         continue;

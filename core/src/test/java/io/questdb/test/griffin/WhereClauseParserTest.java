@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -47,6 +48,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -105,24 +107,25 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
         // same as x but with different number of values in symbol maps
         TableModel model = new TableModel(configuration, "v", PartitionBy.NONE);
-        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16, rndIndexType(rnd))
                 .col("bid", ColumnType.DOUBLE)
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestamp();
         AbstractCairoTest.create(model);
 
         model = new TableModel(configuration, "v_ns", PartitionBy.NONE);
-        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16, rndIndexType(rnd))
                 .col("bid", ColumnType.DOUBLE)
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestampNs();
         AbstractCairoTest.create(model);
 
@@ -149,13 +152,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         AbstractCairoTest.create(model);
 
         model = new TableModel(configuration, "x", PartitionBy.NONE);
-        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16, rndIndexType(rnd))
                 .col("bid", ColumnType.DOUBLE)
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestamp();
         AbstractCairoTest.create(model);
 
@@ -165,8 +168,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestampNs();
         AbstractCairoTest.create(model);
 
@@ -176,8 +179,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("ask", ColumnType.DOUBLE)
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4, rndIndexType(rnd))
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd));
         AbstractCairoTest.create(model);
 
         model = new TableModel(configuration, "z", PartitionBy.NONE);
@@ -187,7 +190,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
                 .col("mode", ColumnType.SYMBOL)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestamp();
         AbstractCairoTest.create(model);
 
@@ -198,7 +201,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
                 .col("mode", ColumnType.SYMBOL)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4, rndIndexType(rnd))
                 .timestampNs();
         AbstractCairoTest.create(model);
 
@@ -484,7 +487,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
-
     @Test
     public void testBadEpochInLess() {
         try {
@@ -682,7 +684,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             TestUtils.assertEquals("missing arguments", e.getFlyweightMessage());
         }
     }
-
 
     @Test
     public void testBetweenIntervalWithCaseStatementAsParam() throws SqlException {
@@ -1076,6 +1077,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("ex != null and ex = null and sym != 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         assertFilter(m, "'blah' sym !=");
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testContradictingNullSearchKeptByTautologicalSelfCompare() throws Exception {
+        // sym is null AND sym is not null is FALSE; a sibling tautological
+        // self-comparison (sym <= sym) must not overwrite that FALSE back to
+        // UNDEFINED/TRUE on its way through analyzeLess. Without the guard,
+        // the index-driven path saw keyColumn=sym with empty value/excluded
+        // lists and tripped an internal assert in SqlCodeGenerator.
+        IntrinsicModel m = modelOf("(sym <= sym and sym != null) and sym = null");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
@@ -3580,6 +3594,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrWithNonTimestampCastRollback() throws Exception {
+        // The OR's lhs (timestamp = 'value') is extractable, but the rhs has a
+        // function that returns DATE, not TIMESTAMP. The structural check in
+        // isOrOfTimestampIn() lets the recursion start; the type check fires
+        // only after lhs has already accumulated an interval and a TRUE
+        // intrinsicValue mark. tryExtractOrTimestampIntrinsics must roll the
+        // partial state back so the OR survives intact as the model filter.
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (-339289)::DATE = timestamp");
+        Assert.assertFalse(m.hasIntervalFilters());
+        Assert.assertNotNull("filter must survive partial OR rollback", m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.intrinsicValue);
+        Assert.assertNotNull("OR.lhs must survive rollback", m.filter.lhs);
+        Assert.assertNotNull("OR.rhs must survive rollback", m.filter.rhs);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.lhs.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.rhs.intrinsicValue);
+    }
+
+    @Test
     public void testTimestampEqualsToBindVariable() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         bindVariableService.clear();
@@ -4203,25 +4235,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "testVarcharPracticalParsing_" + timestampType.getTypeName();
             executeWithRewriteTimestamp("create table " + tableName + " ( a string, ts #TIMESTAMP) timestamp(ts)", timestampType.getTypeName());
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "ts = '2024-02-29' or ts <= '2024-03-01'",
-                    "Async JIT Filter workers: 1\n" +
-                            "  filter: (ts=2024-02-29T00:00:00.000000Z or 2024-03-01T00:00:00.000000Z>=ts)\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "ts = '2024-02-29' or ts <= '2024-03-01'")
+                    .noLeakCheck()
+                    .assertsPlan("Async JIT Filter workers: 1\n" +
+                            "  filter: (2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
 
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
-                    "Async Filter workers: 1\n" +
-                            "  filter: ((ts=2024-02-29T00:00:00.000000Z or 2024-03-01T00:00:00.000000Z>=ts) or ts=2024-05-01T00:00:00.000000Z)\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar")
+                    .noLeakCheck()
+                    .assertsPlan("Async Filter workers: 1\n" +
+                            "  filter: ((2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts) or 2024-05-01T00:00:00.000000Z=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
         });
     }
 
@@ -4263,6 +4293,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
         }
+    }
+
+    private static byte rndIndexType(Rnd rnd) {
+        return rnd.nextBoolean() ? IndexType.BITMAP : IndexType.POSTING;
     }
 
     private static void swap(String[] arr, int i, int j) {
@@ -4344,7 +4378,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     m,
                     sqlExecutionContext,
                     false,
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
+                    false
             );
         }
     }
@@ -4364,7 +4399,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos,
                     sqlExecutionContext,
                     false,
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos,
+                    false
             );
         }
     }
@@ -4383,7 +4419,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos,
                     sqlExecutionContext,
                     false,
-                    noTimestampReader
+                    noTimestampReader,
+                    false
             );
         }
     }
@@ -4403,7 +4440,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     metadata,
                     sqlExecutionContext,
                     false,
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyReader : nonEmptyReaderNanos
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyReader : nonEmptyReaderNanos,
+                    false
             );
         }
     }
@@ -4411,9 +4449,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? expected.replaceAll("00000", "00000000")
-                .replaceAll("99999", "99999999")
-                .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
-                .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z")
+                  .replaceAll("99999", "99999999")
+                  .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
+                  .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z")
                 : expected;
     }
 
@@ -4527,7 +4565,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     metadata,
                     sqlExecutionContext,
                     false,
-                    unindexedReader
+                    unindexedReader,
+                    false
             );
         }
     }

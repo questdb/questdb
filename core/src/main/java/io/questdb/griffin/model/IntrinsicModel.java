@@ -51,7 +51,7 @@ public class IntrinsicModel implements Mutable {
     // Indexed symbol column used as the initial "efficient" filter for the query.
     public CharSequence keyColumn;
     public ObjList<ExpressionNode> keyExcludedNodes = new ObjList<>();
-    public QueryModel keySubQuery;
+    public IQueryModel keySubQuery;
 
     public RuntimeIntrinsicIntervalModel buildIntervalModel() {
         return runtimeIntervalBuilder.build();
@@ -71,6 +71,18 @@ public class IntrinsicModel implements Mutable {
 
     public void clearBetweenTempParsing() {
         runtimeIntervalBuilder.clearBetweenParsing();
+    }
+
+    /**
+     * Clears only the interval filter state without touching keys, filter
+     * expression or intrinsicValue. Used by WhereClauseParser to roll back
+     * a partial OR-tree extraction when one branch can't be turned into an
+     * interval intrinsic. Frees Functions accumulated in the dynamic range
+     * list because rollback discards them without transferring ownership to
+     * a built RuntimeIntervalModel.
+     */
+    public void clearIntervalFilters() {
+        runtimeIntervalBuilder.freeAndClear();
     }
 
     public boolean hasIntervalFilters() {

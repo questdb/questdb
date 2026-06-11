@@ -42,7 +42,6 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -238,11 +237,8 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         if (versionStr == null) {
             return DEFAULT_API_VERSION;
         } else {
-            try {
-                return (byte) Numbers.parseInt(versionStr);
-            } catch (NumericException e) {
-                return DEFAULT_API_VERSION;
-            }
+            int v = Numbers.parseNonNegativeIntQuiet(versionStr);
+            return v >= 0 ? (byte) v : DEFAULT_API_VERSION;
         }
     }
 

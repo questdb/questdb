@@ -183,8 +183,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q2",
                         "SELECT SUM(AdvEngineID), COUNT(*), AVG(ResolutionWidth) FROM hits;",
                         """
-                                GroupBy vectorized: true workers: 1
+                                Async Group By workers: 1
+                                  vectorized: true
                                   values: [sum(AdvEngineID),count(*),avg(ResolutionWidth)]
+                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -194,8 +196,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q3",
                         "SELECT AVG(UserID) FROM hits;",
                         """
-                                GroupBy vectorized: true workers: 1
+                                Async Group By workers: 1
+                                  vectorized: true
                                   values: [avg(UserID)]
+                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -231,8 +235,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q6",
                         "SELECT MIN(EventTime), MAX(EventTime) FROM hits;",
                         """
-                                GroupBy vectorized: true workers: 1
+                                Async Group By workers: 1
+                                  vectorized: true
                                   values: [min_designated(EventTime),max_designated(EventTime)]
+                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -412,6 +418,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                       functions: [UserID,m,SearchPhrase,c]
                                         Async Group By workers: 1
                                           keys: [UserID,m,SearchPhrase]
+                                          keyFunctions: [minute(EventTime)]
                                           values: [count(*)]
                                           filter: null
                                             PageFrame
@@ -549,6 +556,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                 "        Filter filter: 100000<c\n" +
                                 "            Async JIT Group By workers: 1\n" +
                                 "              keys: [k]\n" +
+                                "              keyFunctions: [regexp_replace(Referer,^https?://(?:www\\.)?([^/]+)/.*$,$1)]\n" +
                                 "              values: [avg(length_bytes(Referer)),count(*),min(Referer)]\n" +
                                 "              filter: Referer is not null\n" +
                                 "                PageFrame\n" +
@@ -564,8 +572,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                                                 ? "  functions: [SUM(ResolutionWidth),SUM(ResolutionWidth)+COUNT*1,SUM(ResolutionWidth)+COUNT*2,SUM(ResolutionWidth)+COUNT*3,SUM(ResolutionWidth)+COUNT*4,SUM(ResolutionWidth)+COUNT*5,SUM(ResolutionWidth)+COUNT*6,SUM(ResolutionWidth)+COUNT*7,SUM(ResolutionWidth)+COUNT*8,SUM(ResolutionWidth)+COUNT*9,SUM(ResolutionWidth)+COUNT*10,SUM(ResolutionWidth)+COUNT*11,SUM(ResolutionWidth)+COUNT*12,SUM(ResolutionWidth)+COUNT*13,SUM(ResolutionWidth)+COUNT*14,SUM(ResolutionWidth)+COUNT*15,SUM(ResolutionWidth)+COUNT*16,SUM(ResolutionWidth)+COUNT*17,SUM(ResolutionWidth)+COUNT*18,SUM(ResolutionWidth)+COUNT*19,SUM(ResolutionWidth)+COUNT*20,SUM(ResolutionWidth)+COUNT*21,SUM(ResolutionWidth)+COUNT*22,SUM(ResolutionWidth)+COUNT*23,SUM(ResolutionWidth)+COUNT*24,SUM(ResolutionWidth)+COUNT*25,SUM(ResolutionWidth)+COUNT*26,SUM(ResolutionWidth)+COUNT*27,SUM(ResolutionWidth)+COUNT*28,SUM(ResolutionWidth)+COUNT*29,SUM(ResolutionWidth)+COUNT*30,SUM(ResolutionWidth)+COUNT*31,SUM(ResolutionWidth)+COUNT*32,SUM(ResolutionWidth)+COUNT*33,SUM(ResolutionWidth)+COUNT*34,SUM(ResolutionWidth)+COUNT*35,SUM(ResolutionWidth)+COUNT*36,SUM(ResolutionWidth)+COUNT*37,SUM(ResolutionWidth)+COUNT*38,SUM(ResolutionWidth)+COUNT*39,SUM(ResolutionWidth)+COUNT*40,SUM(ResolutionWidth)+COUNT*41,SUM(ResolutionWidth)+COUNT*42,SUM(ResolutionWidth)+COUNT*43,SUM(ResolutionWidth)+COUNT*44,SUM(ResolutionWidth)+COUNT*45,SUM(ResolutionWidth)+COUNT*46,SUM(ResolutionWidth)+COUNT*47,SUM(ResolutionWidth)+COUNT*48,SUM(ResolutionWidth)+COUNT*49,SUM(ResolutionWidth)+COUNT*50,SUM(ResolutionWidth)+COUNT*51,SUM(ResolutionWidth)+COUNT*52,SUM(ResolutionWidth)+COUNT*53,SUM(ResolutionWidth)+COUNT*54,SUM(ResolutionWidth)+COUNT*55,SUM(ResolutionWidth)+COUNT*56,SUM(ResolutionWidth)+COUNT*57,SUM(ResolutionWidth)+COUNT*58,SUM(ResolutionWidth)+COUNT*59,SUM(ResolutionWidth)+COUNT*60,SUM(ResolutionWidth)+COUNT*61,SUM(ResolutionWidth)+COUNT*62,SUM(ResolutionWidth)+COUNT*63,SUM(ResolutionWidth)+COUNT*64,SUM(ResolutionWidth)+COUNT*65,SUM(ResolutionWidth)+COUNT*66,SUM(ResolutionWidth)+COUNT*67,SUM(ResolutionWidth)+COUNT*68,SUM(ResolutionWidth)+COUNT*69,SUM(ResolutionWidth)+COUNT*70,SUM(ResolutionWidth)+COUNT*71,SUM(ResolutionWidth)+COUNT*72,SUM(ResolutionWidth)+COUNT*73,SUM(ResolutionWidth)+COUNT*74,SUM(ResolutionWidth)+COUNT*75,SUM(ResolutionWidth)+COUNT*76,SUM(ResolutionWidth)+COUNT*77,SUM(ResolutionWidth)+COUNT*78,SUM(ResolutionWidth)+COUNT*79,SUM(ResolutionWidth)+COUNT*80,SUM(ResolutionWidth)+COUNT*81,SUM(ResolutionWidth)+COUNT*82,SUM(ResolutionWidth)+COUNT*83,SUM(ResolutionWidth)+COUNT*84,SUM(ResolutionWidth)+COUNT*85,SUM(ResolutionWidth)+COUNT*86,SUM(ResolutionWidth)+COUNT*87,SUM(ResolutionWidth)+COUNT*88,SUM(ResolutionWidth)+COUNT*89]\n"
                                                 : "  functions: [SUM,SUM+COUNT*1,SUM+COUNT*2,SUM+COUNT*3,SUM+COUNT*4,SUM+COUNT*5,SUM+COUNT*6,SUM+COUNT*7,SUM+COUNT*8,SUM+COUNT*9,SUM+COUNT*10,SUM+COUNT*11,SUM+COUNT*12,SUM+COUNT*13,SUM+COUNT*14,SUM+COUNT*15,SUM+COUNT*16,SUM+COUNT*17,SUM+COUNT*18,SUM+COUNT*19,SUM+COUNT*20,SUM+COUNT*21,SUM+COUNT*22,SUM+COUNT*23,SUM+COUNT*24,SUM+COUNT*25,SUM+COUNT*26,SUM+COUNT*27,SUM+COUNT*28,SUM+COUNT*29,SUM+COUNT*30,SUM+COUNT*31,SUM+COUNT*32,SUM+COUNT*33,SUM+COUNT*34,SUM+COUNT*35,SUM+COUNT*36,SUM+COUNT*37,SUM+COUNT*38,SUM+COUNT*39,SUM+COUNT*40,SUM+COUNT*41,SUM+COUNT*42,SUM+COUNT*43,SUM+COUNT*44,SUM+COUNT*45,SUM+COUNT*46,SUM+COUNT*47,SUM+COUNT*48,SUM+COUNT*49,SUM+COUNT*50,SUM+COUNT*51,SUM+COUNT*52,SUM+COUNT*53,SUM+COUNT*54,SUM+COUNT*55,SUM+COUNT*56,SUM+COUNT*57,SUM+COUNT*58,SUM+COUNT*59,SUM+COUNT*60,SUM+COUNT*61,SUM+COUNT*62,SUM+COUNT*63,SUM+COUNT*64,SUM+COUNT*65,SUM+COUNT*66,SUM+COUNT*67,SUM+COUNT*68,SUM+COUNT*69,SUM+COUNT*70,SUM+COUNT*71,SUM+COUNT*72,SUM+COUNT*73,SUM+COUNT*74,SUM+COUNT*75,SUM+COUNT*76,SUM+COUNT*77,SUM+COUNT*78,SUM+COUNT*79,SUM+COUNT*80,SUM+COUNT*81,SUM+COUNT*82,SUM+COUNT*83,SUM+COUNT*84,SUM+COUNT*85,SUM+COUNT*86,SUM+COUNT*87,SUM+COUNT*88,SUM+COUNT*89]\n"
                                 ) +
-                                "    GroupBy vectorized: true workers: 1\n" +
+                                "    Async Group By workers: 1\n" +
+                                "      vectorized: true\n" +
                                 "      values: [sum(ResolutionWidth),count(*)]\n" +
+                                "      filter: null\n" +
                                 "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: hits\n"
@@ -722,6 +732,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                       functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
                                         Async JIT Group By workers: 1
                                           keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
+                                          keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
                                           values: [count(*)]
                                           filter: (CounterID=62 and IsRefresh=0)
                                             PageFrame
@@ -770,6 +781,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                   keys: [M]
                                     Async JIT Group By workers: 1
                                       keys: [M]
+                                      keyFunctions: [timestamp_floor_utc('1m',EventTime)]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0)
                                         PageFrame
@@ -794,7 +806,9 @@ public class ClickBenchTest extends AbstractCairoTest {
 
             for (TestCase testCase : testCases) {
                 LOG.info().$("verifying exec plan for ").$(testCase.name).$();
-                assertPlanNoLeakCheck(testCase.query, testCase.expectedPlan);
+                assertQuery(testCase.query)
+                        .noLeakCheck()
+                        .assertsPlan(testCase.expectedPlan);
             }
         });
     }

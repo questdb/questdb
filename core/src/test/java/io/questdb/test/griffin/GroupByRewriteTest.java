@@ -36,9 +36,9 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("CREATE TABLE trades2 (sym symbol, price double, amount double, ts timestamp) timestamp(ts) partition by day;");
 
             // key first
-            assertPlanNoLeakCheck(
-                    "SELECT ts, price, price / sum(amount) FROM trades;",
-                    """
+            assertQuery("SELECT ts, price, price / sum(amount) FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price/sum]
                                 Async Group By workers: 1
@@ -48,12 +48,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key first, aliased
-            assertPlanNoLeakCheck(
-                    "SELECT ts, PricE as price0, price / sum(amount) FROM trades;",
-                    """
+            assertQuery("SELECT ts, PricE as price0, price / sum(amount) FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price0,price0/sum]
                                 Async Group By workers: 1
@@ -63,12 +62,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key first, multiple column occurrences
-            assertPlanNoLeakCheck(
-                    "SELECT ts, price, (price + price) / sum(amount) FROM trades;",
-                    """
+            assertQuery("SELECT ts, price, (price + price) / sum(amount) FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price+price/sum]
                                 Async Group By workers: 1
@@ -78,12 +76,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key first, multiple keys, multiple column occurrences
-            assertPlanNoLeakCheck(
-                    "SELECT ts, price, price as price0, (price + price) / sum(amount) FROM trades;",
-                    """
+            assertQuery("SELECT ts, price, price as price0, (price + price) / sum(amount) FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price,price+price/sum]
                                 Async Group By workers: 1
@@ -93,12 +90,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key first, aliased, multiple column occurrences
-            assertPlanNoLeakCheck(
-                    "SELECT ts, price as price0, (price + price) / sum(amount) FROM trades;",
-                    """
+            assertQuery("SELECT ts, price as price0, (price + price) / sum(amount) FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price0,price0+price0/sum]
                                 Async Group By workers: 1
@@ -108,13 +104,12 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
 
             // key second
-            assertPlanNoLeakCheck(
-                    "SELECT ts, price / sum(amount), price FROM trades;",
-                    """
+            assertQuery("SELECT ts, price / sum(amount), price FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price/sum,price]
                                 Async Group By workers: 1
@@ -124,12 +119,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key second, aliased
-            assertPlanNoLeakCheck(
-                    "SELECT ts, price / sum(amount), PricE as price0 FROM trades;",
-                    """
+            assertQuery("SELECT ts, price / sum(amount), PricE as price0 FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price/sum,price]
                                 Async Group By workers: 1
@@ -139,12 +133,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key second, aliased, multiple columns
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sym price, price / sum(amount), price price1 FROM trades;",
-                    """
+            assertQuery("SELECT ts, sym price, price / sum(amount), price price1 FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price1/sum,price1]
                                 Async Group By workers: 1
@@ -154,12 +147,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key second, multiple column occurrences
-            assertPlanNoLeakCheck(
-                    "SELECT ts, (price + price) / sum(amount), price FROM trades;",
-                    """
+            assertQuery("SELECT ts, (price + price) / sum(amount), price FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price+price/sum,price]
                                 Async Group By workers: 1
@@ -169,12 +161,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key second, multiple keys, multiple column occurrences
-            assertPlanNoLeakCheck(
-                    "SELECT ts, (price + price) / sum(amount), price, price as price0 FROM trades;",
-                    """
+            assertQuery("SELECT ts, (price + price) / sum(amount), price, price as price0 FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price+price/sum,price,price]
                                 Async Group By workers: 1
@@ -184,12 +175,11 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
             // key second, aliased, multiple column occurrences
-            assertPlanNoLeakCheck(
-                    "SELECT ts, (price + price) / sum(amount), price as price0 FROM trades;",
-                    """
+            assertQuery("SELECT ts, (price + price) / sum(amount), price as price0 FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price+price/sum,price]
                                 Async Group By workers: 1
@@ -199,13 +189,12 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
 
             // joined tables with same column names - the rewrite should not deduplicate the keys
-            assertPlanNoLeakCheck(
-                    "SELECT t1.ts, t1.price, t2.price / sum(t1.amount) FROM trades t1 JOIN trades2 t2 ON (sym);",
-                    """
+            assertQuery("SELECT t1.ts, t1.price, t2.price / sum(t1.amount) FROM trades t1 JOIN trades2 t2 ON (sym);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price1/sum]
                                 GroupBy vectorized: false
@@ -214,6 +203,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     SelectedRecord
                                         Hash Join Light
                                           condition: t2.sym=t1.sym
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: trades
@@ -221,8 +211,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: trades2
-                            """
-            );
+                            """);
         });
     }
 
@@ -230,9 +219,9 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testRewriteAggregateExtractsConstantKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price double, amount double, ts timestamp) timestamp(ts) partition by day;");
-            assertPlanNoLeakCheck(
-                    "SELECT 42, 'foobar', amount, sum(price) FROM trades;",
-                    """
+            assertQuery("SELECT 42, 'foobar', amount, sum(price) FROM trades;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [42,'foobar',amount,sum]
                                 Async Group By workers: 1
@@ -242,8 +231,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -255,13 +243,16 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("CREATE TABLE tabb ( bx int, bid int );");
             execute("INSERT INTO tabb values (3,1), (4,2)");
 
-            assertQueryNoLeakCheck("""
+            assertQuery("SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
+                    "FROM taba " +
+                    "join tabb on aid = bid")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             sum\tsum1\tsum2\tsum3
                             3\t7\t23\t27
-                            """,
-                    "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
-                            "FROM taba " +
-                            "join tabb on aid = bid", null, false, false, true);
+                            """);
         });
     }
 
@@ -272,9 +263,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("CREATE TABLE tabb ( x int, bid int );");
         });
 
-        assertException("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
+        assertQuery("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
                 "FROM taba " +
-                "join tabb on aid = bid", 11, "Invalid table name or alias");
+                "join tabb on aid = bid")
+                .fails(11, "Invalid table name or alias");
     }
 
     @Test
@@ -282,9 +274,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE taba ( x int, aid int );");
             execute("CREATE TABLE tabb ( x int, bid int );");
-            assertException("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
+            assertQuery("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
-                    "join tabb on aid = bid", 11, "Invalid column: taba.k");
+                    "join tabb on aid = bid")
+                    .fails(11, "Invalid column: taba.k");
         });
     }
 
@@ -293,9 +286,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("  CREATE TABLE taba ( x int, aid int );");
             execute("  CREATE TABLE tabb ( x int, bid int );");
-            assertException("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
+            assertQuery("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
-                    "join tabb on aid = bid", 11, "Ambiguous column [name=x]");
+                    "join tabb on aid = bid")
+                    .fails(11, "Ambiguous column [name=x]");
         });
     }
 
@@ -303,11 +297,9 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE telemetry (created timestamp)");
-            assertExceptionNoLeakCheck(
-                    "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);",
-                    49,
-                    "there is no matching function `SUM` with the argument types: (INT, BOOLEAN, INT)"
-            );
+            assertQuery("SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);")
+                    .noLeakCheck()
+                    .fails(49, "there is no matching function `SUM` with the argument types: (INT, BOOLEAN, INT)");
         });
     }
 
@@ -655,13 +647,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             String query,
             String ddl
     ) throws Exception {
-        assertQuery(
-                expected,
-                query,
-                ddl,
-                null,
-                false,
-                true
-        );
+        assertQuery(query)
+                .ddl(ddl)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 }

@@ -74,18 +74,17 @@ import java.io.Closeable;
 import static io.questdb.TelemetryEvent.*;
 import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
-    public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
-    private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
-    private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;
@@ -365,12 +364,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
 
+                final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
+
                 // Populate transactionMeta with timestamps of future transactions
                 // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
-                writer.readWalTxnDetails(transactionLogCursor);
+                // The lookahead pre-read is bounded by timeLimit so a huge backlog cannot
+                // monopolize the apply worker for arbitrarily long before any commit happens.
+                writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                 transactionLogCursor.toTop();
                 isTerminating = runStatus.isTerminating();
-                final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
                 boolean firstRun = true;
 
                 try {
@@ -474,7 +476,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Last few transactions left to process from the list
                                     // of observed transactions built upfront in the beginning of the loop.
                                     // Read more transactions from the sequencer into readWalTxnDetails to continue
-                                    writer.readWalTxnDetails(transactionLogCursor);
+                                    writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                                     transactionLogCursor.setPosition(seqTxn);
                                 }
 
@@ -515,6 +517,34 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                     if (!finishedAll || isTerminating) {
                         writer.commitSeqTxn();
+                    }
+
+                    // The apply loop holds the writer across this batch of transactions and never
+                    // ticks the command queue itself. Once the batch is applied and its sequencer
+                    // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
+                    // / drop-local / squash) published while the writer was busy, so they run here
+                    // rather than sitting unprocessed until the writer is returned to the pool.
+                    // The drain shares the per-table time quota with the apply loop: it gets at most
+                    // half of whatever quota is left, so a backlog of expensive commands (each squash
+                    // or parquet conversion can take seconds on a wide table) cannot monopolize an
+                    // apply worker shared with other WAL tables. Commands left undrained stay queued
+                    // for the next tick.
+                    // Draining is a side activity: the WAL transactions are already durably committed
+                    // above, so a drain failure must not fail WAL apply or suspend the table. Each
+                    // command's own failure is reported on its correlation channel inside
+                    // processAsyncWriterCommand; this catch only guards the rare infrastructure error
+                    // escaping the queue loop. Such an error leaves the writer in an unknown state, so
+                    // mark it distressed to force the pool to recreate it on the next acquisition. Only
+                    // Exceptions are swallowed here; Errors (OOM, StackOverflow, LinkageError) propagate
+                    // to the apply loop's existing failure handling.
+                    final long drainNow = microClock.getTicks();
+                    final long drainDeadline = drainNow + Math.max(0, (timeLimit - drainNow) / 2);
+                    try {
+                        writer.tick(false, drainDeadline);
+                    } catch (Exception ex) {
+                        LOG.error().$("error draining async command queue after WAL apply [table=")
+                                .$(writer.getTableToken()).$(", error=").$(ex).I$();
+                        writer.markDistressed();
                     }
                 } catch (EjectApplyWalException ex) {
                     finishedAll = false;
@@ -631,6 +661,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         WalTxnDetails txnDetails = writer.getWalTnxDetails();
         final byte walTxnType = txnDetails.getWalTxnType(seqTxn);
         final long start = microClock.getTicks();
+
+        // Reset per iteration: branches that don't internally reset (skip, no-op SQL, mat view
+        // invalidate, view def, truncate) would otherwise re-read the prior iter's count.
+        writer.resetWalApplyCounters();
 
         switch (walTxnType) {
             case DATA:
@@ -941,10 +975,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
-                    //noinspection StringEquality
-                    if (tableBusy.getReason() != NO_LOCK_REASON
-                            && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
-                            && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
+                    if (isUnsolicitedTableLock(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();

@@ -31,7 +31,10 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
@@ -256,6 +259,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    byte getDefaultSymbolIndexType();
+
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -277,6 +282,8 @@ public interface CairoConfiguration {
     long getGroupByAllocatorDefaultChunkSize();
 
     long getGroupByAllocatorMaxChunkSize();
+
+    int getGroupByBatchSize();
 
     int getGroupByMapCapacity();
 
@@ -325,6 +332,8 @@ public interface CairoConfiguration {
     @NotNull
     String getInstallRoot();
 
+    int getJsonUnnestMaxValueSize();
+
     int getLatestByQueueCapacity();
 
     @NotNull
@@ -351,6 +360,8 @@ public interface CairoConfiguration {
     long getMatViewMaxRefreshStepUs();
 
     long getMatViewRefreshIntervalsUpdatePeriod();
+
+    int getMatViewRefreshMaxClusters();
 
     long getMatViewRefreshOomRetryTimeout();
 
@@ -418,6 +429,8 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
+    int getO3MidPartitionMaxSplits();
+
     long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
@@ -462,13 +475,13 @@ public interface CairoConfiguration {
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
-    double getPartitionEncoderParquetMinCompressionRatio();
-
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
 
     int getPartitionEncoderParquetDataPageSize();
+
+    double getPartitionEncoderParquetMinCompressionRatio();
 
     long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
@@ -486,11 +499,105 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    /**
+     * Maximum bytes the posting index writer's per-key spill buffers may hold
+     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
+     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
+     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
+     * negative value disables the back-pressure entirely (legacy behaviour:
+     * accumulate until {@code seal()}). Default is 256 MiB.
+     */
+    default long getPostingIndexerSpillBytesMax() {
+        return 256L << 20;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Threshold at which the adaptive posting-index row-id encoder forces
+     * DELTA instead of running the size-only EF-vs-DELTA race. When a key has
+     * {@code >= getPostingIndexAdaptiveDeltaAtOrAbove()} row IDs the writer
+     * skips EF and emits DELTA directly. Default 2000.
+     * <p>
+     * The size-only adaptive pick is essentially a coin-flip at large counts
+     * because both encodings produce similar byte sizes, but DELTA reads
+     * markedly faster (per-block unpack, cache-line-friendly) than EF for
+     * dense keys that span a long high-bits bitmap. For Zipfian-skewed
+     * workloads with hot keys at 100k+ row IDs the threshold lifts point /
+     * scan / range queries by 15-60% with no measurable regression on
+     * uniform-distribution scenarios where keys stay below the threshold.
+     * <p>
+     * Set to {@link Integer#MAX_VALUE} to restore pure size comparison.
+     */
+    default int getPostingIndexAdaptiveDeltaAtOrAbove() {
+        return 2000;
+    }
+
+    int getPostingSealGenThreshold();
+
+    /**
+     * Hard cap on the per-writer in-memory outbox of superseded posting-seal
+     * generations awaiting publish to the global purge queue. When the cap
+     * is reached the writer evicts the oldest entry and emits a critical
+     * log message — the file the entry pointed at is recovered later by the
+     * writer-open orphan scan.
+     * <p>
+     * Sized for steady-state operation where the purge queue is healthy. If
+     * the queue is saturated for an extended period (e.g. background job
+     * disabled) the outbox saturates, oldest entries are dropped, and the
+     * orphan scan picks up the slack on the next reopen.
+     */
+    default int getPostingSealPurgeOutboxMax() {
+        return 8192;
+    }
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
+
+    /**
+     * Operator override for the zstd compression level used on QWP egress
+     * {@code RESULT_BATCH} frames. Default {@code 0} means "honor the
+     * client-negotiated level" -- the server uses whatever the client
+     * advertised via {@code X-QWP-Accept-Encoding}, clamped to the wire
+     * range {@code [COMPRESSION_ZSTD_MIN_LEVEL, COMPRESSION_ZSTD_MAX_LEVEL]}.
+     * <p>
+     * A value in {@code [1, 9]} forces every ZSTD-negotiated connection on
+     * this server to use that level regardless of what the client asked
+     * for; out-of-range values are clamped at the override site. A misbehaving
+     * client cannot raise the server's CPU spend above the operator's chosen
+     * ceiling. The {@code X-QWP-Content-Encoding} response header echoes
+     * the effective (post-override) level so the client can observe what was
+     * actually used.
+     * <p>
+     * Read from the configuration object on every handshake (not cached at
+     * processor construction), so a live config reload takes effect on the
+     * next new connection. Connections already established keep their
+     * already-built ZSTD contexts -- runtime mutation of an in-flight cctx
+     * level is not safe.
+     */
+    default int getQwpEgressForcedZstdLevel() {
+        return 0;
+    }
+
+    /**
+     * Source of the role / cluster / node identity emitted in the QWP egress
+     * {@code SERVER_INFO} frame. Default is the standalone OSS provider; the
+     * Enterprise configuration overrides this with a provider backed by the
+     * live replication role so clients can route reads to primary vs replica.
+     */
+    @NotNull
+    default QwpServerInfoProvider getQwpServerInfoProvider() {
+        return DefaultQwpServerInfoProvider.INSTANCE;
+    }
 
     @NotNull
     default Rnd getRandom() {
@@ -525,6 +632,13 @@ public interface CairoConfiguration {
     }
 
     boolean getSampleByDefaultAlignmentCalendar();
+
+    /**
+     * Selects the sort backend the SAMPLE BY FILL fast path stacks above
+     * the GROUP BY output. Returns one of {@link SampleBySortStrategy}'s int
+     * constants. The default is {@link SampleBySortStrategy#LIGHT_ENCODED}.
+     */
+    int getSampleByFillSortStrategy();
 
     int getSampleByIndexSearchPageSize();
 
@@ -676,25 +790,42 @@ public interface CairoConfiguration {
 
     int getSqlSortKeyMaterializationThreshold();
 
-    int getSqlSortKeyMaxPages();
+    long getSqlSortKeyMaxBytes();
 
     long getSqlSortKeyPageSize();
 
-    int getSqlSortLightValueMaxPages();
+    long getSqlSortLightValueMaxBytes();
 
     long getSqlSortLightValuePageSize();
 
-    int getSqlSortValueMaxPages();
+    long getSqlSortValueMaxBytes();
 
     int getSqlSortValuePageSize();
 
     int getSqlUnorderedMapMaxEntrySize();
 
+    long getSqlWindowCacheMaxBytes();
+
+    /**
+     * Resolves which config key the CachedWindow record-store cap was sourced from. Returned as a
+     * property path string (e.g. "cairo.sql.window.cache.max.bytes") so error messages can name the
+     * actual binding constraint when growth fails. The new bytes key wins when explicitly set; the
+     * legacy pages key wins when only it is explicit; the new bytes default wins otherwise.
+     */
+    String getSqlWindowCacheMaxPagesConfigKey();
+
+    /**
+     * Effective cap (in pages of {@link #getSqlWindowStorePageSize()}) on the CachedWindow record
+     * store, after reconciling cairo.sql.window.cache.max.bytes and the legacy
+     * cairo.sql.window.store.max.pages. Paired with {@link #getSqlWindowCacheMaxPagesConfigKey()}.
+     */
+    int getSqlWindowCacheMaxPagesResolved();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();
 
-    int getSqlWindowRowIdMaxPages();
+    long getSqlWindowRowIdMaxBytes();
 
     int getSqlWindowRowIdPageSize();
 
@@ -702,7 +833,7 @@ public interface CairoConfiguration {
 
     int getSqlWindowStorePageSize();
 
-    int getSqlWindowTreeKeyMaxPages();
+    long getSqlWindowTreeKeyMaxBytes();
 
     int getSqlWindowTreeKeyPageSize();
 
@@ -816,6 +947,20 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    boolean isCairoMetadataCacheSnapshotOrdered();
+
+    /**
+     * Rollback flag for the by-name column emit to UNION siblings in the SQL optimizer's top-down
+     * column propagation. The optimizer matches UNION columns by position; the legacy by-name emit
+     * could prune one branch inconsistently and crash code generation when branch aliases differed.
+     * When {@code true}, restores the legacy by-name behavior. Defaults to {@code false}.
+     *
+     * @return whether to restore the legacy by-name UNION column propagation
+     */
+    default boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return false;
+    }
+
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
@@ -838,6 +983,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewCoveringIndexEnabled();
+
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
@@ -859,6 +1006,8 @@ public interface CairoConfiguration {
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isPartitionO3OverwriteControlEnabled();
+
+    boolean isPostingIndexAutoIncludeTimestamp();
 
     boolean isQueryTracingEnabled();
 

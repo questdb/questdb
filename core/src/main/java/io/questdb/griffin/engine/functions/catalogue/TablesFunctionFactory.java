@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
@@ -48,7 +49,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -153,7 +154,7 @@ public class TablesFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new TablesCursorFactory()) {
+        return new CursorFunction(new TablesCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -164,11 +165,12 @@ public class TablesFunctionFactory implements FunctionFactory {
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         private final TablesRecordCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjMap<CairoTable> tableCache;
         private long tableCacheVersion = -1;
 
-        public TablesCursorFactory() {
+        public TablesCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
+            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
             cursor = new TablesRecordCursor(tableCache);
         }
 
@@ -200,13 +202,13 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private final CharSequenceObjMap<CairoTable> tableCache;
             private int iteratorIdx = -1;
             private int iteratorLim;
             private RecentWriteTracker recentWriteTracker;
             private TableSequencerAPI tableSequencerAPI;
 
-            public TablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+            public TablesRecordCursor(CharSequenceObjMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
                 this.iteratorLim = tableCache.size() - 1;
             }

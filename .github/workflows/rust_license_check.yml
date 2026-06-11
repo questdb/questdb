@@ -1,0 +1,46 @@
+name: Rust License Compliance
+
+on:
+  pull_request:
+    paths:
+      - 'core/rust/**/Cargo.toml'
+      - 'core/rust/**/Cargo.lock'
+      - 'core/rust/**/deny.toml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'core/rust/**/Cargo.toml'
+      - 'core/rust/**/Cargo.lock'
+      - 'core/rust/**/deny.toml'
+  workflow_dispatch:
+
+jobs:
+  license-check:
+    name: Check dependency licenses
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate:
+          - { path: core/rust/qdbr, name: qdbr }
+          - { path: core/rust/qdb-sqllogictest, name: qdb-sqllogictest }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install cargo-deny
+        run: |
+          DENY_VERSION=$(gh release view --repo EmbarkStudios/cargo-deny --json tagName -q '.tagName')
+          curl -fsSL "https://github.com/EmbarkStudios/cargo-deny/releases/download/${DENY_VERSION}/cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz --strip-components=1 -C /usr/local/bin
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Check license compliance (${{ matrix.crate.name }})
+        working-directory: ${{ matrix.crate.path }}
+        run: cargo deny check licenses
+
+      - name: Check advisories (${{ matrix.crate.name }})
+        working-directory: ${{ matrix.crate.path }}
+        run: cargo deny check advisories

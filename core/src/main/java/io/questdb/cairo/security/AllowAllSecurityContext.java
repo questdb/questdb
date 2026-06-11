@@ -79,6 +79,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableConvertPartitionToNative(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableConvertPartitionToParquet(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableDedupDisable(TableToken tableToken) {
     }
 
@@ -108,6 +116,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeAlterTableSetParam(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableSetParquetSettings(TableToken tableToken) {
     }
 
     @Override
@@ -234,7 +246,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public String getPrincipal() {
+    public CharSequence getPrincipal() {
         return Constants.USER_NAME;
     }
 

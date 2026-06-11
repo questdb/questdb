@@ -245,10 +245,10 @@ class AvgDecimal128Rescale256GroupByFunction extends Decimal256Function implemen
                 destValue.addLong(valueIndex + 2, srcCount);
             }
         } else {
-            // both overflown, neither could be null
+            // both overflown, neither could be null and scales match by construction
             srcValue.getDecimal256(valueIndex, decimal256A);
             destValue.getDecimal256(valueIndex, decimal256B);
-            decimal256B.add(decimal256A);
+            Decimal256.uncheckedAdd(decimal256B, decimal256A);
             destValue.putDecimal256(valueIndex, decimal256B);
             destValue.addLong(valueIndex + 2, srcValue.getLong(valueIndex + 2));
         }

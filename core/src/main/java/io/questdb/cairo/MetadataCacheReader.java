@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -39,8 +39,8 @@ public interface MetadataCacheReader extends QuietCloseable, Sinkable {
 
     long getVersion();
 
-    boolean isVisibleTable(@NotNull CharSequence tableName);
+    boolean isVisibleTable(@NotNull String tableName);
 
-    long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion);
+    long snapshot(CharSequenceObjMap<CairoTable> localCache, long priorVersion);
 }
 

@@ -1,4 +1,5 @@
 steps:
+  - template: detect-local-client.yml
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
@@ -37,7 +38,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition:
       eq(variables['SOURCE_CODE_CHANGED'], 'false')
@@ -54,7 +55,7 @@ steps:
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-         $(MAVEN_RUN_OPTS)"
+         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |

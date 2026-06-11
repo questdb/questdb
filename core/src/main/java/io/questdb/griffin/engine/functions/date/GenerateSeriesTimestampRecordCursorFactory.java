@@ -53,6 +53,12 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
     @Override
     public int getScanDirection() {
+        // A bind-variable step is only known at runtime, so the order cannot be guaranteed
+        // at plan time. Reading getLong() off an unbound function would yield a misleading
+        // direction, so report the order only for a constant step.
+        if (!stepFunc.isConstant()) {
+            return SCAN_DIRECTION_OTHER;
+        }
         if (stepFunc.getLong(null) > 0) {
             return SCAN_DIRECTION_FORWARD;
         } else {

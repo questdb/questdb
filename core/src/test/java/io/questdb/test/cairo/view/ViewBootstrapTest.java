@@ -481,9 +481,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -494,8 +494,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -514,9 +514,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -527,8 +527,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -583,9 +583,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -596,8 +596,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -657,9 +657,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -670,8 +670,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"

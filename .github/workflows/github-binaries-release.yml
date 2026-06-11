@@ -130,10 +130,10 @@ jobs:
         with:
           submodules: true
 
-      - name: Install GraalVM Community 17.0.9
+      - name: Install GraalVM Community 25.0.2
         run: |
           set -eux
-          GRAAL_VERSION=17.0.9
+          GRAAL_VERSION=25.0.2
           TAG="jdk-${GRAAL_VERSION}"
           FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
           BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
@@ -201,11 +201,11 @@ jobs:
         with:
           submodules: true
 
-      - name: Install GraalVM Community 17.0.9
+      - name: Install GraalVM Community 25.0.2
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $GRAAL_VERSION = "17.0.9"
+          $GRAAL_VERSION = "25.0.2"
           $tag = "jdk-$GRAAL_VERSION"
           $fileName = "graalvm-community-jdk-$GRAAL_VERSION`_windows-x64_bin.zip"
           $baseUrl = "https://github.com/graalvm/graalvm-ce-builds/releases/download/$tag"
@@ -221,7 +221,7 @@ jobs:
             throw "SHA256 mismatch for $fileName. Expected $expected but got $actual"
           }
 
-          $dest = Join-Path $env:USERPROFILE "graalvm-ce-17"
+          $dest = Join-Path $env:USERPROFILE "graalvm-ce-25"
           Expand-Archive $zipPath -DestinationPath $dest
           $dir = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
           $graalHome = $dir.FullName

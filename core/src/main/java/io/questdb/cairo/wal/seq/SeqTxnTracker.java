@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
@@ -71,12 +70,10 @@ public class SeqTxnTracker {
         return pressureControl;
     }
 
-    @TestOnly
     public long getSeqTxn() {
         return seqTxn;
     }
 
-    @TestOnly
     public long getWriterTxn() {
         return writerTxn;
     }

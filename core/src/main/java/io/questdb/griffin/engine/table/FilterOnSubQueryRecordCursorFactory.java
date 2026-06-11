@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -58,6 +58,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     private final Function filter;
     private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
+    private final HeapRowCursorFactory rowCursorFactory;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -77,10 +78,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         this.func = func;
         cursorFactories = new ObjList<>();
         cursorFactoriesIdx = new int[]{0};
+        rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         final PageFrameRecordCursorImpl pageFrameRecordCursor = new PageFrameRecordCursorImpl(
                 configuration,
                 metadata,
-                new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                rowCursorFactory,
                 false,
                 filter
         );
@@ -110,6 +112,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     protected void _close() {
         super._close();
         Misc.free(filter);
+        Misc.free(rowCursorFactory);
         Misc.free(cursor);
         recordCursorFactory.close();
         factoriesA.clear();
@@ -256,8 +259,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                                 rowCursorFactory = new SymbolIndexRowCursorFactory(
                                         columnIndex,
                                         symbolKey,
-                                        false,
-                                        BitmapIndexReader.DIR_FORWARD,
+                                        IndexReader.DIR_FORWARD,
                                         null
                                 );
                             } else {
@@ -265,8 +267,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                                         columnIndex,
                                         symbolKey,
                                         filter,
-                                        false,
-                                        BitmapIndexReader.DIR_FORWARD,
+                                        IndexReader.DIR_FORWARD,
                                         null
                                 );
                             }

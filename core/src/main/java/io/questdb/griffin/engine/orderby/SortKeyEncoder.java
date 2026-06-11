@@ -205,7 +205,7 @@ public class SortKeyEncoder implements QuietCloseable {
             return;
         }
         encodeGeneric(record, destAddr);
-        Unsafe.getUnsafe().putLong(destAddr + keyType.rowIdOffset(), rowId);
+        Unsafe.putLong(destAddr + keyType.rowIdOffset(), rowId);
     }
 
     public SortKeyType init(RecordCursor baseCursor) {
@@ -257,16 +257,16 @@ public class SortKeyEncoder implements QuietCloseable {
 
     private static void encodeBoolean(long addr, boolean value, boolean desc) {
         byte b = value ? (byte) 1 : (byte) 0;
-        Unsafe.getUnsafe().putByte(addr, desc ? (byte) ~b : b);
+        Unsafe.putByte(addr, desc ? (byte) ~b : b);
     }
 
     private static void encodeByte(long addr, byte value, boolean desc) {
-        Unsafe.getUnsafe().putByte(addr, (byte) (value ^ (desc ? 0x7F : 0x80)));
+        Unsafe.putByte(addr, (byte) (value ^ (desc ? 0x7F : 0x80)));
     }
 
     private static void encodeChar(long addr, char value, boolean desc) {
         short s = desc ? (short) ~value : (short) value;
-        Unsafe.getUnsafe().putShort(addr, Short.reverseBytes(s));
+        Unsafe.putShort(addr, Short.reverseBytes(s));
     }
 
     private static void encodeDouble(long addr, double value, boolean desc) {
@@ -276,7 +276,7 @@ public class SortKeyEncoder implements QuietCloseable {
         } else {
             bits = bits >= 0 ? bits ^ Long.MIN_VALUE : ~bits;
         }
-        Unsafe.getUnsafe().putLong(addr, Long.reverseBytes(bits));
+        Unsafe.putLong(addr, Long.reverseBytes(bits));
     }
 
     private static void encodeFloat(long addr, float value, boolean desc) {
@@ -286,34 +286,34 @@ public class SortKeyEncoder implements QuietCloseable {
         } else {
             bits = bits >= 0 ? bits ^ Integer.MIN_VALUE : ~bits;
         }
-        Unsafe.getUnsafe().putInt(addr, Integer.reverseBytes(bits));
+        Unsafe.putInt(addr, Integer.reverseBytes(bits));
     }
 
     private static void encodeInt(long addr, int value, boolean desc) {
-        Unsafe.getUnsafe().putInt(addr, Integer.reverseBytes(value ^ (desc ? 0x7FFFFFFF : 0x80000000)));
+        Unsafe.putInt(addr, Integer.reverseBytes(value ^ (desc ? 0x7FFFFFFF : 0x80000000)));
     }
 
     private static void encodeLong(long addr, long value, boolean desc) {
-        Unsafe.getUnsafe().putLong(addr, Long.reverseBytes(value ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE)));
+        Unsafe.putLong(addr, Long.reverseBytes(value ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE)));
     }
 
     private static void encodeShort(long addr, short value, boolean desc) {
-        Unsafe.getUnsafe().putShort(addr, Short.reverseBytes((short) (value ^ (desc ? 0x7FFF : 0x8000))));
+        Unsafe.putShort(addr, Short.reverseBytes((short) (value ^ (desc ? 0x7FFF : 0x8000))));
     }
 
     private static void encodeUnsignedInt(long addr, int value, boolean desc) {
-        Unsafe.getUnsafe().putInt(addr, Integer.reverseBytes(desc ? ~value : value));
+        Unsafe.putInt(addr, Integer.reverseBytes(desc ? ~value : value));
     }
 
     private static void encodeUnsignedLong(long addr, long value, boolean desc) {
-        Unsafe.getUnsafe().putLong(addr, Long.reverseBytes(desc ? ~value : value));
+        Unsafe.putLong(addr, Long.reverseBytes(desc ? ~value : value));
     }
 
     private static void encodeUnsignedRank(long addr, int rank, int byteWidth, boolean desc) {
         switch (byteWidth) {
-            case 1 -> Unsafe.getUnsafe().putByte(addr, (byte) (desc ? ~rank : rank));
-            case 2 -> Unsafe.getUnsafe().putShort(addr, Short.reverseBytes((short) (desc ? ~rank : rank)));
-            default -> Unsafe.getUnsafe().putInt(addr, Integer.reverseBytes(desc ? ~rank : rank));
+            case 1 -> Unsafe.putByte(addr, (byte) (desc ? ~rank : rank));
+            case 2 -> Unsafe.putShort(addr, Short.reverseBytes((short) (desc ? ~rank : rank)));
+            default -> Unsafe.putInt(addr, Integer.reverseBytes(desc ? ~rank : rank));
         }
     }
 
@@ -385,8 +385,8 @@ public class SortKeyEncoder implements QuietCloseable {
             int symKey = record.getInt(colIdx);
             int rank = (symKey < 0 || symKey >= rankMapSizes[0]) ? 0 : rankMaps.getQuick(0).get(symKey);
             key = Integer.toUnsignedLong(desc ? ~rank : rank) << shift;
-            Unsafe.getUnsafe().putLong(destAddr, key);
-            Unsafe.getUnsafe().putLong(destAddr + 8, rowId);
+            Unsafe.putLong(destAddr, key);
+            Unsafe.putLong(destAddr + 8, rowId);
             return;
         }
         key = switch (colType) {
@@ -431,8 +431,8 @@ public class SortKeyEncoder implements QuietCloseable {
             }
             default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(colType));
         } << shift;
-        Unsafe.getUnsafe().putLong(destAddr, key);
-        Unsafe.getUnsafe().putLong(destAddr + 8, rowId);
+        Unsafe.putLong(destAddr, key);
+        Unsafe.putLong(destAddr + 8, rowId);
     }
 
     private void encodeGeneric(Record record, long destAddr) {
@@ -490,10 +490,10 @@ public class SortKeyEncoder implements QuietCloseable {
         int keyLen = keyType.keyLength();
         int lastWord = keyLen - 8;
         for (int w = 0; w < lastWord; w += 8) {
-            long val = Unsafe.getUnsafe().getLong(destAddr + w);
-            Unsafe.getUnsafe().putLong(destAddr + w, Long.reverseBytes(val));
+            long val = Unsafe.getLong(destAddr + w);
+            Unsafe.putLong(destAddr + w, Long.reverseBytes(val));
         }
-        long val = Unsafe.getUnsafe().getLong(destAddr + lastWord);
-        Unsafe.getUnsafe().putLong(destAddr + lastWord, Long.reverseBytes(val & padMask));
+        long val = Unsafe.getLong(destAddr + lastWord);
+        Unsafe.putLong(destAddr + lastWord, Long.reverseBytes(val & padMask));
     }
 }

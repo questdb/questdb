@@ -130,9 +130,9 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
     }
 
     @Override

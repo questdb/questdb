@@ -28,7 +28,13 @@ import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
@@ -89,91 +95,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public static <T> T createLongArray(int... shape) {
         int[] indices = new int[shape.length];
         return buildNestedArray(ArrayDataType.LONG, shape, 0, indices);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
-        if (currentDim == shape.length - 1) {
-            Object arr = dataType.createArray(shape[currentDim]);
-            for (int i = 0; i < Array.getLength(arr); i++) {
-                indices[currentDim] = i;
-                dataType.setElement(arr, i, indices);
-            }
-            return (T) arr;
-        } else {
-            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
-            Object arr = Array.newInstance(componentType, shape[currentDim]);
-            for (int i = 0; i < shape[currentDim]; i++) {
-                indices[currentDim] = i;
-                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
-                Array.set(arr, i, subArr);
-            }
-            return (T) arr;
-        }
-    }
-
-    private static void flushAndAssertError(Sender sender, String... errors) {
-        try {
-            sender.flush();
-            Assert.fail("Expected exception");
-        } catch (LineSenderException e) {
-            for (String error : errors) {
-                TestUtils.assertContains(e.getMessage(), error);
-            }
-        }
-    }
-
-    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
-        int i = 0;
-
-        int port = serverMain.getHttpServerPort();
-        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                .address("localhost:" + port)
-                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
-                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
-                .build()
-        ) {
-            if (count / 2 > 0) {
-                String tableNameUpper = tableName.toUpperCase();
-                for (; i < count / 2; i++) {
-                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                    sender.table(tn)
-                            .symbol("async", "true")
-                            .symbol("location", "santa_monica")
-                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                            .longColumn("water_level", i)
-                            .at(timestamp, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            for (; i < count; i++) {
-                String tableNameUpper = tableName.toUpperCase();
-                String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                sender.table(tn)
-                        .symbol("async", "true")
-                        .symbol("location", "santa_monica")
-                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                        .longColumn("water_level", i)
-                        .at(timestamp, ChronoUnit.MICROS);
-            }
-            sender.flush();
-        }
-    }
-
-    private static void putDouble(DirectUtf8Sink sink, double value) {
-        sink.put('=');
-        sink.putAny((byte) 16);
-        long raw = Double.doubleToRawLongBits(value);
-        sink.putAny((byte) (raw & 0xFF));
-        sink.putAny((byte) ((raw >> 8) & 0xFF));
-        sink.putAny((byte) ((raw >> 16) & 0xFF));
-        sink.putAny((byte) ((raw >> 24) & 0xFF));
-        sink.putAny((byte) ((raw >> 32) & 0xFF));
-        sink.putAny((byte) ((raw >> 40) & 0xFF));
-        sink.putAny((byte) ((raw >> 48) & 0xFF));
-        sink.putAny((byte) ((raw >> 56) & 0xFF));
     }
 
     public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
@@ -926,18 +847,55 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             // large batch's first row triggers newRow(), it rolls to a new segment,
             // opening new column files via ff.openRW(). We intercept that to know
             // the server has started processing and then trigger the rename.
+            //
+            // We also need to pause the batch on the first matching openRW until
+            // the rename has committed its structural change to the sequencer.
+            // Otherwise the batch's sequencer.nextTxn (commit) can win the race
+            // against the rename's sequencer.nextStructureTxn -- both serialize
+            // through the same sequencer WRITE lock, and the test depends on the
+            // rename arriving first so the batch commit sees a token mismatch and
+            // is rejected via TableReferenceOutOfDateException -> 503.
+            //
+            // The RENAME runs synchronously on the test thread and also opens
+            // matching wal*/0 column files (its own structural-change segment).
+            // If the intercept allowed the test thread in, the test thread could
+            // win the race for the first match and park itself in execute(),
+            // letting the batch commit unhindered. Exclude the test thread so
+            // only the batch's HTTP worker can be parked.
             CountDownLatch walSegmentRolled = new CountDownLatch(1);
+            CountDownLatch renameRegistered = new CountDownLatch(1);
             AtomicBoolean trackOpens = new AtomicBoolean(false);
+            AtomicBoolean batchPausedOnce = new AtomicBoolean(false);
+            final Thread testThread = Thread.currentThread();
+            AtomicBoolean renameRegisteredTimedOut = new AtomicBoolean(false);
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
+                    // Skip the test thread entirely: it runs the RENAME, and we must never park
+                    // it. If allowed in, the test thread's own openRW for wal*/0 column files
+                    // could win the parker CAS and deadlock the rename for 60 seconds.
                     if (trackOpens.get()
+                            && Thread.currentThread() != testThread
                             && Utf8s.containsAscii(name, tableName)
                             && Utf8s.containsAscii(name, "wal")
                             && Utf8s.endsWithAscii(name, ".d")) {
+                        // Decide who parks BEFORE counting down walSegmentRolled. If we counted
+                        // down first and then got preempted, the main thread could wake, issue
+                        // the RENAME, and a second matching openRW could win the CAS before
+                        // this one reaches it -- letting the batch commit unhindered.
+                        boolean parker = batchPausedOnce.compareAndSet(false, true);
                         walSegmentRolled.countDown();
+                        if (parker) {
+                            try {
+                                if (!renameRegistered.await(60, TimeUnit.SECONDS)) {
+                                    renameRegisteredTimedOut.set(true);
+                                }
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
                     }
                     return fd;
                 }
@@ -1026,8 +984,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 Assert.assertTrue("Timed out waiting for WAL segment roll",
                         walSegmentRolled.await(60, TimeUnit.SECONDS));
 
-                // Rename the table while the server is processing the large batch
+                // Rename the table while the server is processing the large batch.
+                // The batch's first column-file openRW is parked, so this RENAME
+                // is guaranteed to register its structural change on the sequencer
+                // before the batch can call sequencer.nextTxn at commit time.
                 serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                // Unblock the batch now that the rename's structural change is on
+                // the sequencer. The batch's commit will see the new table token
+                // and the sequencer will throw TableReferenceOutOfDateException.
+                renameRegistered.countDown();
 
                 // Create a new table with the original name
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
@@ -1039,6 +1005,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 // Wait for sender thread to complete
                 senderThread.join(60_000);
                 Assert.assertFalse("Sender thread timed out", senderThread.isAlive());
+                Assert.assertFalse("Batch timed out waiting for the rename to register", renameRegisteredTimedOut.get());
 
                 // Check for errors
                 Throwable error = senderError.get();
@@ -3253,6 +3220,91 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    @SuppressWarnings("unchecked")
+    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
+        if (currentDim == shape.length - 1) {
+            Object arr = dataType.createArray(shape[currentDim]);
+            for (int i = 0; i < Array.getLength(arr); i++) {
+                indices[currentDim] = i;
+                dataType.setElement(arr, i, indices);
+            }
+            return (T) arr;
+        } else {
+            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
+            Object arr = Array.newInstance(componentType, shape[currentDim]);
+            for (int i = 0; i < shape[currentDim]; i++) {
+                indices[currentDim] = i;
+                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
+                Array.set(arr, i, subArr);
+            }
+            return (T) arr;
+        }
+    }
+
+    private static void flushAndAssertError(Sender sender, String... errors) {
+        try {
+            sender.flush();
+            Assert.fail("Expected exception");
+        } catch (LineSenderException e) {
+            for (String error : errors) {
+                TestUtils.assertContains(e.getMessage(), error);
+            }
+        }
+    }
+
+    private static void putDouble(DirectUtf8Sink sink, double value) {
+        sink.put('=');
+        sink.putAny((byte) 16);
+        long raw = Double.doubleToRawLongBits(value);
+        sink.putAny((byte) (raw & 0xFF));
+        sink.putAny((byte) ((raw >> 8) & 0xFF));
+        sink.putAny((byte) ((raw >> 16) & 0xFF));
+        sink.putAny((byte) ((raw >> 24) & 0xFF));
+        sink.putAny((byte) ((raw >> 32) & 0xFF));
+        sink.putAny((byte) ((raw >> 40) & 0xFF));
+        sink.putAny((byte) ((raw >> 48) & 0xFF));
+        sink.putAny((byte) ((raw >> 56) & 0xFF));
+    }
+
+    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
+        int i = 0;
+
+        int port = serverMain.getHttpServerPort();
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                .address("localhost:" + port)
+                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
+                .build()
+        ) {
+            if (count / 2 > 0) {
+                String tableNameUpper = tableName.toUpperCase();
+                for (; i < count / 2; i++) {
+                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                    sender.table(tn)
+                            .symbol("async", "true")
+                            .symbol("location", "santa_monica")
+                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                            .longColumn("water_level", i)
+                            .at(timestamp, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            for (; i < count; i++) {
+                String tableNameUpper = tableName.toUpperCase();
+                String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                sender.table(tn)
+                        .symbol("async", "true")
+                        .symbol("location", "santa_monica")
+                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                        .longColumn("water_level", i)
+                        .at(timestamp, ChronoUnit.MICROS);
+            }
+            sender.flush();
+        }
+    }
+
     private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -3385,7 +3437,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            // V1 overflows client-side (ArithmeticException from Math.multiplyExact),
+                            // V2 sends micros as-is and the server rejects the nanos overflow (LineSenderException)
+                            if (e instanceof LineSenderException) {
+                                TestUtils.assertContains(e.getMessage(), "long overflow");
+                            }
                         } else {
                             throw e;
                         }
@@ -3406,7 +3462,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            if (e instanceof LineSenderException) {
+                                TestUtils.assertContains(e.getMessage(), "long overflow");
+                            }
                         } else {
                             throw e;
                         }

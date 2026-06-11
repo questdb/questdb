@@ -94,11 +94,15 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         if (isExhausted) {
             return false;
         }
+        buildValueConditionally();
+        isExhausted = true;
+        return true;
+    }
+
+    void buildValueConditionally() {
         if (!isValueBuilt) {
             buildValue();
         }
-        isExhausted = true;
-        return true;
     }
 
     @Override

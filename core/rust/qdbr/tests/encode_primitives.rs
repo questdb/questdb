@@ -5,12 +5,15 @@ use arrow::array::{
     Int64Array, Int8Array, TimestampMicrosecondArray, TimestampMillisecondArray, UInt32Array,
 };
 use common::encode::{
-    generate_nulls, make_primitive_column, read_parquet_batches, write_parquet, EncodeEncoding,
+    assert_single_column_bloom_metadata, generate_nulls, make_primitive_column,
+    read_parquet_batches, write_parquet, write_parquet_with_bloom, ALL_BLOOM_FILTER_STATES,
     ALL_NULL_PATTERNS,
 };
 use common::types::primitives::*;
 use qdb_core::col_type::{self, ColumnType};
 use questdbr::parquet_write::schema::Partition;
+
+use crate::common::Encoding;
 
 const COUNT: usize = 1_000;
 
@@ -21,7 +24,8 @@ fn as_bytes<T>(data: &[T]) -> &[u8] {
 fn encode_to_parquet<T: PrimitiveType>(
     data: &[T::T],
     row_count: usize,
-    encoding: EncodeEncoding,
+    encoding: Encoding,
+    bloom_enabled: bool,
 ) -> Vec<u8> {
     let bytes = as_bytes(data);
     let column = make_primitive_column(
@@ -36,7 +40,11 @@ fn encode_to_parquet<T: PrimitiveType>(
         table: "test_table".to_string(),
         columns: vec![column],
     };
-    write_parquet(partition)
+    if bloom_enabled {
+        write_parquet_with_bloom(partition)
+    } else {
+        write_parquet(partition)
+    }
 }
 
 // =============================================================================
@@ -288,34 +296,52 @@ impl EncodeVerify for Uuid {
 // =============================================================================
 
 fn run_encode_test<T: EncodeVerify>(name: &str) {
-    for &encoding in T::ENCODE_ENCODINGS {
-        if T::HAS_NULL_SENTINEL {
-            for &null_pattern in &ALL_NULL_PATTERNS {
-                let ctx = format!("{name} {encoding:?}/{null_pattern:?}");
-                let nulls = generate_nulls(COUNT, null_pattern);
-                let mut data = Vec::with_capacity(COUNT);
-                let mut expected = Vec::with_capacity(COUNT);
-                let mut val_idx = 0;
-                for null in nulls.iter().take(COUNT) {
-                    if *null {
-                        data.push(T::NULL);
-                        expected.push(None);
-                    } else {
-                        let v = T::generate_non_null_native(val_idx);
-                        val_idx += 1;
-                        data.push(v);
-                        expected.push(Some(v));
+    let bloom_states: &[bool] = if matches!(T::TAG, qdb_core::col_type::ColumnTypeTag::Boolean) {
+        &[false]
+    } else {
+        &ALL_BLOOM_FILTER_STATES
+    };
+    for &encoding in T::ENCODINGS {
+        for &bloom_enabled in bloom_states {
+            if T::HAS_NULL_SENTINEL {
+                for &null_pattern in &ALL_NULL_PATTERNS {
+                    let ctx = format!("{name} {encoding:?}/{null_pattern:?}/bloom={bloom_enabled}");
+                    let nulls = generate_nulls(COUNT, null_pattern);
+                    let mut data = Vec::with_capacity(COUNT);
+                    let mut expected = Vec::with_capacity(COUNT);
+                    let mut val_idx = 0;
+                    for null in nulls.iter().take(COUNT) {
+                        if *null {
+                            data.push(T::NULL);
+                            expected.push(None);
+                        } else {
+                            let v = T::generate_non_null_native(val_idx);
+                            val_idx += 1;
+                            data.push(v);
+                            expected.push(Some(v));
+                        }
                     }
+                    let parquet_bytes =
+                        encode_to_parquet::<T>(&data, COUNT, encoding, bloom_enabled);
+                    if bloom_enabled {
+                        assert_single_column_bloom_metadata(&parquet_bytes, true);
+                    } else {
+                        assert_single_column_bloom_metadata(&parquet_bytes, false);
+                    }
+                    T::verify(&parquet_bytes, &expected, &ctx);
                 }
-                let parquet_bytes = encode_to_parquet::<T>(&data, COUNT, encoding);
+            } else {
+                let ctx = format!("{name} {encoding:?}/bloom={bloom_enabled}");
+                let data: Vec<T::T> = (0..COUNT).map(|i| T::generate_non_null_native(i)).collect();
+                let expected: Vec<Option<T::T>> = data.iter().map(|&v| Some(v)).collect();
+                let parquet_bytes = encode_to_parquet::<T>(&data, COUNT, encoding, bloom_enabled);
+                if bloom_enabled {
+                    assert_single_column_bloom_metadata(&parquet_bytes, true);
+                } else {
+                    assert_single_column_bloom_metadata(&parquet_bytes, false);
+                }
                 T::verify(&parquet_bytes, &expected, &ctx);
             }
-        } else {
-            let ctx = format!("{name} {encoding:?}");
-            let data: Vec<T::T> = (0..COUNT).map(|i| T::generate_non_null_native(i)).collect();
-            let expected: Vec<Option<T::T>> = data.iter().map(|&v| Some(v)).collect();
-            let parquet_bytes = encode_to_parquet::<T>(&data, COUNT, encoding);
-            T::verify(&parquet_bytes, &expected, &ctx);
         }
     }
 }
@@ -412,4 +438,91 @@ fn test_encode_long256() {
 #[test]
 fn test_encode_uuid() {
     run_encode_test::<Uuid>("UUID");
+}
+
+// Regression for the intermittent ReplicationFuzzTest "table is suspended"
+// failure: a column-top integer column whose partition is entirely null was
+// encoded as a DELTA_BINARY_PACKED page with an empty values buffer, which the
+// reader rejected with "delta binary packed block size must be greater than
+// zero", suspending the table during WAL apply. These tests drive an all-null
+// page through QuestDB's own writer and reader, for both DELTA and PLAIN.
+
+// Drive an all-null page (every value the column's null sentinel) through
+// QuestDB's own writer and reader for one primitive type. Generic over the
+// nullable, delta-capable types so each distinct null sentinel and width is
+// exercised end-to-end, not just LONG/INT.
+fn round_trip_all_null<T: PrimitiveType>(encoding: Encoding) {
+    let row_count = 1_000usize;
+    let data: Vec<T::T> = vec![T::NULL; row_count];
+    let bytes = as_bytes(&data);
+    let column = make_primitive_column(
+        "null_top",
+        ColumnType::new(T::TAG, 0).code(),
+        bytes.as_ptr(),
+        bytes.len(),
+        row_count,
+        encoding.config(),
+    );
+    let partition = Partition {
+        table: "repro".to_string(),
+        columns: vec![column],
+    };
+    let parquet = write_parquet(partition);
+
+    let (data_out, aux_out) = common::decode_file(&parquet);
+    assert!(aux_out.is_empty());
+    assert_eq!(data_out.len(), row_count * std::mem::size_of::<T::T>());
+    let out = data_out.as_ptr().cast::<T::T>();
+    for i in 0..row_count {
+        let v = unsafe { std::ptr::read_unaligned(out.add(i)) };
+        assert_eq!(
+            v,
+            T::NULL,
+            "row {i} should decode as null for {}",
+            std::any::type_name::<T>()
+        );
+    }
+}
+
+#[test]
+fn all_null_long_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<Long>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_long_plain_round_trips_through_qdb_reader() {
+    round_trip_all_null::<Long>(Encoding::Plain);
+}
+
+#[test]
+fn all_null_int_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<Int>(Encoding::DeltaBinaryPacked);
+}
+
+// Other nullable types that also dispatch DELTA pages, each with a distinct
+// null sentinel and/or width. (Boolean/Byte/Short/Char are always Required, so
+// they have no all-null page.)
+#[test]
+fn all_null_ipv4_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<IPv4>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_byte_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoByte>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_short_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoShort>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_int_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoInt>(Encoding::DeltaBinaryPacked);
+}
+
+#[test]
+fn all_null_geo_long_delta_round_trips_through_qdb_reader() {
+    round_trip_all_null::<GeoLong>(Encoding::DeltaBinaryPacked);
 }

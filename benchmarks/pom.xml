@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>benchmarks</artifactId>
-    <version>9.3.4-SNAPSHOT</version>
+    <version>9.4.3-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>JMH benchmarks for QuestDB</name>
 
@@ -56,7 +56,7 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
-            <version>2.25.3</version>
+            <version>2.25.4</version>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -89,6 +89,11 @@
             <artifactId>questdb-client</artifactId>
             <version>${questdb.client.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.17</version>
+        </dependency>
     </dependencies>
 
     <properties>
@@ -112,8 +117,7 @@
           -->
         <uberjar.name>benchmarks</uberjar.name>
 
-        <!-- Java ILP client version - override with -Dquestdb.client.version=1.0.1-SNAPSHOT for local dev -->
-        <questdb.client.version>1.0.1</questdb.client.version>
+        <questdb.client.version>1.3.2</questdb.client.version>
     </properties>
 
     <build>
@@ -213,9 +217,6 @@
     <profiles>
         <profile>
             <id>local-client</id>
-            <properties>
-                <questdb.client.version>1.0.1-SNAPSHOT</questdb.client.version>
-            </properties>
         </profile>
         <profile>
             <id>javadoc</id>

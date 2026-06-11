@@ -40,7 +40,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LimitTest extends AbstractCairoTest {
-
     private static final String createTableDdl = "create table y as (" +
             "select" +
             " cast(x as int) i," +
@@ -104,12 +103,14 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit -6,-2";
         testLimit(expected, expected2, query);
-        assertPlanNoLeakCheck(query, """
-                Limit left: -6 right: -2 skip-rows: 54 take-rows: 4
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: y
-                """);
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
+                        Limit left: -6 right: -2 skip-rows: 54 take-rows: 4
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: y
+                        """);
     }
 
     @Test
@@ -125,12 +126,14 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit -33,-31";
         testLimit(expected, expected2, query);
-        assertPlanNoLeakCheck(query, """
-                Limit left: -33 right: -31 skip-rows: 27 take-rows: 2
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: y
-                """);
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
+                        Limit left: -33 right: -31 skip-rows: 27 take-rows: 2
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: y
+                        """);
     }
 
     @Test
@@ -223,9 +226,8 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidHiType() throws Exception {
-        assertException(
-                "select * from y limit 5,'ab'",
-                "create table y as (" +
+        assertQuery("select * from y limit 5,'ab'")
+                .ddl("create table y as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym2," +
@@ -244,17 +246,14 @@ public class LimitTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(30)" +
-                        ") timestamp(timestamp)",
-                24,
-                "invalid type: STRING"
-        );
+                        ") timestamp(timestamp)")
+                .fails(24, "invalid type: STRING");
     }
 
     @Test
     public void testInvalidLoType() throws Exception {
-        assertException(
-                "select * from y limit 5 + 0.3",
-                "create table y as (" +
+        assertQuery("select * from y limit 5 + 0.3")
+                .ddl("create table y as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym2," +
@@ -273,16 +272,18 @@ public class LimitTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(30)" +
-                        ") timestamp(timestamp)",
-                24,
-                "invalid type: DOUBLE"
-        );
+                        ") timestamp(timestamp)")
+                .fails(24, "invalid type: DOUBLE");
     }
 
     @Test
     public void testInvalidNegativeLimitJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testInvalidNegativeLimit();
+        try {
+            testInvalidNegativeLimit();
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
     }
 
     @Test
@@ -293,7 +294,8 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testInvalidNegativePositiveArgs() throws Exception {
         execute("CREATE TABLE tango (name VARCHAR)");
-        assertException("tango LIMIT -3, 2", 12, "LIMIT <negative>, <positive> is not allowed");
+        assertQuery("tango LIMIT -3, 2")
+                .fails(12, "LIMIT <negative>, <positive> is not allowed");
     }
 
     @Test
@@ -361,28 +363,24 @@ public class LimitTest extends AbstractCairoTest {
                     SELECT ts, v_max FROM (
                         SELECT ts, k, max(v) AS v_max FROM table1 LIMIT -2
                     ) LIMIT 1""";
-            assertPlanNoLeakCheck(query, """
-                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                        SelectedRecord
-                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
-                                Async Group By workers: 1
-                                  keys: [ts,k]
-                                  values: [max(v)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table1
-                    """);
-            assertQueryAndCache(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                                SelectedRecord
+                                    Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                                        Async Group By workers: 1
+                                          keys: [ts,k]
+                                          values: [max(v)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
+                            """)
+                    .returns("""
                             ts\tv_max
                             1970-01-01T00:01:10.000000Z\t7
-                            """,
-                    query,
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -405,27 +403,24 @@ public class LimitTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertQueryAndCache(
-                    """
+            assertQuery("""
+                    select * from (
+                        select timestamp, symbol, venue,
+                            bids[1][1] as bid_price,
+                            bids[2][1] as bid_size,
+                            asks[1][1] as ask_price,
+                            asks[2][1] as ask_size
+                        from eq_equities_market_data
+                        where symbol='AAPL' and timestamp in '1970'
+                        limit -4
+                    ) limit 2""")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns("""
                             timestamp\tsymbol\tvenue\tbid_price\tbid_size\task_price\task_size
                             1970-01-01T00:00:00.000002Z\tAAPL\tNYSE\t21.3\t20.3\t11.6\t10.5
                             1970-01-01T00:00:00.000003Z\tAAPL\tNYSE\t21.4\t20.4\t11.2\t10.2
-                            """,
-                    """
-                            select * from (
-                                select timestamp, symbol, venue,
-                                    bids[1][1] as bid_price,
-                                    bids[2][1] as bid_size,
-                                    asks[1][1] as ask_price,
-                                    asks[2][1] as ask_size
-                                from eq_equities_market_data
-                                where symbol='AAPL' and timestamp in '1970'
-                                limit -4
-                            ) limit 2""",
-                    "timestamp",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -434,28 +429,229 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t1 (ts timestamp, id symbol)");
             execute("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
-            assertQueryAndCache(
-                    """
+            assertQuery("select ts, id as id from t1 where id = 'abc' limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tid
                             1970-01-01T00:00:00.000004Z\tabc
-                            """,
-                    "select ts, id as id from t1 where id = 'abc' limit -1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testLimitMinusOneJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testLimitMinusOne();
+        try {
+            testLimitMinusOne();
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
     }
 
     @Test
     public void testLimitMinusOneJitEnabled() throws Exception {
         testLimitMinusOne();
+    }
+
+    // DISTINCT collapses duplicates, so an outer LIMIT N pushed into the
+    // inner Async Filter would yield fewer than N post-DISTINCT rows.
+    // The (t0.k + t0.k) key and disabled parallel GROUP BY keep the
+    // filter and GROUP BY in separate factories -- the shape that
+    // exposes the bug.
+    @Test
+    public void testLimitNotPushedBelowDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 40 distinct keys, > LIMIT 30
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT DISTINCT (t0.k + t0.k) AS kk FROM tab t0 WHERE t0.k > 0 LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                                GroupBy vectorized: false
+                                  keys: [kk]
+                                    Async JIT Filter workers: 1
+                                      filter: 0<k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // Locks in the original query-fuzzer divergence: an outer LIMIT N
+    // pushed into the inner Async Filter under a GROUP BY collapses
+    // those N rows into fewer than N groups, breaking LIMIT semantics.
+    // The query mirrors the shape of the failing fuzz query (computed
+    // key and constant projection); disabled parallel GROUP BY keeps
+    // the filter and GROUP BY in separate factories.
+    @Test
+    public void testLimitNotPushedBelowGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 40 distinct keys, > LIMIT 30
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT (t0.k + t0.k) AS kk, -1.0::DECIMAL(38, 5) AS lit, first(true) AS a0 FROM tab t0 WHERE t0.k > 0 LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                                VirtualRecord
+                                  functions: [kk,-1.00000,a0]
+                                    GroupBy vectorized: false
+                                      keys: [kk]
+                                      values: [first(true)]
+                                        Async JIT Filter workers: 1
+                                          filter: 0<k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                            """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // HORIZON JOIN runs as a keyed GROUP BY (see
+    // HorizonJoinRecordCursorFactory), so it drops rows. The current
+    // optimizer absorbs the filter into the join factory in
+    // single-worker mode, so the row-count check is a forward guard for
+    // future rewrites that might re-introduce a separate inner filter.
+    @Test
+    public void testLimitNotPushedBelowHorizonJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // 100 trades with 40 distinct sym values; > 30 surviving keys
+            // so the LIMIT 30 only matches if applied above the HORIZON
+            // aggregation.
+            execute("""
+                    INSERT INTO trades
+                    SELECT timestamp_sequence(0, 1_000_000) ts,
+                           ('s' || (x % 40))::SYMBOL,
+                           x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            execute("""
+                    INSERT INTO prices
+                    SELECT timestamp_sequence(0, 1_000_000) ts,
+                           ('s' || (x % 40))::SYMBOL,
+                           x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT t.sym, avg(p.price) "
+                    + "FROM trades AS t "
+                    + "HORIZON JOIN prices AS p ON (t.sym = p.sym) "
+                    + "RANGE FROM 0s TO 0s STEP 1s AS h "
+                    + "LIMIT 30";
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // SAMPLE BY is encoded as GROUP BY (USE_GROUP_BY_MODEL), so the same
+    // push-down rule applies. The Top-K-driving ORDER BY ts absorbs the
+    // Limit at the top, so the row-count check is a forward guard
+    // rather than a direct catch of the original bug shape.
+    @Test
+    public void testLimitNotPushedBelowSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 100 rows over 100 minutes -> 100 distinct minute buckets
+            execute("""
+                    INSERT INTO tab
+                    SELECT x::INT, timestamp_sequence(0, 60_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT ts, count() AS c FROM tab WHERE k > 0 SAMPLE BY 1m LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // Window functions are 1:1 in row count, but their values depend on
+    // the entire input frame (row_number assigns 1..N over all rows), so
+    // pushing the LIMIT into the inner filter changes the window output.
+    @Test
+    public void testLimitNotPushedBelowWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT k, row_number() OVER (ORDER BY ts) AS rn FROM tab WHERE k > 0 LIMIT 30";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                                Window
+                                  functions: [row_number()]
+                                    Async JIT Filter workers: 1
+                                      filter: 0<k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
     }
 
     @Test
@@ -469,62 +665,48 @@ public class LimitTest extends AbstractCairoTest {
             bindVariableService.setLong(0, 0L);
             bindVariableService.setLong(1, 2L);
 
-            assertQueryAndCache(
-                    """
-                            i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
-                            1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072372\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ
-                            2\tgoogl\t0.423\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.5298405941762054\tnull\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true
-            );
-
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             Limit left: $0::long[0] right: $1::long[2] skip-rows: 0 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
+                            """)
+                    .returns("""
+                            i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
+                            1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072372\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ
+                            2\tgoogl\t0.423\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.5298405941762054\tnull\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select * from y limit -2",
-                    """
+            assertQuery("select * from y limit -2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: -2 skip-rows: 58 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
+                            """);
 
             bindVariableService.setLong(0, -2L);
             bindVariableService.setLong(1, 0L);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             Limit left: $0::long[-2] right: $1::long[0] skip-rows: 58 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
-
-            assertQuery(
-                    """
+                            """)
+                    .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             59\tgoogl\t0.778\t2018-01-01T01:58:00.000000Z\tfalse\tKZZ\t0.7741801422529707\t0.18701869\t586\t2015-05-27T15:12:16.295Z\t\t-7715437488835448247\t1970-01-01T07:46:40.000000Z\t10\t\tEPLWDUWIWJTLCP
                             60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tnull\tnull\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -533,13 +715,10 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
 
-            assertQueryNoLeakCheck(
-                    "sym\tts\n",
-                    "y where sym = 'googl' limit -3",
-                    "ts",
-                    true,
-                    false
-            );
+            assertQuery("y where sym = 'googl' limit -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("sym\tts\n");
         });
     }
 
@@ -564,7 +743,11 @@ public class LimitTest extends AbstractCairoTest {
                     i\ttimestamp
                     257\t2018-01-01T08:34:00.000000Z
                     """;
-            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
 
             query = "select * from y where i % 64 = 1 limit -2";
             expected = """
@@ -572,7 +755,11 @@ public class LimitTest extends AbstractCairoTest {
                     193\t2018-01-01T06:26:00.000000Z
                     257\t2018-01-01T08:34:00.000000Z
                     """;
-            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
 
             query = "select * from y where i % 64 < 3 limit -5";
             expected = """
@@ -583,7 +770,11 @@ public class LimitTest extends AbstractCairoTest {
                     258\t2018-01-01T08:36:00.000000Z
                     320\t2018-01-01T10:40:00.000000Z
                     """;
-            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -608,7 +799,11 @@ public class LimitTest extends AbstractCairoTest {
                     i\ttimestamp
                     257\t2018-01-01T08:34:00.000000Z
                     """;
-            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
 
             query = "select * from y where i % 64 = 1 limit -2";
             expected = """
@@ -616,7 +811,11 @@ public class LimitTest extends AbstractCairoTest {
                     193\t2018-01-01T06:26:00.000000Z
                     257\t2018-01-01T08:34:00.000000Z
                     """;
-            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
 
             query = "select * from y where i % 64 < 3 limit -5";
             expected = """
@@ -627,7 +826,11 @@ public class LimitTest extends AbstractCairoTest {
                     258\t2018-01-01T08:36:00.000000Z
                     320\t2018-01-01T10:40:00.000000Z
                     """;
-            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -638,8 +841,10 @@ public class LimitTest extends AbstractCairoTest {
                     execute("create table x as (select rnd_int() a, timestamp_sequence(0, 100) ts from long_sequence(100)) timestamp(ts)");
                     execute("create table y as (select rnd_int() a, timestamp_sequence(10, 100) ts from long_sequence(100)) timestamp(ts)");
 
-                    assertQuery(
-                            """
+                    assertQuery("y order by ts, a limit -10")
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
                                     a\tts
                                     1100812407\t1970-01-01T00:00:00.009010Z
                                     -889224806\t1970-01-01T00:00:00.009110Z
@@ -651,18 +856,13 @@ public class LimitTest extends AbstractCairoTest {
                                     372462435\t1970-01-01T00:00:00.009710Z
                                     1751526583\t1970-01-01T00:00:00.009810Z
                                     -101516094\t1970-01-01T00:00:00.009910Z
-                                    """,
-                            "y order by ts, a limit -10",
-                            "ts",
-                            true,
-                            true
-                    );
+                                    """);
 
                     // here the last order by (after join) confused the optimiser into removing ordering of
                     // the left part of as-of join
-                    assertSql(
-                            """
-                                    QUERY PLAN
+                    assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte order by y.ts, y.a")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     Encode sort
                                       keys: [ts, a]
                                         SelectedRecord
@@ -681,15 +881,13 @@ public class LimitTest extends AbstractCairoTest {
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: x
-                                    """,
-                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte order by y.ts, y.a "
-                    );
+                                    """);
 
                     // here the last order by (after join) confused the optimiser into removing ordering of
                     // the left part of lt-join. There could be an optimisation opportunity here to remove
-                    assertSql(
-                            """
-                                    QUERY PLAN
+                    assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     Encode sort
                                       keys: [ts, a]
                                         SelectedRecord
@@ -708,16 +906,14 @@ public class LimitTest extends AbstractCairoTest {
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: x
-                                    """,
-                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a "
-                    );
+                                    """);
 
                     // here the result of as-of join is not specifically ordered, but
                     // the plan for as-of join incorrect. The left side of the join is
                     // required to be presented in ascending timestamp order.
-                    assertSql(
-                            """
-                                    QUERY PLAN
+                    assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     SelectedRecord
                                         AsOf Join
                                             Encode sort light
@@ -734,13 +930,13 @@ public class LimitTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row backward scan
                                                         Frame backward scan on: x
-                                    """,
-                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte "
-                    );
+                                    """);
 
                     // as-of data, timestamp order is asc
-                    assertQuery(
-                            """
+                    assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a ")
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
                                     a\tts\ta1\tts1
                                     1100812407\t1970-01-01T00:00:00.009010Z\tnull\t
                                     -889224806\t1970-01-01T00:00:00.009110Z\tnull\t
@@ -752,15 +948,12 @@ public class LimitTest extends AbstractCairoTest {
                                     372462435\t1970-01-01T00:00:00.009710Z\t-360860352\t1970-01-01T00:00:00.009700Z
                                     1751526583\t1970-01-01T00:00:00.009810Z\t-372268574\t1970-01-01T00:00:00.009800Z
                                     -101516094\t1970-01-01T00:00:00.009910Z\t-235358133\t1970-01-01T00:00:00.009900Z
-                                    """,
-                            "with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a ",
-                            "ts",
-                            true,
-                            true
-                    );
+                                    """);
 
-                    assertQuery(
-                            """
+                    assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts desc, y.a ")
+                            .timestampDesc("ts")
+                            .expectSize()
+                            .returns("""
                                     a\tts\ta1\tts1
                                     -101516094\t1970-01-01T00:00:00.009910Z\t-235358133\t1970-01-01T00:00:00.009900Z
                                     1751526583\t1970-01-01T00:00:00.009810Z\t-372268574\t1970-01-01T00:00:00.009800Z
@@ -772,16 +965,13 @@ public class LimitTest extends AbstractCairoTest {
                                     1362833895\t1970-01-01T00:00:00.009210Z\tnull\t
                                     -889224806\t1970-01-01T00:00:00.009110Z\tnull\t
                                     1100812407\t1970-01-01T00:00:00.009010Z\tnull\t
-                                    """,
-                            "with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts desc, y.a ",
-                            "ts###desc",
-                            true,
-                            true
-                    );
+                                    """);
 
-                    assertSql(
-                            """
-                                    QUERY PLAN
+                    assertQuery("(select * from x order by ts, a desc limit -4)" +
+                            " union all " +
+                            "(select * from y order by ts, a limit -10)")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     Union All
                                         Encode sort light
                                           keys: [ts, a desc]
@@ -797,16 +987,15 @@ public class LimitTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    """,
-                            "explain " +
-                                    "(select * from x order by ts, a desc limit -4)" +
-                                    " union all " +
-                                    "(select * from y order by ts, a limit -10)"
-                    );
+                                    """);
 
                     // last 4 + last 10 rows
-                    assertQuery(
-                            """
+                    assertQuery("(select * from x order by ts, a desc limit -4)" +
+                            " union all " +
+                            "(select * from y order by ts, a limit -10)")
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     a\tts
                                     -1538602195\t1970-01-01T00:00:00.009600Z
                                     -360860352\t1970-01-01T00:00:00.009700Z
@@ -822,14 +1011,7 @@ public class LimitTest extends AbstractCairoTest {
                                     372462435\t1970-01-01T00:00:00.009710Z
                                     1751526583\t1970-01-01T00:00:00.009810Z
                                     -101516094\t1970-01-01T00:00:00.009910Z
-                                    """,
-                            "(select * from x order by ts, a desc limit -4)" +
-                                    " union all " +
-                                    "(select * from y order by ts, a limit -10)",
-                            null,
-                            false,
-                            true
-                    );
+                                    """);
                 }
         );
     }
@@ -852,18 +1034,16 @@ public class LimitTest extends AbstractCairoTest {
             execute("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
             execute("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("y where sym = 'googl' limit -3")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             i\tsym\tprice\ttimestamp
                             -3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z
                             -2\tgoogl\t2.0\t2002-01-01T00:00:00.000000Z
                             -1\tgoogl\t3.0\t2003-01-01T00:00:00.000000Z
-                            """,
-                    "y where sym = 'googl' limit -3",
-                    "timestamp",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -876,8 +1056,9 @@ public class LimitTest extends AbstractCairoTest {
                     "  timestamp_sequence(to_timestamp('2024-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 3600000000) " +
                     "FROM long_sequence(100);");
 
-            assertQuery(
-                    """
+            assertQuery("SELECT * FROM trades WHERE timestamp < '2025-01-01' ORDER BY timestamp DESC LIMIT 10")
+                    .timestampDesc("timestamp")
+                    .returns("""
                             id\tprice\ttimestamp
                             100\t150.0\t2024-01-05T03:00:00.000000Z
                             99\t148.5\t2024-01-05T02:00:00.000000Z
@@ -889,12 +1070,7 @@ public class LimitTest extends AbstractCairoTest {
                             93\t139.5\t2024-01-04T20:00:00.000000Z
                             92\t138.0\t2024-01-04T19:00:00.000000Z
                             91\t136.5\t2024-01-04T18:00:00.000000Z
-                            """,
-                    "SELECT * FROM trades WHERE timestamp < '2025-01-01' ORDER BY timestamp DESC LIMIT 10",
-                    "timestamp###desc",
-                    true,
-                    false
-            );
+                            """);
 
             // Both queries should return the same results - the last 10 rows in descending order
             // Query 1: Direct ORDER BY DESC LIMIT (this was broken - returned 0 rows)
@@ -910,31 +1086,37 @@ public class LimitTest extends AbstractCairoTest {
     public void testPlanUnresolvedBounds() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (name VARCHAR)");
-            assertPlanNoLeakCheck("tango WHERE name <> 'a' LIMIT 2, -3", """
-                    Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
-                        Async Filter workers: 1
-                          filter: name!='a'
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tango
-                    """);
-            assertPlanNoLeakCheck("(tango WHERE name <> 'a' LIMIT 2, -3) LIMIT 2, -3", """
-                    Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
-                        Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
-                            Async Filter workers: 1
-                              filter: name!='a'
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tango
-                    """);
-            assertQueryNoLeakCheck("""
+            assertQuery("tango WHERE name <> 'a' LIMIT 2, -3")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                                Async Filter workers: 1
+                                  filter: name!='a'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """);
+            assertQuery("(tango WHERE name <> 'a' LIMIT 2, -3) LIMIT 2, -3")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                                Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                                    Async Filter workers: 1
+                                      filter: name!='a'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tango
+                            """);
+            assertQuery("(tango WHERE name <> 'a' LIMIT 2, 5) LIMIT 2, 5")
+                    .noLeakCheck()
+                    .returns("""
                             name
-                            """, "(tango WHERE name <> 'a' LIMIT 2, 5) LIMIT 2, 5",
-                    null, true, false);
-            assertQueryNoLeakCheck("""
+                            """);
+            assertQuery("tango WHERE name <> 'a' LIMIT 2, 10")
+                    .noLeakCheck()
+                    .returns("""
                             name
-                            """, "tango WHERE name <> 'a' LIMIT 2, 10",
-                    null, true, false);
+                            """);
         });
     }
 
@@ -943,18 +1125,19 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (name VARCHAR)");
             String query = "tango WHERE name <> 'a' LIMIT 2, 2";
-            assertPlanNoLeakCheck(query, """
-                    Limit left: 2 right: 2 skip-rows-max: 0 take-rows-max: 0
-                        Async Filter workers: 1
-                          filter: name!='a'
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tango
-                    """);
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Limit left: 2 right: 2 skip-rows-max: 0 take-rows-max: 0
+                                Async Filter workers: 1
+                                  filter: name!='a'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """)
+                    .returns("""
                             name
-                            """, query,
-                    null, true, false);
+                            """);
         });
     }
 
@@ -1009,11 +1192,19 @@ public class LimitTest extends AbstractCairoTest {
                 bindVariableService.setLong("lo", 4);
                 bindVariableService.setInt("hi", 8);
 
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected1);
                 bindVariableService.setLong("lo", 6);
                 bindVariableService.setInt("hi", 12);
 
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected2);
             } finally {
                 engine.clear();
             }
@@ -1034,16 +1225,14 @@ public class LimitTest extends AbstractCairoTest {
                     select x, ('2023-04-06T00:00:00.000000Z'::timestamp::long + (x*1000))::timestamp
                     from long_sequence(600000)""");
 
-            assertQueryNoLeakCheck(
-                    "count\n1000\n",
-                    """
-                            select count(*)
-                            from intervaltest
-                            WHERE ts > '2023-04-06T00:09:59.000000Z'""",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    select count(*)
+                    from intervaltest
+                    WHERE ts > '2023-04-06T00:09:59.000000Z'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1000\n");
 
             String query = """
                     select *
@@ -1052,19 +1241,16 @@ public class LimitTest extends AbstractCairoTest {
                     ORDER BY ts DESC
                     LIMIT 10""";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .timestampDesc("ts")
+                    .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 PageFrame
                                     Row backward scan
                                     Interval backward scan on: intervaltest
                                       intervals: [("2023-04-06T00:09:59.000001Z","MAX")]
-                            """
-            );
-
-            assertQuery(
-                    """
+                            """)
+                    .returns("""
                             id\tts
                             600000\t2023-04-06T00:10:00.000000Z
                             599999\t2023-04-06T00:09:59.999000Z
@@ -1076,12 +1262,7 @@ public class LimitTest extends AbstractCairoTest {
                             599993\t2023-04-06T00:09:59.993000Z
                             599992\t2023-04-06T00:09:59.992000Z
                             599991\t2023-04-06T00:09:59.991000Z
-                            """,
-                    query,
-                    "ts###DESC",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1096,47 +1277,39 @@ public class LimitTest extends AbstractCairoTest {
             bindVariableService.setLong(0, 2L);
             bindVariableService.setLong(1, 5L);
 
-            assertQueryAndCache(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestampDesc("timestamp")
+                    .expectSize()
+                    .withPlan("""
+                            Sort light lo: $0::long hi: $1::long
+                              keys: [timestamp desc, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
+                    .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             58\tibm\t0.445\t2018-01-01T01:56:00.000000Z\ttrue\tCDE\t0.7613115945849444\tnull\t118\t\tHGKR\t-5065534156372441821\t1970-01-01T07:30:00.000000Z\t4\t00000000 cd 98 7d ba 9d 68 2a 79 76 fc\tBGCKOSB
                             57\tgoogl\t0.756\t2018-01-01T01:54:00.000000Z\tfalse\tKZZ\t0.8925723033175609\t0.9924997\t416\t2015-11-08T09:45:16.753Z\tLVSY\t7173713836788833462\t1970-01-01T07:13:20.000000Z\t29\t00000000 4d 0d d7 44 2d f1 57 ea aa 41 c5 55 ef 19 d9 0f
                             00000010 61 2d\tEYDNMIOCCVV
                             56\tmsft\t0.061\t2018-01-01T01:52:00.000000Z\ttrue\tCDE\t0.7792511437604662\t0.39658612\t341\t2015-03-04T08:18:06.265Z\tLVSY\t5320837171213814710\t1970-01-01T06:56:40.000000Z\t16\t\tJCUBBMQSRHLWSX
-                            """,
-                    query,
-                    "timestamp###DESC",
-                    true,
-                    true
-            );
-
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Sort light lo: $0::long hi: $1::long
-                              keys: [timestamp desc, c]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
-                            """
-            );
+                            """);
 
             bindVariableService.setLong(0, 8L);
             bindVariableService.setLong(1, 13L);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .timestampDesc("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             Sort light lo: $0::long hi: $1::long
                               keys: [timestamp desc, c]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
-
-            assertQuery(
-                    """
+                            """)
+                    .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             52\tgoogl\t0.512\t2018-01-01T01:44:00.000000Z\tfalse\tABC\t0.4112208369860437\t0.27559507\t740\t2015-02-23T09:03:19.389Z\tHGKR\t1930705357282501293\t1970-01-01T05:50:00.000000Z\t19\t\t
                             51\tgoogl\t0.761\t2018-01-01T01:42:00.000000Z\ttrue\tABC\t0.25251288918411996\tnull\t719\t2015-05-22T06:14:06.815Z\tHGKR\t7822359916932392178\t1970-01-01T05:33:20.000000Z\t2\t00000000 26 4f e4 51 37 85 e1 e4 6e 75 fc f4 57 0e 7b 09
@@ -1144,59 +1317,20 @@ public class LimitTest extends AbstractCairoTest {
                             50\tibm\t0.706\t2018-01-01T01:40:00.000000Z\tfalse\tKZZ\t0.4743479290495217\t0.5189641\t864\t2015-04-26T09:59:33.624Z\tKKUS\t2808899229016932370\t1970-01-01T05:16:40.000000Z\t5\t00000000 39 dc 8c 6c 6b ac 60 aa bc f4 27 61 78\tPGHPS
                             49\tibm\t0.048\t2018-01-01T01:38:00.000000Z\ttrue\t\t0.3744661371925302\t0.12639552\t28\t2015-09-06T14:09:17.223Z\tHGKR\t-7172806426401245043\t1970-01-01T05:00:00.000000Z\t29\t00000000 42 9e 8a 86 17 89 6b c0 cd a4 21 12 b7 e3\tRPYKHPMBMDR
                             48\tgoogl\t0.164\t2018-01-01T01:36:00.000000Z\ttrue\tABC\t0.18100042286604445\t0.5755603\t415\t2015-04-28T21:13:18.568Z\t\t7970442953226983551\t1970-01-01T04:43:20.000000Z\t19\t\t
-                            """,
-                    query,
-                    "timestamp###DESC",
-                    true,
-                    true
-            );
+                            """);
 
             // non-parameterized query
-            assertQuery(
-                    """
-                            i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
-                            10\tmsft\t0.509\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.49153268154777974\t0.0024457574\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t
-                            9\tmsft\t0.623\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.8786111112537701\t0.9966377\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t
-                            8\tibm\t0.543\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.4835256202036067\t0.8687886\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ
-                            7\tgoogl\t0.076\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.7606252634124595\t0.065787554\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ
-                            6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.13264287\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE
-                            5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
-                            4\tibm\t0.148\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
-                            00000010 e7 0c 89\tLJUMLGLHMLLEO
-                            """,
-                    "select * from y order by timestamp desc, c limit -10, -3",
-                    "timestamp###DESC",
-                    true,
-                    true
-            );
-
-            assertPlanNoLeakCheck(
-                    "select * from y order by timestamp desc, c limit -10, -3",
-                    """
+            assertQuery("select * from y order by timestamp desc, c limit -10, -3")
+                    .timestampDesc("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             Sort light lo: -10 hi: -3
                               keys: [timestamp desc, c]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
-
-            bindVariableService.setLong(0, -10);
-            bindVariableService.setLong(1, -3);
-
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Sort light lo: $0::long hi: $1::long
-                              keys: [timestamp desc, c]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
-                            """
-            );
-
-            assertQuery(
-                    """
+                            """)
+                    .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             10\tmsft\t0.509\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.49153268154777974\t0.0024457574\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t
                             9\tmsft\t0.623\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.8786111112537701\t0.9966377\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t
@@ -1206,12 +1340,32 @@ public class LimitTest extends AbstractCairoTest {
                             5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
                             4\tibm\t0.148\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
                             00000010 e7 0c 89\tLJUMLGLHMLLEO
-                            """,
-                    query,
-                    "timestamp###DESC",
-                    true,
-                    true
-            );
+                            """);
+
+            bindVariableService.setLong(0, -10);
+            bindVariableService.setLong(1, -3);
+
+            assertQuery(query)
+                    .timestampDesc("timestamp")
+                    .expectSize()
+                    .withPlan("""
+                            Sort light lo: $0::long hi: $1::long
+                              keys: [timestamp desc, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
+                    .returns("""
+                            i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
+                            10\tmsft\t0.509\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.49153268154777974\t0.0024457574\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t
+                            9\tmsft\t0.623\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.8786111112537701\t0.9966377\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t
+                            8\tibm\t0.543\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.4835256202036067\t0.8687886\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ
+                            7\tgoogl\t0.076\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.7606252634124595\t0.065787554\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ
+                            6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.13264287\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE
+                            5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
+                            4\tibm\t0.148\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
+                            00000010 e7 0c 89\tLJUMLGLHMLLEO
+                            """);
         });
     }
 
@@ -1226,41 +1380,39 @@ public class LimitTest extends AbstractCairoTest {
             bindVariableService.setLong("lo", 2L);
             bindVariableService.setLong("hi", 5L);
 
-            assertQueryAndCache(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .withPlan("""
+                            Sort light lo: :lo::long hi: :hi::long partiallySorted: true
+                              keys: [timestamp, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
+                    .returns("""
                             i	sym2	price	timestamp	b	c	d	e	f	g	ik	j	k	l	m	n
                             3	googl	0.17400000000000002	2018-01-01T00:06:00.000000Z	false	W	0.8828228366697741	0.72300154	845	2015-08-26T10:57:26.275Z	VTJW	9029468389542245059	1970-01-01T00:33:20.000000Z	46	00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47	DSWUGSHOLNV
                             4	ibm	0.148	2018-01-01T00:08:00.000000Z	true	I	0.3456897991538844	0.24008358	775	2015-08-03T15:58:03.335Z	VTJW	-8910603140262731534	1970-01-01T00:50:00.000000Z	24	00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
                             00000010 e7 0c 89	LJUMLGLHMLLEO
                             5	googl	0.868	2018-01-01T00:10:00.000000Z	true	Z	0.4274704286353759	0.021189213	179			5746626297238459939	1970-01-01T01:06:40.000000Z	35	00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb	RGIIH
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true
-            );
-
-            assertPlanNoLeakCheck(query, """
-                    Sort light lo: :lo::long hi: :hi::long partiallySorted: true
-                      keys: [timestamp, c]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: y
-                    """);
+                            """);
 
             bindVariableService.setLong("lo", 8L);
             bindVariableService.setLong("hi", 13L);
 
-            assertPlanNoLeakCheck(query, """
-                    Sort light lo: :lo::long hi: :hi::long partiallySorted: true
-                      keys: [timestamp, c]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: y
-                    """);
-
-            assertQuery(
-                    """
+            assertQuery(query)
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .withPlan("""
+                            Sort light lo: :lo::long hi: :hi::long partiallySorted: true
+                              keys: [timestamp, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
+                    .returns("""
                             i	sym2	price	timestamp	b	c	d	e	f	g	ik	j	k	l	m	n
                             9	msft	0.623	2018-01-01T00:18:00.000000Z	false	I	0.8786111112537701	0.9966377	403	2015-08-19T00:36:24.375Z	CPSW	-8506266080452644687	1970-01-01T02:13:20.000000Z	6	00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t
                             10	msft	0.509	2018-01-01T00:20:00.000000Z	true	I	0.49153268154777974	0.0024457574	195	2015-10-15T17:45:21.025Z		3987576220753016999	1970-01-01T02:30:00.000000Z	20	00000000 96 37 08 dd 98 ef 54 88 2a a2\t
@@ -1270,12 +1422,7 @@ public class LimitTest extends AbstractCairoTest {
                             00000010 43	JCTIZKYFLUHZ
                             13	ibm	0.704	2018-01-01T00:26:00.000000Z	true	K	0.036735155240002815	0.84058154	742	2015-05-03T18:49:03.996Z	PEHN	2568830294369411037	1970-01-01T03:20:00.000000Z	24	00000000 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2 bf 84 5a
                             00000010 6f 38 35\t
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1386,6 +1533,146 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTopKDoesNotPeelExtraNullColumnSplice() throws Exception {
+        // WINDOW JOIN with always-false ON wraps the master in an ExtraNullColumnCursorFactory
+        // that splices in NULL columns for every aggregate from the (vacant) right side. The
+        // unified parallel top-K gate must not peel that wrapper; without canPeelForTopK guarding
+        // the splice, top-K iterates the master directly and silently drops the window aggregate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES " +
+                    "('2023-01-01T09:10:00.000000Z', 'AAA', 100.0)," +
+                    "('2023-01-01T09:11:00.000000Z', 'BBB', 200.0)," +
+                    "('2023-01-01T09:12:00.000000Z', 'CCC', 300.0)," +
+                    "('2023-01-01T09:13:00.000000Z', 'DDD', 400.0)");
+            execute("INSERT INTO prices VALUES ('2023-01-01T09:00:00.000000Z', 'AAA', 1.0)");
+
+            // ORDER BY a real master column. Pre-fix the gate peeled the splice and produced
+            // three columns; post-fix the splice is preserved and window_price is present (NULL).
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING " +
+                    "ORDER BY t.sym DESC LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tprice\tts\twindow_price
+                            DDD\t400.0\t2023-01-01T09:13:00.000000Z\tnull
+                            CCC\t300.0\t2023-01-01T09:12:00.000000Z\tnull
+                            BBB\t200.0\t2023-01-01T09:11:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testTopKDoesNotPeelExtraNullColumnSpliceOrderByNullColumn() throws Exception {
+        // ORDER BY a column that exists only in the spliced layer. Pre-fix this hit
+        // AssertionError: index out of bounds, 3 >= 3 from buildAsyncTopKOverStolenFilter
+        // because the gate translated the projected index against the unwrapped master metadata.
+        // Post-fix the splice is the page-frame leaf, baseMetadata covers the null column, and
+        // top-K runs to completion (all rows tie on NULL — comparator stability picks any 3).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES " +
+                    "('2023-01-01T09:10:00.000000Z', 'AAA', 100.0)," +
+                    "('2023-01-01T09:11:00.000000Z', 'BBB', 200.0)," +
+                    "('2023-01-01T09:12:00.000000Z', 'CCC', 300.0)," +
+                    "('2023-01-01T09:13:00.000000Z', 'DDD', 400.0)");
+            execute("INSERT INTO prices VALUES ('2023-01-01T09:00:00.000000Z', 'AAA', 1.0)");
+
+            // We assert column count and that window_price is NULL on every returned row;
+            // exact row order on a degenerate all-NULL key is implementation defined.
+            try (
+                    RecordCursorFactory factory = select(
+                            "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                                    "FROM trades t " +
+                                    "WINDOW JOIN prices p ON (0 = 1) " +
+                                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING " +
+                                    "ORDER BY window_price DESC LIMIT 3");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(4, factory.getMetadata().getColumnCount());
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertTrue(Double.isNaN(cursor.getRecord().getDouble(3)));
+                    rows++;
+                }
+                Assert.assertEquals(3, rows);
+            }
+        });
+    }
+
+    @Test
+    public void testTopKThroughProjection() throws Exception {
+        // ts2 is reversed relative to ts: x=1 -> ts2=1000us, x=1000 -> ts2=1us.
+        // A regression that mistranslated ORDER BY ts2 to the designated
+        // timestamp ts would return the x=1000..996 rows instead of x=1..5.
+        assertMemoryLeak(() -> {
+            execute("create table tab as (" +
+                    "  select x, x::timestamp as ts, (1_001 - x)::timestamp as ts2" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp (ts) partition by hour wal");
+            drainWalQueue();
+
+            String expected = """
+                    x\tx1\tts\tts2
+                    1\t1\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.001000Z
+                    2\t2\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000999Z
+                    3\t3\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000998Z
+                    4\t4\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000997Z
+                    5\t5\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000996Z
+                    """;
+            assertQuery("select x, * from tab where ts2 in '1970' order by ts2 desc limit 5")
+                    .noLeakCheck()
+                    .timestampDesc("ts2")
+                    .expectSize()
+                    .returns(expected);
+
+            assertQuery("select x, * from tab where ts2 in '2099' order by ts2 desc limit 5")
+                    .noLeakCheck()
+                    .timestampDesc("ts2")
+                    .expectSize()
+                    .returns("x\tx1\tts\tts2\n");
+        });
+    }
+
+    @Test
+    public void testTopKThroughVirtualProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab as (" +
+                    "  select x, x::timestamp as ts, (1_001 - x)::timestamp as ts2" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp (ts) partition by hour wal");
+            drainWalQueue();
+
+            String expected = """
+                    x_plus
+                    2
+                    3
+                    4
+                    5
+                    6
+                    """;
+            assertQuery("select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+
+            // repeated execution must not leak filter, function, page-frame or
+            // comparator state across the steal/halfClose/transfer boundary.
+            for (int i = 0; i < 5; i++) {
+                assertQuery("select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("x_plus\n2\n");
+            }
+        });
+    }
+
+    @Test
     public void testTopN() throws Exception {
         String expected = """
                 i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
@@ -1464,9 +1751,17 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong(0, 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected1);
                 bindVariableService.setLong(0, 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected2);
             } finally {
                 engine.clear();
             }
@@ -1522,9 +1817,17 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected1);
                 bindVariableService.setLong("lim", 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected2);
             } finally {
                 engine.clear();
             }
@@ -1588,7 +1891,11 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(createTableDdl);
 
-            assertQueryAndCache(expected1, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected1);
 
             execute(
                     "insert into y select * from " +
@@ -1613,7 +1920,10 @@ public class LimitTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery(expected2, query, "timestamp", true, true);
+            assertQuery(query)
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -1632,28 +1942,22 @@ public class LimitTest extends AbstractCairoTest {
                 execute(sql);
             }
 
-            assertQueryAndCache(
-                    """
+            assertQuery("select * from t1 where id = 'abc' limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tid
                             1970-01-01T00:00:00.000004Z\tabc
-                            """,
-                    "select * from t1 where id = 'abc' limit -1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // now with a virtual column
-            assertQueryAndCache(
-                    """
+            assertQuery("select 42*42 as the_answer, ts, id from t1 where id = 'abc' limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             the_answer\tts\tid
                             1764\t1970-01-01T00:00:00.000004Z\tabc
-                            """,
-                    "select 42*42 as the_answer, ts, id from t1 where id = 'abc' limit -1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 }

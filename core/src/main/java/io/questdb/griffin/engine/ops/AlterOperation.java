@@ -29,6 +29,7 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
@@ -76,10 +77,21 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
-    public final static short DROP_PARQUET_ENCODING = SET_PARQUET_ENCODING + 1; // 27
-    private static final long BIT_INDEXED = 0x1L;
-    private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
-    private final static Log LOG = LogFactory.getLog(AlterOperation.class);
+    // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
+    // key sits at bit 3, and bit 63 is the format-version marker that
+    // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
+    // the WAL across an upgrade. v1 layout (pre-POSTING): only BIT_INDEXED
+    // (0x1) and BIT_DEDUP_KEY (0x2) were used; bit 63 was always zero. Future
+    // bit-layout changes must bump FLAGS_FORMAT_V_CURRENT and add a decode
+    // branch for the previous version, never silently re-interpret existing
+    // bit patterns.
+    private static final long BIT_DEDUP_KEY = 0x08L;
+    private static final long FLAGS_FORMAT_V2 = 1L << 63;
+    private static final long FLAGS_FORMAT_V_CURRENT = FLAGS_FORMAT_V2;
+    private static final long FLAGS_V1_BIT_DEDUP_KEY = 0x02L;
+    private static final long FLAGS_V1_BIT_INDEXED = 0x01L;
+    private static final long INDEX_TYPE_MASK = 0x07L;
+    private static final Log LOG = LogFactory.getLog(AlterOperation.class);
     private final ObjList<CharSequence> authColumnNames = new ObjList<>();
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -101,15 +113,38 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
-    public static long getFlags(boolean indexed, boolean dedupKey) {
-        long flags = 0;
-        if (indexed) {
-            flags |= BIT_INDEXED;
-        }
+    public static long getFlags(byte indexType, boolean dedupKey) {
+        long flags = FLAGS_FORMAT_V_CURRENT | (indexType & INDEX_TYPE_MASK);
         if (dedupKey) {
             flags |= BIT_DEDUP_KEY;
         }
         return flags;
+    }
+
+    /**
+     * Decodes the index-type byte from a serialized ALTER ADD_COLUMN /
+     * CHANGE_COLUMN_TYPE flags long. Detects the layout version via the
+     * format-marker bit and falls back to the v1 layout when the marker is
+     * absent (in-flight WAL payloads written before this branch).
+     * Public for testing across the JPMS test/main module boundary.
+     */
+    public static byte decodeIndexType(long flags) {
+        if ((flags & FLAGS_FORMAT_V2) != 0) {
+            return (byte) (flags & INDEX_TYPE_MASK);
+        }
+        // v1: only BIT_INDEXED (0x1) and BIT_DEDUP_KEY (0x2) were ever set,
+        // and "indexed" implied BITMAP (the only index type at the time).
+        return (flags & FLAGS_V1_BIT_INDEXED) != 0 ? IndexType.BITMAP : IndexType.NONE;
+    }
+
+    /**
+     * See {@link #decodeIndexType(long)}.
+     */
+    public static boolean decodeIsDedupKey(long flags) {
+        if ((flags & FLAGS_FORMAT_V2) != 0) {
+            return (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+        }
+        return (flags & FLAGS_V1_BIT_DEDUP_KEY) == FLAGS_V1_BIT_DEDUP_KEY;
     }
 
     // todo: supply bitset to indicate which ops are supported and which arent
@@ -123,105 +158,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             if (queryRegistry != null) {
                 queryId = queryRegistry.register(sqlText, sqlExecutionContext);
             }
-            switch (command) {
-                case ADD_COLUMN:
-                    applyAddColumn(svc);
-                    break;
-                case DROP_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyDropColumn(svc);
-                    break;
-                case RENAME_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyRenameColumn(svc);
-                    break;
-                case DROP_PARTITION:
-                    applyDropPartition(svc);
-                    break;
-                case CONVERT_PARTITION_TO_PARQUET:
-                    applyConvertPartition(svc, true);
-                    break;
-                case CONVERT_PARTITION_TO_NATIVE:
-                    applyConvertPartition(svc, false);
-                    break;
-                case DETACH_PARTITION:
-                    applyDetachPartition(svc);
-                    break;
-                case ATTACH_PARTITION:
-                    applyAttachPartition(svc);
-                    break;
-                case FORCE_DROP_PARTITION:
-                    applyDropPartitionForce(svc);
-                    break;
-                case ADD_INDEX:
-                    applyAddIndex(svc);
-                    break;
-                case DROP_INDEX:
-                    applyDropIndex(svc);
-                    break;
-                case ADD_SYMBOL_CACHE:
-                    applySetSymbolCache(svc, true);
-                    break;
-                case REMOVE_SYMBOL_CACHE:
-                    applySetSymbolCache(svc, false);
-                    break;
-                case SET_PARAM_MAX_UNCOMMITTED_ROWS:
-                    applyParamUncommittedRows(svc);
-                    break;
-                case SET_PARAM_COMMIT_LAG:
-                    applyParamO3MaxLag(svc);
-                    break;
-                case SET_TTL:
-                    applyTtl(svc);
-                    break;
-                case RENAME_TABLE:
-                    applyRenameTable(svc);
-                    break;
-                case SQUASH_PARTITIONS:
-                    squashPartitions(svc);
-                    break;
-                case SET_DEDUP_ENABLE:
-                    keepMatViewsValid = enableDeduplication(svc);
-                    break;
-                case SET_DEDUP_DISABLE:
-                    svc.disableDeduplication();
-                    break;
-                case CHANGE_COLUMN_TYPE:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    changeColumnType(svc);
-                    break;
-                case CHANGE_SYMBOL_CAPACITY:
-                    changeSymbolCapacity(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH_LIMIT:
-                    setMatViewRefreshLimit(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH_TIMER:
-                    // legacy operation, kept for compat purposes
-                    setMatViewRefreshTimer(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH:
-                    setMatViewRefresh(svc);
-                    break;
-                case SET_PARQUET_ENCODING:
-                    setParquetEncoding(svc);
-                    break;
-                case DROP_PARQUET_ENCODING:
-                    dropParquetEncoding(svc);
-                    break;
-                default:
-                    LOG.error()
-                            .$("invalid alter table command [code=").$(command)
-                            .$(" ,table=").$(svc.getTableToken())
-                            .I$();
-                    throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
-            }
+            doApply(svc, contextAllowsAnyStructureChanges);
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
@@ -262,7 +199,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableAlterColumnType(tableToken, getAuthColumnNames());
             case CHANGE_SYMBOL_CAPACITY ->
                     securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, getAuthColumnNames());
-            case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthColumnNames());
+            case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthIndexedColumn());
             case DROP_INDEX -> securityContext.authorizeAlterTableDropIndex(tableToken, getAuthColumnNames());
             case ADD_SYMBOL_CACHE, REMOVE_SYMBOL_CACHE ->
                     securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
@@ -274,13 +211,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
-            // TODO: need to add new permissions for CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE,
-            //  SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING
-            //  and also need new authorize...() methods on SecurityContext.
-            //case CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE ->
-            //        securityContext.authorizeAlterTableSetType(tableToken);
-            //case SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING ->
-            //        securityContext.authorizeAlterTableSetParam(tableToken);
+            case CONVERT_PARTITION_TO_PARQUET ->
+                    securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
+            case CONVERT_PARTITION_TO_NATIVE -> securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
+            case SET_PARQUET_ENCODING -> securityContext.authorizeAlterTableSetParquetSettings(tableToken);
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
             case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
                     securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
@@ -407,6 +341,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         };
     }
 
+    public AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
     public AlterOperation of(
             int cmdType,
             short command,
@@ -429,7 +367,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int columnType,
             int symbolCapacity,
             boolean cache,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
@@ -439,7 +377,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(columnType);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey));
+        extraInfo.add(getFlags(indexType, dedupKey));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -501,8 +439,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int symbolCapacity = (int) extraInfo.get(lParam++);
             boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
             long flags = extraInfo.get(lParam++);
-            boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
-            boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+            byte indexType = decodeIndexType(flags);
+            boolean isDedupKey = decodeIsDedupKey(flags);
             assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
             int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
             int columnNamePosition = (int) extraInfo.get(lParam++);
@@ -512,7 +450,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         type,
                         symbolCapacity,
                         symbolCacheFlag,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         isDedupKey,
@@ -528,7 +466,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private void applyAddIndex(MetadataService svc) {
         final CharSequence columnName = activeExtraStrInfo.getStrA(0);
         try {
-            svc.addIndex(columnName, (int) extraInfo.get(0));
+            byte indexType = extraInfo.size() > 1 ? (byte) extraInfo.get(1) : IndexType.BITMAP;
+            int coverCount = extraInfo.size() > 2 ? (int) extraInfo.get(2) : 0;
+            ObjList<CharSequence> coveringColumnNames = null;
+            if (coverCount > 0) {
+                coveringColumnNames = new ObjList<>(coverCount);
+                for (int i = 0; i < coverCount; i++) {
+                    coveringColumnNames.add(activeExtraStrInfo.getStrA(1 + i));
+                }
+            }
+            svc.addIndex(columnName, (int) extraInfo.get(0), indexType, coveringColumnNames);
         } catch (CairoException e) {
             // augment exception with table position
             e.position(tableNamePosition);
@@ -713,8 +660,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int symbolCapacity = (int) extraInfo.get(lParam++);
         boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
         long flags = extraInfo.get(lParam++);
-        boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
-        boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+        byte indexType = decodeIndexType(flags);
+        boolean isDedupKey = decodeIsDedupKey(flags);
         assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
         int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
         int columnNamePosition = (int) extraInfo.get(lParam);
@@ -725,7 +672,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     newType,
                     symbolCapacity,
                     symbolCacheFlag,
-                    isIndexed,
+                    indexType,
                     indexValueBlockCapacity,
                     false,
                     securityContext
@@ -745,13 +692,103 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
-    private void dropParquetEncoding(MetadataService svc) {
-        if (activeExtraStrInfo.size() != 1) {
-            throw CairoException.nonCritical().put("invalid drop parquet encoding alter statement");
+    private void doApply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
+        switch (command) {
+            case ADD_COLUMN:
+                applyAddColumn(svc);
+                break;
+            case DROP_COLUMN:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                applyDropColumn(svc);
+                break;
+            case RENAME_COLUMN:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                applyRenameColumn(svc);
+                break;
+            case DROP_PARTITION:
+                applyDropPartition(svc);
+                break;
+            case CONVERT_PARTITION_TO_PARQUET:
+                applyConvertPartition(svc, true);
+                break;
+            case CONVERT_PARTITION_TO_NATIVE:
+                applyConvertPartition(svc, false);
+                break;
+            case DETACH_PARTITION:
+                applyDetachPartition(svc);
+                break;
+            case ATTACH_PARTITION:
+                applyAttachPartition(svc);
+                break;
+            case FORCE_DROP_PARTITION:
+                applyDropPartitionForce(svc);
+                break;
+            case ADD_INDEX:
+                applyAddIndex(svc);
+                break;
+            case DROP_INDEX:
+                applyDropIndex(svc);
+                break;
+            case ADD_SYMBOL_CACHE:
+                applySetSymbolCache(svc, true);
+                break;
+            case REMOVE_SYMBOL_CACHE:
+                applySetSymbolCache(svc, false);
+                break;
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS:
+                applyParamUncommittedRows(svc);
+                break;
+            case SET_PARAM_COMMIT_LAG:
+                applyParamO3MaxLag(svc);
+                break;
+            case SET_TTL:
+                applyTtl(svc);
+                break;
+            case RENAME_TABLE:
+                applyRenameTable(svc);
+                break;
+            case SQUASH_PARTITIONS:
+                squashPartitions(svc);
+                break;
+            case SET_DEDUP_ENABLE:
+                keepMatViewsValid = enableDeduplication(svc);
+                break;
+            case SET_DEDUP_DISABLE:
+                svc.disableDeduplication();
+                break;
+            case CHANGE_COLUMN_TYPE:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                changeColumnType(svc);
+                break;
+            case CHANGE_SYMBOL_CAPACITY:
+                changeSymbolCapacity(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH_LIMIT:
+                setMatViewRefreshLimit(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH_TIMER:
+                // legacy operation, kept for compat purposes
+                setMatViewRefreshTimer(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH:
+                setMatViewRefresh(svc);
+                break;
+            case SET_PARQUET_ENCODING:
+                setParquetEncoding(svc);
+                break;
+            default:
+                LOG.error()
+                        .$("invalid alter table command [code=").$(command)
+                        .$(" ,table=").$(svc.getTableToken())
+                        .I$();
+                throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
         }
-        CharSequence columnName = activeExtraStrInfo.getStrA(0);
-        int dropFlags = (int) extraInfo.get(0);
-        svc.dropColumnParquetEncoding(columnName, dropFlags);
     }
 
     private boolean enableDeduplication(MetadataService svc) {
@@ -767,13 +804,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return authColumnNames;
     }
 
+    // ADD INDEX stores [indexedColumn, cov1, cov2, ...] in extraStrInfo.
+    // Authorization only covers the indexed column; covering INCLUDE columns
+    // are not part of the ADD INDEX privilege.
+    private ObjList<CharSequence> getAuthIndexedColumn() {
+        authColumnNames.clear();
+        if (activeExtraStrInfo.size() > 0) {
+            authColumnNames.add(Chars.toString(activeExtraStrInfo.getStrA(0)));
+        }
+        return authColumnNames;
+    }
+
     private CairoEngine getCairoEngine() {
         assert sqlExecutionContext != null;
         return sqlExecutionContext.getCairoEngine();
-    }
-
-    private AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
     }
 
     private void removeColumn(MetadataService svc, CharSequence columnName) {

@@ -44,17 +44,11 @@ import org.jetbrains.annotations.NotNull;
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
  */
 public abstract class AbstractCovarGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
-    /**
-     * The X (independent variable) function.
-     */
+    // The X (independent variable) function.
     protected final Function xFunc;
-    /**
-     * The Y (dependent variable) function.
-     */
+    // The Y (dependent variable) function.
     protected final Function yFunc;
-    /**
-     * The value index in the map.
-     */
+    // The value index in the map.
     protected int valueIndex;
 
     /**
@@ -141,7 +135,7 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return BinaryFunction.super.supportsParallelism();
     }
 
     /**

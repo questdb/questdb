@@ -45,7 +45,7 @@ public class AlterOperationBuilder implements Mutable {
 
     // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
-        this.op = new AlterOperation(extraInfo, extraStrInfo);
+        this.op = createAlterOperation(extraInfo, extraStrInfo);
     }
 
     public void addColumnToList(
@@ -54,7 +54,7 @@ public class AlterOperationBuilder implements Mutable {
             int type,
             int symbolCapacity,
             boolean cache,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
@@ -63,7 +63,7 @@ public class AlterOperationBuilder implements Mutable {
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey));
+        extraInfo.add(getFlags(indexType, dedupKey));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -106,24 +106,33 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
+    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, byte indexType, int indexValueBlockCapacity) {
         assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, false));
+        extraInfo.add(getFlags(indexType, false));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
 
-    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize) {
+    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
+        this.extraInfo.add(indexType);
+        // Covering column count followed by names (0 means no covering)
+        int coverCount = coveringColumnNames != null ? coveringColumnNames.size() : 0;
+        this.extraInfo.add(coverCount);
+        if (coverCount > 0) {
+            for (int i = 0; i < coverCount; i++) {
+                this.extraStrInfo.add(coveringColumnNames.get(i));
+            }
+        }
     }
 
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -203,16 +212,6 @@ public class AlterOperationBuilder implements Mutable {
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(columnNamePosition);
-    }
-
-    public AlterOperationBuilder ofDropParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int dropFlags) {
-        this.command = DROP_PARQUET_ENCODING;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.tableId = tableId;
-        this.extraStrInfo.add(columnName);
-        this.extraInfo.add(dropFlags);
-        return this;
     }
 
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -352,5 +351,9 @@ public class AlterOperationBuilder implements Mutable {
     public void setParquetConversionOptions(@Nullable CharSequence bloomFilterColumns, double fpp) {
         extraStrInfo.add(bloomFilterColumns);
         extraInfo.add(Double.doubleToLongBits(fpp));
+    }
+
+    protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 }

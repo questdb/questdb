@@ -70,6 +70,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     // marks value chain entry as unused (belonging to a node on the freelist)
     // it's meant to avoid unnecessary reallocations when removing nodes and adding nodes
     private static final long FREE_SLOT = -2;
+    // Upper bound enforced by the compressed-offset encoding (offsets are 4-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     // LIFO list of free blocks to reuse, allocated on the value chain
     private final DirectIntList chainFreeList;
@@ -78,6 +80,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private final DirectIntList freeList;
     private final long initialValueHeapSize;
     private final long maxValueHeapSize;
+    private final String valueHeapConfigKey;
     // number of all values stored in tree (including repeating ones)
     private int currentValues = 0;
     // firstN - keep <first->N> set , otherwise keep <last-N->last> set
@@ -95,15 +98,25 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private long valueHeapSize;
     private long valueHeapStart;
 
-    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
-        super(keyPageSize, keyMaxPages);
+    public LimitedSizeLongTreeChain(
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey
+    ) {
+        super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey);
         try {
             freeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             chainFreeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
+            // value page must hold at least one chain entry (config rejects sub-block sizes).
+            assert valuePageSize >= CHAIN_VALUE_SIZE;
             valueHeapSize = initialValueHeapSize = valuePageSize;
             valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapLimit = valueHeapStart + valueHeapSize;
-            maxValueHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_VALUE_HEAP_SIZE_LIMIT);
+            maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
+            this.valueHeapConfigKey = valueHeapConfigKey;
         } catch (Throwable th) {
             close();
             throw th;
@@ -339,8 +352,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private int appendValue(long value, int prevValueOffset) {
         checkValueCapacity();
         final int offset = compressValueOffset(valueHeapPos - valueHeapStart);
-        Unsafe.getUnsafe().putLong(valueHeapPos, value);
-        Unsafe.getUnsafe().putInt(valueHeapPos + 8, prevValueOffset);
+        Unsafe.putLong(valueHeapPos, value);
+        Unsafe.putInt(valueHeapPos + 8, prevValueOffset);
         valueHeapPos += CHAIN_VALUE_SIZE;
         return offset;
     }
@@ -349,7 +362,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
             final long newHeapSize = valueHeapSize << 1;
             if (newHeapSize > maxValueHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LimitedSizeLongTreeChain");
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LimitedSizeLongTreeChain");
+                if (valueHeapConfigKey != null) {
+                    ex.put(" (raise ").put(valueHeapConfigKey).put(')');
+                }
+                throw ex;
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 
@@ -390,7 +408,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private int nextValueOffset(int valueOffset) {
-        return Unsafe.getUnsafe().getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
+        return Unsafe.getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
     }
 
     private void prepareComparatorLeftSideIfAtMaxCapacity(RecordRandomAccess sourceCursor, Record ownedRecord, RecordComparator comparator, int currentFrameIndex) {
@@ -430,15 +448,15 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private long rowId(int valueOffset) {
-        return Unsafe.getUnsafe().getLong(valueHeapStart + uncompressValueOffset(valueOffset));
+        return Unsafe.getLong(valueHeapStart + uncompressValueOffset(valueOffset));
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        Unsafe.getUnsafe().putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
+        Unsafe.putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
     }
 
     private void setRowId(int valueOffset, long rowId) {
-        Unsafe.getUnsafe().putLong(valueHeapStart + uncompressValueOffset(valueOffset), rowId);
+        Unsafe.putLong(valueHeapStart + uncompressValueOffset(valueOffset), rowId);
     }
 
     // if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node

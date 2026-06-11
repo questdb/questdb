@@ -132,6 +132,7 @@ io.questdb.griffin.engine.functions.math.NegLongFunctionFactory
 io.questdb.griffin.engine.functions.math.NegShortFunctionFactory
 io.questdb.griffin.engine.functions.math.NegByteFunctionFactory
 io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.SubFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.SubIntFunctionFactory
 io.questdb.griffin.engine.functions.math.SubLongFunctionFactory
 io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory
@@ -549,6 +550,7 @@ io.questdb.griffin.engine.functions.bool.InVarcharVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InCharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory
+io.questdb.griffin.engine.functions.bool.InIPv4FunctionFactory
 io.questdb.griffin.engine.functions.bool.InLongFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory

@@ -806,7 +806,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         byte[] utf8Bytes = value.getBytes(StandardCharsets.UTF_8);
         Assert.assertTrue(utf8Bytes.length <= DBCS_MAX_SIZE);
         for (int i = 0, n = utf8Bytes.length; i < n; i++) {
-            Unsafe.getUnsafe().putByte(mem + i, utf8Bytes[i]);
+            Unsafe.putByte(mem + i, utf8Bytes[i]);
         }
         return dus.of(mem, mem + utf8Bytes.length);
     }
@@ -850,7 +850,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
-        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, byte indexType, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
         }
 
         @Override
@@ -912,11 +912,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
         @Override
         public TableWriter.Row newRow(long timestamp) {
             return null;
-        }
-
-        @Override
-        public TableWriter.Row newRowDeferTimestamp() {
-            throw new UnsupportedOperationException();
         }
 
         @Override

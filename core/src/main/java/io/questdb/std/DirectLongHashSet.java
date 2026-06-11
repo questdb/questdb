@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -49,7 +50,7 @@ import java.io.Closeable;
  * </pre>
  */
 public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
-    public static final double DEFAULT_LOAD_FACTOR = 0.4;
+    public static final double DEFAULT_LOAD_FACTOR = 0.7;
     private static final int MIN_CAPACITY = 16;
     private final double loadFactor;
     private final int memoryTag;
@@ -140,7 +141,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         long addr = memStart + (index * Long.BYTES);
 
         for (; ; ) {
-            long k = Unsafe.getUnsafe().getLong(addr);
+            long k = Unsafe.getLong(addr);
             if (k == 0) {
                 return (int) index;
             } else if (k == key) {
@@ -170,7 +171,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         }
 
         for (long addr = memStart; addr < memLimit; addr += Long.BYTES) {
-            long key = Unsafe.getUnsafe().getLong(addr);
+            long key = Unsafe.getLong(addr);
             if (key != 0) {
                 temp.add(key);
             }
@@ -186,12 +187,17 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         long addr = memStart + (index * Long.BYTES);
 
         for (; ; ) {
-            long k = Unsafe.getUnsafe().getLong(addr);
+            long k = Unsafe.getLong(addr);
             if (k == 0) {
-                Unsafe.getUnsafe().putLong(addr, key);
+                Unsafe.putLong(addr, key);
                 size++;
                 if (--free == 0) {
-                    rehash();
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
                 }
                 return true;
             } else if (k == key) {
@@ -219,7 +225,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         int newMask = newCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += Long.BYTES) {
-            long key = Unsafe.getUnsafe().getLong(addr);
+            long key = Unsafe.getLong(addr);
             if (key == 0) {
                 continue;
             }
@@ -227,11 +233,11 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
             long newIndex = Hash.hashLong64(key) & newMask;
             long newAddr = newMemStart + (newIndex * Long.BYTES);
 
-            while (Unsafe.getUnsafe().getLong(newAddr) != 0) {
+            while (Unsafe.getLong(newAddr) != 0) {
                 newIndex = (newIndex + 1) & newMask;
                 newAddr = newMemStart + (newIndex * Long.BYTES);
             }
-            Unsafe.getUnsafe().putLong(newAddr, key);
+            Unsafe.putLong(newAddr, key);
         }
 
         Unsafe.free(memStart, memLimit - memStart, memoryTag);
@@ -239,6 +245,6 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         memLimit = newMemStart + newSizeBytes;
         capacity = newCapacity;
         mask = newMask;
-        free = (int) ((capacity - size) * loadFactor);
+        free = (int) (capacity * loadFactor) - size;
     }
 }

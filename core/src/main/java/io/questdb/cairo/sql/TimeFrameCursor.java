@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
@@ -77,7 +77,7 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * @return BitmapIndexReader for the specified column, or null if the column is not indexed
      * or if this cursor doesn't support indexed access
      */
-    default BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+    default IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
         throw new UnsupportedOperationException();
     }
 
