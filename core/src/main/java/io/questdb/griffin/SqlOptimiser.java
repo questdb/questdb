@@ -1965,10 +1965,14 @@ public class SqlOptimiser implements Mutable {
                         // first, so it stays anchored at i.
                         int anchorIndex = index;
                         if (!node.innerPredicate) {
-                            // The exec order is a full permutation in the common (acyclic) case; a cyclic
-                            // join graph leaves it partial (isNullingExecOrderValid false) and the
-                            // exec-order anchors stale, so fall back to the model-order anchor at the
-                            // highest referenced table, matching lastNullingJoinAfterReferencedTables.
+                            // assignFilters runs after reorderTables, which resolves every join graph
+                            // it accepts into a full permutation (dependency edges are canonicalized
+                            // low->high, so the order is acyclic; an unresolvable graph would also
+                            // mis-execute in generateJoins, which iterates this same ordered list). So
+                            // isNullingExecOrderValid is true here in practice and the exec-order anchor
+                            // is read. The model-order branch is a defensive mirror of the pre-reorder
+                            // siblings (masterNullingJoinIndexInOrder, lastNullingJoinAfterReferencedTables)
+                            // that anchors at the highest referenced table should a partial order ever reach us.
                             final int nullingIndex = isNullingExecOrderValid
                                     ? lastNullingJoinAfterOrderedPosition(i)
                                     : masterNullingJoinIndex(maxRef);

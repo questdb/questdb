@@ -89,4 +89,31 @@ public class EmptyTableRecordCursorFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEmptySymbolColumnInNullMatches() throws Exception {
+        // End-to-end coverage for EmptySymbolMapReader.keyOf(null) == VALUE_IS_NULL. The empty-master
+        // SPLICE pairs every slave row with an all-NULL master, so the projected master SYMBOL (e0)
+        // is always NULL and its static symbol table is EmptySymbolMapReader.INSTANCE. The post-join
+        // "e0 IN (NULL)" routes through InSymbolVarcharArrayFunctionFactory's IntSetFunc, which stores
+        // keyOf(null) as the match key. When keyOf(null) returned VALUE_NOT_FOUND (-2) the key never
+        // matched the NULL column value (VALUE_IS_NULL = INT_NULL) and the filter dropped every row;
+        // now that keyOf(null) returns VALUE_IS_NULL it matches, consistent with null=null being true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 3)");
+
+            assertQuery("SELECT * FROM (" +
+                    "SELECT a.sym AS e0, b.v AS e2 FROM (SELECT * FROM m WHERE 1=2) a SPLICE JOIN s b ON (sym)" +
+                    ") WHERE e0 IN (NULL) ORDER BY e2")
+                    .withPlanContaining("Filter filter: a.sym in [null]")
+                    .returns("""
+                            e0\te2
+                            \t10
+                            \t50
+                            """);
+        });
+    }
+
 }
