@@ -68,6 +68,29 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountReflectsKeepLatestReadFilter() throws Exception {
+        // All rows land in one (active) partition that cleanup never touches, so a superseded row stays on
+        // disk. count() must still reflect the read filter (one latest row per key), not the raw row count.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // superseded (non-active partition)
+                    "('A', 2.0, '2024-01-02T00:00:00.000000Z')," +   // superseded (non-active partition)
+                    "('B', 3.0, '2024-01-01T00:00:00.000000Z')," +   // superseded (non-active partition)
+                    "('A', 4.0, '2024-01-03T00:00:00.000000Z')," +   // latest A (active partition)
+                    "('B', 5.0, '2024-01-02T00:00:00.000000Z')");    // latest B (non-active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep latest partition by k");
+            drainWalAndMatViewQueues();
+            // NO cleanup: all 5 rows are physically present across 3 partitions. The read filter must still
+            // show exactly the latest row per key, and count() must agree.
+            assertSql("k\tv\nA\t4.0\nB\t5.0\n", "select k, v from mv order by k");
+            assertSql("c\n2\n", "select count() c from mv");
+            assertSql("c\n2\n", "select count(distinct k) c from mv");
+        });
+    }
+
+    @Test
     public void testExpireScalarCustomCleanupCompactsAndWipes() throws Exception {
         // A non-time (custom) scalar predicate has no bounds fast-path, so cleanup classifies via the count
         // scan: a fully-expired partition is wiped, a partial one compacted.
