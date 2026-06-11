@@ -1938,11 +1938,16 @@ public class SqlOptimiser implements Mutable {
                     postFilterRemoved.add(k);
                 } else {
                     boolean qualifies = true;
+                    int maxRef = -1;
                     // check if filter references table processed so far
                     for (int y = 0; y < rs; y++) {
-                        if (tablesSoFar.excludes(refs.get(y))) {
+                        final int ref = refs.get(y);
+                        if (tablesSoFar.excludes(ref)) {
                             qualifies = false;
                             break;
+                        }
+                        if (ref > maxRef) {
+                            maxRef = ref;
                         }
                     }
                     if (qualifies) {
@@ -1954,7 +1959,13 @@ public class SqlOptimiser implements Mutable {
                         // first, so it stays anchored at i.
                         int anchorIndex = index;
                         if (!node.innerPredicate) {
-                            final int nullingIndex = lastNullingJoinAfterOrderedPosition(i);
+                            // The exec order is a full permutation in the common (acyclic) case; a cyclic
+                            // join graph leaves it partial (isNullingExecOrderValid false) and the
+                            // exec-order anchors stale, so fall back to the model-order anchor at the
+                            // highest referenced table, matching lastNullingJoinAfterReferencedTables.
+                            final int nullingIndex = isNullingExecOrderValid
+                                    ? lastNullingJoinAfterOrderedPosition(i)
+                                    : masterNullingJoinIndex(maxRef);
                             if (nullingIndex > -1) {
                                 anchorIndex = nullingIndex;
                             }
@@ -5026,7 +5037,8 @@ public class SqlOptimiser implements Mutable {
     /**
      * Model index of the last master-nulling join at an execution-order position strictly after
      * {@code orderedPos}, or -1. {@code orderedPos} indexes getOrderedJoinModels(), not raw models.
-     * O(1) read of the {@link #precomputeNullingJoinAnchors} result.
+     * O(1) read of the {@link #precomputeNullingJoinAnchors} result. Callers must guard on
+     * {@link #isNullingExecOrderValid}; the exec-order array is stale when the order is partial.
      */
     private int lastNullingJoinAfterOrderedPosition(int orderedPos) {
         return nullingAnchorByExecPos.getQuick(orderedPos);
