@@ -91,6 +91,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Maps column ID (field_id / writer index) to parquet column index.
     // Rebuilt each time openParquet() encounters a new file.
     private final IntIntHashMap columnIdToParquetIdx;
+    private final IntList declaredFrameRowCounts = new IntList(16);
     private final PageFrameMemoryImpl frameMemory;
     // Bounded LIFO of closed ParquetBuffers shells, reused by acquireBuffer on the
     // async-parquet per-frame release path so the wrapper object doesn't churn.
@@ -282,12 +283,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
+            if (parquetBuffers != null && parquetBuffers.isRowFiltered) {
+                // A row-filtered buffer holds NULLs for undeclared rows and must not
+                // serve full-frame access.
+                unbind(FRAME_MEMORY_MASK);
+                evictRowFiltered(parquetBuffers);
+                parquetBuffers = null;
+            }
             if (parquetBuffers == null) {
                 openParquet(frameIndex);
                 parquetBuffers = acquireBuffer(frameIndex, FRAME_MEMORY_MASK);
                 decodeAndAccount(frameIndex, parquetBuffers);
             }
-            assert !parquetBuffers.isRowFiltered : "row-filtered buffer hit by full-frame access";
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
@@ -317,12 +324,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
+            if (parquetBuffers != null && parquetBuffers.isRowFiltered) {
+                // A row-filtered buffer holds NULLs for undeclared rows and must not
+                // serve full-frame access.
+                unbind(FRAME_MEMORY_MASK);
+                evictRowFiltered(parquetBuffers);
+                parquetBuffers = null;
+            }
             if (parquetBuffers == null) {
                 openParquet(frameIndex, columnIndexes, true);
                 parquetBuffers = acquireBuffer(frameIndex, FRAME_MEMORY_MASK);
                 decodeAndAccount(frameIndex, parquetBuffers);
             }
-            assert !parquetBuffers.isRowFiltered : "row-filtered buffer hit by full-frame access";
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
@@ -422,26 +435,24 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // First pass: per-frame declared-row counts plus a sortedness probe. When no
         // frame is sparse enough for row-filtered decode (e.g. an unfiltered sort
         // declares every row of every frame), bail out before paying for the sort.
+        final int frameCount = addressCache.getFrameCount();
+        declaredFrameRowCounts.setAll(frameCount, 0);
         boolean isSorted = true;
         long prevRowId = recordAtRows.get(0);
         for (long i = 0; i < kept; i++) {
             final long rowId = recordAtRows.get(i);
             isSorted &= Long.compareUnsigned(prevRowId, rowId) <= 0;
             prevRowId = rowId;
-            final int frameIndex = Rows.toPartitionIndex(rowId);
-            final int keyIndex = recordAtSlices.keyIndex(frameIndex);
-            final long declared = keyIndex < 0 ? recordAtSlices.valueAt(keyIndex) : 0;
-            recordAtSlices.putAt(keyIndex, frameIndex, declared + 1);
+            declaredFrameRowCounts.increment(Rows.toPartitionIndex(rowId));
         }
         boolean hasEligibleFrame = false;
-        for (long i = 0; i < kept; i++) {
-            final int frameIndex = Rows.toPartitionIndex(recordAtRows.get(i));
-            if (isRowFilterEligible(frameIndex, recordAtSlices.get(frameIndex))) {
+        for (int f = 0; f < frameCount; f++) {
+            final int declared = declaredFrameRowCounts.getQuick(f);
+            if (declared > 0 && isRowFilterEligible(f, declared)) {
                 hasEligibleFrame = true;
                 break;
             }
         }
-        recordAtSlices.clear();
         if (!hasEligibleFrame) {
             recordAtRows = Misc.free(recordAtRows);
             return;
@@ -479,7 +490,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
         assert getBound(usageBit) == null : "acquireBuffer requires the prior pin to have been cleared by tryHit";
-        if (cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= decodeHint.maxCachedBuffers) {
+        if (cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= maxCachedBuffers()) {
             for (ParquetBuffers victim = lruHead; victim != null; victim = victim.next) {
                 if (victim.usageFlags != 0) {
                     continue;
@@ -622,21 +633,25 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         evictAndClose(buffers);
     }
 
+    private void evictRowFiltered(ParquetBuffers b) {
+        if (b.usageFlags == 0) {
+            evictAndClose(b);
+        } else {
+            // Evicting while a record still reads the buffer is a caller contract
+            // violation; unmap it so it cannot serve further hits and let the LRU
+            // close it once the pin clears.
+            assert false : "row-filtered buffer is pinned";
+            byFrameIndex.remove(b.frameIndex);
+            b.frameIndex = -1;
+        }
+    }
+
     private void evictRowFilteredBuffers() {
         ParquetBuffers b = lruHead;
         while (b != null) {
             final ParquetBuffers next = b.next;
             if (b.isRowFiltered) {
-                if (b.usageFlags == 0) {
-                    evictAndClose(b);
-                } else {
-                    // A new declaration while a record still reads buffers filtered
-                    // under the old one is a caller contract violation; unmap the
-                    // buffer so it cannot serve hits for the new declaration.
-                    assert false : "row set redeclared while a row-filtered buffer is pinned";
-                    byFrameIndex.remove(b.frameIndex);
-                    b.frameIndex = -1;
-                }
+                evictRowFiltered(b);
             }
             b = next;
         }
@@ -690,6 +705,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         b.prev = null;
         b.next = null;
+    }
+
+    // Row-filtered buffers retain only the declared rows, so a declaration may need
+    // more entries than the hint's cap before the byte budget binds; it never needs
+    // more than the declared frame count.
+    private int maxCachedBuffers() {
+        return Math.max(decodeHint.maxCachedBuffers, recordAtSlices.size());
     }
 
     private void openParquet(int frameIndex) {

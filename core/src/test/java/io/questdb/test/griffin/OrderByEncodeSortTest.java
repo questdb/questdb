@@ -204,6 +204,8 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(11)
                             )"""
             );
+            // Signed zeros tie under the canonicalizing encoder, so their order is
+            // the rowId tiebreak: 0.0 (row 4) ahead of -0.0 (row 5).
             assertQuery("SELECT * FROM x ORDER BY d ASC")
                     .noLeakCheck()
                     .expectSize()
@@ -465,6 +467,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM x ORDER BY v LIMIT :n")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
                     .returns("""
                             v
                             1
@@ -504,6 +507,42 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             3
                             4
                             5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitDegenerateShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 0")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 3,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+            // lo > hi normalizes to rows hi..lo
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 5,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            4
+                            5
+                            """);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT -3,-3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT -2,-4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            2
+                            3
                             """);
         });
     }
@@ -555,6 +594,22 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitLoPosHiNullBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByLimitNegatedNaNBoundary() throws Exception {
         assertMemoryLeak(() -> {
             // NULL doubles are NaN and negating them flips the NaN sign bit; the
@@ -600,22 +655,6 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             3
                             4
                             5
-                            """);
-        });
-    }
-
-    @Test
-    public void testOrderByLimitLoPosHiNullBindVariable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
-            bindVariableService.clear();
-            bindVariableService.setLong("lo", 1);
-            bindVariableService.setLong("hi", Numbers.LONG_NULL);
-            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            v
                             """);
         });
     }
@@ -727,7 +766,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
             assertQuery("SELECT note, v, sym FROM pq WHERE sym = 's1' AND length(note) > 1 ORDER BY v DESC LIMIT 0,3")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("Async")
+                    .withPlanContaining(limitedSortPlanType(), "Async")
                     .returns("""
                             note\tv\tsym
                             r10000\t10000\ts1
@@ -758,6 +797,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
             assertQuery("SELECT v, note, arr, sym FROM pq ORDER BY v LIMIT 0,3")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
                     .returns("""
                             v\tnote\tarr\tsym
                             1\tr1\t[1.0,2.0]\ts1
@@ -802,6 +842,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
             // so the unlimited sort's emit declaration row-filters the parquet decode.
             assertQuery("SELECT v, note FROM pqu WHERE v % 5 = 3 ORDER BY v DESC")
                     .noLeakCheck()
+                    .withPlanContaining(limitedSortPlanType())
                     .returns("""
                             v\tnote
                             48\tr48
@@ -841,6 +882,77 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitThresholdTieSelection() throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x % 10 k, x rid FROM long_sequence(50_000))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 9_000);
+            assertQuery("""
+                    SELECT
+                        sum(CASE WHEN k = 1 THEN 1 ELSE 0 END) cnt,
+                        min(CASE WHEN k = 1 THEN rid END) mn,
+                        max(CASE WHEN k = 1 THEN rid END) mx
+                    FROM (SELECT * FROM t ORDER BY k LIMIT :n)""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            cnt\tmn\tmx
+                            4000\t1\t39991
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTimestampEarlyStopDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE esd AS (
+                        SELECT ((x - 1) / 3 * 1_000_000)::timestamp ts, 10 - x v
+                        FROM long_sequence(9)
+                    ) TIMESTAMP(ts)""");
+            assertQuery("SELECT * FROM esd ORDER BY ts DESC, v LIMIT 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampDesc("ts")
+                    .withPlanContaining(limitedSortPlanType(), "partiallySorted: true")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:02.000000Z\t1
+                            1970-01-01T00:00:02.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\t3
+                            1970-01-01T00:00:01.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTimestampEarlyStopGroupSpansCompaction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE esc AS (
+                        SELECT
+                            (CASE WHEN x <= 5_000 THEN 0 ELSE 1_000_000 END)::timestamp ts,
+                            x % 5_000 v
+                        FROM long_sequence(5_005)
+                    ) TIMESTAMP(ts)""");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT * FROM esc ORDER BY ts, v LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t0
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:00.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByLimitTimestampEarlyStopGroupStraddle() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -856,6 +968,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
+                    .withPlanContaining(limitedSortPlanType(), "partiallySorted: true")
                     .returns("""
                             ts\tv
                             1970-01-01T00:00:00.000000Z\t7
@@ -1373,6 +1486,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         8
                         9
                         """);
+    }
+
+    private String limitedSortPlanType() {
+        return sortMode == SortMode.SORT_ENABLED ? "Encode sort light" : "Sort light";
     }
 
     public enum SortMode {

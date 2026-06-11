@@ -165,6 +165,24 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                     node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
                     StringSink orderByClause = buildOrderByClause(rnd, selected);
                     assertSortMatch(orderByClause, "SELECT * FROM fuzz_sort_parquet ORDER BY ", targetMax, "parquet");
+
+                    // The unique ts in the key makes the sort total, so the LIMIT cut
+                    // cannot diverge between the engines on duplicate keys. Appending
+                    // ts only fits the 32-byte encoder budget for the smaller keys.
+                    boolean hasTs = false;
+                    for (int i = 0, n = selected.size(); i < n; i++) {
+                        hasTs |= "ts".equals(selected.getQuick(i).name());
+                    }
+                    if (hasTs || targetMax <= 24) {
+                        StringSink query = new StringSink();
+                        query.put("SELECT * FROM fuzz_sort_parquet ORDER BY ").put(orderByClause);
+                        if (!hasTs) {
+                            query.put(", ts");
+                        }
+                        query.put(' ');
+                        appendLimitClause(rnd, query, rowCount);
+                        assertQueryMatch(query, "parquet limit");
+                    }
                 }
             }
         });
@@ -172,14 +190,18 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
 
     private static void appendLimitClause(Rnd rnd, StringSink query, int rowCount) {
         final int bound = rowCount + 10;
-        switch (rnd.nextInt(4)) {
+        switch (rnd.nextInt(6)) {
             case 0 -> query.put("LIMIT ").put(1 + rnd.nextInt(bound));
             case 1 -> query.put("LIMIT -").put(1 + rnd.nextInt(bound));
             case 2 -> {
                 final int lo = rnd.nextInt(bound);
                 query.put("LIMIT ").put(lo).put(',').put(lo + 1 + rnd.nextInt(bound));
             }
-            default -> query.put("LIMIT ").put(rnd.nextInt(bound)).put(",-").put(1 + rnd.nextInt(bound));
+            case 3 -> query.put("LIMIT ").put(rnd.nextInt(bound)).put(",-").put(1 + rnd.nextInt(bound));
+            // arbitrary positive pair: covers lo == hi (empty) and lo > hi (normalized)
+            case 4 -> query.put("LIMIT ").put(rnd.nextInt(bound)).put(',').put(rnd.nextInt(bound));
+            // arbitrary negative pair: covers lo == hi (empty) and reversed ranges
+            default -> query.put("LIMIT -").put(1 + rnd.nextInt(bound)).put(",-").put(1 + rnd.nextInt(bound));
         }
     }
 

@@ -105,6 +105,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
+            hasParquetFrames = true;
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
@@ -169,6 +170,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public IntList getColumnTypes() {
         return columnTypes;
+    }
+
+    public int getFrameCount() {
+        return frameSizes.size();
     }
 
     public byte getFrameFormat(int frameIndex) {

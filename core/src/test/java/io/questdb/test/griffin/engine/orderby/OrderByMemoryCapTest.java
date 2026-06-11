@@ -105,6 +105,34 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialEncodedOrderByLimitValueCapFires() throws Exception {
+        // The value cap must bind on its own: a 64-byte budget fits eight rowId
+        // words, so the scan overflows even with the key cap unset.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 64);
+
+        assertMemoryLeak(() -> {
+            // The shared context snapshots the parallel top-K flag at construction,
+            // so it has to be flipped on the context itself.
+            final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            final boolean wasParallelTopKEnabled = context.isParallelTopKEnabled();
+            context.setParallelTopKEnabled(false);
+            try {
+                execute("CREATE TABLE tab AS (" +
+                        "SELECT (x % 1_000)::INT AS g, x::INT AS v" +
+                        " FROM long_sequence(50_000))");
+
+                assertExceptionNoLeakCheck(
+                        "SELECT g, v FROM tab ORDER BY g, v LIMIT 40000",
+                        0,
+                        "memory exceeded in EncodedSort"
+                );
+            } finally {
+                context.setParallelTopKEnabled(wasParallelTopKEnabled);
+            }
+        });
+    }
+
+    @Test
     public void testSerialOrderByLimitCapFires() throws Exception {
         // With parallel top-K and the encoded sort disabled, ORDER BY ... LIMIT routes
         // through the serial LimitedSizeSortedLightRecordCursorFactory. A 64-byte
