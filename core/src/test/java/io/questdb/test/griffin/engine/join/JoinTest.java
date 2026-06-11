@@ -6003,6 +6003,35 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiTableEqualityMasterFilterStaysPostJoin() throws Exception {
+        // Companion to testMultiTableMasterFilterStaysPostJoin, which uses an INEQUALITY (t0.a < t1.b)
+        // that analyseEquals routes straight to assignFilters. An EQUALITY across two master tables
+        // (t0.a = t1.b) instead folds into the inner join's keys, so it was applied BEFORE the later
+        // RIGHT/FULL OUTER NULL-extends t0 and t1 for the unmatched t2 key 2. With the equality folded,
+        // the inner t0/t1 join is empty (1 != 5), so every t2 row became a NULL-master row and the
+        // filter never ran -- leaking (null,null,1) on top of the legitimate (null,null,2), 2 rows for
+        // 1. Held post-join the inner join keeps (1,5,1), which t0.a=t1.b drops, and the outer join's
+        // (null,null,2) survives because null=null is true for INT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\nnull\tnull\t2\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k WHERE t0.a = t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a=t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testMultiTableMasterFilterStaysPostJoin() throws Exception {
         // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches assignFilters'
         // multi-reference else-branch, which anchored it at the inner join where both tables arrive.
