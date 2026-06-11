@@ -70,6 +70,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
@@ -746,6 +747,103 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     .returns("""
                             count\tsum
                             11\t13510.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReopenEvictionThenIncrementalSealRebuildsVarSidecar() throws Exception {
+        // Same reopen-eviction rollback as the DOUBLE case above, but the
+        // covered column is VAR-SIZE (VARCHAR). The streaming rollback must
+        // rebuild the .pc sidecar through the per-key var-size path, so the
+        // covered reads keep serving the committed tags.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_evict_var (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag),
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            execute("""
+                    INSERT INTO t_rb_evict_var
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), 'tag' || (x % 300)
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition
+            execute("""
+                    INSERT INTO t_rb_evict_var
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 'tag' || (x % 300)
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            TableToken token = engine.verifyTableName("t_rb_evict_var");
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            // Plant index values beyond the committed transient row count
+            // (3_100 rows are committed) so the reopen forces a real discard.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                try (PostingIndexWriter planted = new PostingIndexWriter(configuration)) {
+                    planted.of(path, "sym", COLUMN_NAME_TXN_NONE, partitionTs, partitionNameTxn);
+                    for (int i = 0; i < 5; i++) {
+                        planted.add(0, 3_100 + i);
+                    }
+                    planted.setMaxValue(3_104);
+                    planted.commit();
+                }
+            }
+
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // Opening the writer ran rollbackConditionally(3_100): the real
+                // discard streamed the var-size covered sidecar rebuild for the
+                // survivors. Covered reads must still serve the committed tags.
+                assertQuery("SELECT count() c, count(tag) ct, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                c\tct\tmn\tmx
+                                10\t10\ttag0\ttag0
+                                """);
+
+                // O3 append touching only key 'k0': one stride dirty, the
+                // other clean, so the seal goes incremental and reads the
+                // clean stride from the rollback-rebuilt sealed var sidecar.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    r.putVarchar(2, new Utf8String("tag0"));
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            assertQuery("SELECT count() c, count(tag) ct, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            c\tct\tmn\tmx
+                            60\t60\ttag0\ttag0
+                            """);
+            // 'k1' lives in the stride the post-rollback commit left clean; its
+            // covered var-size values come from the sidecar the rollback rebuilt.
+            assertQuery("SELECT count() c, count(tag) ct, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            c\tct\tmn\tmx
+                            11\t11\ttag1\ttag1
                             """);
         });
     }

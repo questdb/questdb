@@ -546,15 +546,15 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
     }
 
     /**
-     * Streaming compaction explicitly refuses var-size cover columns
-     * with an actionable error message. The fast path still handles
-     * var-size cover data; this guard only applies when the pre-flight
-     * forces the streaming branch. A follow-up will lift the
-     * restriction by adding a two-pass write that materialises the
-     * var-size offsets table after walking each key.
+     * Streaming compaction now handles var-size cover columns (per-key offsets
+     * + streaming FSST), but the FSST compressor holds a ~1 MiB batch floor. A
+     * headroom too tight for even that floor lands on the pre-flight's hard
+     * limit -- "would exceed RSS limit even with streaming compaction" -- rather
+     * than OOMing mid-encode. (A separate fuzz covers the streaming-succeeds
+     * case with adequate headroom.)
      */
     @Test
-    public void testSealStreamingVarIncludeFails() throws Exception {
+    public void testSealStreamingVarIncludeHardLimitWhenFsstDoesNotFit() throws Exception {
         // Use multiple keys so streaming peak (2 * maxKeyCount * 8) is much
         // smaller than fast-path peak (2 * rowsPerKey * keys * 8). With 16
         // keys * 256 rows/key, fast-path peak is ~64 KiB (single stride
@@ -603,17 +603,17 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                         writer.setMaxValue(row - 1);
                         writer.commit();
 
-                        // 32 KiB headroom: too small for fast path (~64 KiB),
-                        // large enough for streaming (~4 KiB) -- forcing the
-                        // pre-flight to pick streaming, which then refuses
-                        // because of the var-size cover column.
+                        // 32 KiB headroom: smaller than the var-size streaming
+                        // FSST batch floor (~1 MiB), so neither the fast path nor
+                        // the streaming path fits and the pre-flight refuses with
+                        // its hard-limit diagnostic.
                         Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 32L * 1024L);
                         try {
                             writer.seal();
                             Assert.fail("expected CairoException, seal succeeded");
                         } catch (CairoException e) {
                             TestUtils.assertContains(e.getFlyweightMessage(),
-                                    "variable-size; streaming compaction of var-size cover columns is not yet supported");
+                                    "would exceed RSS limit even with streaming compaction");
                         } finally {
                             Unsafe.setRssMemLimit(savedLimit);
                         }
