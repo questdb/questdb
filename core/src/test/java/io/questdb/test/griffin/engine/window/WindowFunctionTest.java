@@ -1440,6 +1440,54 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistMixedPartitionKeyTypes() throws Exception {
+        // cume_dist()/percent_rank() over (partition by ...) are two-pass, so they always take the
+        // cached path where the partition map is built in-loop, while the generator's reusable
+        // key-types buffer still describes this function's PARTITION BY. Pair each with a window
+        // function partitioned by a different type to confirm the buffer is captured, not aliased.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, sym symbol, b byte) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("insert into tab values " +
+                    "(1,'a',1),(2,'a',2),(3,'b',1),(4,'b',2),(5,'a',1),(6,'b',2)");
+
+            assertQuery("SELECT b, sym, " +
+                    "round(cume_dist() OVER (PARTITION BY b ORDER BY ts),3) w0, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w1 FROM tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t0.333\t1
+                            2\ta\t0.333\t2
+                            1\tb\t0.667\t1
+                            2\tb\t0.667\t2
+                            1\ta\t1.0\t3
+                            2\tb\t1.0\t3
+                            """);
+
+            assertQuery("SELECT b, sym, " +
+                    "round(percent_rank() OVER (PARTITION BY b ORDER BY ts),3) w0, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w1 FROM tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t0.0\t1
+                            2\ta\t0.0\t2
+                            1\tb\t0.5\t1
+                            2\tb\t0.5\t2
+                            1\ta\t1.0\t3
+                            2\tb\t1.0\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testCumeDistMultiColumnOrder() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, a long, b long) timestamp(ts)", timestampType.getTypeName());
@@ -16938,6 +16986,96 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\tk1\t1\t1
                             1970-01-01T00:00:00.000002Z\tk1\t1\t1
                             """));
+        });
+    }
+
+    @Test
+    public void testRankOverPartitionMixedPartitionKeyTypes() throws Exception {
+        // rank()/dense_rank() over (partition by ... order by ts) take the streaming
+        // WindowRecordCursorFactory path, where the partition map is built lazily, after the whole
+        // projection has been walked. The code generator reuses one key-types buffer across window
+        // columns and rebuilds it for each PARTITION BY, so when two window functions partition by
+        // differently typed keys the streaming rank/dense_rank used to build its map from the last
+        // window column's key types instead of its own. That either crashed (the partition sink
+        // wrote a type the wrongly picked map could not hold) or silently mis-keyed the partitions.
+        // A single rank function, or several sharing one partition key, masked it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, sym symbol, b byte, c1 decimal(76,3), c2 decimal(76,3)) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("insert into tab values " +
+                    "(1,'a',1,10,100)," +
+                    "(2,'a',2,10,200)," +
+                    "(3,'b',1,20,100)," +
+                    "(4,'b',2,10,200)," +
+                    "(5,'a',1,20,100)," +
+                    "(6,'b',2,20,200)");
+
+            // BYTE partition key (rank, not last) followed by a SYMBOL partition key (dense_rank).
+            // Before the fix the rank map was built for the SYMBOL key and the BYTE partition sink's
+            // putByte threw UnsupportedOperationException on the picked Unordered4Map. rank is first
+            // here, so it is the one mis-built.
+            assertQuery("SELECT b, sym, " +
+                    "rank() OVER (PARTITION BY b ORDER BY ts) w0, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w1 FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t1\t1
+                            2\ta\t1\t2
+                            1\tb\t2\t1
+                            2\tb\t2\t2
+                            1\ta\t3\t3
+                            2\tb\t3\t3
+                            """);
+
+            // Swapping the order puts dense_rank (SYMBOL key) first and rank (BYTE key) last; the
+            // mis-built map is now dense_rank's, confirming the bug is about position, not function.
+            assertQuery("SELECT b, sym, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w0, " +
+                    "rank() OVER (PARTITION BY b ORDER BY ts) w1 FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t1\t1
+                            2\ta\t2\t1
+                            1\tb\t1\t2
+                            2\tb\t2\t2
+                            1\ta\t3\t3
+                            2\tb\t3\t3
+                            """);
+
+            // The documented fuzzer repro: a wide DECIMAL(76,3) (Decimal256) partition key. dense_rank
+            // partitions by the single-column c2 key while a later window function partitions by the
+            // two-column (sym, c1) key, so a stale key-types reference made dense_rank build a
+            // two-column map fed by its single-column sink and silently report rank 1 for every row.
+            // min(ts) is cast to long so the expected ticks are stable across timestamp precisions.
+            assertQuery("SELECT c2, " +
+                    "dense_rank() OVER (PARTITION BY c2 ORDER BY ts) dr, " +
+                    "min(ts) OVER (PARTITION BY sym, c1 ORDER BY ts)::long m FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            c2\tdr\tm
+                            100.000\t1\t1
+                            200.000\t1\t1
+                            100.000\t2\t3
+                            200.000\t2\t4
+                            100.000\t3\t5
+                            200.000\t3\t3
+                            """);
         });
     }
 

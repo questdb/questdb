@@ -355,7 +355,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                                          String name) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
-            this.keyColumnTypes = keyColumnTypes;
+            // Snapshot the key types: the streaming path builds the map lazily in
+            // initRecordComparator(), by which point the generator has rebuilt its shared key-types
+            // buffer for a later window column's PARTITION BY.
+            this.keyColumnTypes = copyKeyTypes(keyColumnTypes);
             this.configuration = configuration;
             this.dense = dense;
             this.name = name;
