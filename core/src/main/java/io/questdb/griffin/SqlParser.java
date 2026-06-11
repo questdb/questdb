@@ -950,7 +950,7 @@ public class SqlParser {
      * Builds the quoted, comma-separated base column list of a policied table, for the window read-filter's
      * outer projection (so the synthetic {@link RowExpiryUtil#KEEP_COLUMN} is not exposed through SELECT *).
      * Reads from the in-memory metadata cache, falling back to the authoritative table metadata on a cache
-     * miss — exactly as {@link #lookupExpiryPredicate} does. The two MUST agree: the read path reaches this
+     * miss -- exactly as {@link #lookupExpiryPredicate} does. The two MUST agree: the read path reaches this
      * only after {@code lookupExpiryPredicate} returned a (window/keep-by) predicate, which itself uses the
      * fallback, so during the brief startup window before the cache hydrates the predicate is non-null while
      * the cache has no entry; without the same fallback here the column list would be empty and the rewrite
@@ -985,8 +985,9 @@ public class SqlParser {
                 sink.putAscii('"').put(metadata.getColumnName(i)).putAscii('"');
             }
         } catch (CairoException ignore) {
-            // Table concurrently dropped/renamed: return what we have; the caller's read fails closed rather
-            // than exposing rows (same posture as lookupExpiryPredicate treating this as "no policy").
+            // Table concurrently dropped/renamed: getTableMetadata throws on open (before the loop), so the
+            // sink is empty; return that empty list and the caller's read fails closed rather than exposing
+            // rows (same posture as lookupExpiryPredicate treating this as "no policy").
         }
         return sink.toString();
     }

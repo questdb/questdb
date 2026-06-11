@@ -57,9 +57,12 @@ the clause, and `tables()` / `materialized_views()` expose it (`expire_predicate
 - **NULLs.** The three-valued CASE keep-filter means a `NULL` value is never *less than* the group max (the
   comparison is `UNKNOWN`), so `KEEP HIGHEST/LOWEST` and value-based `WHEN` predicates **keep** rows whose
   value is `NULL`. `KEEP LATEST` uses the designated timestamp, which is never `NULL`. **`KEEP <N>` is the
-  exception:** it ranks with `row_number()`, and because QuestDB's window `ORDER BY` has no `NULLS LAST` and
-  sorts `NULL` **first** under `DESC`, `NULL`-valued rows take the leading ranks and are kept only while there
-  is room within `N` (ahead of real values). Use `KEEP HIGHEST/LOWEST` (no `N`) when every `NULL` must be kept.
+  exception:** it ranks with `row_number()` and QuestDB has no `NULLS LAST` to force a uniform position, so
+  where a `NULL` lands in the ranking is **type-dependent**. Under `DESC`, a floating-point `NULL` (NaN) sorts
+  FIRST so it is kept while there is room within `N`, but an integer/timestamp `NULL` (a MIN sentinel) sorts
+  LAST so it is expired first; `ASC` mirrors this. A `NULL`-valued row may therefore be kept or expired under
+  `KEEP <N>` depending on the column type and direction — use `KEEP HIGHEST/LOWEST` (no `N`) when every `NULL`
+  must be kept regardless of type.
 - **Ties / determinism.** `KEEP HIGHEST/LOWEST` keeps *all* rows tied at the max/min — monotonic and
   deterministic. `KEEP <N> …` makes the order total by appending the designated timestamp as a tiebreak, so
   the N-th boundary is deterministic (assuming `(col, ts)` is effectively unique; pair with `DEDUP UPSERT

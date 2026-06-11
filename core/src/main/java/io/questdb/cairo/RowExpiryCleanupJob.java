@@ -238,7 +238,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // the sequencer transaction: require the table FULLY APPLIED at the start (so the scan is complete)
         // and UNCHANGED-BY-OTHERS through each destructive commit (our own commits are tracked in
         // expectedSeqTxn). A non-WAL table writes synchronously, so the survivor recount is authoritative
-        // there. A bounds-based DROP is always safe (every row below T is expired) and is never gated.
+        // there. A bounds-based DROP needs no per-commit seqTxn re-check (every row below T is expired, so a
+        // concurrent back-fill into that range is expired too); it is still attempted only when racyOpsAllowed
+        // (writer caught up at sweep start), uniformly with the other reclamation paths.
         final boolean isWal = tableToken.isWal();
         final SeqTxnTracker txnTracker = isWal ? engine.getTableSequencerAPI().getTxnTracker(tableToken) : null;
         long expectedSeqTxn = isWal ? txnTracker.getSeqTxn() : 0;

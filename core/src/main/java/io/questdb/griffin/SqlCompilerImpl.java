@@ -5286,9 +5286,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * binding it against the columns the object will have. This is purely structural: it parses + binds
      * the expression against {@code metadata} and checks the result is boolean. It touches no table, so
      * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #validateExpiryPredicate})
-     * and, running before {@code createTable}/{@code createMatView}, cannot leave a half-created object
-     * behind on failure. CTAS / mat views pass the SELECT's output metadata; plain / LIKE tables pass
-     * {@code null} and the columns are taken from the operation itself.
+     * and, running before {@code createMatView}, cannot leave a half-created object behind on failure.
+     * Only a CREATE MATERIALIZED VIEW scalar WHEN policy reaches this (EXPIRE ROWS is rejected on plain
+     * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
+     * SELECT output metadata.
      */
     private void validateCreateExpiryPredicate(
             SqlExecutionContext executionContext,

@@ -114,10 +114,11 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
 
     @Test
     public void testKeepTopNNullsSortFirstWithinN() throws Exception {
-        // Documents top-N NULL handling: QuestDB has no NULLS LAST and DESC sorts NULLs FIRST, so under
-        // KEEP <N> HIGHEST a NULL occupies a leading rank and is kept while there is room within N, ahead of
-        // real values. Here N=2 with one NULL: the NULL takes rank 1 and the single highest value rank 2, so
-        // 8.0 and 7.0 are expired. (Use KEEP HIGHEST without N when every NULL must be kept.)
+        // Documents top-N NULL handling for a FLOATING-POINT column (v is DOUBLE): QuestDB has no NULLS LAST
+        // and sorts a float NULL (NaN) FIRST under DESC, so under KEEP <N> HIGHEST the NULL takes a leading
+        // rank and is kept while within N, ahead of real values. Here N=2 with one NULL: NULL=rank1,
+        // 9.0=rank2, so 8.0 and 7.0 expire. (An integer/timestamp NULL sorts LAST under DESC and would be
+        // expired first instead -- the position is type-dependent; use KEEP HIGHEST without N to keep all NULLs.)
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values " +

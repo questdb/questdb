@@ -33,7 +33,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Verifies the EXPIRE ROWS row-expiry clause on MATERIALIZED VIEWs:
@@ -186,7 +188,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 first = job.cleanupTable(token, predicate, 0);
             }
             drainWalAndMatViewQueues();
-            org.junit.Assert.assertTrue("first sweep should reclaim", first);
+            assertTrue("first sweep should reclaim", first);
             assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
 
             // Second sweep: nothing expired remains -> no work, partitions unchanged.
@@ -195,7 +197,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 second = job.cleanupTable(token, predicate, 0);
             }
             drainWalAndMatViewQueues();
-            org.junit.Assert.assertFalse("second sweep must be a no-op", second);
+            assertFalse("second sweep must be a no-op", second);
             assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
         });
     }
