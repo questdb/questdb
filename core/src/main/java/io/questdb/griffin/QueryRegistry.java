@@ -34,7 +34,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentLongHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.Unsafe;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.StringSink;
@@ -78,26 +80,57 @@ public class QueryRegistry {
         }
 
         Entry entry = registry.get(queryId);
-        if (entry != null) {
-            if (!Chars.equals(entry.principal, securityContext.getPrincipal())) {
+        if (entry != null && entry.beginCancel(queryId)) {
+            // While the entry is in the CANCELLING state the query owner busy-waits
+            // in retire(), so keep the guarded sections minimal: snapshot the fields
+            // the permission checks need, then run the checks outside the guard.
+            // authorizeSqlEngineAdmin() is an extension point and may be slow.
+            final boolean isAdminRequired;
+            final boolean isWAL;
+            try {
+                isAdminRequired = !Chars.equals(entry.principal, securityContext.getPrincipal());
+                isWAL = entry.isWAL;
+            } finally {
+                entry.activate(queryId);
+            }
+
+            if (isAdminRequired) {
                 // only a SQL Engine admin can cancel other user's queries
                 securityContext.authorizeSqlEngineAdmin();
             }
-
-            if (entry.isWAL) {
+            if (isWAL) {
                 throw CairoException.nonCritical().put("query applied in WAL job can't be cancelled [id=").put(queryId).put(']');
             }
-            entry.cancel();
-            entry.changedAtNs = clock.getTicks();
-            entry.state = Entry.State.CANCELLED;
-            LOG.info().$("cancelling query [user=").$(securityContext.getPrincipal()).$(",queryId=").$(queryId).$(",sql=").$(entry.query).I$();
-            return true;
+
+            // Re-acquire the guard for the actual cancellation. This fails if the
+            // query finished while the checks ran, in which case we report "not found".
+            if (entry.beginCancel(queryId)) {
+                try {
+                    entry.cancel();
+                    entry.changedAtNs = clock.getTicks();
+                    entry.state = Entry.State.CANCELLED;
+                    LOG.info().$("cancelling query [user=").$(securityContext.getPrincipal()).$(",queryId=").$(queryId).$(",sql=").$(entry.query).I$();
+                    return true;
+                } finally {
+                    entry.activate(queryId);
+                }
+            }
         }
 
         LOG.info().$("query not found in registry [id=").$(queryId).I$();
         return false;
     }
 
+    /**
+     * Returns the registry entry for the given query id, or null when not found.
+     * Reads of the returned entry are best-effort: the entry may be concurrently
+     * retired and recycled for another query while the caller reads its fields,
+     * e.g. in the query_activity() function. The lifecycle guard only protects
+     * the cancel/unregister/reuse paths.
+     *
+     * @param id id of the query to look up
+     * @return entry for the given query id, or null
+     */
     public Entry getEntry(long id) {
         return registry.get(id);
     }
@@ -151,6 +184,9 @@ public class QueryRegistry {
         }
         e.isWAL = executionContext.isWalApplication();
         e.principal = executionContext.getSecurityContext().getPrincipal();
+        // the volatile lifecycle store also publishes the plain field writes
+        // above to threads that look the entry up via the registry
+        e.activate(queryId);
         registry.put(queryId, e);
 
         Listener listener = this.listener;
@@ -184,7 +220,11 @@ public class QueryRegistry {
         executionContext.setCancelledFlag(null);
         final Entry e = registry.remove(queryId);
         if (e != null) {
-            tlQueryPool.get().push(e);
+            if (e.retire(queryId)) {
+                tlQueryPool.get().push(e);
+            } else {
+                LOG.error().$("query lifecycle mismatch [id=").$(queryId).I$();
+            }
         } else {
             // this might happen if query was cancelled
             LOG.error().$("query to unregister not found [id=").$(queryId).I$();
@@ -195,11 +235,34 @@ public class QueryRegistry {
         void onRegister(CharSequence query, long queryId, SqlExecutionContext executionContext);
     }
 
+    /**
+     * Pooled, reusable descriptor of a registered query. The volatile lifecycle
+     * word packs the owning query id and a state:
+     * <pre>
+     * IDLE -&gt; ACTIVE -&gt; (CANCELLING -&gt; ACTIVE)* -&gt; RETIRED -&gt; IDLE
+     * </pre>
+     * register() activates the entry for a query id before publishing it in the
+     * registry. cancel() briefly holds CANCELLING while it mutates the entry,
+     * then releases it back to ACTIVE. unregister() moves ACTIVE to RETIRED,
+     * waiting out an in-flight canceller, and pushes the entry to the pool,
+     * where clear() resets it to IDLE. Because the query id is part of the CAS
+     * word, a stale canceller holding a recycled entry cannot transition it.
+     */
     public static class Entry implements Mutable {
+        private static final long LIFECYCLE_IDLE = -1;
+        private static final long LIFECYCLE_OFFSET = Unsafe.getFieldOffset(Entry.class, "lifecycle");
+        private static final long LIFECYCLE_STATE_ACTIVE = 0;
+        private static final long LIFECYCLE_STATE_CANCELLING = 1;
+        private static final long LIFECYCLE_STATE_RETIRED = 2;
+
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final StringSink query = new StringSink();
         private long changedAtNs;
         private boolean isWAL;
+        // Packs query id and state into one CAS word to guard pooled Entry reuse.
+        // The id occupies bits 2-63, so the usable id space is 2^62; idSeq starts
+        // at 0 on every server start and cannot realistically reach that.
+        private volatile long lifecycle = LIFECYCLE_IDLE;
         private CharSequence poolName;
         private CharSequence principal;
         private long registeredAtNs;
@@ -221,6 +284,7 @@ public class QueryRegistry {
             principal = null;
             state = State.IDLE;
             isWAL = false;
+            lifecycle = LIFECYCLE_IDLE;
         }
 
         public AtomicBoolean getCancelled() {
@@ -261,6 +325,48 @@ public class QueryRegistry {
 
         public boolean isWAL() {
             return isWAL;
+        }
+
+        private static long lifecycle(long queryId, long state) {
+            return (queryId << 2) | state;
+        }
+
+        /**
+         * Moves the entry into the ACTIVE lifecycle state for the given query id.
+         * register() calls this to publish the entry before inserting it into the
+         * registry; cancel() calls it to release the CANCELLING state.
+         */
+        private void activate(long queryId) {
+            lifecycle = lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
+        }
+
+        private boolean beginCancel(long queryId) {
+            return transitionFromActive(queryId, LIFECYCLE_STATE_CANCELLING);
+        }
+
+        private boolean retire(long queryId) {
+            return transitionFromActive(queryId, LIFECYCLE_STATE_RETIRED);
+        }
+
+        private boolean transitionFromActive(long queryId, long targetState) {
+            final long active = lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
+            final long cancelling = lifecycle(queryId, LIFECYCLE_STATE_CANCELLING);
+            final long target = lifecycle(queryId, targetState);
+            while (true) {
+                final long current = lifecycle;
+                if (current == active) {
+                    if (Unsafe.cas(this, LIFECYCLE_OFFSET, active, target)) {
+                        return true;
+                    }
+                    continue;
+                }
+                if (current == cancelling) {
+                    // a canceller owns the entry, wait for it to finish
+                    Os.pause();
+                    continue;
+                }
+                return false;
+            }
         }
 
         public static class State {
