@@ -48,8 +48,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private boolean areCursorsPrepared;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
-    private long rowsProducedSinceSkip;
     private RowCursor rowCursor;
+    private long rowsProducedSinceSkip;
 
     public PageFrameRecordCursorImpl(
             CairoConfiguration configuration,
@@ -181,7 +181,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         prepareRowCursorFactory();
 
-        final boolean canClamp = filter == null && !rowCursorFactory.isUsingIndex() && rowCursorFactory.isForwardScan();
+        // The clamp decodes only the leading [0, n) rows of a parquet frame, so it is
+        // sound only for a scan that yields the frame's rows 1:1 in ascending order.
+        // isEntity() is that guarantee; a scattered/index row cursor reports false.
+        final boolean canClamp = filter == null && rowCursorFactory.isEntity() && rowCursorFactory.isForwardScan();
         this.maxRowsAfterSkip = canClamp ? maxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
         this.rowsProducedSinceSkip = 0;
 

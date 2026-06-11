@@ -1749,6 +1749,174 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOverParquetDescendingAfterReaderEviction() throws Exception {
+        // A backward scan that skips a whole partition returns a skip-only frame skeleton.
+        // The skeleton must not carry a stale parquetMetaDecoder from a prior frame, or the
+        // freed pointer reaches PageFrameAddressCache after the reader is evicted.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (0, '2024-01-01T00:00:00.000000Z'),
+                    (1, '2024-01-02T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:01.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z'),
+                    (4, '2024-01-03T00:00:01.000000Z')""");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in ('2024-01-01', '2024-01-02')");
+            try (RecordCursorFactory factory = select("SELECT a FROM x ORDER BY ts DESC LIMIT 2, 4")) {
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        2
+                        1
+                        """);
+                engine.releaseAllReaders();
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        2
+                        1
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetForwardNoOffset() throws Exception {
+        // Headline case: SELECT ... LIMIT N over a parquet partition decodes only the first N rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // N < frame size
+            assertQuery("SELECT a FROM x LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            """);
+            // N == full size
+            assertQuery("SELECT a FROM x LIMIT 8")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            8
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetIndexedSymbolOrderBy() throws Exception {
+        // Regression: the decode-window clamp must not apply to a symbol-index scan.
+        // SortedSymbolIndexRowCursorFactory yields rows in symbol order, scattered across the
+        // frame, so clamping the parquet decode to the leading rows would read undecoded memory
+        // for the high row indexes. 'aa' sorts first but lives at rows 5-7, past a 3-row window.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('zz', 0, '2024-01-01T00:00:00.000000Z'),
+                    ('zz', 1, '2024-01-01T00:00:01.000000Z'),
+                    ('zz', 2, '2024-01-01T00:00:02.000000Z'),
+                    ('zz', 3, '2024-01-01T00:00:03.000000Z'),
+                    ('zz', 4, '2024-01-01T00:00:04.000000Z'),
+                    ('aa', 5, '2024-01-01T00:00:05.000000Z'),
+                    ('aa', 6, '2024-01-01T00:00:06.000000Z'),
+                    ('aa', 7, '2024-01-01T00:00:07.000000Z'),
+                    ('mm', 8, '2024-01-02T00:00:00.000000Z')""");
+            // 2024-01-01 stays historic so ADD INDEX routes it through indexParquetPartition.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX");
+            assertQuery("SELECT s, i FROM x WHERE ts in '2024-01-01' ORDER BY s LIMIT 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            s	i
+                            aa	5
+                            aa	6
+                            aa	7
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetSpansMultipleRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(10)");
+            // trailing active partition so 2024-01-01 can convert
+            execute("INSERT INTO x VALUES (999, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            // row group size 4 splits 2024-01-01 into row groups of 4, 4, 2; LIMIT 6 spans the
+            // first two, decoding 4 + 2 rows.
+            assertQuery("SELECT a FROM x WHERE ts in '2024-01-01' LIMIT 6")
+                    .noLeakCheck()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            """);
+            // skip lands in the second row group and the take spans into the third
+            assertQuery("SELECT a FROM x WHERE ts in '2024-01-01' LIMIT 5, 9")
+                    .noLeakCheck()
+                    .returns("""
+                            a
+                            6
+                            7
+                            8
+                            9
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetUnionAll() throws Exception {
+        // The hint passes through UnionAllRecordCursor to both legs; the result must be exact.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(5)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("CREATE TABLE y (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO y SELECT x + 100, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(5)");
+            drainWalQueue();
+            execute("ALTER TABLE y CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("(SELECT a FROM x) UNION ALL (SELECT a FROM y) LIMIT 7")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            4
+                            5
+                            101
+                            102
+                            """);
+        });
+    }
+
+    @Test
     public void testLimitRightFrameFormat() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1800,6 +1968,13 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testLong256LateMaterializationOverParquet() throws Exception {
+        // PageFrameFilteredMemoryRecord routes column reads through getRowIndex(columnIndex), which
+        // returns the absolute row index for filter columns and the compacted index for late-
+        // materialized columns. Most overrides are wired up correctly, but getLong256A / getLong256B
+        // fell through to a private parent helper that read with the absolute rowIndex. For a query
+        // that filters on a non-LONG256 column and groups by a LONG256, every late-materialized
+        // LONG256 read returned the wrong row's value, and reads beyond the compacted slice spilled
+        // into adjacent buffer memory.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x SELECT " +
