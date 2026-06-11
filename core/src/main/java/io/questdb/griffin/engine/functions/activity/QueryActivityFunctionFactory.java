@@ -235,10 +235,17 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 }
 
                 this.queryId = queryId;
+                // Read state first: cancel() writes changedAtNs then state while it
+                // holds the CANCELLING guard, and the closing recheck validates state.
+                // Reading state before changedAtNs makes it the snapshot's version
+                // guard. If a concurrent cancel() lands, either the recheck rejects the
+                // row, or observing the new state already implies the preceding
+                // changedAtNs write is visible to the later read, so the pair stays
+                // consistent rather than showing 'cancelled' with a stale state_change.
+                this.state = entry.getState();
                 this.workerId = entry.getWorkerId();
                 this.registeredAtNs = entry.getRegisteredAtNs();
                 this.changedAtNs = entry.getChangedAtNs();
-                this.state = entry.getState();
                 this.isWAL = entry.isWAL();
 
                 final CharSequence entryPoolName = entry.getPoolName();
