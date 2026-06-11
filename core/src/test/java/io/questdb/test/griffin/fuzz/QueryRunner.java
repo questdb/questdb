@@ -542,6 +542,19 @@ public final class QueryRunner {
      *       {@code IN} over BOOLEAN, while the bind form keeps the subtree
      *       opaque and the type-check fires. Compile-time vs. bind-time
      *       type resolution, not a data divergence.</li>
+     *   <li>"cannot compare" - the {@code IN} and comparison factories reject
+     *       mismatched operand types at compile time. For example {@code someInt
+     *       IN (someDoubleExpr)} resolves the cheaper INT-to-LONG widening and
+     *       lands in {@code InLongFunctionFactory}, which admits only
+     *       integral/string list elements and rejects the DOUBLE one with
+     *       "cannot compare LONG with type DOUBLE" -- whereas the sibling
+     *       {@code =} operator widens both sides and compiles. Same fold-order
+     *       shape as the "there is no matching operator" case: the literal form
+     *       folds an enclosing contradiction (e.g. {@code false != false}) to
+     *       FALSE, collapses the whole WHERE, and never type-checks the {@code
+     *       IN} subtree, while the bind form keeps the predicate opaque so the
+     *       type-check fires. Compile-time-vs-fold-order, not a data
+     *       divergence.</li>
      *   <li>"decimal places but scale is limited to" - {@code FunctionParser}
      *       routes a literal {@code DOUBLE/FLOAT::DECIMAL(p,s)} through
      *       {@code DecimalUtil.parseDecimalConstant} with the strict {@code
@@ -565,6 +578,7 @@ public final class QueryRunner {
                 || o.exceptionMessage.contains("constant expected")
                 || o.exceptionMessage.contains("there is no matching function")
                 || o.exceptionMessage.contains("there is no matching operator")
+                || o.exceptionMessage.contains("cannot compare")
                 || o.exceptionMessage.contains("decimal places but scale is limited to")
                 || (o.exceptionMessage.contains("right side column") && o.exceptionMessage.contains("is of unsupported type"));
     }
