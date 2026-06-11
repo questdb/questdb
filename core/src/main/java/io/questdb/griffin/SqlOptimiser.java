@@ -382,6 +382,10 @@ public class SqlOptimiser implements Mutable {
         literalCollectorBNames.clear();
         defaultAliasCount = 0;
         hasNonEquiNullingJoin = false;
+        isNullingExecOrderValid = false;
+        nullingAnchorByExecPos.clear();
+        nullingAnchorByModelPos.clear();
+        nullingExecPosByModel.clear();
         expressionNodePool.clear();
         characterStore.clear();
         tablesSoFar.clear();
@@ -404,12 +408,6 @@ public class SqlOptimiser implements Mutable {
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
         lateralJoinRewriter.clear();
-    }
-
-    public void clearConstNameToMaps() {
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -2258,6 +2256,12 @@ public class SqlOptimiser implements Mutable {
             return qc;
         }
         return null;
+    }
+
+    private void clearConstNameToMaps() {
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
     }
 
     /**
