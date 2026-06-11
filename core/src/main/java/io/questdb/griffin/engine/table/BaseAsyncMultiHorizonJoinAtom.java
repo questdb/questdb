@@ -34,6 +34,7 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -561,9 +562,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             TablePageFrameCursor slavePageFrameCursor,
             ConcurrentTimeFrameState sharedState
     ) throws SqlException {
-        // Initialize owner cursor for this slave
+        // Initialize owner cursor for this slave. Each owner and per-worker pool is sized to the
+        // configured budget, so a fan-out over a parquet slave would multiply peak RSS by the pool
+        // count (here workerCount * slaveCount); MONOTONIC caps each effective budget to a quarter.
         int tsIndex = ownerSlaveTimeFrameCursors.getQuick(slaveIndex).getTimestampIndex();
         ownerSlaveTimeFrameCursors.getQuick(slaveIndex).of(sharedState, slavePageFrameCursor, tsIndex);
+        ownerSlaveTimeFrameCursors.getQuick(slaveIndex).setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
         ownerSlaveTimeFrameHelpers.getQuick(slaveIndex).of(ownerSlaveTimeFrameCursors.getQuick(slaveIndex));
 
         // Initialize per-worker cursors for this slave
@@ -571,6 +575,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             int idx = w * slaveCount + slaveIndex;
             ConcurrentTimeFrameCursor c = perWorkerSlaveTimeFrameCursors.getQuick(idx);
             c.of(sharedState, slavePageFrameCursor, tsIndex);
+            c.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             perWorkerSlaveTimeFrameHelpers.getQuick(idx).of(c);
         }
 

@@ -596,11 +596,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     ) throws SqlException {
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
         ownerSlaveTimeFrameCursor.of(sharedState, pageFrameCursor, timestampIndex);
-        // The slave is probed at scattered rowIds, so the owner pool runs at the full budget.
-        // Each per-worker pool is also sized to the full configured budget, so a fan-out over a
-        // parquet slave would multiply peak RSS by the worker count; MONOTONIC caps their
-        // effective budget to a quarter to bound that, matching BaseAsyncHorizonJoinAtom.
-        ownerSlaveTimeFrameCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+        // Both the owner pool and every per-worker pool are sized to the configured budget, so a
+        // fan-out over a parquet slave would multiply peak RSS by the pool count; MONOTONIC caps
+        // each effective budget to a quarter to bound that, matching BaseAsyncHorizonJoinAtom.
+        ownerSlaveTimeFrameCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
         for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
             final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
