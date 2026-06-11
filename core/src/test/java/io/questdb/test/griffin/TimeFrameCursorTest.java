@@ -33,6 +33,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
@@ -1206,6 +1207,14 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     }
                     Assert.assertNotNull("a decode under the RSS cap must fail", decodeError);
                     Assert.assertTrue(decodeError.isOutOfMemory());
+
+                    // The failed navigate must drop the record's stale fast-path binding, so a later
+                    // navigateTo() to its old frame cannot read a buffer the failure freed or reused.
+                    Assert.assertEquals(
+                            "failed navigate must clear the record's stale frame binding",
+                            -1,
+                            ((PageFrameMemoryRecord) record).getFrameIndex()
+                    );
 
                     // The failed navigate must not corrupt the accounting.
                     Assert.assertTrue("cachedBytes must stay non-negative, got " + pool.getCachedBytes(), pool.getCachedBytes() >= 0);

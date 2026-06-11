@@ -234,9 +234,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             ParquetBuffers parquetBuffers = tryHit(frameIndex, usageBit);
             if (parquetBuffers == null) {
-                openParquet(frameIndex);
-                parquetBuffers = acquireBuffer(frameIndex, usageBit);
-                decodeAndAccount(frameIndex, parquetBuffers);
+                try {
+                    openParquet(frameIndex);
+                    parquetBuffers = acquireBuffer(frameIndex, usageBit);
+                    decodeAndAccount(frameIndex, parquetBuffers);
+                } catch (Throwable th) {
+                    // tryHit() unpinned the record's prior buffer, so any failure here leaves
+                    // it evictable. Drop the stale binding so the fast path can't read freed
+                    // memory; the next navigateTo() re-resolves a live entry or re-decodes.
+                    record.clear();
+                    throw th;
+                }
             }
             record.init(
                     frameIndex,
@@ -278,9 +286,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         } else if (format == PartitionFormat.PARQUET) {
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
             if (parquetBuffers == null) {
-                openParquet(frameIndex);
-                parquetBuffers = acquireBuffer(frameIndex, FRAME_MEMORY_MASK);
-                decodeAndAccount(frameIndex, parquetBuffers);
+                try {
+                    openParquet(frameIndex);
+                    parquetBuffers = acquireBuffer(frameIndex, FRAME_MEMORY_MASK);
+                    decodeAndAccount(frameIndex, parquetBuffers);
+                } catch (Throwable th) {
+                    // Same hazard as the record fast path; drop frameMemory's stale binding.
+                    frameMemory.clear();
+                    throw th;
+                }
             }
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
@@ -312,9 +326,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         } else if (format == PartitionFormat.PARQUET) {
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
             if (parquetBuffers == null) {
-                openParquet(frameIndex, columnIndexes, true);
-                parquetBuffers = acquireBuffer(frameIndex, FRAME_MEMORY_MASK);
-                decodeAndAccount(frameIndex, parquetBuffers);
+                try {
+                    openParquet(frameIndex, columnIndexes, true);
+                    parquetBuffers = acquireBuffer(frameIndex, FRAME_MEMORY_MASK);
+                    decodeAndAccount(frameIndex, parquetBuffers);
+                } catch (Throwable th) {
+                    // Same hazard as the record fast path; drop frameMemory's stale binding.
+                    frameMemory.clear();
+                    throw th;
+                }
             }
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;

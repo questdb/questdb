@@ -131,12 +131,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // Assign base cursor first, so close() frees it if entryMem.reopen() throws.
+        this.baseCursor = baseCursor;
+        this.baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
         }
-        this.baseCursor = baseCursor;
-        this.baseRecord = baseCursor.getRecord();
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
