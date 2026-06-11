@@ -637,6 +637,19 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (queryModel.getJoinModels().size() > 1) {
             return false;
         }
+        // LATEST ON / UNION / GROUP BY / DISTINCT lower onto a NESTED model, which the top-level
+        // isNotPlainSelectModel() check above does not see. Walk the whole nested chain so a DERIVED view
+        // (e.g. SELECT * FROM base LATEST ON ts PARTITION BY k) is NOT misclassified as passthrough: its
+        // rows are not 1:1 with the base, so EXPIRE ROWS physical cleanup must never run on it.
+        for (IQueryModel m = queryModel; m != null; m = m.getNestedModel()) {
+            if (m.getLatestByType() != IQueryModel.LATEST_BY_NONE
+                    || m.getUnionModel() != null
+                    || m.getGroupBy().size() > 0
+                    || m.getJoinModels().size() > 1
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT) {
+                return false;
+            }
+        }
         final ObjList<QueryColumn> cols = queryModel.getBottomUpColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
             if (!hasNoAggregates(functionFactoryCache, queryModel, i)) {

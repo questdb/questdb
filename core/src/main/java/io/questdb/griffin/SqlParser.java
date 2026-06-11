@@ -1102,18 +1102,21 @@ public class SqlParser {
      * QuestDB comparisons are two-valued: a NULL operand makes BOTH {@code a < b} and {@code a >= b} false, so
      * {@code NOT(a < b)} (which is true when an operand is NULL) is NOT equivalent to {@code a >= b} (false)
      * unless both operands are guaranteed non-null. The flip is therefore allowed only when one operand is the
-     * designated timestamp column (never NULL) and the other references no column (a constant / now()-style
-     * expression, also never NULL) — exactly the {@code ts < now()} shape the partition-pruning optimisation
-     * targets. Every other shape keeps the {@code NOT(...)} wrap, which is always correct (it just does not
-     * prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on a nullable column would
-     * hide (and the cleanup job would delete) rows whose {@code v} is NULL even though they never expired.
+     * designated timestamp column (never NULL) and the other is <i>provably</i> non-NULL per
+     * {@link #isOperandProvablyNonNull} (a non-null literal, the now()/systimestamp()/sysdate() clock, or
+     * null-preserving timestamp arithmetic over non-null operands) — exactly the {@code ts < now()} shape the
+     * partition-pruning optimisation targets. Every other shape (including a column-free but possibly-NULL
+     * constant like {@code cast(null as timestamp)}) keeps the {@code NOT(...)}/CASE wrap, which is always
+     * correct (it just does not prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on
+     * a nullable column would hide (and the cleanup job would delete) rows whose {@code v} is NULL even though
+     * they never expired.
      */
     private static boolean isNullSafeOrderingFlip(ExpressionNode a, ExpressionNode b, CharSequence designatedTimestampColumn) {
         if (a == null || b == null || designatedTimestampColumn == null) {
             return false;
         }
-        return (isDesignatedTimestamp(a, designatedTimestampColumn) && hasNoColumnReference(b))
-                || (isDesignatedTimestamp(b, designatedTimestampColumn) && hasNoColumnReference(a));
+        return (isDesignatedTimestamp(a, designatedTimestampColumn) && isOperandProvablyNonNull(b))
+                || (isDesignatedTimestamp(b, designatedTimestampColumn) && isOperandProvablyNonNull(a));
     }
 
     private static boolean isDesignatedTimestamp(ExpressionNode node, CharSequence designatedTimestampColumn) {
@@ -1123,26 +1126,72 @@ public class SqlParser {
     }
 
     /**
-     * True if the sub-tree contains no column reference (LITERAL) or bind variable (BIND_VARIABLE) — i.e. it
-     * is built only from constants and functions of constants (e.g. {@code now()}, {@code dateadd('d', -1,
-     * now())}), so it cannot evaluate to NULL on a per-row basis.
+     * Conservative "this expression can never evaluate to NULL" test, gating the null-unsafe timestamp flip
+     * (see {@link #isNullSafeOrderingFlip}). Only an allowlist is treated as provably non-null: a non-null
+     * constant literal; the nullary clock functions {@code now()/systimestamp()/sysdate()}; and the
+     * null-preserving timestamp functions / arithmetic operators (e.g. {@code dateadd}, {@code date_trunc},
+     * {@code timestamp_floor}, {@code +}, {@code -}, {@code *}) applied to provably-non-null operands.
+     * Everything else — a column (LITERAL), bind variable, the NULL literal, {@code cast(...)},
+     * {@code to_timestamp(...)}, or any unknown function — is treated as possibly-NULL, so the flip falls
+     * back to the always-correct CASE form. Being conservative here only costs a partition-pruning
+     * opportunity, never correctness. (Merely "references no column" is NOT enough: a column-free constant
+     * such as {@code cast(null as timestamp)} is still NULL, and flipping {@code NOT(ts < NULL)} to
+     * {@code ts >= NULL} would wrongly hide every row.)
      */
-    private static boolean hasNoColumnReference(ExpressionNode node) {
+    private static boolean isOperandProvablyNonNull(ExpressionNode node) {
         if (node == null) {
-            return true;
-        }
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
             return false;
         }
-        if (!hasNoColumnReference(node.lhs) || !hasNoColumnReference(node.rhs)) {
-            return false;
+        if (node.type == ExpressionNode.CONSTANT) {
+            return !SqlKeywords.isNullKeyword(node.token);
         }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (!hasNoColumnReference(node.args.getQuick(i))) {
+        if (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.OPERATION) {
+            if (isNeverNullClockFunction(node.token)) {
+                return true;
+            }
+            if (!isNullPreservingTimestampExpr(node.token)) {
                 return false;
             }
+            // null-preserving: non-null iff every operand is non-null (and there is at least one operand).
+            boolean hasOperand = false;
+            if (node.lhs != null) {
+                if (!isOperandProvablyNonNull(node.lhs)) {
+                    return false;
+                }
+                hasOperand = true;
+            }
+            if (node.rhs != null) {
+                if (!isOperandProvablyNonNull(node.rhs)) {
+                    return false;
+                }
+                hasOperand = true;
+            }
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                if (!isOperandProvablyNonNull(node.args.getQuick(i))) {
+                    return false;
+                }
+                hasOperand = true;
+            }
+            return hasOperand;
         }
-        return true;
+        return false;
+    }
+
+    private static boolean isNeverNullClockFunction(CharSequence token) {
+        return Chars.equalsIgnoreCase(token, "now")
+                || Chars.equalsIgnoreCase(token, "systimestamp")
+                || Chars.equalsIgnoreCase(token, "sysdate");
+    }
+
+    private static boolean isNullPreservingTimestampExpr(CharSequence token) {
+        // null-in -> null-out, non-null-in -> non-null-out, so the result is non-null iff all operands are.
+        return Chars.equalsIgnoreCase(token, "dateadd")
+                || Chars.equalsIgnoreCase(token, "date_trunc")
+                || Chars.equalsIgnoreCase(token, "timestamp_floor")
+                || Chars.equalsIgnoreCase(token, "to_timezone")
+                || Chars.equalsIgnoreCase(token, "to_utc")
+                || (token != null && token.length() == 1
+                && (token.charAt(0) == '+' || token.charAt(0) == '-' || token.charAt(0) == '*'));
     }
 
     /**

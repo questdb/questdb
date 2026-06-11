@@ -121,6 +121,44 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireScalarCleanupKeepsNullPredicateRow() throws Exception {
+        // A row whose scalar predicate operand is NULL is KEPT (v < 2.0 is UNKNOWN, not TRUE). Physical
+        // cleanup must not delete it: the partial partition compacts but retains the NULL row. Scalar-WHEN
+        // cleanup uses its own keep-filter (buildRowExpiryKeepFilter), so this guards that path's 3VL.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // v<2 -> expired (d1 partial)
+                    "('C', null, '2024-01-01T00:00:00.000000Z')," +  // NULL -> kept (d1)
+                    "('B', 1.5, '2024-01-02T00:00:00.000000Z')," +   // v<2 -> d2 fully expired
+                    "('D', 9.0, '2024-01-03T00:00:00.000000Z')");    // active partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate);
+            }
+            drainWalAndMatViewQueues();
+
+            // d1 partial (A expired, C null kept) -> 1 row; d2 fully expired -> wiped; active d3 kept.
+            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql(
+                    "sym\tv\n" +
+                            "C\tnull\n" +
+                            "D\t9.0\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testExpireScalarCleanupReclaimsOldPartition() throws Exception {
         // The physical cleanup reclaims on a mat view via REPLACE_RANGE (DROP PARTITION via SQL is rejected
         // for mat views). Here a wholly-below-threshold partition is wiped.
@@ -504,6 +542,21 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadFilterTimestampNullConstantKeepsAllRows() throws Exception {
+        // ts < cast(null as timestamp) is never TRUE, so NO row expires -- all rows stay visible. The
+        // null-unsafe flip (NOT(ts < T) -> ts >= T) would have produced `ts >= NULL` and hidden EVERY row
+        // (read/cleanup divergence: cleanup keeps them). The provably-non-null guard keeps the CASE form here.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when ts < cast(null as timestamp)");
+            execute("insert into base values ('A', '2024-01-05T00:00:00.000000Z')");
+            execute("insert into base values ('B', '2024-01-20T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertSql("sym\n" + "A\n" + "B\n", "select sym from mv order by ts");
+        });
+    }
+
+    @Test
     public void testApplyTimeGuardIgnoresExpireOnPlainTable() throws Exception {
         // Defense-in-depth (apply/write side): setMetaExpiry must NOT persist a policy onto a non-mat-view,
         // even if a malformed/forged alter reaches the writer (the SQL compiler already rejects this; here we
@@ -518,6 +571,24 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             try (TableMetadata metadata = engine.getTableMetadata(token)) {
                 org.junit.Assert.assertNull("policy must not persist on a plain table", metadata.getExpiryPredicate());
             }
+        });
+    }
+
+    @Test
+    public void testCreateLatestOnViewWithExpireRejected() throws Exception {
+        // A LATEST ON defining query is NOT a 1:1 passthrough -- its rows are a per-key reduction of the base
+        // -- so it must not be classified as a passthrough mat view, otherwise EXPIRE ROWS' physical cleanup
+        // would delete rows from a derived view. (LATEST ON lowers onto a NESTED model, which the prior
+        // top-model-only passthrough check missed.) It is rejected as a non-passthrough/non-aggregating mat
+        // view before EXPIRE is evaluated. Regression guard for the passthrough-classification fix.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvlo as (select * from base latest on ts partition by sym) EXPIRE ROWS WHEN v < 2.0",
+                    34,
+                    "TIMESTAMP column is not present in select list"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mvlo"));
         });
     }
 

@@ -218,6 +218,22 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateQuotesKeepColumnNeedingQuoting() throws Exception {
+        // A keep column whose name needs quoting (a space) must be re-quoted by SHOW CREATE so the rendered
+        // DDL round-trips. (The parser unquote()s the stored column, so the renderer must add the quotes back.)
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, \"my val\" double, ts timestamp) timestamp(ts) partition by day wal");
+            // The CREATE accepts the quoted keep column -> proves the parse side of the round-trip.
+            execute("create materialized view mv as (select * from base) expire rows keep highest \"my val\" partition by k");
+            drainWalAndMatViewQueues();
+            sink.clear();
+            printSql("show create materialized view mv", sink);
+            // The render side must emit it quoted (unquoted "my val" would not re-parse).
+            TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP HIGHEST \"my val\" PARTITION BY k");
+        });
+    }
+
+    @Test
     public void testCatalogueRendersClause() throws Exception {
         assertMemoryLeak(() -> {
             createBase();

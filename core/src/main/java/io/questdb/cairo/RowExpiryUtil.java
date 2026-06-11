@@ -212,15 +212,16 @@ public final class RowExpiryUtil {
     }
 
     private static void appendKeepByClause(CharSink<?> sink, CharSequence stored) {
-        // Column refs are rendered UNQUOTED to match the rest of SHOW CREATE TABLE (designated timestamp(col),
-        // DEDUP UPSERT KEYS(col), column defs are all unquoted). Do not quote here -- the executable-SQL path
-        // that DOES need quoting is buildKeepByPredicate, which feeds an expression back to the compiler.
+        // The keep column is stored UNQUOTED (the parser unquote()s it), so re-quote it when its name needs
+        // quoting (spaces / non-identifier chars / leading digit) so SHOW CREATE round-trips. The PARTITION
+        // BY keys are captured raw (with any quotes the user wrote) and already round-trip, so emit verbatim.
         final KeepBy k = new KeepBy(stored);
         sink.putAscii("KEEP ");
         if (k.n > 0) {
             sink.put(k.n).putAscii(' ');
         }
-        sink.putAscii(k.highest ? "HIGHEST " : "LOWEST ").put(k.col);
+        sink.putAscii(k.highest ? "HIGHEST " : "LOWEST ");
+        appendMaybeQuotedName(sink, k.col);
         if (k.keys.length() > 0) {
             sink.putAscii(" PARTITION BY ").put(k.keys);
         }
@@ -230,9 +231,47 @@ public final class RowExpiryUtil {
         sink.putAscii("KEEP LATEST");
         final CharSequence ts = keepLatestTs(stored);
         if (ts.length() > 0) {
-            sink.putAscii(" ON ").put(ts);
+            // ON <ts> is stored unquoted -> re-quote when needed for round-trip (see appendKeepByClause).
+            sink.putAscii(" ON ");
+            appendMaybeQuotedName(sink, ts);
         }
         sink.putAscii(" PARTITION BY ").put(keepLatestKeys(stored));
+    }
+
+    /**
+     * Appends an identifier, double-quoting (and escaping internal quotes) only when its name is not a bare
+     * identifier — so common lowercase names render cleanly while spaces / special chars / a leading digit
+     * still round-trip through the grammar.
+     */
+    private static void appendMaybeQuotedName(CharSink<?> sink, CharSequence name) {
+        if (!identifierNeedsQuoting(name)) {
+            sink.put(name);
+            return;
+        }
+        sink.putAscii('"');
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            if (c == '"') {
+                sink.putAscii('"'); // escape an embedded quote by doubling it
+            }
+            sink.put(c);
+        }
+        sink.putAscii('"');
+    }
+
+    private static boolean identifierNeedsQuoting(CharSequence name) {
+        final int n = name.length();
+        if (n == 0) {
+            return true;
+        }
+        for (int i = 0; i < n; i++) {
+            final char c = name.charAt(i);
+            final boolean bare = Character.isLetter(c) || c == '_' || c == '$' || (Character.isDigit(c) && i > 0);
+            if (!bare) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String buildKeepByPredicate(CharSequence stored, CharSequence designatedTs) {

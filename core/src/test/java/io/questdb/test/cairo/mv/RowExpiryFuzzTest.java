@@ -205,6 +205,10 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
                 }
                 return better < 2;
             }
+            case SCALAR_WHEN:
+                // scalar value predicate: a row expires when v < 3; NULL is kept (v < 3 is UNKNOWN). This is
+                // the one keep-set NOT shared with the read filter (cleanup uses buildRowExpiryKeepFilter).
+                return vNull[i] || v[i] >= 3;
             default:
                 throw new IllegalStateException();
         }
@@ -216,7 +220,8 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
         KEEP_MAX_GLOBAL("expire rows keep highest v"),
         KEEP_MIN("expire rows keep lowest v partition by k"),
         TOP_N("expire rows keep 2 highest v partition by k"),
-        WINDOW_WHEN("expire rows when v < max(v) over (partition by k)");
+        WINDOW_WHEN("expire rows when v < max(v) over (partition by k)"),
+        SCALAR_WHEN("expire rows when v < 3");
 
         final String clause;
 
