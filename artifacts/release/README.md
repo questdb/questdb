@@ -80,13 +80,41 @@ It will also mark the release draft as non-draft and latest.
 Check the workflow run status and when completed go to the latest release
 in https://github.com/questdb/questdb/releases to check that everything is in order.
 
-In case of workflow failure, the binaries can be compiled using maven on Windows and Linux
-and uploaded to GH release page
+In case of workflow failure, prefer re-running the failed jobs in the
+[Github Release - Binaries](https://github.com/questdb/questdb/actions/workflows/github-binaries-release.yml)
+workflow. If you must build and upload the binaries by hand, mind that the Rust native library
+(`libquestdbr.so` / `libquestdbr.dylib` / `questdbr.dll`) is no longer committed to the repository:
+each `mvn package` builds it only for the host platform.
+
+The platform-specific `rt-<platform>` archives are therefore correct when built on their own platform.
+Build the Linux and Windows archives on Linux and Windows respectively, then upload the resulting
+`core/target/questdb-*-rt-*.gz` files to the GH release page:
 
 ```bash
 git fetch --tags
 git checkout tags/7.1.1
 mvn clean package -DskipTests -P build-web-console,build-binaries
+```
+
+The cross-platform `no-jre` JAR, however, must bundle the Rust library for **all** platforms. A
+single-host `mvn clean package` produces a `no-jre` JAR missing the other platforms' Rust libraries,
+and QuestDB will fail to start on them. To assemble it by hand, download the five `build-rust-*`
+artifacts from the workflow run (those jobs usually succeed even when packaging fails), drop each into
+the matching `core/target/classes/io/questdb/bin/<platform>/` directory, then package with `-DskipNative`
+and no `clean` (which would delete the libraries you just placed):
+
+```bash
+git fetch --tags
+git checkout tags/7.1.1
+
+# Download the per-platform Rust libraries from the workflow run into:
+#   core/target/classes/io/questdb/bin/linux-x86-64/libquestdbr.so      (artifact rust-linux-x64)
+#   core/target/classes/io/questdb/bin/linux-aarch64/libquestdbr.so     (artifact rust-linux-arm64)
+#   core/target/classes/io/questdb/bin/darwin-aarch64/libquestdbr.dylib (artifact rust-macos-arm64)
+#   core/target/classes/io/questdb/bin/darwin-x86-64/libquestdbr.dylib  (artifact rust-macos-x64)
+#   core/target/classes/io/questdb/bin/windows-x86-64/questdbr.dll      (artifact rust-windows)
+
+mvn package -DskipTests -DskipNative -P build-web-console,build-binaries
 ```
 
 ## Release Java Library

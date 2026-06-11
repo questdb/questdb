@@ -364,7 +364,6 @@ public final class Os {
             String devCXXLib = devCXXLibRoot + cxxLibName;
 
             // The Rust library file is missing "lib" prefix on Windows
-            String devRustLibRoot = "/io/questdb/rust/";
             final String rustLibName;
             if (type == WINDOWS) {
                 rustLibName = "questdbr" + outputLibExt;
@@ -385,15 +384,9 @@ public final class Os {
                     loadLib(devCXXLib, libCXXStream);
                 }
 
-
-                final String devRustLib = devRustLibRoot + rustLibName;
-                InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
-                if (libRustStream == null) {
-                    loadLib(prdLibRoot + rustLibName);
-                } else {
-                    System.err.println("Loading DEV Rust library: " + devRustLib);
-                    loadLib(devRustLib, libRustStream);
-                }
+                // The Rust library is always built into the production path
+                // (target/classes/io/questdb/bin/<platform>/), so there is no DEV override for it.
+                loadLib(prdLibRoot + rustLibName);
             }
             initRust();
         } else {
