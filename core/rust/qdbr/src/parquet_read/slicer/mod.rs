@@ -172,8 +172,9 @@ fn checked_len(value: i64) -> ParquetResult<i32> {
 /// recoverable `OutOfMemory` error instead of aborting the JVM.
 ///
 /// The DELTA length/prefix/suffix streams decode up front into a `Vec`. `limit`
-/// is the slicer's row count -- the page's `num_values`, an attacker-controlled
-/// header field up to `i32::MAX`. A bit-width-0 delta miniblock expands to
+/// is the slicer's row count -- `row_hi`, the read range's upper bound, clamped to
+/// the page's row count and so bounded by the page header's `num_values` (an
+/// attacker-controlled field up to `i32::MAX`). A bit-width-0 delta miniblock expands to
 /// `values_per_mini_block` entries while consuming no buffer bytes, so a tiny
 /// page can declare billions of values; `take(limit)` caps the iteration at the
 /// page's row count and `try_reserve_exact(limit)` makes the up-front sizing
@@ -207,8 +208,8 @@ fn collect_checked_lengths<E>(
 ///
 /// The slicers must skip the WHOLE length stream to reach the data region.
 /// Deriving the offset from `delta_bitpacked::Decoder::consumed_bytes()` after a
-/// `take(row_count)` is wrong for a partial range read (`row_count` < the page's
-/// `num_values`): `take` stops before entering the later delta blocks, so
+/// `take(row_count)` is wrong for a partial range read (`row_count` below the
+/// page's value count): `take` stops before entering the later delta blocks, so
 /// `consumed_bytes()` omits their bytes and the data slice starts inside the
 /// length stream, shifting every value (silent corruption) or tripping a
 /// "length exceeds values buffer" error on a valid page.
@@ -220,6 +221,13 @@ fn collect_checked_lengths<E>(
 /// value count, so it cannot be amplified into an unbounded loop by a foreign
 /// page. This is the same primitive the VarcharSlice decoder uses to locate its
 /// data region.
+///
+/// `MiniblockIterator` enforces the parquet spec's stricter miniblock granularity
+/// (a multiple of 32, the pack width QuestDB's value decoder needs) than the
+/// parquet2 length decoder that produced the values (a multiple of 8). A foreign
+/// page whose miniblock size is a non-spec multiple of 8 but not 32 therefore
+/// decodes on a full read (the `consumed_bytes()` path, no `MiniblockIterator`)
+/// yet is cleanly rejected here on a partial read -- an error, never corruption.
 fn delta_stream_byte_len(data: &[u8]) -> ParquetResult<usize> {
     let (iter, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(data)?;
     let end = iter.get_end_pointer()?;

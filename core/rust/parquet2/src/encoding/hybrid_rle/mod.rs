@@ -325,7 +325,7 @@ mod tests {
         data.extend(std::iter::repeat_n(0u8, 40));
 
         let err = HybridRleDecoder::try_new(&data, 40, 8)
-            .expect_err("a level bit width over 32 must error, not panic");
+            .expect_err("a bitpacked num_bits over 32 must error, not panic");
         assert!(
             format!("{err:?}").contains("exceeds"),
             "expected a clean bit-width error, got: {err:?}"

@@ -4832,8 +4832,9 @@ mod tests {
         // uncompressed_size under-claims the real decompressed length (levels +
         // values) must surface a clean error, not panic or abort. The PR hoisted
         // the buffer sizing into the can_decompress arm, so resize_decompress_buffer
-        // sizes decompress_buffer[offset..] one byte short and the codec cannot fill
-        // it -- the error must propagate out rather than reach an unwritten tail.
+        // sizes decompress_buffer one byte short of levels+values, leaving its
+        // [offset..] values region too small for the codec to fill -- the error must
+        // propagate out rather than reach an unwritten tail.
         let levels = [0xAAu8, 0xBB, 0xCC];
         let values: Vec<u8> = (0..40u8).collect();
         let mut body = levels.to_vec();
