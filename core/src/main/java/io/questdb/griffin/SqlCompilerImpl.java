@@ -5318,10 +5318,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Validates a CREATE MATERIALIZED VIEW EXPIRE ROWS policy before the view exists. Relative KEEP LATEST
-     * retention is only allowed on a passthrough (non-aggregating) view, and its key columns must resolve
-     * against the view's columns (with a designated timestamp present). A plain WHEN predicate is validated
-     * structurally as for any object.
+     * Validates a CREATE MATERIALIZED VIEW EXPIRE ROWS policy before the view exists. EXPIRE ROWS requires a
+     * passthrough (non-aggregating) view for EVERY mode (checked first). The relative KEEP LATEST / window
+     * modes additionally require their key/value columns to resolve against the view's columns (with a
+     * designated timestamp present); a scalar WHEN predicate is then validated structurally.
      */
     private void validateCreateMatViewExpiryPolicy(
             SqlExecutionContext executionContext,

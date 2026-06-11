@@ -3,8 +3,10 @@
 `EXPIRE ROWS` is a retention policy on a **materialized view** that hides — and eventually reclaims — rows
 that are no longer wanted, computed continuously as the view refreshes. It is **materialized-view-only**:
 `CREATE TABLE … EXPIRE ROWS` / `ALTER TABLE … SET EXPIRE` are rejected (base tables use TTL and storage
-policies for retention). The relative/window modes additionally require a **passthrough** (non-aggregating)
-view, i.e. `CREATE MATERIALIZED VIEW v AS (SELECT * FROM base)`.
+policies for retention). It additionally requires a **passthrough** (non-aggregating) view for *every* mode
+(scalar `WHEN` included), i.e. `CREATE MATERIALIZED VIEW v AS (SELECT * FROM base)`: the cleanup job
+physically reclaims rows, which is only coherent when the view mirrors base rows 1:1, so an aggregating
+(e.g. `SAMPLE BY`) view is rejected.
 
 ```sql
 -- per-row predicate: a row expires when <predicate> is TRUE for it

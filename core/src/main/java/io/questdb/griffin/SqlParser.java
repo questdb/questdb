@@ -1170,7 +1170,10 @@ public class SqlParser {
      */
     private String lookupExpiryPredicate(TableToken tableToken) {
         expiryTimestampColumnName = null;
-        if (tableToken == null || tableToken.isView()) {
+        // EXPIRE ROWS is materialized-view-only; require isMatView() (not merely !isView()) so a policy that
+        // ever leaks onto a plain table cannot silently hide its rows. Defense-in-depth: the compiler gate is
+        // the primary enforcement, this is the read-side last line.
+        if (tableToken == null || !tableToken.isMatView()) {
             return null;
         }
         try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {

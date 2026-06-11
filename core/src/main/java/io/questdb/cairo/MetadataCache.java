@@ -607,8 +607,10 @@ public class MetadataCache implements QuietCloseable {
                     continue;
                 }
                 final TableToken token = table.getTableToken();
-                if (token == null || token.isView()) {
-                    // plain (non-materialized) views have no _meta and cannot carry an EXPIRE ROWS policy
+                if (token == null || !token.isMatView()) {
+                    // EXPIRE ROWS is materialized-view-only; require isMatView() (not merely !isView()) so a
+                    // policy that ever leaks onto a plain table is inert here rather than physically deleting
+                    // its rows. The compiler is the gatekeeper; this is defense-in-depth for an irreversible op.
                     continue;
                 }
                 tokensOut.add(token);
