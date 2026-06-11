@@ -1772,10 +1772,7 @@ public class SqlOptimiser implements Mutable {
                         //we can't push anything into another left/right join
                         if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
-                        } else if (joinIndex < 0
-                                && (masterNullingJoinIndex(lhi) >= 0
-                                || masterNullingJoinIndex(rhi) >= 0
-                                || hasNonEquiNullingJoin)) {
+                        } else if (joinIndex < 0 && (masterNullingJoinIndex(lhi) >= 0 || masterNullingJoinIndex(rhi) >= 0 || hasNonEquiNullingJoin)) {
                             // A two-table WHERE equality folds into an inner-join key, applied before a
                             // downstream master-nulling join NULL-extends t0/t1; the NULL-master rows then
                             // bypass it and leak. Defer to assignFilters, which anchors it post-join.
