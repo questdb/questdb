@@ -124,9 +124,9 @@ public class QueryRegistry {
     /**
      * Returns the registry entry for the given query id, or null when not found.
      * Reads of the returned entry are best-effort: the entry may be concurrently
-     * retired and recycled for another query while the caller reads its fields,
-     * e.g. in the query_activity() function. The lifecycle guard only protects
-     * the cancel/unregister/reuse paths.
+     * retired and recycled for another query while the caller reads its fields.
+     * Callers that need a stable view should copy the fields they need and then
+     * validate the entry lifecycle before using the copy.
      *
      * @param id id of the query to look up
      * @return entry for the given query id, or null
@@ -295,6 +295,10 @@ public class QueryRegistry {
             return changedAtNs;
         }
 
+        public long getLifecycle() {
+            return lifecycle;
+        }
+
         public CharSequence getPoolName() {
             return poolName;
         }
@@ -325,6 +329,10 @@ public class QueryRegistry {
 
         public boolean isWAL() {
             return isWAL;
+        }
+
+        public static boolean isActiveLifecycle(long queryId, long lifecycle) {
+            return lifecycle == lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
         }
 
         private static long lifecycle(long queryId, long state) {

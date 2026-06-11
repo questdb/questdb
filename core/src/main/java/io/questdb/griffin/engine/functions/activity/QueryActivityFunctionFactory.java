@@ -44,6 +44,9 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
+
+import java.util.Objects;
 
 @SuppressWarnings("unused")
 public class QueryActivityFunctionFactory implements FunctionFactory {
@@ -65,7 +68,6 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         private final LongList entryIds = new LongList();
         private final QueryRegistry queryRegistry;
         private final QueryActivityRecord record = new QueryActivityRecord();
-        private QueryRegistry.Entry entry;
         private int entryIndex;
 
         private boolean isAdmin;
@@ -79,6 +81,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             entryIds.clear();
+            record.clear();
             isAdmin = false;
             principal = null;
             toTop();
@@ -92,9 +95,10 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         @Override
         public boolean hasNext() {
             while (++entryIndex < entryIds.size()) {
-                entry = queryRegistry.getEntry(entryIds.get(entryIndex));
+                final long queryId = entryIds.get(entryIndex);
+                final QueryRegistry.Entry entry = queryRegistry.getEntry(queryId);
                 if (entry != null) {
-                    if (isAdmin || entry.getPrincipal().equals(principal)) {
+                    if (record.of(queryId, entry) && (isAdmin || Objects.equals(record.getPrincipal(), principal))) {
                         return true;
                     }
                 }
@@ -128,15 +132,29 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             entryIndex = -1;
-            entry = null;
         }
 
-        private class QueryActivityRecord implements Record {
+        private static class QueryActivityRecord implements Record {
+            private final StringSink poolName = new StringSink();
+            private final StringSink principal = new StringSink();
+            private final StringSink query = new StringSink();
+            private long changedAtNs;
+            private boolean isWAL;
+            private boolean poolNameIsNull;
+            private boolean principalIsNull;
+            private long queryId;
+            private long registeredAtNs;
+            private byte state;
+            private long workerId;
+
+            private QueryActivityRecord() {
+                clear();
+            }
 
             @Override
             public boolean getBool(int col) {
                 if (col == 7) {
-                    return entry.isWAL();
+                    return isWAL;
                 }
 
                 return false;
@@ -145,9 +163,9 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             @Override
             public long getLong(int col) {
                 if (col == 0) {
-                    return entryIds.getQuick(entryIndex);
+                    return queryId;
                 } else if (col == 1) {
-                    return entry.getWorkerId();
+                    return workerId;
                 }
 
                 return Record.super.getLong(col);
@@ -156,13 +174,13 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             @Override
             public CharSequence getStrA(int col) {
                 if (col == 2) {
-                    return entry.getPoolName();
+                    return poolNameIsNull ? null : poolName;
                 } else if (col == 3) {
-                    return entry.getPrincipal();
+                    return getPrincipal();
                 } else if (col == 6) {
-                    return entry.getStateText();
+                    return QueryRegistry.Entry.State.getText(state);
                 } else if (col == 8) {
-                    return entry.getQuery();
+                    return query;
                 }
 
                 return Record.super.getStrA(col);
@@ -181,12 +199,81 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             @Override
             public long getTimestamp(int col) {
                 if (col == 4) {
-                    return entry.getRegisteredAtNs();
+                    return registeredAtNs;
                 } else if (col == 5) {
-                    return entry.getChangedAtNs();
+                    return changedAtNs;
                 }
 
                 return Record.super.getTimestamp(col);
+            }
+
+            private void clear() {
+                poolName.clear();
+                principal.clear();
+                query.clear();
+                poolNameIsNull = true;
+                principalIsNull = true;
+                queryId = -1;
+                workerId = -1;
+                registeredAtNs = 0;
+                changedAtNs = 0;
+                state = QueryRegistry.Entry.State.IDLE;
+                isWAL = false;
+            }
+
+            private CharSequence getPrincipal() {
+                return principalIsNull ? null : principal;
+            }
+
+            // Entry is a moving target: unregister() can retire and recycle it while
+            // query_activity() reads. Copy a row optimistically, then accept it only
+            // if the lifecycle still points to the same active query.
+            private boolean of(long queryId, QueryRegistry.Entry entry) {
+                final long lifecycle = entry.getLifecycle();
+                if (!QueryRegistry.Entry.isActiveLifecycle(queryId, lifecycle)) {
+                    return false;
+                }
+
+                this.queryId = queryId;
+                this.workerId = entry.getWorkerId();
+                this.registeredAtNs = entry.getRegisteredAtNs();
+                this.changedAtNs = entry.getChangedAtNs();
+                this.state = entry.getState();
+                this.isWAL = entry.isWAL();
+
+                final CharSequence entryPoolName = entry.getPoolName();
+                if (!copy(entryPoolName, poolName)) {
+                    return false;
+                }
+                poolNameIsNull = entryPoolName == null;
+
+                final CharSequence entryPrincipal = entry.getPrincipal();
+                if (!copy(entryPrincipal, principal)) {
+                    return false;
+                }
+                principalIsNull = entryPrincipal == null;
+
+                if (!copy(entry.getQuery(), query)) {
+                    return false;
+                }
+
+                return entry.getLifecycle() == lifecycle && entry.getState() == state;
+            }
+
+            private static boolean copy(CharSequence source, StringSink target) {
+                target.clear();
+                if (source != null) {
+                    final int len = source.length();
+                    try {
+                        // The source may shrink while we copy; reject the row instead of exposing a torn string.
+                        target.put(source, 0, len);
+                    } catch (IndexOutOfBoundsException e) {
+                        target.clear();
+                        return false;
+                    }
+                    return source.length() == len;
+                }
+                return true;
             }
         }
     }
