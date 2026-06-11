@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
-    private static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
+    public static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;

@@ -79,13 +79,15 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         response.status(200, "application/json; charset=utf-8");
         response.sendHeader();
 
-        // Fetch the snapshot and initialise the per-connection cursor at the start of serialisation.
-        final LifecycleSnapshot snap = snapshotSupplier.get();
+        // Fetch the snapshot holder once (a subclass may return an extended type) and initialise
+        // the per-connection cursor at the start of serialisation. The same holder is reused
+        // across every resume call so the response cannot tear mid-flight.
+        final Object holder = captureSnapshot();
         LifecycleState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new LifecycleState());
         }
-        state.reset(snap);
+        state.reset(holder, toBaseSnapshot(holder));
 
         resumeSnapshot(response, state);
     }
@@ -101,6 +103,34 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
     }
 
     /**
+     * Captures the snapshot to serialize. The base captures a {@link LifecycleSnapshot} from the
+     * supplier; a subclass may return an extended holder type (carrying extra header fields) as long
+     * as {@link #toBaseSnapshot(Object)} can recover the base from it. Called once per request so the
+     * resume loop reuses the same holder across every {@link #resumeSend} call.
+     */
+    protected Object captureSnapshot() {
+        return snapshotSupplier.get();
+    }
+
+    /**
+     * Recovers the base {@link LifecycleSnapshot} (whose components the loop iterates) from the holder
+     * produced by {@link #captureSnapshot()}. The base holder IS a {@link LifecycleSnapshot}.
+     */
+    protected LifecycleSnapshot toBaseSnapshot(Object holder) {
+        return (LifecycleSnapshot) holder;
+    }
+
+    /**
+     * Hook for a subclass to inject extra JSON header fields between {@code capturedAtMicros} and the
+     * {@code components} array. Each field this writes MUST end with a trailing comma. The base writes
+     * nothing. The header is one bookmark unit, so an overflow rewinds and re-runs this hook -- keep
+     * it side-effect free.
+     */
+    protected void writeHeaderExtraFields(HttpChunkedResponse response, Object holder) {
+        // Base lifecycle JSON has no extra header fields.
+    }
+
+    /**
      * Serializes the lifecycle snapshot into the response buffer, resuming from the cursor saved in
      * {@code state} across multiple calls if the TCP send buffer fills. A snapshot of a
      * fully-populated server can exceed the default {@code http.min.send.buffer.size} of 1024 bytes,
@@ -111,9 +141,17 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
      * HTTP framework parks the connection and calls {@link #resumeSend} when the socket drains. This
      * mirrors the OSS JSON query processor and the enterprise {@code EntLifecycleProcessor} overlay.
      */
-    private static void resumeSnapshot(
+    private void resumeSnapshot(
             HttpChunkedResponse response,
             LifecycleState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        resumeSnapshot(response, state, this::writeHeaderExtraFields);
+    }
+
+    private static void resumeSnapshot(
+            HttpChunkedResponse response,
+            LifecycleState state,
+            HeaderExtraWriter headerExtra
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final LifecycleSnapshot snap = state.snapshot;
         final ObjList<LifecycleSnapshot.ComponentSnapshot> components = snap.components();
@@ -125,8 +163,12 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
                 try {
                     response.bookmark();
                     response.putAscii('{')
-                            .putAsciiQuoted("capturedAtMicros").putAscii(':').put(snap.capturedAtMicros()).putAscii(',')
-                            .putAsciiQuoted("components").putAscii(':').putAscii('[');
+                            .putAsciiQuoted("capturedAtMicros").putAscii(':').put(snap.capturedAtMicros()).putAscii(',');
+                    // A subclass may inject extra header fields here (each followed by a trailing
+                    // comma) before the components array. The whole header is one bookmark unit, so
+                    // an overflow rewinds and re-runs the hook -- it must stay side-effect free.
+                    headerExtra.write(response, state.holder);
+                    response.putAsciiQuoted("components").putAscii(':').putAscii('[');
                     state.headerWritten = true;
                     break;
                 } catch (NoSpaceLeftInResponseBufferException ignored) {
@@ -191,12 +233,13 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
     }
 
     // Visible for testing: drives the resumable serialization in a single pass with a fresh cursor,
-    // so a test can exercise the bookmark/overflow/flush loop without a live HTTP server.
+    // so a test can exercise the bookmark/overflow/flush loop without a live HTTP server. Exercises
+    // the base header (no extra fields).
     public static void writeSnapshotResumable(HttpChunkedResponse r, LifecycleSnapshot snap)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         final LifecycleState state = new LifecycleState();
-        state.reset(snap);
-        resumeSnapshot(r, state);
+        state.reset(snap, snap);
+        resumeSnapshot(r, state, LifecycleProcessor::writeNoHeaderExtraFields);
     }
 
     // Visible for testing: allows LifecycleProcessorTest to invoke without a live HTTP server.
@@ -259,6 +302,20 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         r.putAscii('}');
     }
 
+    private static void writeNoHeaderExtraFields(HttpChunkedResponse response, Object holder) {
+        // Base lifecycle JSON has no extra header fields.
+    }
+
+    /**
+     * Writes any extra header fields a subclass injects between {@code capturedAtMicros} and the
+     * {@code components} array. Lets the resume loop stay a single static method while the instance
+     * dispatches to {@link #writeHeaderExtraFields(HttpChunkedResponse, Object)}.
+     */
+    @FunctionalInterface
+    protected interface HeaderExtraWriter {
+        void write(HttpChunkedResponse response, Object holder);
+    }
+
     /**
      * Per-connection serialization cursor for resumable GET /lifecycle responses.
      */
@@ -266,13 +323,17 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         int cursor;
         boolean footerWritten;
         boolean headerWritten;
+        // The original snapshot holder (a LifecycleSnapshot in the base, an extended type in a
+        // subclass) passed to the header-extra hook. Held alongside the base snapshot the loop iterates.
+        Object holder;
         LifecycleSnapshot snapshot;
 
-        void reset(LifecycleSnapshot snap) {
+        void reset(Object holder, LifecycleSnapshot base) {
             cursor = 0;
             footerWritten = false;
             headerWritten = false;
-            snapshot = snap;
+            this.holder = holder;
+            snapshot = base;
         }
     }
 }
