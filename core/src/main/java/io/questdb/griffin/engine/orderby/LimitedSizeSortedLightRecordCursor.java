@@ -113,6 +113,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
             chain.reopen();

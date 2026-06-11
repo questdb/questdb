@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -101,7 +100,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         }
 
         try {
-            baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -70,7 +69,6 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {

@@ -124,6 +124,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         this.baseCursor = baseCursor;
         baseCursor.expectLimitedIteration();
         baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
             chain.reopen();

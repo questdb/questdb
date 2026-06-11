@@ -100,6 +100,7 @@ class LongTopKRecordCursor implements RecordCursor {
         // assign base cursor as the first step, so that we close it in close() call
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
 
         if (!isOpen) {
             isOpen = true;

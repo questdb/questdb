@@ -299,8 +299,11 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * effective ceiling, scattered walks get the full configured budget.
      * Wrappers that hold a delegate cursor must forward the call. Factories
      * that copy delegate records into a heap-allocated chain or map before
-     * iteration (e.g. non-light hash/asof joins) intentionally skip this hint
-     * because the underlying cursor is exhausted once and never random-accessed.
+     * iteration (e.g. non-light sorts and hash/asof joins) intentionally skip
+     * this hint because the underlying cursor is exhausted once and never
+     * random-accessed.
+     *
+     * @param hint the access pattern of upcoming {@code recordAt} calls
      */
     default void setParquetDecodeHint(ParquetDecodeHint hint) {
     }
