@@ -6019,6 +6019,39 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiOuterJoinReorderedFilterStaysPostJoin() throws Exception {
+        // Companion to testNonEquiOuterJoinMasterFilterStaysPostJoin, which filters the directly
+        // NULL-extended master that masterNullingJoinIndex catches in model order. Here the WHERE
+        // predicate (c.v = 1) is on an INNER-joined table whose NULL-extension comes from a lower-
+        // model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so it homogenizes
+        // to JOIN_CROSS_RIGHT/JOIN_CROSS_FULL and reorderTables appends it last -- after c joins, so
+        // it NULL-extends c. masterNullingJoinIndex only scans higher model indexes and misses the
+        // reorder, so analyseEquals (hasNonEquiNullingJoin) defers the predicate to the exec-order-
+        // aware assignFilters, which keeps it post-join. Pushing it into c leaked the (null,100,null)
+        // row -- 2 rows for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c (k INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 1)");
+
+            final String expected = "x\ty\tv\n10\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = 1 ORDER BY b.y";
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: c.v=1").returns(expected);
+
+                final String bind = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = :v::INT ORDER BY b.y";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testOperatorMasterFilterStaysPostJoin() throws Exception {
         // assignFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
         // master to a post-join filter; the existing folded-FALSE splice test only exercises that
