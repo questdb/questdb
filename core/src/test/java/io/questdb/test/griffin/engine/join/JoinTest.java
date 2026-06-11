@@ -6087,6 +6087,38 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiTableEqualityReorderedFilterStaysPostJoin() throws Exception {
+        // Covers the hasNonEquiNullingJoin arm of the two-table equality deferral;
+        // testMultiTableEqualityMasterFilterStaysPostJoin covers the masterNullingJoinIndex arm.
+        // The WHERE equality (c.c1 = d.d1) is across two INNER-joined tables whose NULL-extension
+        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext,
+        // so homogenizeCrossJoins rewrites it to a CROSS variant reorderTables appends last -- after
+        // c and d join -- and NULL-extends them. masterNullingJoinIndex scans only higher model
+        // indexes and misses the reorder, so analyseEquals defers via hasNonEquiNullingJoin to the
+        // exec-order-aware assignFilters, keeping c.c1 = d.d1 post-join. Folding it into the c/d inner
+        // join applies it before the reordered outer join, emptying that subtree (7 != 8) so the join
+        // pairs the slave row with NULL c/d and leaks (null,50,null,null) -- 1 row for 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (100, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (50)");
+            execute("CREATE TABLE c (k INT, c1 INT)");
+            execute("INSERT INTO c VALUES (1, 7)");
+            execute("CREATE TABLE d (k INT, d1 INT)");
+            execute("INSERT INTO d VALUES (1, 8)");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.c1, d.d1 FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k JOIN d ON d.k = a.k WHERE c.c1 = d.d1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: c.c1=d.d1")
+                        .returns("x\ty\tc1\td1\n");
+            }
+        });
+    }
+
+    @Test
     public void testMultiTableMasterFilterStaysPostJoin() throws Exception {
         // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches assignFilters'
         // multi-reference else-branch, which anchored it at the inner join where both tables arrive.
