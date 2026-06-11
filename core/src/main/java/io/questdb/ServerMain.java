@@ -919,7 +919,7 @@ public class ServerMain implements Closeable {
      * Replaces the now-deleted bindAndStartNetworkServices() / initialize() shims, which
      * had no production caller (only @Deprecated annotations + a few tests) yet remained
      * the only path that ran compileAllViews. Without this envelope, production boot
-     * silently skipped view compilation -- finding #079.
+     * silently skipped view compilation.
      */
     private final class HydrationEnvelope implements io.questdb.lifecycle.Component {
         private final ObjList<String> empty = new ObjList<>();
@@ -1090,10 +1090,10 @@ public class ServerMain implements Closeable {
                     ctx.publish(State.READY);
                 }
             } catch (Throwable t) {
-                // #090: free partially-allocated resources in reverse-construction order before
+                // Free partially-allocated resources in reverse-construction order before
                 // rethrow. The orchestrator's close loop skips FAILED components, so without this
                 // wrap a mid-body throw leaks the LineTcpReceiver / LineUdpReceiver. Mirrors the
-                // WR-09 addSuppressed pattern from PrimaryRoleState.openLoops.
+                // addSuppressed pattern from PrimaryRoleState.openLoops.
                 if (this.lineUdpReceiver != null) {
                     try {
                         Misc.free(this.lineUdpReceiver);
@@ -1385,7 +1385,7 @@ public class ServerMain implements Closeable {
             if ("engine".equals(depName) && current == State.READY) {
                 // Consult the role-aware seam BEFORE flipping acceptOpen. OSS default returns
                 // true; ENT overlay returns role == PRIMARY so a REPLICA boot never opens the
-                // accept loop (#083).
+                // accept loop.
                 acceptOpen.set(shouldOpenAccept(ctxRef));
                 log.info().$("qwip envelope: accept loop state on engine READY [open=").$(acceptOpen.get()).$(']').$();
                 if (ctxRef != null) {
@@ -1407,7 +1407,7 @@ public class ServerMain implements Closeable {
         /**
          * Role-aware override seam. OSS standalone returns true (accept opens whenever engine
          * is READY). Enterprise overlays return role == PRIMARY so a REPLICA boot does not
-         * briefly accept QWIP UDP datagrams (#083). The gate is consulted at the moment accept
+         * briefly accept QWIP UDP datagrams. The gate is consulted at the moment accept
          * could open, not after-the-fact, so the brief acceptance window on REPLICA boot
          * becomes impossible by construction.
          */
@@ -1441,7 +1441,7 @@ public class ServerMain implements Closeable {
             if (ctx.state("engine") == State.READY) {
                 // Consult the role-aware seam on catch-up too -- otherwise the catch-up branch
                 // would unconditionally flip acceptOpen=true and a REPLICA boot would briefly
-                // accept datagrams (#083).
+                // accept datagrams.
                 acceptOpen.set(shouldOpenAccept(ctx));
                 log.info().$("qwip envelope: accept loop state on engine READY (catch-up) [open=").$(acceptOpen.get()).$(']').$();
                 ctx.publish(State.READY);
@@ -1530,10 +1530,10 @@ public class ServerMain implements Closeable {
                     ctx.publish(State.READY);
                 }
             } catch (Throwable t) {
-                // #090: free partially-allocated resources before rethrow. The orchestrator's
+                // Free partially-allocated resources before rethrow. The orchestrator's
                 // close loop skips FAILED components, so without this wrap a mid-body throw
                 // (e.g. inside findEnvelope or the FlushQueryCacheJob.assign() step) leaks the
-                // HttpServer. Mirrors the WR-09 addSuppressed pattern from
+                // HttpServer. Mirrors the addSuppressed pattern from
                 // PrimaryRoleState.openLoops.
                 if (this.server != null) {
                     try {

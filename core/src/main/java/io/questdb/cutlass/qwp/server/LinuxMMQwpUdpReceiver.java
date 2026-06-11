@@ -72,7 +72,7 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
             // Mirror the worker-path acceptOpen gate so the own-thread driver
             // also quiesces after switchRole publishes acceptOpen=false. Placed
             // AFTER checkClosed() so close()'s acknowledgment spin (which sets
-            // closedAcknowledged inside checkClosed()) can still progress. (#036)
+            // closedAcknowledged inside checkClosed()) can still progress.
             return false;
         }
         boolean ran = false;

@@ -85,7 +85,7 @@ public class PGServer implements Closeable {
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
             AtomicBoolean acceptOpen
     ) {
-        // #050: wrap the post-field-init body in try/catch so any throw (most commonly the bind
+        // Wrap the post-field-init body in try/catch so any throw (most commonly the bind
         // failure from IODispatchers.create) releases the native handles allocated above
         // (typesAndSelectCache + contextFactory). Matches the LineTcpReceiver pattern.
         AssociativeCache<TypesAndSelect> typesAndSelectCacheLocal = null;

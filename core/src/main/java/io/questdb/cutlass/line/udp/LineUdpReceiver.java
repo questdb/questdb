@@ -50,7 +50,7 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
             AtomicBoolean acceptOpen
     ) {
         super(configuration, engine, workerPool, acceptOpen);
-        // #051: wrap the post-super allocation and start() in try/catch so a failure (thread
+        // Wrap the post-super allocation and start() in try/catch so a failure (thread
         // alloc, affinity bind, or buf malloc OOM) releases what the super already opened.
         // close() releases the fd and any allocated buf; matches the LineTcpReceiver pattern.
         try {
@@ -81,7 +81,7 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
             // Mirror the worker-path acceptOpen gate (AbstractLineProtoUdpReceiver.run)
             // so the own-thread driver also quiesces after switchRole publishes
             // acceptOpen=false. close() does not depend on runSerially() flowing
-            // post-close, so placement at the top is safe. (#036)
+            // post-close, so placement at the top is safe.
             return false;
         }
         boolean ran = false;

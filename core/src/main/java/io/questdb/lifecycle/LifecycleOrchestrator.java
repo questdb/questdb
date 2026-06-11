@@ -126,7 +126,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
         // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
         // stop loop ran first and executor.shutdown ran after -- which left a window where an
         // in-flight switchRole on the lifecycle executor thread could touch a component that
-        // the stop loop had just freed (#084 native UAF / NPE). Draining the executor here
+        // the stop loop had just freed (a native use-after-free / NPE). Draining the executor here
         // means every in-flight task either completes before the stop loop runs, or the new
         // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
         // the task exits without progressing further.
@@ -568,7 +568,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
         // available for future parallel exploitation.
         assert topoOrder != null;
         for (int i = 0, n = topoOrder.size(); i < n; i++) {
-            // #084 close-race short-circuit: if close() raced startup, exit the loop now so the
+            // Close-race short-circuit: if close() raced startup, exit the loop now so the
             // remaining components stay in INIT and the reverse-topo stop loop has nothing to
             // tear down for them. The in-flight component finishes start() naturally; close()'s
             // executor.shutdown + awaitTermination (run BEFORE the stop loop now) ensures that

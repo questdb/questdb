@@ -217,7 +217,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile boolean isCompleteInitDone;
     // volatile: configReloader is reassigned by EntCairoEngine.switchRole on the lifecycle
     // thread and read by SqlCompilerImpl, GenericDropOperation, WriterPool, WalWriterPool,
-    // CopyImportTask on worker threads; no implicit fence between writer and readers. (WR-10)
+    // CopyImportTask on worker threads; no implicit fence between writer and readers.
     private volatile @NotNull ConfigReloader configReloader = new ConfigReloader() {
         @Override
         public boolean reload() {
@@ -236,7 +236,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }; // no-op
     // volatile: ddlListener is reassigned by EntCairoEngine.switchRole on the lifecycle thread
     // (DefaultDdlListener.INSTANCE on REPLICA, EntDdlListener instance on PRIMARY) and read by
-    // SqlCompilerImpl on worker threads. Matches the sibling volatile durableAckRegistry. (WR-10)
+    // SqlCompilerImpl on worker threads. Matches the sibling volatile durableAckRegistry.
     private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
@@ -246,7 +246,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     // volatile: walListener is reassigned by PrimaryRoleState.openLoops on the lifecycle thread
     // and read by TableSequencerImpl and TableSequencerAPI on sequencer/apply threads; no
-    // implicit fence between writer and readers. (WR-10)
+    // implicit fence between writer and readers.
     private volatile @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
 

@@ -50,7 +50,7 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     ) {
         super(configuration, engine, workerPool, acceptOpen);
         this.msgCount = configuration.getMsgCount();
-        // #051: wrap the post-super native allocation and start() in try/catch so a failure
+        // Wrap the post-super native allocation and start() in try/catch so a failure
         // (msgHeaders OOM, thread alloc, affinity bind) releases what the super already opened.
         // close() releases the fd and any allocated msgVec; matches the LineTcpReceiver pattern.
         try {
@@ -81,7 +81,7 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
             // Mirror the worker-path acceptOpen gate (AbstractLineProtoUdpReceiver.run)
             // so the own-thread driver also quiesces after switchRole publishes
             // acceptOpen=false. close() does not depend on runSerially() flowing
-            // post-close, so placement at the top is safe. (#036)
+            // post-close, so placement at the top is safe.
             return false;
         }
         boolean ran = false;
