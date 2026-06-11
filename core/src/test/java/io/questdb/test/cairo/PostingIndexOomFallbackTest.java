@@ -470,6 +470,109 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSealIncrementalVarIncludeReservesFsstFloorUnderRssPressure() throws Exception {
+        // The incremental-seal RSS pre-flight must reserve the var-size FSST
+        // batch floor (peakVarCoverFsstScratchBytes), exactly as the two
+        // full-seal estimates do. Without it, an incremental seal of a var-size
+        // cover under headroom smaller than the ~1 MiB FSST floor would pass the
+        // pre-flight and then OOM in the FSST batch; with it, the pre-flight
+        // defers to the full seal, which refuses with the actionable hard-limit
+        // diagnostic. Data is kept tiny so the only term that pushes the peak
+        // past the headroom is the FSST floor itself -- this test fails (the
+        // seal succeeds) if the floor is dropped from the incremental pre-flight.
+        final int strideKeys = 256;   // keys 0..255 -> stride 0
+        final int cleanKeys = 44;     // keys 256..299 -> stride 1, kept clean
+        final int numKeys = strideKeys + cleanKeys;
+        final int phase1PerKey = 2;
+        final int phase2PerKey = 2;   // only stride-0 keys
+        final int totalRows = numKeys * phase1PerKey + strideKeys * phase2PerKey;
+        // BINARY layout: [8B length][1-byte payload]. Sub-FSST_MIN_RAW_SIZE
+        // total so the un-fixed code would NOT trigger the FSST batch and the
+        // seal would silently succeed.
+        final int binStride = Long.BYTES + 1;
+        final long binDataSize = (long) totalRows * binStride;
+        final long binAuxSize = (long) (totalRows + 1) * Long.BYTES;
+
+        assertMemoryLeak(() -> {
+            long binDataAddr = Unsafe.malloc(binDataSize, MemoryTag.NATIVE_DEFAULT);
+            long binAuxAddr = Unsafe.malloc(binAuxSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long off = 0;
+                for (int i = 0; i < totalRows; i++) {
+                    Unsafe.putLong(binAuxAddr + (long) i * Long.BYTES, off);
+                    Unsafe.putLong(binDataAddr + off, 1L); // length = 1
+                    Unsafe.putByte(binDataAddr + off + Long.BYTES, (byte) (i & 0xff));
+                    off += binStride;
+                }
+                Unsafe.putLong(binAuxAddr + (long) totalRows * Long.BYTES, off);
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final String name = "incr_var_cover_fsst";
+                    long savedLimit = Unsafe.getRssMemLimit();
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        long row = 0;
+                        // Phase 1: every key -> dense gen 0 after the full seal.
+                        // Covers are re-supplied per op, mirroring the O3 flow.
+                        configureVarBinCover(writer, binDataAddr, binAuxAddr);
+                        for (int r = 0; r < phase1PerKey; r++) {
+                            for (int k = 0; k < numKeys; k++) {
+                                writer.add(k, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        writer.seal();
+                        Assert.assertEquals(1, writer.getGenCount());
+
+                        // Phase 2: only stride-0 keys -> sparse gen 1 dirties
+                        // stride 0 alone (dirtyCount < strideCount stays incremental).
+                        configureVarBinCover(writer, binDataAddr, binAuxAddr);
+                        for (int r = 0; r < phase2PerKey; r++) {
+                            for (int k = 0; k < strideKeys; k++) {
+                                writer.add(k, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        Assert.assertEquals(2, writer.getGenCount());
+
+                        // 512 KiB headroom: above the tiny non-FSST incremental
+                        // peak but below the ~1 MiB var FSST floor. With the floor
+                        // budgeted, the incremental pre-flight defers to the full
+                        // seal, which refuses; without it the seal proceeds.
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 512L * 1024L);
+                        try {
+                            writer.seal();
+                            Assert.fail("expected CairoException, incremental seal succeeded");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(),
+                                    "would exceed RSS limit even with streaming compaction");
+                        } finally {
+                            Unsafe.setRssMemLimit(savedLimit);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(binAuxAddr, binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(binDataAddr, binDataSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private static void configureVarBinCover(PostingIndexWriter writer, long binDataAddr, long binAuxAddr) {
+        writer.configureCovering(
+                new long[]{binDataAddr},
+                new long[]{binAuxAddr},
+                new long[]{0L},     // colTops
+                new int[]{-1},      // shifts: var-size
+                new int[]{2},       // writer indices
+                new int[]{ColumnType.BINARY},
+                /* coverCount */ 1,
+                /* timestampColumnIndex */ -1
+        );
+    }
+
     /**
      * The non-covering rollback streams per key (decode -> filter at the
      * cutoff -> re-encode the surviving prefix), so its peak heap is the

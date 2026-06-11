@@ -2706,6 +2706,70 @@ public class PostingIndexWriter implements IndexWriter {
         return peak;
     }
 
+    /**
+     * Pass 1 of the streaming rollback (no covers or path-based covers).
+     * Decodes each key from every generation into {@code keyBuffer},
+     * binary-searches the rollback
+     * cutoff (the per-key run is sorted ascending, so survivors are the leading
+     * prefix &lt;= {@code maxValueCutoff}), and overwrites
+     * {@code totalCountsAddr[key]} with the surviving count. Returns the new key
+     * count (highest surviving key + 1); 0 means every value was rolled back and
+     * the caller truncates. Peak heap is one key ({@code maxKeyCount} longs), not
+     * the whole index. {@link #reencodeWithPerKeyStreaming} then re-decodes each
+     * key and encodes the surviving prefix.
+     */
+    private int filterCountsForRollback(long maxValueCutoff, long totalCountsAddr, long keyBuffer, int maxKeyCount) {
+        int newKeyCount = 0;
+        final int oldKeyCount = keyCount;
+        for (int key = 0; key < oldKeyCount; key++) {
+            int origCount = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
+            if (origCount == 0) {
+                continue;
+            }
+            int stride = key / PostingIndexUtils.DENSE_STRIDE;
+            int j = key % PostingIndexUtils.DENSE_STRIDE;
+            int decodedTotal = 0;
+            for (int gen = 0; gen < genCount; gen++) {
+                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                long genBase = valueMem.addressOf(genFileOffset);
+                long appendAddr = keyBuffer + (long) decodedTotal * Long.BYTES;
+                if (genKeyCount < 0) {
+                    decodedTotal += decodeSparseGenSingleKey(genBase, -genKeyCount, key, appendAddr);
+                } else if (stride < PostingIndexUtils.strideCount(genKeyCount)) {
+                    decodedTotal += decodeDenseGenSingleKey(genBase, genKeyCount, stride, j, appendAddr);
+                }
+            }
+            // decodedTotal equals the full per-key count totalCountsAddr held
+            // before this pass; maxKeyCount (the full max) bounds keyBuffer.
+            assert decodedTotal <= maxKeyCount;
+            if (decodedTotal != origCount) {
+                throw CairoException.critical(0)
+                        .put("posting index rollback decode mismatch [key=").put(key)
+                        .put(", expected=").put(origCount)
+                        .put(", decoded=").put(decodedTotal).put(']');
+            }
+            int lo = 0, hi = decodedTotal - 1, cut = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                long midVal = Unsafe.getLong(keyBuffer + (long) mid * Long.BYTES);
+                if (midVal <= maxValueCutoff) {
+                    cut = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            int newCount = cut + 1;
+            Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, newCount);
+            if (newCount > 0) {
+                newKeyCount = key + 1;
+            }
+        }
+        return newKeyCount;
+    }
+
     private void flushAllPending() {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
@@ -3733,29 +3797,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Anonymous-heap scratch the streaming FSST compressor holds while encoding
-     * a var-size cover stride: the 1 MiB compressed-output floor plus the batch
-     * offset arrays, per-value scratch and symbol-table header. Zero when no
-     * active cover is variable-size. Both seal estimates add this so the
-     * pre-flight refuses (rather than OOMs) when even the FSST floor does not fit.
-     */
-    private long peakVarCoverFsstScratchBytes() {
-        boolean hasVar = false;
-        for (int c = 0; c < coverCount; c++) {
-            if (coveredColumnIndices.getQuick(c) >= 0 && coveredColumnShifts.getQuick(c) < 0) {
-                hasVar = true;
-                break;
-            }
-        }
-        if (!hasVar) {
-            return 0L;
-        }
-        long offsArrays = 2L * (FSST_BATCH_SIZE + 1) * Long.BYTES;
-        long batchScratch = (long) FSST_BATCH_SIZE * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
-        return FSST_BATCH_OUT_CAP_MIN + offsArrays + batchScratch + FSSTNative.MAX_HEADER_SIZE;
-    }
-
-    /**
      * Largest fixed-size cover column's value size in bytes, or 0 when
      * either there are no cover columns or every cover column is var-size
      * (those use a different sidecar layout that does not allocate the
@@ -3777,6 +3818,29 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
         return peak;
+    }
+
+    /**
+     * Anonymous-heap scratch the streaming FSST compressor holds while encoding
+     * a var-size cover stride: the 1 MiB compressed-output floor plus the batch
+     * offset arrays, per-value scratch and symbol-table header. Zero when no
+     * active cover is variable-size. Both seal estimates add this so the
+     * pre-flight refuses (rather than OOMs) when even the FSST floor does not fit.
+     */
+    private long peakVarCoverFsstScratchBytes() {
+        boolean hasVar = false;
+        for (int c = 0; c < coverCount; c++) {
+            if (coveredColumnIndices.getQuick(c) >= 0 && coveredColumnShifts.getQuick(c) < 0) {
+                hasVar = true;
+                break;
+            }
+        }
+        if (!hasVar) {
+            return 0L;
+        }
+        long offsArrays = 2L * (FSST_BATCH_SIZE + 1) * Long.BYTES;
+        long batchScratch = (long) FSST_BATCH_SIZE * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
+        return FSST_BATCH_OUT_CAP_MIN + offsArrays + batchScratch + FSSTNative.MAX_HEADER_SIZE;
     }
 
     /**
@@ -4230,7 +4294,9 @@ public class PostingIndexWriter implements IndexWriter {
                 // there (matching the prior monolithic skip, without the
                 // whole-index decode).
                 long keyBuffer = Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                final int oldKeyCount = keyCount;
                 boolean reencodeStarted = false;
+                boolean reencodePublished = false;
                 try {
                     int newKeyCount = filterCountsForRollback(maxValueCutoff, totalCountsAddr, keyBuffer, maxKeyCount);
                     if (newKeyCount == 0) {
@@ -4250,6 +4316,11 @@ public class PostingIndexWriter implements IndexWriter {
                         }
                         reencodeStarted = true;
                         reencodeWithPerKeyStreaming(newSealTxn, maxValue, totalCountsAddr, keyBuffer, maxKeyCount);
+                        // reencodeWithPerKeyStreaming's last step is publishToChain;
+                        // once it returns the new sealTxn is live (chain switched,
+                        // .pv/.pc synced). A failure past this point must NOT unlink
+                        // those files -- the rollback has committed.
+                        reencodePublished = true;
                         // Sync the chain publish now -- the new .pv/.pc are already
                         // synced inside reencodeWithPerKeyStreaming -- so once
                         // rollbackToMaxValue queues the old files for purge, a
@@ -4261,16 +4332,20 @@ public class PostingIndexWriter implements IndexWriter {
                         }
                     }
                 } catch (Throwable th) {
-                    // reencodeWithPerKeyStreaming never reaches publishToChain on a
-                    // throw (it is the last step), so the staged .pv/.pc at
-                    // newSealTxn were never published and the chain still
-                    // references the old .pv. Drop the staged files; the new .pv
-                    // may already be switched into valueMem, but the caller marks
-                    // the writer distressed and replaces it, releasing the
-                    // unlinked-but-mapped file on close.
-                    if (reencodeStarted) {
+                    // A throw BEFORE publishToChain (the last step of
+                    // reencodeWithPerKeyStreaming) leaves the staged .pv/.pc at
+                    // newSealTxn unpublished and the chain still on the old .pv:
+                    // drop the staged files and restore keyCount (set above before
+                    // the reencode). The new .pv may already be switched into
+                    // valueMem, but the caller marks the writer distressed and
+                    // replaces it, releasing the unlinked-but-mapped file on close.
+                    // A throw AFTER publish (the post-publish .pk sync) must leave
+                    // the now-live files alone; only propagate so the writer is
+                    // distressed.
+                    if (reencodeStarted && !reencodePublished) {
                         closeSidecarMems();
                         unlinkOrphanSealFiles(newSealTxn);
+                        keyCount = oldKeyCount;
                     }
                     throw th;
                 } finally {
@@ -4344,70 +4419,6 @@ public class PostingIndexWriter implements IndexWriter {
         } finally {
             Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
         }
-    }
-
-    /**
-     * Pass 1 of the streaming rollback (no covers or path-based covers).
-     * Decodes each key from every generation into {@code keyBuffer},
-     * binary-searches the rollback
-     * cutoff (the per-key run is sorted ascending, so survivors are the leading
-     * prefix &lt;= {@code maxValueCutoff}), and overwrites
-     * {@code totalCountsAddr[key]} with the surviving count. Returns the new key
-     * count (highest surviving key + 1); 0 means every value was rolled back and
-     * the caller truncates. Peak heap is one key ({@code maxKeyCount} longs), not
-     * the whole index. {@link #reencodeWithPerKeyStreaming} then re-decodes each
-     * key and encodes the surviving prefix.
-     */
-    private int filterCountsForRollback(long maxValueCutoff, long totalCountsAddr, long keyBuffer, int maxKeyCount) {
-        int newKeyCount = 0;
-        final int oldKeyCount = keyCount;
-        for (int key = 0; key < oldKeyCount; key++) {
-            int origCount = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
-            if (origCount == 0) {
-                continue;
-            }
-            int stride = key / PostingIndexUtils.DENSE_STRIDE;
-            int j = key % PostingIndexUtils.DENSE_STRIDE;
-            int decodedTotal = 0;
-            for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
-                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                long genBase = valueMem.addressOf(genFileOffset);
-                long appendAddr = keyBuffer + (long) decodedTotal * Long.BYTES;
-                if (genKeyCount < 0) {
-                    decodedTotal += decodeSparseGenSingleKey(genBase, -genKeyCount, key, appendAddr);
-                } else if (stride < PostingIndexUtils.strideCount(genKeyCount)) {
-                    decodedTotal += decodeDenseGenSingleKey(genBase, genKeyCount, stride, j, appendAddr);
-                }
-            }
-            // decodedTotal equals the full per-key count totalCountsAddr held
-            // before this pass; maxKeyCount (the full max) bounds keyBuffer.
-            assert decodedTotal <= maxKeyCount;
-            if (decodedTotal != origCount) {
-                throw CairoException.critical(0)
-                        .put("posting index rollback decode mismatch [key=").put(key)
-                        .put(", expected=").put(origCount)
-                        .put(", decoded=").put(decodedTotal).put(']');
-            }
-            int lo = 0, hi = decodedTotal - 1, cut = -1;
-            while (lo <= hi) {
-                int mid = (lo + hi) >>> 1;
-                long midVal = Unsafe.getLong(keyBuffer + (long) mid * Long.BYTES);
-                if (midVal <= maxValueCutoff) {
-                    cut = mid;
-                    lo = mid + 1;
-                } else {
-                    hi = mid - 1;
-                }
-            }
-            int newCount = cut + 1;
-            Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, newCount);
-            if (newCount > 0) {
-                newKeyCount = key + 1;
-            }
-        }
-        return newKeyCount;
     }
 
     /**
@@ -5116,10 +5127,21 @@ public class PostingIndexWriter implements IndexWriter {
                     + (long) maxDirtyKeyCount * Long.BYTES           // unpackBatch (auto-grows to max single key)
                     + encodeCtxPeakBytes(maxDirtyKeyCount)
                     + sealAuxiliaryBufferBytes();
-            if (coverCount > 0 && maxColValueSize > 0) {
-                incrementalPeak += (long) maxDirtyStrideTotal * maxColValueSize;     // incrSidecarBuf (worst dirty stride)
-                incrementalPeak += peakCoverColumnCompressBufBytes(maxDirtyKeyCount);
+            if (coverCount > 0) {
+                // incrSidecarBuf is sized to the widest cover value and is
+                // allocated (>= 8 bytes/value) even for var-only covers, where
+                // the var sidecar writer ignores it -- budget what seal()
+                // actually mallocs. peakCoverColumnCompressBufBytes is 0 for
+                // var-only covers; peakVarCoverFsstScratchBytes is 0 for
+                // fixed-only ones. Mirrors estimateFastPathPeakBytes /
+                // estimateStreamingPathPeakBytes, which add the same FSST term --
+                // without it a var-size cover with a >= FSST_MIN_RAW_SIZE dirty
+                // stride could pass the pre-flight and then OOM in the FSST batch.
+                final long sidecarValueSize = Math.max(Long.BYTES, maxColValueSize);
+                incrementalPeak += (long) maxDirtyStrideTotal * sidecarValueSize;     // incrSidecarBuf (worst dirty stride)
+                incrementalPeak += peakCoverColumnCompressBufBytes(maxDirtyKeyCount); // ALP compressBuf (fixed covers)
                 incrementalPeak += (long) coverCount * siSize;                       // incrSidecarSiBufs
+                incrementalPeak += peakVarCoverFsstScratchBytes();                   // streaming FSST batch (var covers)
             }
             final long headroom = Math.max(0L, rssLimit - Unsafe.getRssMemUsed());
             if (incrementalPeak > headroom) {
@@ -6263,42 +6285,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    /**
-     * Per-key streaming var-size sidecar writer (the rollback / RSS-bounded
-     * counterpart of {@link #writeSidecarVarStrideData}, which reads a whole
-     * stride's merged row ids). For one stride it reserves the
-     * {@code [totalCount][offsets][bytes]} block, then for each key decodes its
-     * row ids out of the freshly sealed dense gen 0 into {@code keyBuffer} and
-     * writes the covered var value at each, finally streaming-FSST-compressing
-     * the data region. Anonymous-heap scratch stays bounded by the largest key
-     * plus the FSST batch, not the whole stride's bytes.
-     */
-    private void writeSidecarVarStreamingForColumn(
-            MemoryMARW mem, int c, long colTop, int colType,
-            int ks, int strideStart, int[] keyCounts, long keyBuffer
-    ) {
-        int totalCount = 0;
-        for (int j = 0; j < ks; j++) {
-            totalCount += keyCounts[j];
-        }
-        final long blockStart = mem.getAppendOffset();
-        boolean longOffsets = false;
-        if (!writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, totalCount, false)) {
-            mem.jumpTo(blockStart);
-            longOffsets = true;
-            boolean ok = writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, totalCount, true);
-            assert ok : "long offsets must not overflow";
-        }
-        final int offsetWidth = longOffsets ? Long.BYTES : Integer.BYTES;
-        final long offsetsStart = blockStart + Integer.BYTES;
-        final long dataStart = offsetsStart + (long) (totalCount + 1) * offsetWidth;
-        final long rawDataLen = mem.getAppendOffset() - dataStart;
-        if (rawDataLen < FSST_MIN_RAW_SIZE || totalCount == 0) {
-            return;
-        }
-        tryFsstStreamingCompress(mem, totalCount, longOffsets, blockStart, offsetsStart, dataStart, rawDataLen);
-    }
-
     private void writeSidecarGenData(int totalValues, int genIndex) {
         if (coverCount <= 0 || totalValues == 0
                 || (coveredColumnNames.size() == 0 && coveredColumnAddrs.size() == 0)) {
@@ -6510,6 +6496,42 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * Per-key streaming var-size sidecar writer (the rollback / RSS-bounded
+     * counterpart of {@link #writeSidecarVarStrideData}, which reads a whole
+     * stride's merged row ids). For one stride it reserves the
+     * {@code [totalCount][offsets][bytes]} block, then for each key decodes its
+     * row ids out of the freshly sealed dense gen 0 into {@code keyBuffer} and
+     * writes the covered var value at each, finally streaming-FSST-compressing
+     * the data region. Anonymous-heap scratch stays bounded by the largest key
+     * plus the FSST batch, not the whole stride's bytes.
+     */
+    private void writeSidecarVarStreamingForColumn(
+            MemoryMARW mem, int c, long colTop, int colType,
+            int ks, int strideStart, int[] keyCounts, long keyBuffer
+    ) {
+        int totalCount = 0;
+        for (int j = 0; j < ks; j++) {
+            totalCount += keyCounts[j];
+        }
+        final long blockStart = mem.getAppendOffset();
+        boolean longOffsets = false;
+        if (!writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, totalCount, false)) {
+            mem.jumpTo(blockStart);
+            longOffsets = true;
+            boolean ok = writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, totalCount, true);
+            assert ok : "long offsets must not overflow";
+        }
+        final int offsetWidth = longOffsets ? Long.BYTES : Integer.BYTES;
+        final long offsetsStart = blockStart + Integer.BYTES;
+        final long dataStart = offsetsStart + (long) (totalCount + 1) * offsetWidth;
+        final long rawDataLen = mem.getAppendOffset() - dataStart;
+        if (rawDataLen < FSST_MIN_RAW_SIZE || totalCount == 0) {
+            return;
+        }
+        tryFsstStreamingCompress(mem, totalCount, longOffsets, blockStart, offsetsStart, dataStart, rawDataLen);
+    }
+
+    /**
      * Writes var-sized sidecar data for one stride in the sealed path.
      * <p>
      * Uncompressed format: [totalCount:4B][offsets:(totalCount+1)×W][concatenated bytes]
@@ -6668,38 +6690,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    private boolean writeVarStrideDataAttempt(
-            MemoryMARW mem, int covIdx, long colTop, int colType,
-            int ks, int[] keyCounts, long[] keyOffsets, long mergedValuesAddr,
-            int totalCount, boolean longOffsets
-    ) {
-        mem.putInt(longOffsets ? totalCount | PostingIndexUtils.LONG_OFFSETS_FLAG : totalCount);
-        long offsetsStart = mem.getAppendOffset();
-        for (int i = 0; i <= totalCount; i++) {
-            if (longOffsets) mem.putLong(0L);
-            else mem.putInt(0);
-        }
-        long dataStart = mem.getAppendOffset();
-
-        int valueOrdinal = 0;
-        for (int j = 0; j < ks; j++) {
-            int count = keyCounts[j];
-            long keyOff = keyOffsets[j];
-            for (int i = 0; i < count; i++) {
-                long rowId = Unsafe.getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                long off = mem.getAppendOffset() - dataStart;
-                if (!longOffsets && off > Integer.MAX_VALUE) return false;
-                writeVarOffset(mem, offsetsStart, valueOrdinal, off, longOffsets);
-                writeVarValue(mem, covIdx, colTop, rowId, colType);
-                valueOrdinal++;
-            }
-        }
-        long endOff = mem.getAppendOffset() - dataStart;
-        if (!longOffsets && endOff > Integer.MAX_VALUE) return false;
-        writeVarOffset(mem, offsetsStart, valueOrdinal, endOff, longOffsets);
-        return true;
-    }
-
     /**
      * Per-key variant of {@link #writeVarStrideDataAttempt}: instead of reading
      * a key's row ids out of a pre-merged stride buffer, decode them from the
@@ -6750,6 +6740,38 @@ public class PostingIndexWriter implements IndexWriter {
         if (!longOffsets && endOff > Integer.MAX_VALUE) {
             return false;
         }
+        writeVarOffset(mem, offsetsStart, valueOrdinal, endOff, longOffsets);
+        return true;
+    }
+
+    private boolean writeVarStrideDataAttempt(
+            MemoryMARW mem, int covIdx, long colTop, int colType,
+            int ks, int[] keyCounts, long[] keyOffsets, long mergedValuesAddr,
+            int totalCount, boolean longOffsets
+    ) {
+        mem.putInt(longOffsets ? totalCount | PostingIndexUtils.LONG_OFFSETS_FLAG : totalCount);
+        long offsetsStart = mem.getAppendOffset();
+        for (int i = 0; i <= totalCount; i++) {
+            if (longOffsets) mem.putLong(0L);
+            else mem.putInt(0);
+        }
+        long dataStart = mem.getAppendOffset();
+
+        int valueOrdinal = 0;
+        for (int j = 0; j < ks; j++) {
+            int count = keyCounts[j];
+            long keyOff = keyOffsets[j];
+            for (int i = 0; i < count; i++) {
+                long rowId = Unsafe.getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                long off = mem.getAppendOffset() - dataStart;
+                if (!longOffsets && off > Integer.MAX_VALUE) return false;
+                writeVarOffset(mem, offsetsStart, valueOrdinal, off, longOffsets);
+                writeVarValue(mem, covIdx, colTop, rowId, colType);
+                valueOrdinal++;
+            }
+        }
+        long endOff = mem.getAppendOffset() - dataStart;
+        if (!longOffsets && endOff > Integer.MAX_VALUE) return false;
         writeVarOffset(mem, offsetsStart, valueOrdinal, endOff, longOffsets);
         return true;
     }
