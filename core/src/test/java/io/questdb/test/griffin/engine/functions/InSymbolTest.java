@@ -24,10 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class InSymbolTest extends AbstractCairoTest {
@@ -57,12 +56,10 @@ public class InSymbolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBindVarTypeChange2() throws SqlException {
-        execute("create table test as (select x, rnd_symbol(20, 2, 5, 1) a from long_sequence(100))");
-
+    public void testBindVarTypeChange2() throws Exception {
         // when more than one argument supplied, the function will match exact values from the list
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "simple",
                 """
                         x\ta
@@ -83,28 +80,28 @@ public class InSymbolTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "undefined bind variable",
+                23,
                 "undefined bind variable: 2",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "ELLKK");
                     bindVariableService.setStr(1, "RX");
-                },
-                23
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "bad type",
+                20,
                 "inconvertible types: INT -> SYMBOL [from=INT, to=SYMBOL]",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "RX");
                     bindVariableService.setInt(1, 30);
                     bindVariableService.setStr(2, "CPSWH");
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "with nulls",
                 """
                         x\ta
@@ -174,7 +171,9 @@ public class InSymbolTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("test where a in ($1,$2,$3)", tuples);
+        assertQuery("test where a in ($1,$2,$3)")
+                .ddl("create table test as (select x, rnd_symbol(20, 2, 5, 1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test

@@ -198,6 +198,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
     private final boolean cairoSqlLegacyOperatorPrecedence;
+    private final boolean cairoSqlLegacyUnionColumnPropagation;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
     private final int cairoUnorderedPageFrameReduceQueueCapacity;
@@ -427,7 +428,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
-    private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
     private final long qwpUdpCommitInterval;
@@ -1840,6 +1840,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 );
             }
             this.cairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
+            this.cairoSqlLegacyUnionColumnPropagation = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
@@ -1890,18 +1891,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
-            this.qwpMaxSchemasPerConnection = getInt(
-                    properties,
-                    env,
-                    PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION,
-                    QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
-            );
-            if (qwpMaxSchemasPerConnection < 1) {
-                throw new ServerConfigurationException(
-                        PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION.getPropertyPath()
-                                + " must be at least 1"
-                );
-            }
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -5133,6 +5122,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isCairoSqlLegacyUnionColumnPropagation() {
+            return cairoSqlLegacyUnionColumnPropagation;
+        }
+
+        @Override
         public boolean isCheckpointRecoveryEnabled() {
             return checkpointRecoveryEnabled;
         }
@@ -5989,11 +5983,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpMaxRowsPerTable() {
             return qwpMaxRowsPerTable;
-        }
-
-        @Override
-        public int getQwpMaxSchemasPerConnection() {
-            return qwpMaxSchemasPerConnection;
         }
 
         @Override

@@ -36,7 +36,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -77,13 +76,14 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
             new Thread(() -> {
                 started.countDown();
                 try {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        TestUtils.assertSql(compiler, regularUserContext1, query, sink, "t\n1\n");
-                        Assert.fail("Query should have been cancelled");
-                    } catch (Exception e) {
-                        if (!e.getMessage().contains("cancelled by user")) {
-                            error.set(e);
-                        }
+                    assertQuery(query)
+                            .withContext(regularUserContext1)
+                            .noLeakCheck()
+                            .returnsOnce("t\n1\n");
+                    Assert.fail("Query should have been cancelled");
+                } catch (Exception e) {
+                    if (!e.getMessage().contains("cancelled by user")) {
+                        error.set(e);
                     }
                 } finally {
                     stopped.countDown();
@@ -161,13 +161,14 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
             new Thread(() -> {
                 started.countDown();
                 try {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        TestUtils.assertSql(compiler, adminUserContext1, query, new StringSink(), "t\n1\n");
-                        Assert.fail("Query should have been cancelled");
-                    } catch (Exception e) {
-                        if (!e.getMessage().contains("cancelled by user")) {
-                            error.set(e);
-                        }
+                    assertQuery(query)
+                            .withContext(adminUserContext1)
+                            .noLeakCheck()
+                            .returnsOnce("t\n1\n");
+                    Assert.fail("Query should have been cancelled");
+                } catch (Exception e) {
+                    if (!e.getMessage().contains("cancelled by user")) {
+                        error.set(e);
                     }
                 } finally {
                     stopped.countDown();

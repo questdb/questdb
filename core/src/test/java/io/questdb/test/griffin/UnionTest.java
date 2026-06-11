@@ -24,14 +24,142 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
 
 public class UnionTest extends AbstractCairoTest {
+
+    @Test
+    public void testAggregateOverUnionAllLegacyFlagReintroducesCrash() throws Exception {
+        // The cairo.sql.legacy.union.column.propagation flag restores the pre-fix by-name emit,
+        // which reintroduces the column-count divergence so the otherwise-fixed query fails again
+        // with an AssertionError during code generation. Guards the rollback switch against
+        // silently becoming a no-op. Reset the flag in finally so it cannot leak into other tests
+        // in this class (overrides are otherwise only cleared at @AfterClass).
+        setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "true");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table u1 (a symbol, close double)");
+                execute("create table u2 (a symbol, close double)");
+                execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
+                execute("insert into u2 values ('z', 3.0)");
+
+                final String unionSql = "select a, close price from u1 union all select a, close price from u2";
+                boolean threw = false;
+                try (RecordCursorFactory ignored = select("select count() from (" + unionSql + ")")) {
+                    // unreachable: the legacy by-name emit diverges the branch column counts
+                } catch (AssertionError e) {
+                    threw = true;
+                }
+                Assert.assertTrue("legacy flag should restore the by-name emit and reintroduce the crash", threw);
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, "false");
+        }
+    }
+
+    @Test
+    public void testAggregateOverUnionAllOfLatestOn() throws Exception {
+        // Regression test: an aggregate (count/sum) over a UNION ALL of LATEST ON
+        // sub-queries used to crash with an AssertionError in SqlCodeGenerator
+        // (columnCount == metadataB.getColumnCount()). Top-down column pruning over
+        // the union chain pruned one branch down to just the LATEST ON partition key
+        // while leaving the others with all projected columns, so the union sides
+        // diverged in column count. Not specific to count() - any aggregate that
+        // prunes the projection triggers it.
+        assertMemoryLeak(() -> {
+            for (int i = 1; i <= 4; i++) {
+                execute("create table t" + i + " (tvId symbol, close double, timestamp timestamp) timestamp(timestamp) partition by day wal");
+            }
+            // t1: A -> latest close 11, B -> 20  (2 rows after LATEST ON)
+            execute("insert into t1 values " +
+                    "('A', 10.0, '2024-01-01T00:00:01.000000Z'), " +
+                    "('A', 11.0, '2024-01-01T00:00:02.000000Z'), " +
+                    "('B', 20.0, '2024-01-01T00:00:01.000000Z')");
+            // t2: C -> 30  (1 row)
+            execute("insert into t2 values ('C', 30.0, '2024-01-01T00:00:01.000000Z')");
+            // t3: D -> latest close 41  (1 row)
+            execute("insert into t3 values " +
+                    "('D', 40.0, '2024-01-01T00:00:01.000000Z'), " +
+                    "('D', 41.0, '2024-01-01T00:00:02.000000Z')");
+            // t4: E -> 50  (1 row)
+            execute("insert into t4 values ('E', 50.0, '2024-01-01T00:00:01.000000Z')");
+            drainWalQueue();
+
+            final String unionSql =
+                    "SELECT tvId, close price, timestamp mts FROM t1 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t2 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t3 LATEST ON timestamp PARTITION BY tvId " +
+                            "UNION ALL " +
+                            "SELECT tvId, close price, timestamp mts FROM t4 LATEST ON timestamp PARTITION BY tvId";
+
+            // 2 + 1 + 1 + 1 = 5 rows
+            assertQuery("select count() from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            5
+                            """);
+            // 11 + 20 + 30 + 41 + 50 = 152
+            assertQuery("select sum(price) from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            152.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAggregateOverUnionAllWithAliasMismatch() throws Exception {
+        // Minimal root-cause regression test: the crash is driven by alias divergence between
+        // UNION ALL branches, not by LATEST ON (which only forces the CHOOSE-wrapper structure).
+        // Here one column is aliased (close -> price) and one is not (a). The old by-name emit
+        // matched only the same-named column (a) into the sibling, pruning it to 1 column while
+        // the head kept 2, so the union sides diverged in column count under count()/sum().
+        assertMemoryLeak(() -> {
+            execute("create table u1 (a symbol, close double)");
+            execute("create table u2 (a symbol, close double)");
+            execute("insert into u1 values ('x', 1.0), ('y', 2.0)");
+            execute("insert into u2 values ('z', 3.0)");
+
+            final String unionSql =
+                    "select a, close price from u1 " +
+                            "union all " +
+                            "select a, close price from u2";
+
+            // 2 + 1 = 3 rows
+            assertQuery("select count() from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+            // 1 + 2 + 3 = 6
+            assertQuery("select sum(price) from (" + unionSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            6.0
+                            """);
+        });
+    }
 
     @Test
     public void testExcept() throws Exception {
@@ -67,9 +195,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21', 1
                     except
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query1)) {
-                assertCursor(expected1, rcf, true, false);
-            }
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .returns(expected1);
 
             final String expected2 = """
                     a\tb
@@ -79,9 +207,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21' a, 1 b
                     except
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query2)) {
-                assertCursor(expected2, rcf, true, false);
-            }
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -185,9 +313,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21', 1
                     intersect
                     select '2020-04-21', 1""";
-            try (RecordCursorFactory rcf = select(query1)) {
-                assertCursor(expected1, rcf, true, false);
-            }
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .returns(expected1);
 
             final String expected2 = """
                     a\tb
@@ -197,9 +325,9 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21' a, 1 b
                     intersect
                     select '2020-04-21', 1""";
-            try (RecordCursorFactory rcf = select(query2)) {
-                assertCursor(expected2, rcf, true, false);
-            }
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -758,9 +886,10 @@ public class UnionTest extends AbstractCairoTest {
             );
 
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -786,9 +915,11 @@ public class UnionTest extends AbstractCairoTest {
                     " long_sequence(10))"
             );
 
-            try (RecordCursorFactory factory = select("select * from x union all y")) {
-                assertCursor(expected2, factory, false, true);
-            }
+            assertQuery("select * from x union all y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -804,9 +935,11 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21', 1
                     union all
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query1)) {
-                assertCursor(expected1, rcf, false, true);
-            }
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected1);
 
             final String expected2 = """
                     a\tb
@@ -817,9 +950,11 @@ public class UnionTest extends AbstractCairoTest {
                     select '2020-04-21' a, 1 b
                     union all
                     select '2020-04-22', 2""";
-            try (RecordCursorFactory rcf = select(query2)) {
-                assertCursor(expected2, rcf, false, true);
-            }
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -859,9 +994,10 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -872,9 +1008,10 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(7) x)"
             ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            try (RecordCursorFactory factory = select("select distinct t from x union all y order by t")) {
-                assertCursor(expected2, factory, true, true);
-            }
+            assertQuery("select distinct t from x union all y order by t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -927,9 +1064,10 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(7) x)"
             );
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -947,19 +1085,18 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(13) x)"
             ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            try (
-                    RecordCursorFactory factory = select(
-                            "select t from (" +
-                                    "select * from (select distinct t from x order by 1) " +
-                                    "union all " +
-                                    "y " +
-                                    "union all " +
-                                    "z " +
-                                    ")"
-                    )
-            ) {
-                assertCursor(expected2, factory, false, true);
-            }
+            assertQuery(
+                    "select t from (" +
+                            "select * from (select distinct t from x order by 1) " +
+                            "union all " +
+                            "y " +
+                            "union all " +
+                            "z " +
+                            ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -1138,19 +1275,17 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(13) x)"
             ); // produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            try (
-                    RecordCursorFactory factory = select(
-                            "select t from (" +
-                                    "select distinct t from x " +
-                                    "union all " +
-                                    "y " +
-                                    "union all " +
-                                    "z " +
-                                    ")  order by 1"
-                    )
-            ) {
-                assertCursor(expected2, factory, true, true);
-            }
+            assertQuery(
+                    "select t from (" +
+                            "select distinct t from x " +
+                            "union all " +
+                            "y " +
+                            "union all " +
+                            "z " +
+                            ")  order by 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -1244,9 +1379,10 @@ public class UnionTest extends AbstractCairoTest {
             );
 
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -1295,9 +1431,10 @@ public class UnionTest extends AbstractCairoTest {
                     " long_sequence(4))"
             );
 
-            try (RecordCursorFactory factory = select("select * from x union y union z")) {
-                assertCursor(expected2, factory, false, false);
-            }
+            assertQuery("select * from x union y union z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected2);
         });
     }
 
@@ -1393,9 +1530,10 @@ public class UnionTest extends AbstractCairoTest {
             );
 
 
-            try (RecordCursorFactory rcf = select("x")) {
-                assertCursor(expected, rcf, true, true);
-            }
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             SharedRandom.RANDOM.get().reset();
 
@@ -1446,9 +1584,10 @@ public class UnionTest extends AbstractCairoTest {
                     " long_sequence(24))"
             );
 
-            try (RecordCursorFactory factory = select("select * from x union all y union z")) {
-                assertCursor(expected2, factory, false, false);
-            }
+            assertQuery("select * from x union all y union z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected2);
         });
     }
 
@@ -1642,23 +1781,22 @@ public class UnionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
+                    .withPlan("""
+                            Union All
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                Limit value: -1 skip-rows: 2 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
                     .returns("""
                             timestamp
                             2022-03-08T18:03:57.609765Z
                             2022-03-10T18:03:57.609765Z
                             """);
-
-            assertPlanNoLeakCheck(limitQuery, """
-                    Union All
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                        Limit value: -1 skip-rows: 2 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                    """);
 
             assertQuery("(SELECT min(timestamp) timestamp FROM trades) " +
                     "UNION ALL " +
@@ -1672,18 +1810,20 @@ public class UnionTest extends AbstractCairoTest {
                             2022-03-10T18:03:57.609765Z
                             """);
 
-            assertPlanNoLeakCheck(groupQuery, """
-                    Union All
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            SelectedRecord
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: trades
-                    """);
+            assertQuery(groupQuery)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    SelectedRecord
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: trades
+                            """);
         });
     }
 

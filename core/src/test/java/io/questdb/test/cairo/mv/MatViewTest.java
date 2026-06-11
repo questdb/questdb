@@ -3539,10 +3539,9 @@ public class MatViewTest extends AbstractCairoTest {
                             2
                             """);
 
-            assertQuery("explain " + sql)
+            assertQuery(sql)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2
@@ -3563,10 +3562,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             if (JitUtil.isJitSupported()) {
-                assertQuery("explain " + sql)
+                assertQuery(sql)
                         .noLeakCheck()
-                        .returnsOnce("""
-                                QUERY PLAN
+                        .assertsPlan("""
                                 Async JIT Filter workers: 1
                                   filter: sym='eurusd'
                                     PageFrame
@@ -3574,10 +3572,9 @@ public class MatViewTest extends AbstractCairoTest {
                                         Frame forward scan on: price_1h
                                 """);
             } else {
-                assertQuery("explain " + sql)
+                assertQuery(sql)
                         .noLeakCheck()
-                        .returnsOnce("""
-                                QUERY PLAN
+                        .assertsPlan("""
                                 Async Filter workers: 1
                                   filter: sym='eurusd'
                                     PageFrame
@@ -3590,10 +3587,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            assertQuery("explain " + sql)
+            assertQuery(sql)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2
@@ -3649,10 +3645,9 @@ public class MatViewTest extends AbstractCairoTest {
                             eurusd\t1.314\t2024-09-14T13:00:00.000000Z
                             """);
 
-            assertQuery("explain " + sql)
+            assertQuery(sql)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2

@@ -105,7 +105,8 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
                         .withEngine(engine)
                         .withContext(sqlExecutionContext)
                         .noLeakCheck()
-                        .returnsOnce("sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
+                        .expectSize()
+                        .returns("sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
         }
     }

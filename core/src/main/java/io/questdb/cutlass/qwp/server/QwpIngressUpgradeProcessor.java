@@ -1039,16 +1039,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
-        int clientMaxVersion = QwpConstants.VERSION_1; // default if header absent
+        int clientMaxVersion = QwpConstants.VERSION; // default if header absent
         Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_MAX_VERSION);
         if (maxVersionHeader != null) {
             int parsed = Numbers.parseNonNegativeIntQuiet(maxVersionHeader);
-            if (parsed >= QwpConstants.VERSION_1) {
+            if (parsed >= QwpConstants.VERSION) {
                 clientMaxVersion = parsed;
             }
         }
 
-        int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_INGEST_VERSION);
+        int negotiated = Math.min(clientMaxVersion, QwpConstants.VERSION);
 
         Utf8Sequence clientId = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_CLIENT_ID);
         if (clientId != null) {

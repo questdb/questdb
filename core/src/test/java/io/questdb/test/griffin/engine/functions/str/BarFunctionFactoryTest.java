@@ -344,16 +344,15 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         // factory/signature changes are visible in review.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertPlanNoLeakCheck(
-                    "SELECT val, bar(val, 0, 100, 10) FROM t",
-                    """
+            assertQuery("SELECT val, bar(val, 0, 100, 10) FROM t")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [val,bar(val,0,100,10)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 

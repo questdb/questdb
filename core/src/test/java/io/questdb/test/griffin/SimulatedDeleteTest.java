@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class SimulatedDeleteTest extends AbstractCairoTest {
@@ -62,13 +61,9 @@ public class SimulatedDeleteTest extends AbstractCairoTest {
             execute("insert into state_table values(systimestamp(), 12345, 'OFF');");
             execute("insert into state_table values(systimestamp(), 12345, 'ON');");
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "(select state from state_table latest on time partition by state limit -1) where state != 'ON';",
-                    sink,
-                    "state\n"
-            );
+            assertQuery("(select state from state_table latest on time partition by state limit -1) where state != 'ON';")
+                    .noLeakCheck()
+                    .returns("state\n");
         });
     }
 }
