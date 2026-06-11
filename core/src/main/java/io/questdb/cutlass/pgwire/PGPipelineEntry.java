@@ -48,11 +48,11 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CompiledQueryImpl;
+import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
-import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -98,6 +98,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 import static io.questdb.cutlass.pgwire.PGConnectionContext.*;
@@ -362,22 +363,55 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
-        try {
-            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
-                final TableWriterAPI w = pendingWriter.value;
-                if (w != null) {
-                    w.commit();
-                }
-                // We rely on the fact that writer will roll back itself when it is returned to the pool.
-                // The pool will also handle a case, when rollback fails. This will release the writer object
-                // fully and force next writer to load its state from disk.
-                pendingWriter.value = Misc.free(w);
-            }
-            pendingWriters.clear();
-        } catch (Throwable th) {
-            // free remaining writers
+        // Demote write-fence, mirrored from the ILP twin TableUpdateDetails.commit. A BEGIN; INSERT
+        // parks a WalWriter in pendingWriters -- invisible to drainWriterPool, which counts the non-WAL
+        // writerPool only by design -- so the demote drain can complete while a transaction is still
+        // open. Without this fence the later COMMIT (or the implicit commit on SYNC / on a pipelined
+        // SELECT) would append a local seqTxn on the already-settled replica and acknowledge it to the
+        // client: an acked-but-unreplicated write plus replica divergence. The flush is the only
+        // pg-wire path that materializes parked writes, so the fence belongs here, covering the COMMIT
+        // case, the implicit-commit-before-SELECT path, and the SYNC implicit-commit path at once.
+        //
+        // Cheap early-out: if the node is already read-only before we attempt to acquire the lock, skip
+        // the lock entirely. This is NOT the authoritative refusal -- the in-lock re-check below is.
+        if (engine.isReadOnlyMode()) {
             rollback(pendingWriters);
-            throw kaput().put(th);
+            throw CairoException.authorization().put("replica access is read-only");
+        }
+        // Hold the role-switch lock across the authoritative re-check and the actual commit. The
+        // role-flip path in EntCairoEngine acquires the same lock around the REPLICA flag publish, so
+        // either (a) the flip runs first: we see REPLICA on the in-lock re-check and refuse without
+        // committing; or (b) we run first: we commit as PRIMARY and the flip waits. This closes the
+        // TOCTOU window between the gate-read and writerAPI.commit().
+        final ReentrantLock lock = engine.getRoleSwitchLock();
+        lock.lock();
+        try {
+            // Authoritative in-lock re-check. Thrown raw (before the commit try below) so it surfaces
+            // as the standard read-only authorization error rather than a wrapped processing exception;
+            // the parked writers are rolled back so nothing lands on the demoting node.
+            if (engine.isReadOnlyMode()) {
+                rollback(pendingWriters);
+                throw CairoException.authorization().put("replica access is read-only");
+            }
+            try {
+                for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                    final TableWriterAPI w = pendingWriter.value;
+                    if (w != null) {
+                        w.commit();
+                    }
+                    // We rely on the fact that writer will roll back itself when it is returned to the pool.
+                    // The pool will also handle a case, when rollback fails. This will release the writer object
+                    // fully and force next writer to load its state from disk.
+                    pendingWriter.value = Misc.free(w);
+                }
+                pendingWriters.clear();
+            } catch (Throwable th) {
+                // free remaining writers
+                rollback(pendingWriters);
+                throw kaput().put(th);
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -631,36 +665,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // otherwise be authorized and land on a node that is already demoting (its WAL uploader
             // may have closed), losing the write once the node settles as a replica. Re-checking the
             // live engine state per statement closes that window for pg-wire, the same way the QWP
-            // ingress path consults isReadOnlyMode() per batch.
-            // The enumerated set must cover EVERY state-mutating statement type, because nothing
-            // behind this gate refuses writes: isReadOnlyMode() is not enforced at the engine/writer
-            // level, and a connection authorized while the node was PRIMARY keeps a read-write
-            // SecurityContext across the demote, so steady-state ReadOnlySecurityContext does not
-            // apply to it. A type omitted here falls through to msgExecute's default branch and
-            // engine.execute(), mutating a demoting node (write-loss). CREATE_USER/ALTER_USER are
-            // intentionally NOT listed: they are ACL ops gated by the enterprise ACL permission
-            // layer, not the table-write class this gate covers.
-            // One DROP shape is exempt: a DROP that targets the HTTP parquet exporter's temp table.
-            // A read-only replica still runs parquet export (it materializes a temp table behind a
-            // SELECT), and when its own cleanup fails the admin drops the leftover temp table. That
-            // drop is a purely local operation the replica security context already permits, so the
-            // eager gate here would refuse it too early; let it pass and rely on the downstream
-            // authorizeTableDrop check, which still refuses every genuine client DROP.
+            // ingress path consults isReadOnlyMode() per batch. The statement-type classification
+            // (and the parquet-export temp-table DROP exemption) lives in ReadOnlyStatementGate so the
+            // HTTP /exec gate in JsonQueryProcessor and this one cannot drift apart -- COMMIT is not in
+            // that set; the transaction-flush fence inside commit() is the authoritative refusal for a
+            // BEGIN/INSERT that parks a writer and straddles the demote.
             if (engine.isReadOnlyMode()
-                    && (this.sqlType == CompiledQuery.INSERT
-                    || this.sqlType == CompiledQuery.INSERT_AS_SELECT
-                    || this.sqlType == CompiledQuery.UPDATE
-                    || this.sqlType == CompiledQuery.ALTER
-                    || this.sqlType == CompiledQuery.TRUNCATE
-                    || this.sqlType == CompiledQuery.RENAME_TABLE
-                    || this.sqlType == CompiledQuery.CREATE_TABLE
-                    || this.sqlType == CompiledQuery.CREATE_TABLE_AS_SELECT
-                    || this.sqlType == CompiledQuery.CREATE_MAT_VIEW
-                    || this.sqlType == CompiledQuery.REFRESH_MAT_VIEW
-                    || this.sqlType == CompiledQuery.CREATE_VIEW
-                    || this.sqlType == CompiledQuery.ALTER_VIEW
-                    || this.sqlType == CompiledQuery.ALTER_STORAGE_POLICY
-                    || (this.sqlType == CompiledQuery.DROP && !isExportTempTableDrop()))) {
+                    && ReadOnlyStatementGate.isRefusedOnReadOnly(this.sqlType, operation, engine.getConfiguration())) {
                 throw CairoException.authorization().put("replica access is read-only");
             }
             switch (this.sqlType) {
@@ -1369,11 +1380,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return sqlType == CompiledQuery.SELECT
                 || sqlType == CompiledQuery.EXPLAIN
                 || sqlType == CompiledQuery.PSEUDO_SELECT;
-    }
-
-    private boolean isExportTempTableDrop() {
-        return operation instanceof GenericDropOperation
-                && ((GenericDropOperation) operation).isExportTempTableDrop(engine.getConfiguration().getParquetExportTableNamePrefix());
     }
 
     private boolean isTextFormat() {

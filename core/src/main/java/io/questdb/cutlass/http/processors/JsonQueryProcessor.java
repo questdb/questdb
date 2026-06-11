@@ -50,11 +50,11 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlTimeoutException;
-import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -474,42 +474,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
-                // Read-only boundary gate (mirrors the pg-wire gate in PGPipelineEntry and the ILP
-                // gate in TableUpdateDetails.commit): engine.isReadOnlyMode() flips to true as the
-                // FIRST step of an in-place PRIMARY->REPLICA switch cascade, before the security
-                // context resolved for this request reflects the replica role. A write/DDL submitted
-                // over /exec on a connection authorized while the node was still PRIMARY would
-                // otherwise be executed and land on a node that is already demoting (its WAL uploader
-                // may have closed), losing the write once the node settles as a replica. Re-checking
-                // the live engine state per statement closes that window for the HTTP /exec path.
-                // Keep this enumeration in lockstep with the pg-wire gate in PGPipelineEntry: it must
-                // cover EVERY state-mutating statement type. Nothing behind this gate refuses writes
-                // (isReadOnlyMode() is not enforced at the engine/writer level, and a PRIMARY-resolved
-                // request keeps a read-write security context across the demote), so an omitted type
-                // executes against a demoting node (write-loss). CREATE_USER/ALTER_USER are
-                // intentionally excluded: they are ACL ops gated by the enterprise ACL permission
-                // layer, not the table-write class this gate covers.
-                // The pg-wire gate exempts one DROP shape -- the HTTP parquet exporter's temp table --
-                // and this gate matches it: a read-only replica still exports parquet (it materializes
-                // a temp table behind a SELECT), and the admin drops the leftover temp table when the
-                // replica's own cleanup fails. That drop is a local operation the replica security
-                // context already permits, so the eager gate must let it pass and rely on the
-                // downstream authorizeTableDrop check, which still refuses every genuine client DROP.
+                // Read-only boundary gate: engine.isReadOnlyMode() flips to true as the FIRST step of
+                // an in-place PRIMARY->REPLICA switch cascade, before the security context resolved for
+                // this request reflects the replica role. A write/DDL submitted over /exec on a
+                // connection authorized while the node was still PRIMARY would otherwise be executed and
+                // land on a node that is already demoting (its WAL uploader may have closed), losing the
+                // write once the node settles as a replica. Re-checking the live engine state per
+                // statement closes that window for the HTTP /exec path. The statement-type classification
+                // (and the parquet-export temp-table DROP exemption) lives in ReadOnlyStatementGate so
+                // the pg-wire gate in PGPipelineEntry and this one cannot drift apart.
                 if (engine.isReadOnlyMode()
-                        && (cc.getType() == CompiledQuery.INSERT
-                        || cc.getType() == CompiledQuery.INSERT_AS_SELECT
-                        || cc.getType() == CompiledQuery.UPDATE
-                        || cc.getType() == CompiledQuery.ALTER
-                        || cc.getType() == CompiledQuery.TRUNCATE
-                        || cc.getType() == CompiledQuery.RENAME_TABLE
-                        || cc.getType() == CompiledQuery.CREATE_TABLE
-                        || cc.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT
-                        || cc.getType() == CompiledQuery.CREATE_MAT_VIEW
-                        || cc.getType() == CompiledQuery.REFRESH_MAT_VIEW
-                        || cc.getType() == CompiledQuery.CREATE_VIEW
-                        || cc.getType() == CompiledQuery.ALTER_VIEW
-                        || cc.getType() == CompiledQuery.ALTER_STORAGE_POLICY
-                        || (cc.getType() == CompiledQuery.DROP && !isExportTempTableDrop(cc)))) {
+                        && ReadOnlyStatementGate.isRefusedOnReadOnly(cc.getType(), cc.getOperation(), engine.getConfiguration())) {
                     // The compiled query holds a native op (InsertOperation, UpdateOperation,
                     // AlterOperation, or an Operation subtype for CREATE/DROP). The per-type
                     // executors that normally free these ops are not reached when we throw here,
@@ -784,11 +759,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     code
             );
         }
-    }
-
-    private boolean isExportTempTableDrop(CompiledQuery cc) {
-        return cc.getOperation() instanceof GenericDropOperation
-                && ((GenericDropOperation) cc.getOperation()).isExportTempTableDrop(engine.getConfiguration().getParquetExportTableNamePrefix());
     }
 
     private boolean parseUrl(
