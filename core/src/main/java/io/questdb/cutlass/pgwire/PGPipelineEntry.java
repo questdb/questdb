@@ -383,7 +383,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // the lock entirely. This is NOT the authoritative refusal -- the in-lock re-check below is.
         if (engine.isReadOnlyMode()) {
             rollback(pendingWriters);
-            throw CairoException.authorization().put("replica access is read-only");
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
         // Hold the role-switch lock across the authoritative re-check and the actual commit. The
         // role-flip path in EntCairoEngine acquires the same lock around the REPLICA flag publish, so
@@ -398,7 +398,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // the parked writers are rolled back so nothing lands on the demoting node.
             if (engine.isReadOnlyMode()) {
                 rollback(pendingWriters);
-                throw CairoException.authorization().put("replica access is read-only");
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
             try {
                 for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
@@ -679,7 +679,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // BEGIN/INSERT that parks a writer and straddles the demote.
             if (engine.isReadOnlyMode()
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(this.sqlType, operation, engine.getConfiguration())) {
-                throw CairoException.authorization().put("replica access is read-only");
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
             switch (this.sqlType) {
                 case CompiledQuery.EXPLAIN:

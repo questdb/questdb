@@ -1724,7 +1724,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // instant the node is read-only. This also closes the demote window: isReadOnlyMode()
             // flips first, while a connection's security context may still be the PRIMARY one that
             // authorizeAlterTableSetType() would accept, so the check must precede the auth call.
-            throw CairoException.authorization().put("replica access is read-only");
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
@@ -3089,7 +3089,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // table registry, so the caller sees "replica access is read-only" rather than
         // "table does not exist" when the table has not yet been replicated to this node.
         if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put("replica access is read-only");
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
         InsertOperationImpl insertOperation = null;
@@ -3219,7 +3219,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // table registry, so the caller sees "replica access is read-only" rather than
         // "table does not exist" when the table has not yet been replicated to this node.
         if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put("replica access is read-only");
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
@@ -3500,7 +3500,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Refuse the instant the node goes read-only, mirroring the per-statement write gates
                 // on the pg-wire and HTTP /exec paths -- otherwise this enqueues an async refresh that
                 // writes to a node that is already demoting and loses the write once it settles.
-                throw CairoException.authorization().put("replica access is read-only");
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
             if (isStatsReset) {

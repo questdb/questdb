@@ -394,15 +394,6 @@ public class Bootstrap {
         return new CairoEngine(getConfiguration().getCairoConfiguration(), new io.questdb.cairo.wal.QdbrWalLocker(), true);
     }
 
-    /**
-     * Returns a partially-initialised engine suitable for lifecycle-managed startup.
-     * Callers that own a lifecycle orchestrator must call {@link CairoEngine#completeInit()}
-     * and then {@link CairoEngine#load()} at the appropriate DAG stage.
-     */
-    public CairoEngine newPartialCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration(), new io.questdb.cairo.wal.QdbrWalLocker(), false);
-    }
-
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
         final boolean exists = out.exists();
         if (force || !exists) {

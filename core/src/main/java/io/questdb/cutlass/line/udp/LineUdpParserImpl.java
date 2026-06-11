@@ -139,6 +139,14 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     public void commitAll() {
+        // Cheap idle early-out: an iteration with nothing buffered (no cached writer and an empty
+        // commit list) has nothing to flush, so skip the global role-switch lock acquire entirely.
+        // The UDP receive loop calls commitAll() on every iteration including idle ones; without
+        // this short-circuit each idle tick would contend the engine-wide role-switch lock for no
+        // work.
+        if (writer == null && commitList.size() == 0) {
+            return;
+        }
         // Cheap early-out: a node already read-only before we try to acquire the lock
         // has nothing to flush -- skip the lock acquire entirely. This is NOT the
         // authoritative refusal, the in-lock re-check below is.

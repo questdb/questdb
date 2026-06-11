@@ -83,7 +83,10 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
     private Thread compileViewsThread;
-    private Thread hydrateMetadataThread;
+    // The HydrationEnvelope fire-once guard. onDependencyState fires from orchestrator threads on
+    // every role switch; volatile publishes the first-hydration write so a later switch on another
+    // thread observes the non-null guard and suppresses the redundant re-run.
+    private volatile Thread hydrateMetadataThread;
     private io.questdb.lifecycle.LifecycleOrchestrator orchestrator;
     private Thread shutdownHookThread;
 
@@ -431,32 +434,40 @@ public class ServerMain implements Closeable {
 
     public synchronized void start(boolean addShutdownHook) {
         if (!closed.get() && running.compareAndSet(false, true)) {
-            orchestrator = newOrchestrator(
-                    bootstrap.getLog(),
-                    null,   // workerPoolManager exposed lazily after WPM envelope reaches DEGRADED
-                    null    // tokio runtime -- enterprise plans (Plan 04) override registerComponents to provide
-            );
-            freeOnExit(orchestrator);
-            // Halt worker pools before the rollback stop loop frees component resources.
-            // On a boot failure of a late component (run() -> close()), the reverse-topo stop
-            // loop stops dependents like web-http first, freeing the dispatcher's native FDSet
-            // while shared pool workers still run -- on Windows the select dispatcher then
-            // dereferences the freed native array in runSerially() (EXCEPTION_ACCESS_VIOLATION);
-            // epoll/kqueue only hand a closed fd to the kernel and survive with EBADF. The hook
-            // mirrors the halt-then-free order of close(); WorkerPool.halt() is CAS-guarded, so
-            // the normal-shutdown second call is a no-op.
-            orchestrator.setPreStopHook(() -> {
-                if (workerPoolManager != null) {
-                    workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+            try {
+                orchestrator = newOrchestrator(
+                        bootstrap.getLog(),
+                        null,   // workerPoolManager exposed lazily after WPM envelope reaches DEGRADED
+                        null    // tokio runtime -- enterprise plans (Plan 04) override registerComponents to provide
+                );
+                freeOnExit(orchestrator);
+                // Halt worker pools before the rollback stop loop frees component resources.
+                // On a boot failure of a late component (run() -> close()), the reverse-topo stop
+                // loop stops dependents like web-http first, freeing the dispatcher's native FDSet
+                // while shared pool workers still run -- on Windows the select dispatcher then
+                // dereferences the freed native array in runSerially() (EXCEPTION_ACCESS_VIOLATION);
+                // epoll/kqueue only hand a closed fd to the kernel and survive with EBADF. The hook
+                // mirrors the halt-then-free order of close(); WorkerPool.halt() is CAS-guarded, so
+                // the normal-shutdown second call is a no-op.
+                orchestrator.setPreStopHook(() -> {
+                    if (workerPoolManager != null) {
+                        workerPoolManager.halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                    }
+                });
+                if (addShutdownHook) {
+                    addShutdownHook();
                 }
-            });
-            if (addShutdownHook) {
-                addShutdownHook();
+                registerComponents(orchestrator);
+                orchestrator.run();   // BLOCKS until graph stable; throws LifecycleStartupException on boot-essential failure
+                // Banner, DataID log, System.gc, 'enjoy' advisory all emit from the network-services envelope tail
+                // (W4 -- moved verbatim from this method's :263-:272 region).
+            } catch (Throwable th) {
+                // Reset the running flag on a startup failure so a caller (embedded host or test)
+                // can legitimately retry start(); without this reset the CAS above stays latched at
+                // true and every retry is a silent no-op that never re-runs the orchestrator.
+                running.set(false);
+                throw th;
             }
-            registerComponents(orchestrator);
-            orchestrator.run();   // BLOCKS until graph stable; throws LifecycleStartupException on boot-essential failure
-            // Banner, DataID log, System.gc, 'enjoy' advisory all emit from the network-services envelope tail
-            // (W4 -- moved verbatim from this method's :263-:272 region).
         }
     }
 
@@ -1324,20 +1335,37 @@ public class ServerMain implements Closeable {
         public void start(LifecycleContext ctx) {
             this.ctxRef = ctx;
             ctx.publish(State.STARTING);
-            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
-            this.server = ServerMain.this.services().createPGWireServer(
-                    cfg.getPGWireConfiguration(),
-                    ServerMain.this.engine,
-                    ServerMain.this.workerPoolManager,
-                    acceptOpen);
-            log.info().$("pg-wire envelope: bound, accept paused").$();
-            ctx.publish(State.DEGRADED);
-            // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
-            // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
-            if (ctx.state("engine") == State.READY) {
-                acceptOpen.set(true);
-                log.info().$("pg-wire envelope: accept loop open (catch-up)").$();
-                ctx.publish(State.READY);
+            try {
+                final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+                this.server = ServerMain.this.services().createPGWireServer(
+                        cfg.getPGWireConfiguration(),
+                        ServerMain.this.engine,
+                        ServerMain.this.workerPoolManager,
+                        acceptOpen);
+                log.info().$("pg-wire envelope: bound, accept paused").$();
+                ctx.publish(State.DEGRADED);
+                // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
+                // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
+                if (ctx.state("engine") == State.READY) {
+                    acceptOpen.set(true);
+                    log.info().$("pg-wire envelope: accept loop open (catch-up)").$();
+                    ctx.publish(State.READY);
+                }
+            } catch (Throwable t) {
+                // Free the partially-allocated PG server before rethrow. The orchestrator's close
+                // loop skips FAILED components, so without this wrap a throw after the server was
+                // created (e.g. a publish that runs the failure cascade) leaks it. Mirrors the
+                // IlpTcpEnvelope / WebHttpEnvelope self-clean wraps and the PrimaryRoleState
+                // addSuppressed pattern.
+                if (this.server != null) {
+                    try {
+                        Misc.free(this.server);
+                        this.server = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                }
+                throw t;
             }
         }
 
@@ -1424,27 +1452,43 @@ public class ServerMain implements Closeable {
         public void start(LifecycleContext ctx) {
             this.ctxRef = ctx;
             ctx.publish(State.STARTING);
-            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
-            final boolean isReadOnly = cfg.getCairoConfiguration().isReadOnlyInstance();
-            final QwpUdpReceiverConfiguration qwpCfg = cfg.getQwpUdpReceiverConfiguration();
-            if (!isReadOnly && qwpCfg != null && qwpCfg.isEnabled()) {
-                this.receiver = ServerMain.this.services().createQwpUdpReceiver(
-                        qwpCfg,
-                        ServerMain.this.engine,
-                        ServerMain.this.workerPoolManager,
-                        acceptOpen);
-            }
-            log.info().$("qwip envelope: bound, accept paused").$();
-            ctx.publish(State.DEGRADED);
-            // Catch-up: if engine reached READY before our ctxRef was set, the
-            // onDependencyState dispatch was lost. Self-publish now.
-            if (ctx.state("engine") == State.READY) {
-                // Consult the role-aware seam on catch-up too -- otherwise the catch-up branch
-                // would unconditionally flip acceptOpen=true and a REPLICA boot would briefly
-                // accept datagrams.
-                acceptOpen.set(shouldOpenAccept(ctx));
-                log.info().$("qwip envelope: accept loop state on engine READY (catch-up) [open=").$(acceptOpen.get()).$(']').$();
-                ctx.publish(State.READY);
+            try {
+                final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+                final boolean isReadOnly = cfg.getCairoConfiguration().isReadOnlyInstance();
+                final QwpUdpReceiverConfiguration qwpCfg = cfg.getQwpUdpReceiverConfiguration();
+                if (!isReadOnly && qwpCfg != null && qwpCfg.isEnabled()) {
+                    this.receiver = ServerMain.this.services().createQwpUdpReceiver(
+                            qwpCfg,
+                            ServerMain.this.engine,
+                            ServerMain.this.workerPoolManager,
+                            acceptOpen);
+                }
+                log.info().$("qwip envelope: bound, accept paused").$();
+                ctx.publish(State.DEGRADED);
+                // Catch-up: if engine reached READY before our ctxRef was set, the
+                // onDependencyState dispatch was lost. Self-publish now.
+                if (ctx.state("engine") == State.READY) {
+                    // Consult the role-aware seam on catch-up too -- otherwise the catch-up branch
+                    // would unconditionally flip acceptOpen=true and a REPLICA boot would briefly
+                    // accept datagrams.
+                    acceptOpen.set(shouldOpenAccept(ctx));
+                    log.info().$("qwip envelope: accept loop state on engine READY (catch-up) [open=").$(acceptOpen.get()).$(']').$();
+                    ctx.publish(State.READY);
+                }
+            } catch (Throwable t) {
+                // Free the partially-allocated QWP UDP receiver before rethrow. The orchestrator's
+                // close loop skips FAILED components, so without this wrap a throw after the
+                // receiver was created (e.g. a publish that runs the failure cascade) leaks it.
+                // Mirrors the IlpTcpEnvelope / WebHttpEnvelope self-clean wraps.
+                if (this.receiver != null) {
+                    try {
+                        Misc.free(this.receiver);
+                        this.receiver = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                }
+                throw t;
             }
         }
 

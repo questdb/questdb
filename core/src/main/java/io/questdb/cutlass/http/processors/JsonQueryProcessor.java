@@ -493,7 +493,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     // covers CREATE/DROP operation subtypes.
                     cc.closeAllButSelect();
                     Misc.free(cc.getOperation());
-                    throw CairoException.authorization().put("replica access is read-only");
+                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
                 }
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
                 // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.

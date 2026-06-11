@@ -76,18 +76,22 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpChunkedResponse response = context.getChunkedResponse();
-        response.status(200, "application/json; charset=utf-8");
-        response.sendHeader();
 
-        // Fetch the snapshot holder once (a subclass may return an extended type) and initialise
-        // the per-connection cursor at the start of serialisation. The same holder is reused
-        // across every resume call so the response cannot tear mid-flight.
+        // Fetch the snapshot holder once (a subclass may return an extended type) and initialise the
+        // per-connection cursor BEFORE sending the header. If sendHeader() parks the connection on a
+        // slow reader (PeerIsSlowToReadException), the framework later calls resumeSend(); that path
+        // returns early when the per-connection state is null, so initialising the state first lets a
+        // slow reader's response actually complete instead of hanging with no response ever. The same
+        // holder is reused across every resume call so the response cannot tear mid-flight.
         final Object holder = captureSnapshot();
         LifecycleState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new LifecycleState());
         }
         state.reset(holder, toBaseSnapshot(holder));
+
+        response.status(200, "application/json; charset=utf-8");
+        response.sendHeader();
 
         resumeSnapshot(response, state);
     }

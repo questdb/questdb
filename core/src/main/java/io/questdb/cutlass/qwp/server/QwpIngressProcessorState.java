@@ -618,7 +618,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // read-only-replica flag flips FIRST in the switch cascade), the whole batch is
             // rejected as an authorization error, which maps to Status.SECURITY_ERROR below.
             if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put("replica access is read-only");
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
 
             // Verify the message version matches what was negotiated during the upgrade
