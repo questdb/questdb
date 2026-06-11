@@ -1027,6 +1027,32 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLightSortKeepsBaseScatteredUnderMonotonicConsumer() throws Exception {
+        // A light sort random-accesses its base out of order, so of() pins the base pool to
+        // SCATTERED. When the sort is itself the slave of a MONOTONIC consumer (an ASOF light
+        // join pushes MONOTONIC onto its slave after getCursor()), the wrapper must NOT forward
+        // that downgrade to its base: quartering the base budget would cause avoidable Parquet
+        // re-decodes during the out-of-order emission. The same fix covers the top-K and
+        // latest-by light wrappers, which share this push pattern.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT a, s, t FROM x ORDER BY a")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    AbstractPageFrameRecordCursor base = findBasePageFrameCursor(cursor);
+                    Assert.assertNotNull("expected a page-frame cursor under the sort", base);
+                    PageFrameMemoryPool pool = base.getFrameMemoryPool();
+                    // of() pinned the base to SCATTERED.
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    // An outer MONOTONIC consumer (an ASOF light join slave) must not downgrade it.
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    Assert.assertEquals(configuration.getSqlParquetCacheMemorySize(), pool.getEffectiveBudgetBytes());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetDecodeCacheReleaseResetsAccounting() throws Exception {
         // After a random-access sweep the cache holds bytes; releaseParquetBuffers() (the path
         // of()/clear()/close() take) must zero both the byte and frame accounting, and neither

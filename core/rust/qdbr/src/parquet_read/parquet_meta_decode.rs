@@ -147,6 +147,7 @@ pub fn decode_row_group(
         }
     }
 
+    ctx.clear_reuse_pool();
     Ok(decoded)
 }
 
@@ -274,6 +275,7 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
         }
     }
 
+    ctx.clear_reuse_pool();
     Ok(decoded)
 }
 

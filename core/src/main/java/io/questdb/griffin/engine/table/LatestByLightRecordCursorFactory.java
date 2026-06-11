@@ -222,7 +222,8 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public void setParquetDecodeHint(ParquetDecodeHint hint) {
-            baseCursor.setParquetDecodeHint(hint);
+            // We emit out of order, so of() pins the base to SCATTERED. An outer MONOTONIC push
+            // (e.g. an ASOF light join slave) must not downgrade it and force base re-decodes.
         }
 
         @Override

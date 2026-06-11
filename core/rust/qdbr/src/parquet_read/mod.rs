@@ -43,6 +43,23 @@ impl DecodeContext {
             varchar_slice_dict_bufs_scratch: Vec::new(),
         }
     }
+
+    /// Drops the VarcharSlice page-buffer reuse pool, freeing any spare decompressed
+    /// page/dict allocations left over from prior column-chunk decodes.
+    ///
+    /// During a decode the column loop parks a column's old `page_buffers` here so the
+    /// next column can reuse them, and the live buffers a decode produces end up back in
+    /// `ColumnChunkBuffers::page_buffers` (counted by the Java byte budget via
+    /// `page_buffers_size`). Whatever a decode does not reuse stays in this pool. Because
+    /// the `DecodeContext` outlives individual cache entries, those spares are uncounted
+    /// RSS that would otherwise survive cache eviction and `releaseParquetBuffers()` — the
+    /// configured cache budget could read zero while this pool still held varchar page
+    /// bytes. Each row-group decode calls this at the end so the pool is empty between
+    /// decodes; same-slot reuse is preserved because the next decode re-parks the live
+    /// `page_buffers` it drains from `ColumnChunkBuffers`.
+    pub fn clear_reuse_pool(&mut self) {
+        self.varchar_slice_buf_pool.clear();
+    }
 }
 
 pub const FILTER_OP_EQ: u8 = 0;

@@ -2320,6 +2320,58 @@ mod tests {
     }
 
     #[test]
+    fn decode_row_group_clears_varchar_slice_reuse_pool() {
+        // The VarcharSlice page-buffer reuse pool lives on the DecodeContext, which outlives
+        // individual decode-cache entries. Spare buffers left in it are uncounted by the Java
+        // byte budget and would otherwise survive cache eviction and releaseParquetBuffers(),
+        // letting the budget read zero while RSS still held varchar page allocations. A
+        // row-group decode must drop the pool at the end. The live buffers a decode produces
+        // are held in ColumnChunkBuffers::page_buffers (counted), not the pool.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 10;
+        let row_group_size = 50;
+        let data_page_size = 50;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        // Simulate spare page buffers retained from a prior column-chunk decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        decoder
+            .decode_row_group(
+                &mut ctx,
+                &mut rgb,
+                &[(0, column_type)],
+                0,
+                0,
+                row_count as u32,
+            )
+            .unwrap();
+
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "row-group decode must release the varchar-slice reuse pool"
+        );
+    }
+
+    #[test]
     fn test_decode_int_column_v2_nulls() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();

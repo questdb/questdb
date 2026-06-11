@@ -273,6 +273,7 @@ impl ParquetDecoder {
             }
         }
 
+        ctx.clear_reuse_pool();
         Ok(decoded)
     }
 
@@ -400,6 +401,7 @@ impl ParquetDecoder {
             }
         }
 
+        ctx.clear_reuse_pool();
         Ok(output_count)
     }
 
