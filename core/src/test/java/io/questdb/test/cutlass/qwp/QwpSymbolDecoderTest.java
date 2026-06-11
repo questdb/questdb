@@ -93,7 +93,7 @@ public class QwpSymbolDecoderTest {
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION);
                 Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
                 Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
                 Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
@@ -105,7 +105,7 @@ public class QwpSymbolDecoderTest {
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 ObjList<String> connectionDict = new ObjList<>();
                 try {
-                    cursor.of(address, totalSize, null, connectionDict);
+                    cursor.of(address, totalSize, connectionDict);
                     Assert.fail("Expected QwpParseException for excessive delta symbol dictionary size");
                 } catch (QwpParseException e) {
                     Assert.assertTrue(e.getMessage().contains("delta symbol dictionary"));
@@ -131,7 +131,7 @@ public class QwpSymbolDecoderTest {
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION);
                 Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
                 Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
                 Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
@@ -147,7 +147,7 @@ public class QwpSymbolDecoderTest {
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 ObjList<String> connectionDict = new ObjList<>();
                 try {
-                    cursor.of(address, totalSize, null, connectionDict);
+                    cursor.of(address, totalSize, connectionDict);
                     Assert.fail("Expected QwpParseException for integer overflow in delta symbol dictionary");
                 } catch (QwpParseException e) {
                     Assert.assertTrue(e.getMessage().contains("delta symbol dictionary"));
@@ -495,7 +495,7 @@ public class QwpSymbolDecoderTest {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(values, nulls, useNullBitmap);
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
                 try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
