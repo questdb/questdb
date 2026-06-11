@@ -1405,7 +1405,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             val
-
+                            
                             world
                             """);
         });
