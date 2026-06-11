@@ -1413,6 +1413,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalScanStringMultiBlockPage() throws Exception {
+        // Force a large row-group size so all 300 rows land in one row group (one
+        // data page) regardless of execution order. The property is a static
+        // override that persists across test methods (reset only in @AfterClass),
+        // and many sibling tests lower it to 100; a value below 128 would split the
+        // rows into single-block row groups whose length stream never spans multiple
+        // blocks, silently bypassing the partial multi-block read path this guards.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         // A STRING column read over a partial row-group range. 300 rows land in a
         // single row group whose one data page holds a DELTA_LENGTH_BYTE_ARRAY
         // length stream that spans several 128-value blocks. An interval ending
@@ -1449,6 +1456,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalScanStringMultiBlockPageBackward() throws Exception {
+        // Force a large row-group size for the same reason as
+        // testIntervalScanStringMultiBlockPage: keep all 300 rows in one multi-block
+        // page so a sibling test's lowered override cannot mask the partial-read path.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         // As testIntervalScanStringMultiBlockPage but with descending timestamp
         // order, which drives the backward page-frame cursor. It computes the same
         // partial (rowGroupHi < value count) frame and reads the STRING column over
