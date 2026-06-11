@@ -1718,6 +1718,37 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOverParquetDescendingScan() throws Exception {
+        // A backward scan reads frame rows high-to-low, so the post-skip decode-window
+        // clamp must not apply: clamping decodes [0, n) while the cursor reads the high rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT a FROM x ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            8
+                            7
+                            6
+                            """);
+            assertQuery("SELECT a FROM x ORDER BY ts DESC LIMIT 2, 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            6
+                            5
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testLimitRightFrameFormat() throws Exception {
         assertMemoryLeak(() -> {
             execute(

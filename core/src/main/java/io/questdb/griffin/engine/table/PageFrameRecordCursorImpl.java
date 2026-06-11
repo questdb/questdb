@@ -181,7 +181,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         prepareRowCursorFactory();
 
-        final boolean canClamp = filter == null && !rowCursorFactory.isUsingIndex();
+        final boolean canClamp = filter == null && !rowCursorFactory.isUsingIndex() && rowCursorFactory.isForwardScan();
         this.maxRowsAfterSkip = canClamp ? maxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
         this.rowsProducedSinceSkip = 0;
 

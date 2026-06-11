@@ -60,6 +60,10 @@ public interface RowCursorFactory extends Plannable, QuietCloseable {
 
     boolean isEntity();
 
+    default boolean isForwardScan() {
+        return true;
+    }
+
     /**
      * Indicates if the factory uses index
      *
