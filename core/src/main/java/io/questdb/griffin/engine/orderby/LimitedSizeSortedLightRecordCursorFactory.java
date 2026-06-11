@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -102,7 +101,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         }
 
         try {
-            baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
@@ -223,11 +221,15 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 }
             } else { // lo >= 0
                 if (hi < 0) {
-                    // if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
-                    // (it's from lo up to end-hi so probably whole result anyway )
-                    this.limit = -1;
-                    this.skipFirst = lo;
-                    this.skipLast = -hi;
+                    // A NULL hi yields the empty result (limit stays 0); checking it here
+                    // also keeps skipLast = -hi from overflowing to Long.MIN_VALUE.
+                    if (hi != Numbers.LONG_NULL) {
+                        // if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
+                        // (it's from lo up to end-hi so probably whole result anyway )
+                        this.limit = -1;
+                        this.skipFirst = lo;
+                        this.skipLast = -hi;
+                    }
                 } else { // both lo and hi are positive
                     this.isFirstN = true;
                     this.limit = Math.max(hi, lo);

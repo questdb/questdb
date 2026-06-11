@@ -318,8 +318,11 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * effective ceiling, scattered walks get the full configured budget.
      * Wrappers that hold a delegate cursor must forward the call. Factories
      * that copy delegate records into a heap-allocated chain or map before
-     * iteration (e.g. non-light hash/asof joins) intentionally skip this hint
-     * because the underlying cursor is exhausted once and never random-accessed.
+     * iteration (e.g. non-light sorts and hash/asof joins) intentionally skip
+     * this hint because the underlying cursor is exhausted once and never
+     * random-accessed.
+     *
+     * @param hint the access pattern of upcoming {@code recordAt} calls
      */
     default void setParquetDecodeHint(ParquetDecodeHint hint) {
     }
@@ -329,11 +332,14 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * {@link #recordAt(Record, long)} calls. Parquet-backed cursors pull the row ids from
      * the source and then decode only the declared rows of a row group instead of the
      * whole row group; cursors that cannot benefit never pull, so the caller pays nothing.
-     * Null restores full-frame decoding. Wrappers that hold a delegate cursor must
-     * forward the call.
+     * Null restores full-frame decoding. Wrappers that forward {@code recordAt} to a
+     * delegate with unchanged row ids must forward the call; wrappers that resolve
+     * {@code recordAt} from their own storage (e.g. a record chain) must not.
      * <p>
      * Until the declaration is cleared with null, reading a row id outside the declared
      * set is undefined: on a row-filtered Parquet frame such rows materialize as NULLs.
+     *
+     * @param source the supplier of the declared row ids, or null
      */
     default void setRecordAtRows(@Nullable RowIdSource source) {
     }

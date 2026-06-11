@@ -7463,6 +7463,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
+                final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
+                        && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
@@ -7544,7 +7546,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
-                        if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                        if (isEncodedSortSupported) {
                             return new EncodedSortLimitedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
@@ -7566,7 +7568,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseCursorTimestampIndex
                         );
                     } else {
-                        if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                        if (isEncodedSortSupported) {
                             return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
@@ -7637,7 +7639,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when base record cursor does not support random access
                 // we have to copy entire record into ordered structure
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
-                if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                if (isEncodedSortSupported) {
                     return new EncodedSortRecordCursorFactory(
                             configuration,
                             orderedMetadata,

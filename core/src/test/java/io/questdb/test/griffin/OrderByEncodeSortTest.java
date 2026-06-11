@@ -555,6 +555,36 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitNegatedNaNBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            // NULL doubles are NaN and negating them flips the NaN sign bit; the
+            // encoder canonicalizes NaN so the LIMIT cut selects the same rows as
+            // the legacy comparator on both sides of the boundary.
+            execute("CREATE TABLE nd AS (SELECT CASE WHEN x <= 3 THEN x::double END val FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT val, -val neg FROM nd ORDER BY neg LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            val\tneg
+                            3.0\t-3.0
+                            2.0\t-2.0
+                            1.0\t-1.0
+                            """);
+            assertQuery("SELECT val, -val neg FROM nd ORDER BY neg DESC LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            val\tneg
+                            null\tnull
+                            null\tnull
+                            1.0\t-1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByLimitNullBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
@@ -690,11 +720,14 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
             execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')");
             execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
             // Reordered projection routes the sort key through the SelectedRecordCursor
-            // remap; the filter engages worker-side late materialization. The two-bound
-            // limit keeps the plan off the constant-limit top-K factories.
-            assertQuery("SELECT note, v, sym FROM pq WHERE sym = 's1' AND v <= 10_000 ORDER BY v DESC LIMIT 0,3")
+            // remap; the filter engages worker-side late materialization. The sort key
+            // must stay out of the filter so the build reads it only through the
+            // remapped parent-used-columns decode - a broken remap fails the test.
+            // The two-bound limit keeps the plan off the constant-limit top-K factories.
+            assertQuery("SELECT note, v, sym FROM pq WHERE sym = 's1' AND length(note) > 1 ORDER BY v DESC LIMIT 0,3")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("Async")
                     .returns("""
                             note\tv\tsym
                             r10000\t10000\ts1
@@ -751,6 +784,36 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             3\tr3\t[3.0,6.0]\ts0
                             4\tr4\t[4.0,8.0]\ts1
                             5\tr5\t[5.0,10.0]\ts2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmitNoLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pqu AS (
+                        SELECT x v, ('r' || x)::varchar note, timestamp_sequence(0, 100) ts
+                        FROM long_sequence(50)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pqu VALUES (1_000_000, 'r1000000', '2000-01-01')");
+            execute("ALTER TABLE pqu CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+            // The filter keeps 10 of the 50 parquet rows, under the 50% density gate,
+            // so the unlimited sort's emit declaration row-filters the parquet decode.
+            assertQuery("SELECT v, note FROM pqu WHERE v % 5 = 3 ORDER BY v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tnote
+                            48\tr48
+                            43\tr43
+                            38\tr38
+                            33\tr33
+                            28\tr28
+                            23\tr23
+                            18\tr18
+                            13\tr13
+                            8\tr8
+                            3\tr3
                             """);
         });
     }

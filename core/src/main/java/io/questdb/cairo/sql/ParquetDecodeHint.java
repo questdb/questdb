@@ -32,7 +32,17 @@ package io.questdb.cairo.sql;
  * and warrant the full configured budget.
  */
 public enum ParquetDecodeHint {
+    /**
+     * A single forward (or backward) walk: a quarter of the configured budget
+     * and at most 4 buffers cover the live frame plus the records that may
+     * still be bound to recently visited ones.
+     */
     MONOTONIC(2, 4),
+    /**
+     * Revisiting walk (sort emit, hash/asof probes): the full configured
+     * budget; 256 buffers cap the entry count so tiny row groups cannot grow
+     * the LRU without bound before the byte budget binds.
+     */
     SCATTERED(0, 256);
 
     final int maxCachedBuffers;

@@ -25,11 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.idx.IndexReader;
-import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -2036,14 +2034,6 @@ public class ParquetTest extends AbstractCairoTest {
     public void testParquetDecodeHintScatteredKeepsFullBudget() {
         Assert.assertEquals(256L * 1024 * 1024, ParquetDecodeHint.SCATTERED.applyTo(256L * 1024 * 1024));
         Assert.assertEquals(0, ParquetDecodeHint.SCATTERED.applyTo(0));
-    }
-
-    @Test
-    public void testParquetDecodeHintTwoEnumValues() {
-        ParquetDecodeHint[] values = ParquetDecodeHint.values();
-        Assert.assertEquals(2, values.length);
-        Assert.assertEquals(ParquetDecodeHint.MONOTONIC, values[0]);
-        Assert.assertEquals(ParquetDecodeHint.SCATTERED, values[1]);
     }
 
     @Test

@@ -54,19 +54,21 @@ import org.jetbrains.annotations.Nullable;
  * Thus, a {@link #navigateTo(int)} call is required before accessing memory
  * that belongs to a page frame.
  * <p>
- * Decoded Parquet frames live in a per-cursor LRU capped by total decoded
- * bytes ({@code cairo.sql.parquet.cache.memory.size}). Each entry tracks its
- * decoded size on insertion. When a miss arrives and {@code cachedBytes} is
- * already at or above the budget, {@link #acquireBuffer} reuses the LRU
- * oldest unpinned {@link ParquetBuffers} in place: it resets only the
- * logical state ({@code frameIndex}, {@code usageFlags}, {@code decodedBytes})
- * and leaves all native memory alive so the upcoming decode overwrites it
- * via the Rust {@code ColumnChunkBuffers::reset()} path, growing each
+ * Decoded Parquet frames live in a per-cursor LRU capped by total retained
+ * bytes ({@code cairo.sql.parquet.cache.memory.size}). When a miss arrives
+ * and {@code cachedBytes} is already at or above the budget,
+ * {@link #acquireBuffer} reuses the LRU oldest unpinned
+ * {@link ParquetBuffers} in place: it resets only the logical state and
+ * leaves all native memory alive so the upcoming decode overwrites it via
+ * the Rust {@code ColumnChunkBuffers::reset()} path, growing each
  * {@code Vec} via realloc only when the new chunk exceeds the buffer's
- * historical peak. Entries currently bound to a record or to the
- * frame-memory flyweight are skipped during victim selection, so when every
- * cached entry is pinned the pool creates a new buffer and the budget is
- * temporarily exceeded.
+ * historical peak. Because reuse keeps that peak allocated, each entry is
+ * accounted at {@code retainedBytes} - the largest decode it has held - and
+ * after every decode {@link #trimToBudget} closes LRU-oldest unpinned
+ * entries until the total drops back under the budget. Entries currently
+ * bound to a record or to the frame-memory flyweight are skipped during
+ * victim selection and trimming, so when every cached entry is pinned the
+ * pool creates a new buffer and the budget is temporarily exceeded.
  * <p>
  * The access-pattern hint declared by the enclosing factory scales the
  * effective ceiling: {@link ParquetDecodeHint#MONOTONIC} cursors get a quarter
@@ -118,6 +120,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers boundForRecordB;
     private long cachedBytes;
     private long effectiveBudgetBytes;
+    // True while parquetColumns/queryToSlot hold the full projection for the
+    // active decoder's file, letting openParquet(int) skip the rebuild on
+    // every subsequent frame of the same file.
+    private boolean hasFullProjectionMap;
     private ParquetBuffers lruHead;
     private ParquetBuffers lruTail;
     private DirectLongList recordAtRows;
@@ -126,7 +132,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         try {
             this.maxCacheBytes = Math.max(maxCacheBytes, 0L);
             this.effectiveBudgetBytes = accessPattern.applyTo(this.maxCacheBytes);
-            byFrameIndex = new IntObjHashMap<>(ParquetDecodeHint.SCATTERED.maxCachedBuffers);
+            byFrameIndex = new IntObjHashMap<>(16);
             columnIdToParquetIdx = new IntIntHashMap(16);
             frameMemory = new PageFrameMemoryImpl();
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
@@ -170,13 +176,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      */
     public void navigateTo(int frameIndex, PageFrameMemoryRecord record) {
         final byte format = addressCache.getFrameFormat(frameIndex);
-        final int columnOffset = addressCache.toColumnOffset(frameIndex);
         if (format == PartitionFormat.NATIVE) {
             // Native page addresses come from the address cache and stay valid for the whole
             // query, so a matching frame index proves the record is already positioned here.
             if (record.getFrameIndex() == frameIndex) {
                 return;
             }
+            final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
+            unbind(usageBit);
             record.init(
                     frameIndex,
                     format,
@@ -185,7 +192,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getAuxPageAddresses(),
                     addressCache.getPageSizes(),
                     addressCache.getAuxPageSizes(),
-                    columnOffset
+                    addressCache.toColumnOffset(frameIndex)
             );
         } else if (format == PartitionFormat.PARQUET) {
             // Fast path: the record already points at THIS pool's live buffers for this frame,
@@ -241,13 +248,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         final byte format = addressCache.getFrameFormat(frameIndex);
-        final int columnOffset = addressCache.toColumnOffset(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            unbind(FRAME_MEMORY_MASK);
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
             frameMemory.pageSizes = addressCache.getPageSizes();
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
-            frameMemory.columnOffset = columnOffset;
+            frameMemory.columnOffset = addressCache.toColumnOffset(frameIndex);
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
@@ -276,13 +283,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         final byte format = addressCache.getFrameFormat(frameIndex);
-        final int columnOffset = addressCache.toColumnOffset(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            unbind(FRAME_MEMORY_MASK);
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
             frameMemory.pageSizes = addressCache.getPageSizes();
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
-            frameMemory.columnOffset = columnOffset;
+            frameMemory.columnOffset = addressCache.toColumnOffset(frameIndex);
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
@@ -333,7 +340,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     /**
      * Frees all decoded Parquet buffers and clears bookkeeping.
      * <p>
-     * Bulk shutdown path: this does NOT honour the {@code usageFlags} pin
+     * Bulk shutdown path: this does NOT honor the {@code usageFlags} pin
      * bits, so any {@link PageFrameMemoryRecord} or {@code frameMemory}
      * flyweight still bound to a cached entry will hold a dangling pointer
      * after this returns. Callers must ensure all records are abandoned
@@ -370,6 +377,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public void setRecordAtRows(@Nullable RecordCursor.RowIdSource source) {
+        evictRowFilteredBuffers();
         recordAtSlices.clear();
         if (recordAtRows != null) {
             recordAtRows.clear();
@@ -386,11 +394,39 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             recordAtRows = Misc.free(recordAtRows);
             return;
         }
-        Vect.sortULongAscInPlace(recordAtRows.getAddress(), kept);
+        // First pass: per-frame declared-row counts plus a sortedness probe. When no
+        // frame is sparse enough for row-filtered decode (e.g. an unfiltered sort
+        // declares every row of every frame), bail out before paying for the sort.
+        boolean isSorted = true;
+        long prevRowId = recordAtRows.get(0);
+        for (long i = 0; i < kept; i++) {
+            final long rowId = recordAtRows.get(i);
+            isSorted &= Long.compareUnsigned(prevRowId, rowId) <= 0;
+            prevRowId = rowId;
+            final int frameIndex = Rows.toPartitionIndex(rowId);
+            final int keyIndex = recordAtSlices.keyIndex(frameIndex);
+            final long declared = keyIndex < 0 ? recordAtSlices.valueAt(keyIndex) : 0;
+            recordAtSlices.putAt(keyIndex, frameIndex, declared + 1);
+        }
+        boolean hasEligibleFrame = false;
+        for (long i = 0; i < kept; i++) {
+            final int frameIndex = Rows.toPartitionIndex(recordAtRows.get(i));
+            if (isRowFilterEligible(frameIndex, recordAtSlices.get(frameIndex))) {
+                hasEligibleFrame = true;
+                break;
+            }
+        }
+        recordAtSlices.clear();
+        if (!hasEligibleFrame) {
+            recordAtRows = Misc.free(recordAtRows);
+            return;
+        }
+        if (!isSorted) {
+            Vect.sortULongAscInPlace(recordAtRows.getAddress(), kept);
+        }
         // Strip the frame bits in place (each frame's segment stays ascending within
         // the frame) and index the segments, so a decode can hand its segment straight
         // to the decoder without a local-row scratch copy.
-        boolean hasEligibleFrame = false;
         int runStart = 0;
         int runFrame = -1;
         for (int i = 0, n = (int) kept; i < n; i++) {
@@ -399,7 +435,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (frameIndex != runFrame) {
                 if (runFrame >= 0) {
                     recordAtSlices.put(runFrame, Numbers.encodeLowHighInts(runStart, i));
-                    hasEligibleFrame |= isRowFilterEligible(runFrame, i - runStart);
                 }
                 runFrame = frameIndex;
                 runStart = i;
@@ -407,11 +442,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             recordAtRows.set(i, Rows.toLocalRowID(rowId));
         }
         recordAtSlices.put(runFrame, Numbers.encodeLowHighInts(runStart, (int) kept));
-        hasEligibleFrame |= isRowFilterEligible(runFrame, (int) kept - runStart);
-        if (!hasEligibleFrame) {
-            recordAtSlices.clear();
-            recordAtRows = Misc.free(recordAtRows);
+    }
+
+    private void accountDecode(ParquetBuffers parquetBuffers) {
+        if (parquetBuffers.decodedBytes > parquetBuffers.retainedBytes) {
+            cachedBytes += parquetBuffers.decodedBytes - parquetBuffers.retainedBytes;
+            parquetBuffers.retainedBytes = parquetBuffers.decodedBytes;
         }
+        trimToBudget();
     }
 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
@@ -421,13 +459,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 if (victim.usageFlags != 0) {
                     continue;
                 }
-                cachedBytes -= victim.decodedBytes;
+                // In-place reuse keeps the victim's native memory (and thus its
+                // retainedBytes accounting); only the logical state resets.
                 byFrameIndex.remove(victim.frameIndex);
                 lruUnlink(victim);
                 victim.frameIndex = frameIndex;
                 victim.usageFlags = usageBit;
                 victim.decodedBytes = 0;
                 victim.isRowFiltered = false;
+                victim.slotCount = 0;
                 lruAppend(victim);
                 byFrameIndex.put(frameIndex, victim);
                 setBound(usageBit, victim);
@@ -467,20 +507,27 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 parquetMetaDecoder.of(parquetMetaFrame);
                 buildColumnIdMap(parquetMetaDecoder);
             }
-            activeDecoder = parquetMetaDecoder;
+            if (activeDecoder != parquetMetaDecoder) {
+                hasFullProjectionMap = false;
+                activeDecoder = parquetMetaDecoder;
+            }
         } else {
             ParquetFileDecoder legacyFrame = (ParquetFileDecoder) frameDecoder;
             if (legacyDecoder.getFileAddr() != legacyFrame.getFileAddr() || legacyDecoder.getFileSize() != legacyFrame.getFileSize()) {
                 legacyDecoder.of(legacyFrame);
                 buildColumnIdMap(legacyDecoder);
             }
-            activeDecoder = legacyDecoder;
+            if (activeDecoder != legacyDecoder) {
+                hasFullProjectionMap = false;
+                activeDecoder = legacyDecoder;
+            }
         }
     }
 
     private void buildColumnIdMap(ParquetDecoder decoder) {
         final int parquetColumnCount = decoder.getColumnCount();
         columnIdToParquetIdx.clear();
+        hasFullProjectionMap = false;
         for (int i = 0; i < parquetColumnCount; i++) {
             final int id = decoder.getColumnId(i);
             // External parquet files may not have field IDs (all -1).
@@ -499,7 +546,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             evictHalfInitialized(parquetBuffers);
             throw th;
         }
-        cachedBytes += parquetBuffers.decodedBytes;
+        accountDecode(parquetBuffers);
     }
 
     private void decodeRowFilteredAndAccount(int frameIndex, ParquetBuffers parquetBuffers, long slice) {
@@ -522,7 +569,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             evictHalfInitialized(parquetBuffers);
             throw th;
         }
-        cachedBytes += parquetBuffers.decodedBytes;
+        accountDecode(parquetBuffers);
+    }
+
+    private void evictAndClose(ParquetBuffers buffers) {
+        cachedBytes -= buffers.retainedBytes;
+        if (buffers.frameIndex >= 0) {
+            byFrameIndex.remove(buffers.frameIndex);
+        }
+        lruUnlink(buffers);
+        buffers.close();
+        if (freeParquetBufferShells.size() < SHELL_POOL_CAP) {
+            freeParquetBufferShells.add(buffers);
+        }
     }
 
     private void evictHalfInitialized(ParquetBuffers buffers) {
@@ -535,13 +594,26 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (boundForFrameMemory == buffers) {
             boundForFrameMemory = null;
         }
-        if (buffers.frameIndex >= 0) {
-            byFrameIndex.remove(buffers.frameIndex);
-        }
-        lruUnlink(buffers);
-        buffers.close();
-        if (freeParquetBufferShells.size() < SHELL_POOL_CAP) {
-            freeParquetBufferShells.add(buffers);
+        evictAndClose(buffers);
+    }
+
+    private void evictRowFilteredBuffers() {
+        ParquetBuffers b = lruHead;
+        while (b != null) {
+            final ParquetBuffers next = b.next;
+            if (b.isRowFiltered) {
+                if (b.usageFlags == 0) {
+                    evictAndClose(b);
+                } else {
+                    // A new declaration while a record still reads buffers filtered
+                    // under the old one is a caller contract violation; unmap the
+                    // buffer so it cannot serve hits for the new declaration.
+                    assert false : "row set redeclared while a row-filtered buffer is pinned";
+                    byFrameIndex.remove(b.frameIndex);
+                    b.frameIndex = -1;
+                }
+            }
+            b = next;
         }
     }
 
@@ -594,6 +666,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private void openParquet(int frameIndex) {
         activateDecoder(frameIndex);
+        if (hasFullProjectionMap) {
+            return;
+        }
 
         parquetColumns.reopen();
         parquetColumns.clear();
@@ -628,10 +703,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             queryToSlot.setQuick(i, slot);
         }
         assert parquetColumns.size() % 2 == 0 : "parquetColumns must hold [parquetIdx, columnType] pairs";
+        hasFullProjectionMap = true;
     }
 
     private void openParquet(int frameIndex, IntHashSet columnIndexes, boolean isInclude) {
         activateDecoder(frameIndex);
+        hasFullProjectionMap = false;
 
         parquetColumns.reopen();
         parquetColumns.clear();
@@ -689,6 +766,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return isRowFilterEligible(frameIndex, Numbers.decodeHighInt(slice) - Numbers.decodeLowInt(slice));
     }
 
+    private void trimToBudget() {
+        ParquetBuffers b = lruHead;
+        while (b != null && cachedBytes > effectiveBudgetBytes) {
+            final ParquetBuffers next = b.next;
+            if (b.usageFlags == 0) {
+                evictAndClose(b);
+            }
+            b = next;
+        }
+    }
+
     @Nullable
     private ParquetBuffers tryHit(int frameIndex, byte usageBit) {
         final ParquetBuffers previousBound = getBound(usageBit);
@@ -700,10 +788,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         final ParquetBuffers hit = byFrameIndex.get(frameIndex);
         if (hit == null) {
-            if (previousBound != null) {
-                previousBound.usageFlags &= (byte) ~usageBit;
-                setBound(usageBit, null);
-            }
+            unbind(usageBit);
             return null;
         }
         if (previousBound != null) {
@@ -715,6 +800,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             lruMoveToTail(hit);
         }
         return hit;
+    }
+
+    private void unbind(byte usageBit) {
+        final ParquetBuffers bound = getBound(usageBit);
+        if (bound != null) {
+            bound.usageFlags &= (byte) ~usageBit;
+            setBound(usageBit, null);
+        }
     }
 
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
@@ -828,7 +921,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
             if (filteredRows.size() != 0) {
-                final long prevDecodedBytes = currentRowGroupBuffer.decodedBytes;
                 final long extra;
                 try {
                     extra = currentRowGroupBuffer.decodeRemainingColumns(
@@ -842,15 +934,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                             fillWithNulls
                     );
                 } catch (Throwable th) {
-                    cachedBytes -= prevDecodedBytes;
                     evictHalfInitialized(currentRowGroupBuffer);
                     clear();
                     throw th;
                 }
-                if (extra > 0) {
-                    currentRowGroupBuffer.decodedBytes = prevDecodedBytes + extra;
-                    cachedBytes += extra;
-                }
+                currentRowGroupBuffer.decodedBytes += extra;
+                accountDecode(currentRowGroupBuffer);
                 return true;
             }
             return false;
@@ -868,6 +957,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private boolean isRowFiltered;
         private ParquetBuffers next;
         private ParquetBuffers prev;
+        // Peak decodedBytes since the native buffers were last freed. In-place
+        // reuse keeps the Rust Vec capacities at this watermark, so the budget
+        // accounts it rather than the current chunk's logical size.
+        private long retainedBytes;
         private int slotCount;
         private byte usageFlags;
 
@@ -914,6 +1007,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             usageFlags = 0;
             frameIndex = -1;
             decodedBytes = 0;
+            retainedBytes = 0;
             isRowFiltered = false;
         }
 

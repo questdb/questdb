@@ -182,7 +182,9 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
 
     @Override
     public void setRecordAtRows(@Nullable RowIdSource source) {
-        baseCursor.setRecordAtRows(source);
+        if (baseCursor != null) {
+            baseCursor.setRecordAtRows(source);
+        }
     }
 
     @Override

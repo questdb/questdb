@@ -132,7 +132,16 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
 
     @Override
     public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
-        target.ensureCapacity((emitEndAddr - emitStartAddr) / entrySize);
+        long parquetRowCount = 0;
+        for (long addr = emitStartAddr; addr < emitEndAddr; addr += entrySize) {
+            if (addressCache.getFrameFormat(Rows.toPartitionIndex(Unsafe.getLong(addr))) == PartitionFormat.PARQUET) {
+                parquetRowCount++;
+            }
+        }
+        if (parquetRowCount == 0) {
+            return;
+        }
+        target.ensureCapacity(parquetRowCount);
         for (long addr = emitStartAddr; addr < emitEndAddr; addr += entrySize) {
             final long rowId = Unsafe.getLong(addr);
             if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
@@ -179,12 +188,13 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.baseCursor = baseCursor;
-        this.baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
         }
+        this.baseCursor = baseCursor;
+        this.baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (isEarlyStopEnabled) {
             baseCursor.expectLimitedIteration();
         }
@@ -246,6 +256,17 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     @Override
     public void toTop() {
         currentAddr = emitStartAddr;
+    }
+
+    private void acceptEncoded(long addr) {
+        if (hasThreshold && isBeyondThreshold(addr)) {
+            // The next candidate overwrites the rejected entry.
+            return;
+        }
+        entryMem.skip(longsPerEntry);
+        if (++count == compactionTrigger) {
+            compact();
+        }
     }
 
     private void buildAndSort() {
@@ -313,6 +334,16 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         emitEndAddr = entryMem.getAddress() + rowIdOffset + end * entrySize;
     }
 
+    private long encodeCurrentRow() {
+        if (count >= maxEntries) {
+            SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+        }
+        entryMem.ensureCapacity(longsPerEntry);
+        final long addr = entryMem.getAppendAddress();
+        encoder.encode(baseRecord, addr, baseRecord.getRowId());
+        return addr;
+    }
+
     // Entries are unique by their trailing rowId word, so word-wise unsigned
     // comparison is a strict total order matching Vect.sortEncodedEntries.
     private boolean isBeyondThreshold(long entryAddr) {
@@ -332,7 +363,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            tryAppendCurrentRow();
+            acceptEncoded(encodeCurrentRow());
         }
     }
 
@@ -341,46 +372,36 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
      * FIRST N, so once a completed timestamp group pushes the cumulative row
      * count past the limit, every further row carries a strictly larger leading
      * key than every collected row and cannot enter the top-K slice.
+     * <p>
+     * The leading key word is a bijective transform of the designated timestamp,
+     * so word equality detects group changes without re-reading the column; the
+     * entry encoded for the stopping row sits beyond the buffer position, exactly
+     * like a threshold-rejected entry, and is never observed.
      */
     private void runBuildTimestampEarlyStop() {
         if (!baseCursor.hasNext()) {
             return;
         }
-        tryAppendCurrentRow();
-        long groupTimestamp = baseRecord.getTimestamp(timestampIndex);
+        long addr = encodeCurrentRow();
+        long groupKey = Unsafe.getLong(addr);
+        acceptEncoded(addr);
         long rowsInGroup = 1;
         long rowsSoFar = 0;
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final long currentTimestamp = baseRecord.getTimestamp(timestampIndex);
-            if (groupTimestamp == currentTimestamp) {
+            addr = encodeCurrentRow();
+            final long currentKey = Unsafe.getLong(addr);
+            if (groupKey == currentKey) {
                 rowsInGroup++;
             } else {
                 rowsSoFar += rowsInGroup;
                 if (rowsSoFar > limit) {
                     return;
                 }
-                groupTimestamp = currentTimestamp;
+                groupKey = currentKey;
                 rowsInGroup = 1;
             }
-            tryAppendCurrentRow();
-        }
-    }
-
-    private void tryAppendCurrentRow() {
-        if (count >= maxEntries) {
-            SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
-        }
-        entryMem.ensureCapacity(longsPerEntry);
-        final long addr = entryMem.getAppendAddress();
-        encoder.encode(baseRecord, addr, baseRecord.getRowId());
-        if (hasThreshold && isBeyondThreshold(addr)) {
-            // The next candidate overwrites the rejected entry.
-            return;
-        }
-        entryMem.skip(longsPerEntry);
-        if (++count == compactionTrigger) {
-            compact();
+            acceptEncoded(addr);
         }
     }
 }

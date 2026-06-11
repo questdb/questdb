@@ -48,7 +48,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute(
                         "CREATE TABLE tab AS (" +
                                 "SELECT (x * 1_000_000L)::TIMESTAMP AS ts, (x % 1_000)::INT AS g, x::INT AS v" +
@@ -86,7 +86,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
             // The shared context snapshots the parallel top-K flag at construction,
             // so it has to be flipped on the context itself.
             final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            final boolean parallelTopK = context.isParallelTopKEnabled();
+            final boolean wasParallelTopKEnabled = context.isParallelTopKEnabled();
             context.setParallelTopKEnabled(false);
             try {
                 execute("CREATE TABLE tab AS (" +
@@ -99,7 +99,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
                         "memory exceeded in EncodedSort"
                 );
             } finally {
-                context.setParallelTopKEnabled(parallelTopK);
+                context.setParallelTopKEnabled(wasParallelTopKEnabled);
             }
         });
     }
@@ -118,7 +118,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
             // The shared context snapshots the parallel top-K flag at construction,
             // so it has to be flipped on the context itself.
             final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            final boolean parallelTopK = context.isParallelTopKEnabled();
+            final boolean wasParallelTopKEnabled = context.isParallelTopKEnabled();
             context.setParallelTopKEnabled(false);
             try {
                 execute("CREATE TABLE tab AS (" +
@@ -131,7 +131,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
                         "memory exceeded in RedBlackTree (raise cairo.sql.sort.key.max.bytes)"
                 );
             } finally {
-                context.setParallelTopKEnabled(parallelTopK);
+                context.setParallelTopKEnabled(wasParallelTopKEnabled);
             }
         });
     }

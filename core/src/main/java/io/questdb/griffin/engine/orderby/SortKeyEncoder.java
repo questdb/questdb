@@ -310,7 +310,7 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeDouble(long addr, double value, boolean desc) {
-        long bits = Double.doubleToRawLongBits(value);
+        long bits = Double.doubleToLongBits(value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
         } else {
@@ -320,7 +320,7 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeFloat(long addr, float value, boolean desc) {
-        int bits = Float.floatToRawIntBits(value);
+        int bits = Float.floatToIntBits(value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
         } else {
@@ -448,7 +448,7 @@ public class SortKeyEncoder implements QuietCloseable {
                     Integer.toUnsignedLong(record.getDecimal32(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
             case ColumnType.IPv4 -> Integer.toUnsignedLong(desc ? ~record.getIPv4(colIdx) : record.getIPv4(colIdx));
             case ColumnType.FLOAT -> {
-                int bits = Float.floatToRawIntBits(record.getFloat(colIdx));
+                int bits = Float.floatToIntBits(record.getFloat(colIdx));
                 if (desc) {
                     bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
                 } else {
@@ -462,7 +462,7 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.DATE -> record.getDate(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.DECIMAL64 -> record.getDecimal64(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.DOUBLE -> {
-                long bits = Double.doubleToRawLongBits(record.getDouble(colIdx));
+                long bits = Double.doubleToLongBits(record.getDouble(colIdx));
                 if (desc) {
                     yield bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
                 } else {

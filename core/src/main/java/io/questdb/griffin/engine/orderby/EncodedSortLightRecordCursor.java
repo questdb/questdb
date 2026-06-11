@@ -96,7 +96,16 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
 
     @Override
     public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
-        target.ensureCapacity(count);
+        long parquetRowCount = 0;
+        for (long addr = startAddr; addr < endAddr; addr += entrySize) {
+            if (addressCache.getFrameFormat(Rows.toPartitionIndex(Unsafe.getLong(addr))) == PartitionFormat.PARQUET) {
+                parquetRowCount++;
+            }
+        }
+        if (parquetRowCount == 0) {
+            return;
+        }
+        target.ensureCapacity(parquetRowCount);
         for (long addr = startAddr; addr < endAddr; addr += entrySize) {
             final long rowId = Unsafe.getLong(addr);
             if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
@@ -143,12 +152,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.baseCursor = baseCursor;
-        this.baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
         }
+        this.baseCursor = baseCursor;
+        this.baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         baseCursor.setParentUsedColumns(buildReadColumns);
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
