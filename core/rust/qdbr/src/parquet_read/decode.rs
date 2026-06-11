@@ -4387,6 +4387,124 @@ mod tests {
         );
     }
 
+    // Like decode_delta_varlen_page_partial but with an explicit null pattern:
+    // def_levels[i] == 1 marks a non-null row, 0 a null row, and non_null_strings
+    // holds only the non-null values (its length must equal the number of 1s). The
+    // DELTA_LENGTH stream encodes only the non-null lengths, so this exercises the
+    // interaction between the ROW count (row_hi, which bounds the slicer's take())
+    // and the smaller NON-NULL count the slicer actually yields.
+    fn decode_delta_string_with_nulls_partial(
+        def_levels: &[u32],
+        non_null_strings: &[&[u8]],
+        row_hi: usize,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = def_levels.len();
+        assert_eq!(
+            def_levels.iter().filter(|&&d| d == 1).count(),
+            non_null_strings.len(),
+            "non_null_strings must match the number of non-null def levels"
+        );
+
+        let mut values = Vec::new();
+        parquet2::encoding::delta_length_byte_array::encode(
+            non_null_strings.iter().copied(),
+            &mut values,
+        );
+
+        let mut def_buf = Vec::new();
+        encode_u32(&mut def_buf, def_levels.iter().copied(), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_buf.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_buf);
+        buffer.extend_from_slice(&values);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaLengthByteArray.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::String.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
+        (
+            bufs.data_vec.as_slice().to_vec(),
+            bufs.aux_vec.as_slice().to_vec(),
+        )
+    }
+
+    #[test]
+    fn decode_page_delta_length_string_partial_range_multi_block_with_nulls() {
+        // The partial-range multi-block DELTA decode, but with NULLs in the cut
+        // range. row_hi is a ROW count and bounds the slicer's take(), while the
+        // DELTA length stream holds only the NON-NULL lengths -- a smaller count. A
+        // partial read must still locate the value bytes correctly and place
+        // nulls/values in the right rows. 300 rows with a null every 7th row give
+        // 258 non-null values (a 3-block length stream); cutting at row 137 lands
+        // inside the stream with 19 nulls before the cut. Reading [0, 137) from the
+        // full page must match decoding a page of just those first 137 rows.
+        let n = 300usize;
+        let row_hi = 137usize;
+        let def_levels: Vec<u32> = (0..n).map(|i| if i % 7 == 6 { 0 } else { 1 }).collect();
+        // Varying-length non-null values so the delta blocks carry non-zero bit
+        // widths (real miniblock bytes the offset walk must skip).
+        let owned: Vec<String> = (0..n)
+            .filter(|i| def_levels[*i] == 1)
+            .map(|i| "ab".repeat(1 + (i % 9)))
+            .collect();
+        let non_null: Vec<&[u8]> = owned.iter().map(|s| s.as_bytes()).collect();
+
+        let (partial_data, partial_aux) =
+            decode_delta_string_with_nulls_partial(&def_levels, &non_null, row_hi);
+
+        // Reference: a page of just the first row_hi rows (same null pattern, same
+        // non-null values among them), decoded over the same range.
+        let ref_def: Vec<u32> = def_levels[..row_hi].to_vec();
+        let ref_non_null_count = ref_def.iter().filter(|&&d| d == 1).count();
+        let ref_non_null: Vec<&[u8]> = non_null[..ref_non_null_count].to_vec();
+        let (ref_data, ref_aux) =
+            decode_delta_string_with_nulls_partial(&ref_def, &ref_non_null, row_hi);
+
+        assert_eq!(
+            partial_data, ref_data,
+            "partial multi-block decode with nulls must match the prefix-only decode"
+        );
+        assert_eq!(
+            partial_aux, ref_aux,
+            "partial multi-block decode with nulls must match the prefix-only decode"
+        );
+    }
+
     #[test]
     fn decode_page_dict_num_values_over_buffer_errors_not_panics() {
         // End-to-end through decode_page: a dictionary-encoded Varchar column

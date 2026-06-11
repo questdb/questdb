@@ -430,6 +430,53 @@ fn test_delta_length_array_slicer_partial_range_varying_len() {
 }
 
 #[test]
+fn test_delta_length_array_slicer_partial_range_multi_miniblock() {
+    // A foreign DELTA_LENGTH_BYTE_ARRAY page with miniblocks_per_block=4 -- a shape
+    // QuestDB never writes (it always emits 1), so parquet2's encoder cannot
+    // produce it and it must be hand-built. The single block's first miniblock holds
+    // all 32 deltas; the 3 trailing miniblocks are unused and carry NON-ZERO garbage
+    // bit-width bytes (the spec permits any value there and writes no body for them).
+    // On a partial range read the value-bytes offset must skip the whole length
+    // stream; get_end_pointer used to add phantom bodies for those unused trailing
+    // miniblocks and start the value slice 12 bytes too late -- returning shifted
+    // bytes (or tripping "exceeds values buffer"). Reverting the get_end_pointer fix
+    // makes this test fail.
+    use parquet2::encoding::{uleb128, zigzag_leb128};
+    fn put_uleb128(buf: &mut Vec<u8>, v: u64) {
+        let mut tmp = [0u8; 10];
+        let n = uleb128::encode(v, &mut tmp);
+        buf.extend_from_slice(&tmp[..n]);
+    }
+    fn put_zigzag(buf: &mut Vec<u8>, v: i64) {
+        let (tmp, n) = zigzag_leb128::encode(v);
+        buf.extend_from_slice(&tmp[..n]);
+    }
+
+    // Length stream: block_size=128, miniblocks=4, value_count=33, first_value=0,
+    // min_delta=0, bit widths [1, 7, 7, 7] (only miniblock 0 is real), then a 4-byte
+    // all-ones body so every delta is 1. The decoded lengths are 0,1,2,3,4,... The
+    // length stream is exactly 14 bytes; the value bytes follow it.
+    let mut data = Vec::new();
+    put_uleb128(&mut data, 128);
+    put_uleb128(&mut data, 4);
+    put_uleb128(&mut data, 33);
+    put_zigzag(&mut data, 0);
+    put_zigzag(&mut data, 0);
+    data.extend_from_slice(&[1, 7, 7, 7]);
+    data.extend_from_slice(&[0xFF; 4]);
+    // Value bytes for lengths 0,1,2,3,4 = 0+1+2+3+4 = 10 bytes, distinct so any
+    // shift is visible.
+    data.extend_from_slice(b"ABCDEFGHIJ");
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&data, 5, 5).unwrap();
+    assert_eq!(slicer.next().unwrap(), &b""[..]); // length 0
+    assert_eq!(slicer.next().unwrap(), &b"A"[..]); // length 1: [0..1]
+    assert_eq!(slicer.next().unwrap(), &b"BC"[..]); // length 2: [1..3]
+    assert_eq!(slicer.next().unwrap(), &b"DEF"[..]); // length 3: [3..6]
+    assert_eq!(slicer.next().unwrap(), &b"GHIJ"[..]); // length 4: [6..10]
+}
+
+#[test]
 fn test_delta_length_array_slicer_full_range_multi_block() {
     // Full read of a multi-block length stream: row_count == the page's value
     // count, so the take exhausts the decoder and the data offset comes from

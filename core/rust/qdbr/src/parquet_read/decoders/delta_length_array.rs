@@ -1383,12 +1383,14 @@ mod tests {
     /// declares the given bit width. With `bit_width > 32` this is a foreign /
     /// corrupt page: the i32 length unpacker only handles widths 0..=32.
     ///
-    /// Layout: block_size=32, miniblocks_per_block=1, value_count=2,
-    /// first_value=0, min_delta=0, bitwidth=`bit_width`, then `32*bit_width/8`
-    /// packed bytes.
+    /// Layout: block_size=128, miniblocks_per_block=1, value_count=2,
+    /// first_value=0, min_delta=0, bitwidth=`bit_width`, then `128*bit_width/8`
+    /// packed bytes. The spec requires block_size to be a multiple of 128, which
+    /// MiniblockIterator::try_new now enforces, so this minimal page uses 128 (the
+    /// block size is irrelevant to the bit-width guard these tests exercise).
     fn bit_width_page(bit_width: u8) -> Vec<u8> {
-        let mut data = vec![0x20u8, 0x01, 0x02, 0x00, 0x00, bit_width];
-        data.extend(std::iter::repeat_n(0u8, 32 * bit_width as usize / 8));
+        let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, bit_width];
+        data.extend(std::iter::repeat_n(0u8, 128 * bit_width as usize / 8));
         data
     }
 
