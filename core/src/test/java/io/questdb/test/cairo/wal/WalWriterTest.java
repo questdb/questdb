@@ -4916,6 +4916,107 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void ebtestRebaseWalComplexTablePreservesDataAndIndexes() throws Exception {
+        // REBASE clones the applied table via hard-links. This exercises the clone over a table with
+        // column tops, several column-version ALTERs, multiple partitions (mixed native + parquet),
+        // symbol columns and all symbol index types, then verifies the rebased table returns the
+        // identical data and is still queryable by every index.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // Designated ts, a default-indexed symbol plus one symbol per index type, a plain symbol
+            // (to add+drop an index), and varied scalar types including UUID.
+            execute("""
+                    create table t (
+                      ts timestamp,
+                      sym_def symbol index,
+                      sym_bmp symbol index type bitmap,
+                      sym_post symbol index type posting,
+                      sym_postd symbol index type posting delta,
+                      sym_poste symbol index type posting ef,
+                      sym_plain symbol,
+                      i int, l long, d double, str string, vch varchar, b boolean, ts2 timestamp, u uuid
+                    ) timestamp(ts) partition by day wal""");
+
+            // Day 1 + day 2, before the column top is added.
+            execute("""
+                    insert into t values
+                     ('2024-01-01T00:00:00.000000Z','A','A','A','A','A','P', 1, 10, 1.5, 's1', 'v1', true,  '2020-01-01T00:00:00.000000Z', '11111111-1111-1111-1111-111111111111'),
+                     ('2024-01-02T00:00:00.000000Z','B','B','B','B','B','P', 2, 20, 2.5, 's2', 'v2', false, '2020-01-02T00:00:00.000000Z', '22222222-2222-2222-2222-222222222222')""");
+            // Apply so day1/day2 exist and ADD COLUMN turns them into a genuine column top.
+            drainWalQueue();
+
+            // Column top: day1/day2 have no topcol; day3/day4 do.
+            execute("alter table t add column topcol int");
+            execute("""
+                    insert into t values
+                     ('2024-01-03T00:00:00.000000Z','A','C','A','C','A','P', 3, 30, 3.5, 's3', 'v3', true,  '2020-01-03T00:00:00.000000Z', '33333333-3333-3333-3333-333333333333', 300),
+                     ('2024-01-04T00:00:00.000000Z','B','C','B','C','B','P', 4, 40, 4.5, 's4', 'v4', false, '2020-01-04T00:00:00.000000Z', '44444444-4444-4444-4444-444444444444', 400)""");
+
+            // Column-version ALTERs: add+drop an index, change a symbol capacity (BITMAP only),
+            // rename a column, and drop a column.
+            execute("alter table t alter column sym_plain add index");
+            execute("alter table t alter column sym_plain drop index");
+            execute("alter table t alter column sym_bmp symbol capacity 2048");
+            execute("alter table t rename column str to str_renamed");
+            execute("alter table t drop column l");
+
+            // Convert the two earliest (historic) partitions to parquet; day3/day4 stay native.
+            execute("alter table t convert partition to parquet where ts < '2024-01-03'");
+
+            // Apply everything BEFORE suspend: REBASE discards any pending (unapplied) WAL txns.
+            drainWalQueue();
+
+            // The conversion really happened: day1/day2 are parquet, day3/day4 are still native.
+            assertSql("count\n2\n", "select count() from table_partitions('t') where isParquet = true");
+
+            // Capture the full dataset and the indexed-query results to diff against the rebased table.
+            final StringSink fullExpected = new StringSink();
+            printSql("select * from t order by ts", fullExpected);
+            final StringSink defExpected = new StringSink();
+            printSql("select ts, sym_def from t where sym_def = 'A' order by ts", defExpected);
+            final StringSink postExpected = new StringSink();
+            printSql("select ts, sym_post from t where sym_post = 'A' order by ts", postExpected);
+
+            final TableToken oldToken = engine.verifyTableName("t");
+            final int oldTableId = oldToken.getTableId();
+
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // New identity: different dir + table id, old dir dropped, fresh sequencer (empty seed).
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNotEquals(oldTableId, newToken.getTableId());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(newToken).getSeqTxn() <= 2);
+
+            // Identical full dataset: all columns, all rows, the column-top NULLs (day1/day2 topcol),
+            // and both parquet partitions reproduced exactly.
+            assertSql(fullExpected, "select * from t order by ts");
+
+            // Indexed queries return the same rows AND still use an index scan after the rebase.
+            assertSql(defExpected, "select ts, sym_def from t where sym_def = 'A' order by ts");
+            assertSql(postExpected, "select ts, sym_post from t where sym_post = 'A' order by ts");
+            assertIndexScan("select * from t where sym_def = 'A'", "sym_def");
+            assertIndexScan("select * from t where sym_bmp = 'C'", "sym_bmp");
+            assertIndexScan("select * from t where sym_post = 'A'", "sym_post");
+            assertIndexScan("select * from t where sym_postd = 'C'", "sym_postd");
+            assertIndexScan("select * from t where sym_poste = 'A'", "sym_poste");
+
+            // The clone preserved the parquet partitions: still 2 parquet after the rebase.
+            assertSql("count\n2\n", "select count() from table_partitions('t') where isParquet = true");
+
+            // The rebased table is still writable.
+            execute("""
+                    insert into t values
+                     ('2024-01-05T00:00:00.000000Z','A','C','A','C','A','P', 5, 5.5, 's5', 'v5', true, '2020-01-05T00:00:00.000000Z', '55555555-5555-5555-5555-555555555555', 500)""");
+            drainWalQueue();
+            assertSql("count\n5\n", "select count() from t");
+        });
+    }
+
+    @Test
     public void testRebaseWalDiscardsPendingStructuralChange() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
@@ -4978,30 +5079,6 @@ public class WalWriterTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cairo.wal.apply.suspended.write.denied=true");
             }
-        });
-    }
-
-    @Test
-    public void testReplicationDisableMarkerTxnAppliesAsNoOp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-            assertSql("count\n1\n", "select count() from t");
-
-            final TableToken tt = engine.verifyTableName("t");
-            // Write the data-less REPLICATION_DISABLE marker transaction.
-            try (WalWriter walWriter = engine.getWalWriter(tt)) {
-                walWriter.markReplicationDisabled();
-            }
-            drainWalQueue();
-
-            // The marker applies as a no-op (no rows) and is consumed (applied seqTxn advances),
-            // so subsequent data still applies — if the marker had stalled apply, this would stay at 1.
-            assertSql("count\n1\n", "select count() from t");
-            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
-            drainWalQueue();
-            assertSql("count\n2\n", "select count() from t");
         });
     }
 
@@ -5701,6 +5778,15 @@ public class WalWriterTest extends AbstractCairoTest {
         assertEquals(0, symbolMapDiff.getRecordCount());
         assertNotNull(symbolMapDiff);
         assertNull(symbolMapDiff.nextEntry());
+    }
+
+    // Asserts that the EXPLAIN plan for `sql` chooses an index scan on `column`. The "Index forward scan
+    // on: <col>" text is the stable contract across both BITMAP and POSTING index types and over both
+    // native and parquet partitions; the exact plan also embeds the integer symbol key, which is brittle.
+    private void assertIndexScan(String sql, String column) throws SqlException {
+        StringSink sink = new StringSink();
+        printSql("explain " + sql, sink);
+        TestUtils.assertContains(sink, "Index forward scan on: " + column);
     }
 
     private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {

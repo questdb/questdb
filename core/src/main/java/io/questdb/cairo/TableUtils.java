@@ -1707,7 +1707,7 @@ public final class TableUtils {
     private static boolean isRebaseClonedRootFile(CharSequence name) {
         if (Chars.equals(name, TODO_FILE_NAME)
                 || Chars.equals(name, CONVERT_FILE_NAME)
-                || Chars.equals(name, io.questdb.cairo.wal.WalUtils.REPLICATION_DISABLED_FILE_NAME)
+                || Chars.equals(name, io.questdb.cairo.wal.WalUtils.REBASE_NEW_FILE_NAME)
                 || Chars.equals(name, TXN_SCOREBOARD_FILE_NAME)) {
             return false;
         }

@@ -536,17 +536,6 @@ class WalEventWriter implements Closeable {
         );
     }
 
-    int replicationDisable() {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.REPLICATION_DISABLE);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        return txn++;
-    }
 
     int truncate() {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;

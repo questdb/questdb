@@ -1390,20 +1390,19 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Disables replication for the table on this node. Invoked when a
-     * {@link io.questdb.cairo.wal.WalTxnType#REPLICATION_DISABLE} marker transaction is applied (the
-     * first txn of a table created by {@code ALTER TABLE ... REBASE WAL}). No-op in OSS, which has no
-     * replication; the enterprise engine overrides it to write a durable per-table marker that the
-     * replica downloader consults. Must be idempotent.
+     * Durably marks the table rebased on this node ({@code ALTER TABLE ... REBASE WAL}). No-op in OSS,
+     * which has no replication; the enterprise engine overrides it to write a per-table marker so
+     * getReplicationStatus reports REBASED (the uploader records it in the replication index instead of a
+     * drop, the downloader keeps the data and stops following the table). Must be idempotent.
      */
-    public void disableReplication(TableToken tableToken) {
+    public void markRebaseNew(TableToken tableToken) {
         // no-op in OSS
     }
 
     /**
-     * Re-enables replication for the table on this node (clears whatever {@link #disableReplication}
-     * set). Invoked by {@code ALTER TABLE ... RESUME REPLICATION}. No-op in OSS; enterprise overrides
-     * it to delete the per-table marker and re-notify the downloader. Must be idempotent.
+     * Re-enables replication for the table on this node (clears whatever {@link #markRebaseNew} set).
+     * Invoked by {@code ALTER TABLE ... RESUME REPLICATION}. No-op in OSS; enterprise overrides it to
+     * delete the per-table marker and re-notify the downloader. Must be idempotent.
      */
     public void resumeReplication(TableToken tableToken) {
         // no-op in OSS
@@ -2218,9 +2217,10 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Rebases a hard-suspended WAL table ({@code ALTER TABLE ... REBASE WAL}): clones the applied data
      * into a new dir with a new tableId and a brand-new sequencer (seqTxn reset to 0), discarding all
-     * non-applied WAL (including pending structural changes), writes a non-replicable
-     * {@link io.questdb.cairo.wal.WalTxnType#REPLICATION_DISABLE} marker as the new table's first txn,
-     * then repoints the logical name to the new dir and drops the old one.
+     * non-applied WAL (including pending structural changes), marks the new table rebased and seeds an
+     * empty first transaction (so real data starts at seqTxn 2), then repoints the logical name to the
+     * new dir and drops the old one. On the replica, the rebased new table is recorded in the replication
+     * index so it stalls (keeps no empty data) until a physical copy of the table arrives.
      * <p>
      * Preconditions: WAL table (not a view) and hard-suspended (ALTER TABLE ... SUSPEND WAL).
      * <p>
@@ -2326,9 +2326,12 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableNameRegistry.rebaseSwap(oldToken, newToken);
                 swapped = true;
 
-                // Write the non-replicable marker as the new table's first transaction (seqTxn 1).
+                // Mark the new table rebased (the uploader records it in the replication index so a
+                // replica stalls instead of building it from empty) and seed an empty first transaction
+                // so real data starts at seqTxn 2 (the uploader skips seqTxn 1).
+                markRebaseNew(newToken);
                 try (WalWriter walWriter = getWalWriter(newToken)) {
-                    walWriter.markReplicationDisabled();
+                    walWriter.commitRebaseSeed();
                 }
             } catch (Throwable th) {
                 try {

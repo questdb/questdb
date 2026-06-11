@@ -610,13 +610,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Writes a data-less {@link WalTxnType#REPLICATION_DISABLE} marker transaction. On a freshly
-     * created sequencer this becomes seqTxn 1, so it is the first transaction any consumer (local
-     * apply or a replica) sees. Used by ALTER TABLE ... REBASE WAL.
+     * Commits an empty (0-row) DATA transaction. Used as the first transaction (seqTxn 1) of a table
+     * created by ALTER TABLE ... REBASE WAL, so real data starts at seqTxn 2. The replication uploader
+     * skips this transaction, leaving the replica unable to apply onto the empty table until a physical
+     * copy arrives.
      */
-    public void markReplicationDisabled() {
+    public void commitRebaseSeed() {
         try {
-            lastSegmentTxn = events.replicationDisable();
+            lastSegmentTxn = events.appendData(
+                    WalTxnType.DATA,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false,
+                    WAL_DEFAULT_BASE_TABLE_TXN,
+                    WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                    WAL_DEFAULT_LAST_PERIOD_HI,
+                    0,
+                    0,
+                    WAL_DEDUP_MODE_DEFAULT
+            );
             getSequencerTxn();
         } catch (Throwable th) {
             rollback0();

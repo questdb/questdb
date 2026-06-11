@@ -54,9 +54,11 @@ public class WalUtils {
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
-    // Per-table marker file written when a node disables replication for the table (e.g. after applying
-    // a REPLICATION_DISABLE WAL txn). Lives in the table dir; survives restart; cleared by RESUME REPLICATION.
-    public static final String REPLICATION_DISABLED_FILE_NAME = "_replication_disabled";
+    // Per-table marker file written on the freshly-created table of an ALTER TABLE ... REBASE WAL. Lives
+    // in the table dir; survives restart; cleared by RESUME REPLICATION. getReplicationStatus reports
+    // REBASE_NEW so the uploader skips the empty first txn and records it in the replication index, and a
+    // replica stalls instead of building the table from empty until a physical copy arrives.
+    public static final String REBASE_NEW_FILE_NAME = "_rebase_new";
     public static final int SEG_MIN_ID = 0;
     public static final int SEG_NONE_ID = Integer.MAX_VALUE >> 2;
     public static final int SEG_MAX_ID = SEG_NONE_ID - 1;
@@ -132,42 +134,42 @@ public class WalUtils {
     }
 
     /**
-     * Whether the {@link #REPLICATION_DISABLED_FILE_NAME} marker exists in the table dir.
+     * Whether the {@link #REBASE_NEW_FILE_NAME} marker exists in the table dir.
      *
      * @param tableDirPath path positioned at the table directory ({@code <dbRoot>/<dirName>}); restored on return.
      */
-    public static boolean isReplicationDisabledMarkerPresent(FilesFacade ff, Path tableDirPath) {
+    public static boolean isRebaseNewMarkerPresent(FilesFacade ff, Path tableDirPath) {
         final int len = tableDirPath.size();
         try {
-            return ff.exists(tableDirPath.concat(REPLICATION_DISABLED_FILE_NAME).$());
+            return ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$());
         } finally {
             tableDirPath.trimTo(len);
         }
     }
 
     /**
-     * Removes the {@link #REPLICATION_DISABLED_FILE_NAME} marker (RESUME REPLICATION). Idempotent.
+     * Removes the {@link #REBASE_NEW_FILE_NAME} marker (RESUME REPLICATION). Idempotent.
      *
      * @param tableDirPath path positioned at the table directory; restored on return.
      */
-    public static void removeReplicationDisabledMarker(FilesFacade ff, Path tableDirPath) {
+    public static void removeRebaseNewMarker(FilesFacade ff, Path tableDirPath) {
         final int len = tableDirPath.size();
         try {
-            ff.removeQuiet(tableDirPath.concat(REPLICATION_DISABLED_FILE_NAME).$());
+            ff.removeQuiet(tableDirPath.concat(REBASE_NEW_FILE_NAME).$());
         } finally {
             tableDirPath.trimTo(len);
         }
     }
 
     /**
-     * Creates the {@link #REPLICATION_DISABLED_FILE_NAME} marker in the table dir. Idempotent.
+     * Creates the {@link #REBASE_NEW_FILE_NAME} marker in the table dir. Idempotent.
      *
      * @param tableDirPath path positioned at the table directory; restored on return.
      */
-    public static void writeReplicationDisabledMarker(FilesFacade ff, Path tableDirPath) {
+    public static void writeRebaseNewMarker(FilesFacade ff, Path tableDirPath) {
         final int len = tableDirPath.size();
         try {
-            if (!ff.exists(tableDirPath.concat(REPLICATION_DISABLED_FILE_NAME).$())) {
+            if (!ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$())) {
                 ff.touch(tableDirPath.$());
             }
         } finally {

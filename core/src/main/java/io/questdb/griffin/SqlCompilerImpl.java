@@ -5038,8 +5038,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = expectToken(lexer, "'wal' or 'replication'");
         if (isReplicationKeyword(tok)) {
-            // ALTER TABLE <t> RESUME REPLICATION: clear the per-table replication-disable marker set when
-            // a REPLICATION_DISABLE WAL txn was applied (e.g. on a replica after the table was rebased).
+            // ALTER TABLE <t> RESUME REPLICATION: clear the per-table _rebase_new marker so the table
+            // replicates normally again (set by ALTER TABLE ... REBASE WAL).
             if (!engine.isWalTable(tableToken)) {
                 throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
             }
