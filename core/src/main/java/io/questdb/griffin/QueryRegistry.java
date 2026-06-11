@@ -247,6 +247,13 @@ public class QueryRegistry {
      * waiting out an in-flight canceller, and pushes the entry to the pool,
      * where clear() resets it to IDLE. Because the query id is part of the CAS
      * word, a stale canceller holding a recycled entry cannot transition it.
+     * <p>
+     * The byte state field is separate from the lifecycle word despite the
+     * overlapping vocabulary: it carries the informational status
+     * (idle/active/cancelled) that query_activity() renders via getStateText(),
+     * and it never synchronizes anything. cancel() writes it while holding the
+     * CANCELLING guard, so query_activity() snapshots observe it consistently
+     * with the rest of the entry.
      */
     public static class Entry implements Mutable {
         private static final long LIFECYCLE_IDLE = -1;
