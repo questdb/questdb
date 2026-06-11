@@ -1904,6 +1904,31 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOffsetWithColumnTopAndNullsOverParquet() throws Exception {
+        // The clamped-window rebase must leave NULL columns at address 0: a column
+        // added after parquet conversion (column top, absent from the file) and an
+        // all-NULL column (empty chunk) both hit the addr==0 guards in remapColumns,
+        // while the present columns are rebased by frameRowLo. Compared row-for-row
+        // against an identical native table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, v VARCHAR, n VARCHAR, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, NULL, ARRAY[x::DOUBLE, x + 0.5], " +
+                    "timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(20)");
+            // trailing active partition so 2024-01-01 is historic and convertible
+            execute("INSERT INTO x VALUES (999, 'last', NULL, ARRAY[0.0, 0.0], '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            execute("ALTER TABLE x ADD COLUMN c INT");
+            execute("ALTER TABLE x ADD COLUMN cv VARCHAR");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            // skip lands mid frame: a/v/arr rebase, n/c/cv stay NULL
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native WHERE ts in '2024-01-01' LIMIT 12, 18",
+                    "SELECT * FROM x WHERE ts in '2024-01-01' LIMIT 12, 18",
+                    LOG);
+        });
+    }
+
+    @Test
     public void testLimitOffsetThenToTopWidensDecodeWindow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (i INT, vch VARCHAR, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2001,6 +2026,18 @@ public class ParquetTest extends AbstractCairoTest {
                             5
                             101
                             102
+                            """);
+            // offset 6 exhausts leg A (5 rows) and crosses into B, so B's skipRows
+            // is called with a finite cap -- the clamped-leg-B path.
+            assertQuery("(SELECT a FROM x) UNION ALL (SELECT a FROM y) LIMIT 6, 9")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a
+                            102
+                            103
+                            104
                             """);
         });
     }

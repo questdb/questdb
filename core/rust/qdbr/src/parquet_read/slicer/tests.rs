@@ -839,14 +839,60 @@ fn test_delta_bytes_array_slicer_partial_window() {
     // DELTA_BYTE_ARRAY lays out [all N prefix lengths][all N suffix lengths]
     // [concatenated suffix bytes]. A partial decode window must drain both
     // length blocks to find the suffix-block and data starts.
-    let strings: Vec<&[u8]> = vec![b"alpha", b"alphabet", b"alpine", b"beta", b"betamax"];
+    // Enough values to span many delta miniblocks (32 values each): a small input
+    // fits one miniblock, which the decoder consumes whole, masking the bug.
+    let strings: Vec<String> = (0..1000).map(|i| format!("prefix_{i}_suffix")).collect();
     let mut encoded = Vec::new();
-    parquet2::encoding::delta_byte_array::encode(strings.clone().into_iter(), &mut encoded);
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
 
-    for row_count in 1..=strings.len() {
+    for row_count in [1, 7, 33, 130, 1000] {
         let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, row_count, row_count).unwrap();
         for s in strings.iter().take(row_count) {
-            assert_eq!(slicer.next().unwrap(), *s);
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_length_array_slicer_window_with_row_lo() {
+    // A clamped page decode skips the leading row_lo rows: the slicer decodes the
+    // first row_hi lengths (row_hi < page rows), drains the rest to find the data
+    // start, then skip(row_lo) advances past the skipped values' bytes. Mirrors the
+    // sliced_row_count < row_count call shape from decode_column_chunk_with_params.
+    let strings: Vec<String> = (0..1000).map(|i| format!("value_{i}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for (row_lo, row_hi) in [(130usize, 200usize), (1, 1000), (500, 700)] {
+        let mut slicer =
+            DeltaLengthArraySlicer::try_new(&encoded, row_hi, row_hi - row_lo).unwrap();
+        slicer.skip(row_lo).unwrap();
+        for s in strings.iter().take(row_hi).skip(row_lo) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_window_with_row_lo() {
+    let strings: Vec<String> = (0..1000).map(|i| format!("prefix_{i}_suffix")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for (row_lo, row_hi) in [(130usize, 200usize), (1, 1000), (500, 700)] {
+        let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, row_hi, row_hi - row_lo).unwrap();
+        slicer.skip(row_lo).unwrap();
+        for s in strings.iter().take(row_hi).skip(row_lo) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
         }
     }
 }

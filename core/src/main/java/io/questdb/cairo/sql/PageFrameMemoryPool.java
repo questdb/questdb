@@ -199,6 +199,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return navigateTo(frameIndex, 0, Integer.MAX_VALUE);
     }
 
+    /**
+     * Convenience overload of {@link #navigateTo(int, int, int)} with the window
+     * starting at frame row 0, i.e. {@code [0, inFrameRowHi)}.
+     */
     public PageFrameMemory navigateTo(int frameIndex, int inFrameRowHi) {
         return navigateTo(frameIndex, 0, inFrameRowHi);
     }
@@ -215,6 +219,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * using absolute frame-relative row indexes. The pool tracks the decoded window
      * of each cached buffer and transparently re-decodes a wider window when a
      * later call for the same frame requires one.
+     * <p>
+     * Invariant required by the record-bound fast path in
+     * {@link #navigateTo(int, PageFrameMemoryRecord)}: a record bound to a partial
+     * window (via {@link PageFrameMemoryRecord#init(PageFrameMemory)}) must never be
+     * asked, through that fast path, for a row outside the window it was bound with.
+     * The fast path re-points without checking coverage, so a wider later access
+     * would read undecoded memory. The sole finite-window originator is
+     * {@code LimitRecordCursor}, whose window only shrinks across a scan, so no bound
+     * record ever needs widening; a new finite-window caller must uphold this.
      */
     public PageFrameMemory navigateTo(int frameIndex, int inFrameRowLo, int inFrameRowHi) {
         final byte format = addressCache.getFrameFormat(frameIndex);
@@ -251,7 +264,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-            frameMemory.columnOffset = 0;
+            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -689,12 +702,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         //
         // frameRowLo > 0 means the decode dropped the first frameRowLo frame rows,
         // yet readers keep addressing rows by absolute frame-relative index. The
-        // remap shifts each published vector back by frameRowLo entries so that
+        // remap shifts the published base pointer back by frameRowLo entries so that
         // index arithmetic lands on the right decoded row, and grows the published
         // size by the same amount so addr+size still marks the buffer end. Fixed-size
-        // columns shift the data vector; var-size columns shift only the aux vector,
-        // since aux entries hold compacted-data offsets (absolute pointers for
-        // varchar slices) that need no adjustment.
+        // columns shift the data base pointer; var-size columns shift only the aux
+        // base pointer -- the data base is left as is because the offset values
+        // stored inside the aux entries (or absolute pointers, for varchar slices)
+        // index the compacted data and need no adjustment.
         private void remapColumns(int frameRowLo) {
             final int columnCount = addressCache.getColumnCount();
             if (columnCount == 0) {
