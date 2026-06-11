@@ -1838,6 +1838,59 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnEqColumnReorderedFilterStaysPostJoin() throws Exception {
+        // Companion to testColumnEqColumnMasterFilterStaysPostJoin: there the col=col WHERE sits on the
+        // directly NULL-extended master; here it sits on an INNER-joined table (c) whose NULL-extension
+        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so
+        // it homogenizes to a CROSS variant reorderTables appends last -- after c joins -- and NULL-
+        // extends c. masterNullingJoinIndex scans only higher model indexes and misses the reorder, so
+        // analyseEquals defers via hasNonEquiNullingJoin to the exec-order-aware assignFilters, keeping
+        // c.c1 = c.c2 post-join. Pushing it into c emptied c (7 != 8), so the join paired the slave row
+        // with a NULL c and leaked (null,50,null,null) -- 1 row for 0. The matched (100,50,7,8) row fails
+        // c1=c2, so the correct result is empty.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (100, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (50)");
+            execute("CREATE TABLE c (k INT, c1 INT, c2 INT)");
+            execute("INSERT INTO c VALUES (1, 7, 8)");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.c1, c.c2 FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.c1 = c.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: c.c1=c.c2")
+                        .returns("x\ty\tc1\tc2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnReorderedFilterStaysPostJoinSymbol() throws Exception {
+        // SYMBOL variant of testColumnEqColumnReorderedFilterStaysPostJoin. Unlike INT, SYMBOL null=null
+        // is not unconditionally true, so the mechanism is the match-set change, not the null-row's own
+        // verdict: pushing c.v = c.w into c changes which rows the reordered join NULL-extends and leaked
+        // a (null,100,,) row. Held post-join, the full join keeps only the matched (10,5,foo,foo) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c (k INT, v SYMBOL, w SYMBOL)");
+            execute("INSERT INTO c VALUES (1, 'foo', 'foo')");
+
+            final String expected = "x\ty\tv\tw\n10\t5\tfoo\tfoo\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = c.w ORDER BY b.y")
+                        .noLeakCheck()
+                        .withPlanContaining("Filter filter: c.v=c.w")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2201,6 +2254,65 @@ public class JoinTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertEquals(Long.MAX_VALUE, cursor.size());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testForwardRefOuterJoinColumnEqColumnFilterStaysPostJoin() throws Exception {
+        // col=col counterpart of testForwardRefOuterJoinConstFilterStaysPostJoin: the RIGHT/FULL OUTER
+        // ON b.k = c.k forward-references c (joined later), so no JoinContext attaches at the join's own
+        // model index and it homogenizes to a CROSS variant reordered last, NULL-extending c. With
+        // c1 != c2 the matched row fails, leaving only the b row that the join NULL-extends; held
+        // post-join, NULL=NULL keeps that (null,9,29,null,null) row. Pushing c.c1 = c.c2 into c emptied c
+        // and leaked a second NULL-master row (2 rows for 1). Needs both the predictor fix (so
+        // hasNonEquiNullingJoin sees the forward-ref join) and the col=col deferral.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, k2 INT, av INT)");
+            execute("INSERT INTO a VALUES (1, 100, 11)");
+            execute("CREATE TABLE b (k INT, bv INT)");
+            execute("INSERT INTO b VALUES (1, 21), (9, 29)");
+            execute("CREATE TABLE c (k INT, k2 INT, c1 INT, c2 INT)");
+            execute("INSERT INTO c VALUES (1, 100, 7, 8)");
+
+            final String expected = "av\tbk\tbv\tc1\tc2\nnull\t9\t29\tnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.av, b.k bk, b.bv, c.c1, c.c2 FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.c1 = c.c2 ORDER BY bk")
+                        .noLeakCheck()
+                        .withPlanContaining("Filter filter: c.c1=c.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testForwardRefOuterJoinConstFilterStaysPostJoin() throws Exception {
+        // The RIGHT/FULL OUTER ON b.k = c.k forward-references c, which is joined later, so analyseEquals
+        // builds no JoinContext at this join's own model index. homogenizeCrossJoins therefore rewrites it
+        // to a CROSS variant reorderTables appends last, NULL-extending c. criteriaHasCrossTableEquality
+        // used to count the forward-ref equality as context-building and leave hasNonEquiNullingJoin
+        // false, so the col=CONST WHERE c.v = 1 pushed into c and leaked a (null,9,29,null) row (2 rows
+        // for 1). Requiring the equality's higher index to equal the join's own index fixes the predictor;
+        // the filter stays post-join. literal == bind (a bind variable cannot fold, so this divergence is
+        // invisible to the fuzzer).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, k2 INT, av INT)");
+            execute("INSERT INTO a VALUES (1, 100, 11)");
+            execute("CREATE TABLE b (k INT, bv INT)");
+            execute("INSERT INTO b VALUES (1, 21), (9, 29)");
+            execute("CREATE TABLE c (k INT, k2 INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 100, 1)");
+
+            final String expected = "av\tbk\tbv\tcv\n11\t1\t21\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.av, b.k bk, b.bv, c.v cv FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.v = 1 ORDER BY bk";
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: c.v=1").returns(expected);
+
+                final String bind = "SELECT a.av, b.k bk, b.bv, c.v cv FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.v = :v::INT ORDER BY bk";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().returns(expected);
             }
         });
     }

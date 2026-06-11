@@ -1727,9 +1727,12 @@ public class SqlOptimiser implements Mutable {
                             if (jc.slaveIndex != joinIndex &&
                                     joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                                 addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
-                            } else if (joinIndex < 0 && masterNullingJoinIndex(lhi) >= 0) {
+                            } else if (joinIndex < 0 && (masterNullingJoinIndex(lhi) >= 0 || hasNonEquiNullingJoin)) {
                                 // a.c1 = a.c2 on a master-nulled table: defer to assignFilters so the
                                 // post-join anchor is chosen in execution order (WHERE-origin only).
+                                // Also defers when a reordering non-equi RIGHT/FULL OUTER NULL-extends
+                                // lhi out of model order; pushing would empty lhi and change which rows
+                                // that join NULL-extends, leaking NULL-master rows.
                                 parent.addParsedWhereNode(node, innerPredicate);
                             } else {
                                 addWhereNode(parent, lhi, node);
@@ -3042,13 +3045,16 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * True when the criteria's AND-spine contains a plain cross-table equality (column = column
-     * referencing two different tables, no functions or nulls) -- the condition under which
-     * processJoinConditions/analyseEquals builds a join context, so homogenizeCrossJoins leaves the
-     * RIGHT/FULL OUTER join type alone. Mirrors the equi check in analyseEquals. Inspects the raw
-     * criteria, so it can run before processJoinConditions has built any context.
+     * True when the criteria's AND-spine contains a plain cross-table equality (column = column,
+     * two different tables, no functions or nulls) whose higher table index equals {@code joinIndex}
+     * -- the condition under which analyseEquals builds a join context FOR THIS join, so
+     * homogenizeCrossJoins leaves its RIGHT/FULL OUTER type alone. The higher-index test mirrors
+     * analyseEquals: a barrier join keeps its equi context only when the equality's slave index (the
+     * higher of the two) is the join's own model index. An ON clause that forward-references a later
+     * table, or references only earlier tables, builds no context, so the join still homogenizes to
+     * a CROSS variant and NULL-extends. Runs before processJoinConditions on the raw criteria.
      */
-    private boolean criteriaHasCrossTableEquality(IQueryModel parent, ExpressionNode criteria) throws SqlException {
+    private boolean criteriaHasCrossTableEquality(IQueryModel parent, ExpressionNode criteria, int joinIndex) throws SqlException {
         sqlNodeStack.clear();
         ExpressionNode n = criteria;
         while (n != null || !sqlNodeStack.isEmpty()) {
@@ -3069,7 +3075,8 @@ public class SqlOptimiser implements Mutable {
                             && literalCollector.nullCount == 0
                             && literalCollectorAIndexes.size() == 1
                             && literalCollectorBIndexes.size() == 1
-                            && literalCollectorAIndexes.get(0) != literalCollectorBIndexes.get(0)) {
+                            && literalCollectorAIndexes.get(0) != literalCollectorBIndexes.get(0)
+                            && Math.max(literalCollectorAIndexes.get(0), literalCollectorBIndexes.get(0)) == joinIndex) {
                         return true;
                     }
                     n = null;
@@ -6244,7 +6251,7 @@ public class SqlOptimiser implements Mutable {
                 continue;
             }
             final ExpressionNode criteria = joinModel.getJoinCriteria();
-            if (criteria != null && !criteriaHasCrossTableEquality(parent, criteria)) {
+            if (criteria != null && !criteriaHasCrossTableEquality(parent, criteria, i)) {
                 hasNonEquiNullingJoin = true;
                 return;
             }
