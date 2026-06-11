@@ -1992,6 +1992,78 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheEvictionMonotonicAsOfStaysCorrect() throws Exception {
+        // The ASOF join's slave cursor declares MONOTONIC, so its effective budget is a
+        // quarter of the configured value. Small row groups plus a tiny budget force the
+        // slave's backward scan to evict and re-decode parquet frames; the native slave
+        // copy is the oracle. Guards the MONOTONIC tryHit/eviction path end to end.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE slave AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        rnd_varchar(6, 30, 5) AS v,
+                        x::double AS d,
+                        timestamp_sequence('2024-01-01', 60_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE slave CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE slave_nat AS (SELECT * FROM slave) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    CREATE TABLE master AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        timestamp_sequence('2024-01-01T00:00:30', 120_000_000) AS ts
+                      FROM long_sequence(8_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            assertSqlCursors(
+                    "SELECT m.ts, m.k, s.v, s.d FROM master m ASOF JOIN slave_nat s ON (k)",
+                    "SELECT m.ts, m.k, s.v, s.d FROM master m ASOF JOIN slave s ON (k)"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheEvictionScatteredSortStaysCorrect() throws Exception {
+        // Small row groups make a partition span many page frames; a tiny byte budget
+        // forces the SCATTERED sort to evict and reuse decoded buffers in place across
+        // the LRU walk. Comparing against a native copy catches corruption from in-place
+        // victim reuse and from the VARCHAR_SLICE page-buffer re-decode path.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                      SELECT
+                        (x % 23)::int AS k,
+                        rnd_varchar(8, 48, 5) AS v1,
+                        rnd_varchar(1, 4, 5) AS v2,
+                        x::double AS d,
+                        timestamp_sequence('2024-01-01', 60_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE nat AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // ORDER BY a non-timestamp column routes through a SCATTERED sort that
+            // random-accesses frames out of order. ts and d break ties so order is stable.
+            assertSqlCursors(
+                    "SELECT k, v1, v2, d, ts FROM nat ORDER BY v1, ts",
+                    "SELECT k, v1, v2, d, ts FROM src ORDER BY v1, ts"
+            );
+            assertSqlCursors(
+                    "SELECT k, v1, v2, d, ts FROM nat ORDER BY k, d DESC",
+                    "SELECT k, v1, v2, d, ts FROM src ORDER BY k, d DESC"
+            );
+        });
+    }
+
+    @Test
     public void testParquetCacheZeroBudgetSinglePartitionStillCorrect() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
         assertMemoryLeak(() -> {

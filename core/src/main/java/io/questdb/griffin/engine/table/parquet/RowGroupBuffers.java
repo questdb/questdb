@@ -28,6 +28,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Native output buffers for a decoded parquet row group.
@@ -103,6 +104,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
      * already counted by {@link #getChunkDataSize(int)} (the DeltaByteArray spill path).
      * The decode-cache byte budget adds this so VARCHAR_SLICE frames are not undercounted.
      */
+    @TestOnly
     public long getChunkPageBuffersSize(int columnIndex) {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;

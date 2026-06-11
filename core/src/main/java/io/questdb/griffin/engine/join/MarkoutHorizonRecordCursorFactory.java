@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -153,6 +154,9 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
+            // The master recordAt() access slides forward over a small window of rows (the
+            // offset grid), so at frame granularity it is sequential: monotonic, not scattered.
+            masterCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             slaveCursor = slaveFactory.getCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;

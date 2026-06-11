@@ -55,6 +55,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
@@ -125,6 +126,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         Misc.free(frameRowCounts);
         Misc.free(frameTimestampCache);
         frameCursor = Misc.free(frameCursor);
+    }
+
+    @TestOnly
+    public PageFrameMemoryPool getFrameMemoryPool() {
+        return frameMemoryPool;
     }
 
     @Override

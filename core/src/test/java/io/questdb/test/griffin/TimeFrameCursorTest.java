@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -31,6 +32,8 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -819,6 +822,107 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetDecodeCacheMonotonicCapsCachedFrameCount() throws Exception {
+        // The table spans many parquet partitions, so the cursor sees many page frames. A
+        // MONOTONIC cursor caps the decode cache at ParquetDecodeHint.MONOTONIC.maxCachedBuffers
+        // (4) entries regardless of the byte budget, so a forward random-access sweep across all
+        // frames must evict and leave the cache holding at most 4 frames. Asserting against
+        // PageFrameMemoryPool observability turns "eviction fired" into a regression guard.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    Assert.assertEquals(ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
+                    // MONOTONIC scales the configured budget down to a quarter.
+                    Assert.assertEquals(configuration.getSqlParquetCacheMemorySize() >>> 2, pool.getEffectiveBudgetBytes());
+
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue("need more than 4 frames to force eviction, got " + frameCount, frameCount > 4);
+
+                    sweepFramesByRandomAccess(cursor, frameCount);
+
+                    // The default budget is far larger than the decoded bytes, so only the
+                    // 4-buffer count cap fires: the cache holds at most 4 frames, fewer than total.
+                    int cachedFrames = pool.getCachedFrameCount();
+                    Assert.assertTrue("eviction should leave at most 4 cached frames, got " + cachedFrames, cachedFrames <= 4);
+                    Assert.assertTrue("cache should not be empty after the sweep", cachedFrames >= 1);
+                    Assert.assertTrue("eviction should drop the cached frame count below the total", cachedFrames < frameCount);
+                    Assert.assertTrue(pool.getCachedBytes() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeCacheScatteredRespectsByteBudget() throws Exception {
+        // A SCATTERED cursor keeps the full configured budget and the larger 256-buffer count
+        // cap, so eviction is driven purely by the byte budget. With a tight 128 KiB budget and
+        // a varchar-heavy table whose total decoded size across frames dwarfs it, a forward
+        // random-access sweep must evict and keep the cached bytes bounded near the budget.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        final long budget = 128 * 1024;
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, budget);
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    // SCATTERED keeps the full configured budget.
+                    Assert.assertEquals(budget, pool.getEffectiveBudgetBytes());
+
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue("need more than one frame, got " + frameCount, frameCount > 1);
+
+                    sweepFramesByRandomAccess(cursor, frameCount);
+
+                    // The byte budget holds only a fraction of the frames, so the sweep evicts.
+                    int cachedFrames = pool.getCachedFrameCount();
+                    Assert.assertTrue("cache should not be empty after the sweep", cachedFrames >= 1);
+                    Assert.assertTrue("byte budget should drop the cached frame count below the total, got " + cachedFrames, cachedFrames < frameCount);
+                    // Cached bytes stay bounded near the budget (a single just-decoded frame may
+                    // briefly push it over, so allow generous slack rather than an exact cap).
+                    long cachedBytes = pool.getCachedBytes();
+                    Assert.assertTrue(cachedBytes > 0);
+                    Assert.assertTrue("cached bytes should stay near the budget, got " + cachedBytes, cachedBytes <= 2 * budget);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetPartitionWithLazyPath() throws Exception {
         assertMemoryLeak(() -> {
             // 72 rows across 3 partitions (days 1970-01-01, 1970-01-02, 1970-01-03).
@@ -1298,6 +1402,29 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertEquals(AbstractCairoTest.sink, actualSink);
     }
 
+    private static int countFrames(TimeFrameCursorImpl cursor) {
+        cursor.toTop();
+        int frameCount = 0;
+        while (cursor.next()) {
+            frameCount++;
+        }
+        return frameCount;
+    }
+
+    private static void createManyFrameParquetTable() throws Exception {
+        // 20k rows spread across ~24 DAY partitions; each parquet partition becomes one page
+        // frame, so the cursor sees many frames to evict between. The varchar column makes the
+        // total decoded size across frames dwarf a tight cache budget.
+        execute("CREATE TABLE x AS (" +
+                " SELECT" +
+                " rnd_int() a," +
+                " rnd_varchar(20, 40, 0) s," +
+                " timestamp_sequence(0, 100_000_000) t" +
+                " FROM long_sequence(20_000)" +
+                ") TIMESTAMP (t) PARTITION BY DAY");
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE t >= 0");
+    }
+
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -1309,6 +1436,17 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
             WorkerPool pool = new WorkerPool(() -> 2);
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
+    }
+
+    private static void sweepFramesByRandomAccess(TimeFrameCursorImpl cursor, int frameCount) {
+        // Random-access the first row of every frame in order. Each navigateTo() decodes a
+        // distinct parquet frame, so the pass exercises misses and victim reuse across the cache.
+        Record record = cursor.getRecord();
+        int tsIndex = cursor.getTimestampIndex();
+        for (int f = 0; f < frameCount; f++) {
+            cursor.recordAt(record, f, 0);
+            record.getTimestamp(tsIndex);
+        }
     }
 
     private void testBothCursors(String ddl, TimeFrameCursorAssertion assertion) throws Exception {

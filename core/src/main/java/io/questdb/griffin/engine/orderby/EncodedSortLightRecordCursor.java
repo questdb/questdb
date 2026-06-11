@@ -159,7 +159,6 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-        baseCursor.setParentUsedColumns(buildReadColumns);
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
         entrySize = keyType.entrySize();

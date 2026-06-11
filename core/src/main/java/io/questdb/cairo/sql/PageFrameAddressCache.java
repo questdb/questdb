@@ -105,7 +105,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
-            hasParquetFrames = true;
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
