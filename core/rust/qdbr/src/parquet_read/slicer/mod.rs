@@ -278,6 +278,12 @@ impl<'a> DeltaLengthArraySlicer<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        // The concatenated values start after the FULL lengths block. A partial
+        // decode (row_count < page rows) leaves the decoder mid-block, so drain
+        // the remaining lengths before taking consumed_bytes() as the data start.
+        for r in decoder.by_ref() {
+            r.map_err(|_| fmt_err!(Layout, "not enough length values to iterate"))?;
+        }
         let data_offset = decoder.consumed_bytes();
         Ok(Self {
             data: &data[data_offset..],
@@ -398,14 +404,25 @@ impl<'a> DeltaBytesArraySlicer<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        // The suffix-lengths block starts after the FULL prefix-lengths block, and
+        // the concatenated values after the FULL suffix block. A partial decode
+        // (row_count < page rows) leaves a decoder mid-block, so drain each block
+        // before taking consumed_bytes() as the next offset.
+        for r in &mut decoder {
+            r.map_err(|_| fmt_err!(Layout, "not enough prefix values to iterate"))?;
+        }
         let mut data_offset = decoder.consumed_bytes();
-        let mut decoder = delta_bitpacked::Decoder::try_new(&values[decoder.consumed_bytes()..])?;
-        let suffix = (&mut decoder)
+        let mut decoder = delta_bitpacked::Decoder::try_new(&values[data_offset..])?;
+        let suffix: Vec<i32> = (&mut decoder)
+            .take(row_count)
             .map(|r| {
                 let v = r.map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))?;
                 checked_len(v)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        for r in &mut decoder {
+            r.map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))?;
+        }
         data_offset += decoder.consumed_bytes();
 
         Ok(Self {

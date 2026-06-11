@@ -725,3 +725,43 @@ fn test_fixed_slicer_exact_buffer_reads_ok() {
     slicer.next_slice_into(1, &mut sink).unwrap();
     assert_eq!(sink.into_inner(), data.to_vec());
 }
+
+#[test]
+fn test_delta_length_array_slicer_partial_window() {
+    // DELTA_LENGTH_BYTE_ARRAY lays out [all N lengths][concatenated bytes]. A
+    // partial decode window (row_count < N, e.g. a LIMIT-clamped page decode)
+    // must still locate the data start after the FULL lengths block; stopping at
+    // consumed_bytes() mid-block slices garbage for every value.
+    // Enough values to span many delta miniblocks (32 values each): a small input
+    // fits one miniblock, which the decoder consumes whole, masking the bug.
+    let strings: Vec<String> = (0..1000).map(|i| format!("value_{i}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for row_count in [1, 7, 33, 130, 1000] {
+        let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, row_count, row_count).unwrap();
+        for s in strings.iter().take(row_count) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_window() {
+    // DELTA_BYTE_ARRAY lays out [all N prefix lengths][all N suffix lengths]
+    // [concatenated suffix bytes]. A partial decode window must drain both
+    // length blocks to find the suffix-block and data starts.
+    let strings: Vec<&[u8]> = vec![b"alpha", b"alphabet", b"alpine", b"beta", b"betamax"];
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(strings.clone().into_iter(), &mut encoded);
+
+    for row_count in 1..=strings.len() {
+        let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, row_count, row_count).unwrap();
+        for s in strings.iter().take(row_count) {
+            assert_eq!(slicer.next().unwrap(), *s);
+        }
+    }
+}
