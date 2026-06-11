@@ -1838,6 +1838,34 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnEqColumnOuterJoinedTableStaysPostJoin() throws Exception {
+        // Variant of testColumnEqColumnMasterFilterStaysPostJoin where the table the predicate
+        // references (a) is itself reached via an outer join, then NULL-extended by a SECOND outer
+        // join. analyseEquals routes a same-table equality whose table is barrier-joined to a
+        // model-order post-join anchor at that table's own join -- below the later FULL/RIGHT OUTER,
+        // which then synthesizes NULL-master rows that bypass the filter, leaking (null,null,1) on
+        // top of the legitimate (null,null,3). Held above the outer join, the matched (1,2) row is
+        // dropped by c1=c2 and only the (null,null,3) row survives because null=null is true for INT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (k INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE a (c1 INT, c2 INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 2, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (3)");
+
+            final String expected = "c1\tc2\tk\nnull\tnull\t3\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.c1, a.c2, t2.k FROM t0 RIGHT JOIN a ON t0.k = a.k " + joinType + " JOIN t2 ON a.k = t2.k WHERE a.c1 = a.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: a.c1=a.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testColumnEqColumnReorderedFilterStaysPostJoin() throws Exception {
         // Companion to testColumnEqColumnMasterFilterStaysPostJoin: there the col=col WHERE sits on the
         // directly NULL-extended master; here it sits on an INNER-joined table (c) whose NULL-extension
@@ -6023,6 +6051,33 @@ public class JoinTest extends AbstractCairoTest {
             final String expected = "a\tb\tk\nnull\tnull\t2\n";
             for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
                 assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k WHERE t0.a = t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a=t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableEqualityOuterJoinedTableStaysPostJoin() throws Exception {
+        // Variant of testMultiTableEqualityMasterFilterStaysPostJoin where the HIGHER table of the
+        // equality (t1) is itself reached via an outer join, then NULL-extended by a SECOND outer
+        // join. analyseEquals routes a two-table equality whose higher table is barrier-joined to a
+        // model-order post-join anchor at that table's own join -- below the later FULL/RIGHT OUTER,
+        // leaking (null,null,1) on top of the legitimate (null,null,3). Held above the outer join,
+        // the matched (1,5) row fails 1=5 and only (null,null,3) survives because null=null is true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1), (9, 2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (3)");
+
+            final String expected = "a\tb\tk\nnull\tnull\t3\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 RIGHT JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t1.k = t2.k WHERE t0.a = t1.b")
                         .noLeakCheck()
                         .noRandomAccess()
                         .withPlanContaining("Filter filter: t0.a=t1.b")

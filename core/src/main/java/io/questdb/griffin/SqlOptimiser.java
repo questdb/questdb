@@ -1723,17 +1723,20 @@ public class SqlOptimiser implements Mutable {
                         // single table reference
                         jc.slaveIndex = lhi;
                         if (canMovePredicate) {
-                            // we can't push anything into another left/right join
-                            if (jc.slaveIndex != joinIndex &&
-                                    joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
-                                addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
-                            } else if (joinIndex < 0 && (masterNullingJoinIndex(lhi) >= 0 || hasNonEquiNullingJoin)) {
+                            if (joinIndex < 0 && (masterNullingJoinIndex(lhi) >= 0 || hasNonEquiNullingJoin)) {
                                 // a.c1 = a.c2 on a master-nulled table: defer to assignFilters so the
                                 // post-join anchor is chosen in execution order (WHERE-origin only).
                                 // Also defers when a reordering non-equi RIGHT/FULL OUTER NULL-extends
                                 // lhi out of model order; pushing would empty lhi and change which rows
-                                // that join NULL-extends, leaking NULL-master rows.
+                                // that join NULL-extends, leaking NULL-master rows. Checked before the
+                                // barrier-slave branch below: when lhi is itself barrier-joined but a
+                                // further nulling join sits above it, that branch would anchor at lhi's
+                                // own join, below the nulling join, and leak.
                                 parent.addParsedWhereNode(node, innerPredicate);
+                            } else if (jc.slaveIndex != joinIndex &&
+                                    joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                                // we can't push anything into another left/right join
+                                addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                             } else {
                                 addWhereNode(parent, lhi, node);
                             }
@@ -1769,14 +1772,18 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     if (canMovePredicate || (jc.slaveIndex == joinIndex && parent.getJoinModels().get(joinIndex).getJoinType() != IQueryModel.JOIN_WINDOW)) {
-                        //we can't push anything into another left/right join
-                        if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
-                            addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
-                        } else if (joinIndex < 0 && (masterNullingJoinIndex(lhi) >= 0 || masterNullingJoinIndex(rhi) >= 0 || hasNonEquiNullingJoin)) {
+                        if (joinIndex < 0 && (masterNullingJoinIndex(lhi) >= 0 || masterNullingJoinIndex(rhi) >= 0 || hasNonEquiNullingJoin)) {
                             // A two-table WHERE equality folds into an inner-join key, applied before a
                             // downstream master-nulling join NULL-extends t0/t1; the NULL-master rows then
-                            // bypass it and leak. Defer to assignFilters, which anchors it post-join.
+                            // bypass it and leak. Defer to assignFilters, which anchors it post-join in
+                            // execution order. Checked before the barrier-slave branch below: when the
+                            // higher table is itself barrier-joined but a further nulling join sits above
+                            // it, that branch would anchor at the higher table's own join, below the
+                            // nulling join, and leak.
                             parent.addParsedWhereNode(node, innerPredicate);
+                        } else if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                            //we can't push anything into another left/right join
+                            addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {
                             addJoinContext(parent, jc);
                             // lhi == rhi returned above, so we are guaranteed to have two
