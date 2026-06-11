@@ -26,6 +26,8 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory;
@@ -17247,6 +17249,159 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         3\t3\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z
                         5\t5\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z
                         """));
+    }
+
+    @Test
+    public void testRankWithUnserializablePassThroughColumn() throws Exception {
+        // rank()/dense_rank() over (partition by ... order by ts) takes the streaming
+        // WindowRecordCursorFactory path when the order matches the designated timestamp. That path
+        // used to copy the whole projected row into a MapValue, which threw
+        // UnsupportedOperationException for any pass-through column the MapValue cannot hold (UUID,
+        // STRING, VARCHAR, BINARY, LONG256, arrays, ...). Only the ORDER BY columns are needed, so
+        // the pass-through columns must not break compilation.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, g symbol, u uuid, str string, vc varchar, l256 long256, arr double[]) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("insert into tab values " +
+                    "(1,'a','00000000-0000-0000-0000-000000000001','s1','v1'::varchar,'0x01'::long256,ARRAY[1.0])," +
+                    "(1,'a','00000000-0000-0000-0000-000000000002','s2','v2'::varchar,'0x02'::long256,ARRAY[2.0])," +
+                    "(1,'b','00000000-0000-0000-0000-000000000003','s3','v3'::varchar,'0x03'::long256,ARRAY[3.0])," +
+                    "(2,'a','00000000-0000-0000-0000-000000000004','s4','v4'::varchar,'0x04'::long256,ARRAY[4.0])," +
+                    "(2,'b','00000000-0000-0000-0000-000000000005','s5','v5'::varchar,'0x05'::long256,ARRAY[5.0])," +
+                    "(2,'b','00000000-0000-0000-0000-000000000006','s6','v6'::varchar,'0x06'::long256,ARRAY[6.0])," +
+                    "(3,'a','00000000-0000-0000-0000-000000000007','s7','v7'::varchar,'0x07'::long256,ARRAY[7.0])," +
+                    "(3,'a','00000000-0000-0000-0000-000000000008','s8','v8'::varchar,'0x08'::long256,ARRAY[8.0])," +
+                    "(3,'a','00000000-0000-0000-0000-000000000009','s9','v9'::varchar,'0x09'::long256,ARRAY[9.0])");
+
+            // UUID pass-through (the documented repro). Confirm the streaming Window path is used.
+            assertQuery("SELECT u, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            u\tdr\tr
+                            00000000-0000-0000-0000-000000000001\t1\t1
+                            00000000-0000-0000-0000-000000000002\t1\t1
+                            00000000-0000-0000-0000-000000000003\t1\t1
+                            00000000-0000-0000-0000-000000000004\t2\t3
+                            00000000-0000-0000-0000-000000000005\t2\t2
+                            00000000-0000-0000-0000-000000000006\t2\t2
+                            00000000-0000-0000-0000-000000000007\t3\t4
+                            00000000-0000-0000-0000-000000000008\t3\t4
+                            00000000-0000-0000-0000-000000000009\t3\t4
+                            """);
+
+            // STRING pass-through.
+            assertQuery("SELECT str, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            str\tdr\tr
+                            s1\t1\t1
+                            s2\t1\t1
+                            s3\t1\t1
+                            s4\t2\t3
+                            s5\t2\t2
+                            s6\t2\t2
+                            s7\t3\t4
+                            s8\t3\t4
+                            s9\t3\t4
+                            """);
+
+            // VARCHAR pass-through.
+            assertQuery("SELECT vc, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            vc\tdr\tr
+                            v1\t1\t1
+                            v2\t1\t1
+                            v3\t1\t1
+                            v4\t2\t3
+                            v5\t2\t2
+                            v6\t2\t2
+                            v7\t3\t4
+                            v8\t3\t4
+                            v9\t3\t4
+                            """);
+
+            // LONG256 pass-through.
+            assertQuery("SELECT l256, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            l256\tdr\tr
+                            0x01\t1\t1
+                            0x02\t1\t1
+                            0x03\t1\t1
+                            0x04\t2\t3
+                            0x05\t2\t2
+                            0x06\t2\t2
+                            0x07\t3\t4
+                            0x08\t3\t4
+                            0x09\t3\t4
+                            """);
+
+            // DOUBLE[] pass-through.
+            assertQuery("SELECT arr, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            arr\tdr\tr
+                            [1.0]\t1\t1
+                            [2.0]\t1\t1
+                            [3.0]\t1\t1
+                            [4.0]\t2\t3
+                            [5.0]\t2\t2
+                            [6.0]\t2\t2
+                            [7.0]\t3\t4
+                            [8.0]\t3\t4
+                            [9.0]\t3\t4
+                            """);
+
+            // Descending order also takes the streaming path (backward scan); exercise the negative
+            // direction with a UUID pass-through.
+            assertQuery("SELECT u, dense_rank() OVER (PARTITION BY g ORDER BY ts DESC) dr, rank() OVER (PARTITION BY g ORDER BY ts DESC) r FROM tab ORDER BY ts DESC")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            u\tdr\tr
+                            00000000-0000-0000-0000-000000000009\t1\t1
+                            00000000-0000-0000-0000-000000000008\t1\t1
+                            00000000-0000-0000-0000-000000000007\t1\t1
+                            00000000-0000-0000-0000-000000000006\t1\t1
+                            00000000-0000-0000-0000-000000000005\t1\t1
+                            00000000-0000-0000-0000-000000000004\t2\t4
+                            00000000-0000-0000-0000-000000000003\t2\t3
+                            00000000-0000-0000-0000-000000000002\t3\t5
+                            00000000-0000-0000-0000-000000000001\t3\t5
+                            """);
+
+            // BINARY pass-through has no literal to assert exactly, but it must still compile and run.
+            execute("alter table tab add column bin binary");
+            execute("update tab set bin = rnd_bin(2, 4, 0)");
+            try (
+                    RecordCursorFactory factory = select("SELECT bin, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(9, rows);
+            }
+        });
     }
 
     @Test
