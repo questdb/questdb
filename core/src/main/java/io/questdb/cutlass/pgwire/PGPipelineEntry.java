@@ -372,6 +372,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // pg-wire path that materializes parked writes, so the fence belongs here, covering the COMMIT
         // case, the implicit-commit-before-SELECT path, and the SYNC implicit-commit path at once.
         //
+        // Nothing parked means nothing to fence: an empty pendingWriters is the common SELECT-only /
+        // read-only session case (the implicit commit on SYNC and before a pipelined SELECT both reach
+        // here with an empty map). Returning early keeps a read-only replica's read traffic working and
+        // mirrors the ILP twin, which only fences when getUncommittedRowCount() > 0.
+        if (pendingWriters.size() == 0) {
+            return;
+        }
         // Cheap early-out: if the node is already read-only before we attempt to acquire the lock, skip
         // the lock entirely. This is NOT the authoritative refusal -- the in-lock re-check below is.
         if (engine.isReadOnlyMode()) {
