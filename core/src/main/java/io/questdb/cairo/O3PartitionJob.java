@@ -196,6 +196,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // updated target schema.
                 final boolean hasExtraColumns = mappedParquetColumns < parquetColumnCount;
                 final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
+                // Legacy files (written before BYTE/SHORT/CHAR/SYMBOL became Optional) store these
+                // no-null-sentinel columns as Required (parquet max def level 0, pages carry no
+                // definition-level stream). A rewrite migrates the footer to Optional but raw-copies
+                // non-overlapping row groups verbatim, leaving Required pages under an Optional footer,
+                // which the reader then mis-decodes (value bytes consumed as def levels). When the source
+                // carries any such column, force a full rewrite that re-encodes every row group through
+                // the conversion path under the migrated Optional schema, so no Required page survives.
+                // New (already Optional) files report a positive max def level and keep the raw-copy path.
+                final boolean forceFullReencode = hasLegacyRequiredNoSentinelColumn(partitionDecoder.metadata(), parquetColumnCount);
 
                 assert rowGroupCount > 0;
 
@@ -223,6 +232,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
                 isRewrite = hasSchemaChange
+                        || forceFullReencode
                         || rowGroupCount == 1
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
                         || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
@@ -319,7 +329,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetFileSize
                 );
 
-                if (hasSchemaChange) {
+                if (hasSchemaChange || forceFullReencode) {
                     // Table schema differs from parquet file schema (ADD COLUMN,
                     // DROP COLUMN, or both). Pass the full target schema to Rust
                     // so the output file footer, column remapping, and null column
@@ -485,10 +495,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
                                             .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
                                             .I$();
-                                    if (hasTypeConvertedColumns) {
+                                    if (hasTypeConvertedColumns || forceFullReencode) {
+                                        // Pass the NON-owning chunkDescriptor (like mergeRowGroup):
+                                        // rewriteParquetRowGroupWithConversions hands the descriptor
+                                        // borrowed decode-buffer pointers (Rust-owned) for identity
+                                        // columns and tmpBufs pointers it frees itself in its own
+                                        // finally. The owning OwnedMemoryPartitionDescriptor.clear()
+                                        // would illegally free the former and double-free the latter.
                                         rewriteParquetRowGroupWithConversions(
                                                 partitionDecoder,
-                                                partitionDescriptor,
+                                                chunkDescriptor,
                                                 partitionUpdater,
                                                 rowGroupBuffers,
                                                 parquetColumns,
@@ -2133,6 +2149,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
+    // Detects a legacy parquet file that stores BYTE/SHORT/CHAR/SYMBOL as Required (max def
+    // level 0, no definition-level stream). Such a file predates the convention that these
+    // no-null-sentinel columns are Optional. Rewriting it migrates the footer to Optional while
+    // raw-copying untouched row groups, leaving Required pages under an Optional footer (corrupt
+    // reads). The caller forces a full re-encode when this returns true. Modern files report a
+    // positive max def level for these columns and are left on the fast raw-copy path.
+    private static boolean hasLegacyRequiredNoSentinelColumn(ParquetMetaFileReader meta, int parquetColumnCount) {
+        for (int i = 0; i < parquetColumnCount; i++) {
+            if (meta.getColumnMaxDefLevel(i) == 0) {
+                final int srcTag = ColumnType.tagOf(meta.getColumnType(i));
+                if (srcTag == ColumnType.BYTE
+                        || srcTag == ColumnType.SHORT
+                        || srcTag == ColumnType.CHAR
+                        || srcTag == ColumnType.SYMBOL) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // returns packed long: (numOutputRowGroups << 32) | (duplicateCount & 0xFFFFFFFFL)
     private static long mergeRowGroup(
             PartitionDescriptor chunkDescriptor,
@@ -3381,7 +3418,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      */
     private static void rewriteParquetRowGroupWithConversions(
             ParquetPartitionDecoder decoder,
-            PartitionDescriptor partitionDescriptor,
+            PartitionDescriptor chunkDescriptor,
             PartitionUpdater partitionUpdater,
             RowGroupBuffers rowGroupBuffers,
             DirectIntList parquetColumns,
@@ -3456,7 +3493,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         // Phase 3: Build PartitionDescriptor with conversions applied.
         final String tableName = tableWriter.getTableToken().getTableName();
-        partitionDescriptor.of(tableName, rowGroupSize, timestampIndex);
+        chunkDescriptor.of(tableName, rowGroupSize, timestampIndex);
 
         // Track temporary buffers that need to be freed after addRowGroup.
         // Layout: 4 longs per column = [auxAddr, auxSize, dataAddr, dataSize].
@@ -3538,7 +3575,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
 
-                    partitionDescriptor.addColumn(
+                    chunkDescriptor.addColumn(
                             columnName,
                             columnType,
                             columnId,
@@ -3591,7 +3628,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (!symbolMapWriter.getNullFlag()) {
                             encodeColumnType |= Integer.MIN_VALUE;
                         }
-                        partitionDescriptor.addColumn(
+                        chunkDescriptor.addColumn(
                                 columnName,
                                 encodeColumnType,
                                 columnId,
@@ -3605,7 +3642,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 parquetEncodingConfig
                         );
                     } else {
-                        partitionDescriptor.addColumn(
+                        chunkDescriptor.addColumn(
                                 columnName,
                                 columnType,
                                 columnId,
@@ -3621,7 +3658,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             }
-            partitionUpdater.addRowGroup(metadataPosition, partitionDescriptor);
+            partitionUpdater.addRowGroup(metadataPosition, chunkDescriptor);
         } finally {
             for (int i = 0; i < activeColCount; i++) {
                 for (int slot = 0; slot < 4; slot += 2) {
