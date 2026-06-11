@@ -152,12 +152,14 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // Take ownership before reopen() can throw: on a reopen OOM, close()
+        // must find baseCursor here to free it instead of leaking it.
+        this.baseCursor = baseCursor;
+        this.baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
         }
-        this.baseCursor = baseCursor;
-        this.baseRecord = baseCursor.getRecord();
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         baseCursor.setParentUsedColumns(buildReadColumns);
         keyType = encoder.init(baseCursor);
