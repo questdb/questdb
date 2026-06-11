@@ -5801,6 +5801,80 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadWideDecimalOverPartitionStreamingShape() throws Exception {
+        // lead() over a Decimal128/Decimal256 argument used to report ZERO_PASS, unlike every other
+        // lead variant. That routed a query whose only window functions were wide-decimal leads
+        // through the streaming window executor. lead reads ahead, so it cannot run in the forward
+        // streaming pass, and the wide-decimal lead exposed no Decimal128/Decimal256 read accessor
+        // there, so reading the result threw UnsupportedOperationException. Narrow-decimal columns in
+        // the earlier all-types tests masked this by forcing the cached path. The wide-decimal lead
+        // now behaves like the rest (cached, backward pass1) and reads back correctly.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_6_PART);
+            // Decimal256 (precision 60 > 38) on its own -- the shape that used to crash on read.
+            assertQuery("SELECT ts, grp, lead(v256, 1) OVER (PARTITION BY grp ORDER BY ts) l256 FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindow
+                              unorderedFunctions: [lead(v256, 1, NULL) over (partition by [grp])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            ts\tgrp\tl256
+                            2024-01-01T00:00:00.000000Z\ta\t8
+                            2024-01-01T00:01:00.000000Z\tb\t2
+                            2024-01-01T00:02:00.000000Z\ta\t4
+                            2024-01-01T00:03:00.000000Z\tb\t6
+                            2024-01-01T00:04:00.000000Z\ta\t
+                            2024-01-01T00:05:00.000000Z\tb\t
+                            """);
+            // Decimal128 (precision 38) on its own.
+            assertQuery("SELECT ts, grp, lead(v128, 1) OVER (PARTITION BY grp ORDER BY ts) l128 FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindow
+                              unorderedFunctions: [lead(v128, 1, NULL) over (partition by [grp])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            ts\tgrp\tl128
+                            2024-01-01T00:00:00.000000Z\ta\t8.000000
+                            2024-01-01T00:01:00.000000Z\tb\t2.000000
+                            2024-01-01T00:02:00.000000Z\ta\t4.000000
+                            2024-01-01T00:03:00.000000Z\tb\t6.000000
+                            2024-01-01T00:04:00.000000Z\ta\t
+                            2024-01-01T00:05:00.000000Z\tb\t
+                            """);
+            // Both wide-decimal leads together, still no narrow-decimal column to force the cached path.
+            assertQuery("SELECT ts, grp, " +
+                    "lead(v128, 1) OVER (PARTITION BY grp ORDER BY ts) l128, " +
+                    "lead(v256, 1) OVER (PARTITION BY grp ORDER BY ts) l256 " +
+                    "FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tgrp\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\ta\t8.000000\t8
+                            2024-01-01T00:01:00.000000Z\tb\t2.000000\t2
+                            2024-01-01T00:02:00.000000Z\ta\t4.000000\t4
+                            2024-01-01T00:03:00.000000Z\tb\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\ta\t\t
+                            2024-01-01T00:05:00.000000Z\tb\t\t
+                            """);
+        });
+    }
+
+    @Test
     public void testLeadOffsetZero() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
