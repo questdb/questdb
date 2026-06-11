@@ -912,6 +912,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameIndex = -1;
             decodedBytes = 0;
             retainedBytes = 0;
+            // releaseParquetBuffers() parks closed shells without unlinking first; drop the
+            // LRU links so a pooled shell cannot retain its former neighbours.
+            prev = null;
+            next = null;
         }
 
         public void decode(ParquetDecoder decoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi) {

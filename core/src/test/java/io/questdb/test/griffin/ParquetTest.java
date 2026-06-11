@@ -2013,18 +2013,22 @@ public class ParquetTest extends AbstractCairoTest {
                       SELECT
                         (x % 13)::int AS k,
                         rnd_varchar(8, 48, 5) AS v,
-                        x::double AS d,
+                        (x % 100)::double AS d,
                         timestamp_sequence('2024-01-01', 100_000_000) AS ts
                       FROM long_sequence(20_000)
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
             execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
             execute("CREATE TABLE nat AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Filter on d; k (group key) and v (varchar, via max) are remaining columns
-            // late-materialized for the surviving rows. ORDER BY k makes the output deterministic.
+            // Filter on d; k (group key) and v (varchar, via max) are late-materialized for the
+            // survivors. d cycles 0..99 per partition, so 'd < 10' keeps ~10% of every frame:
+            // selectivity stays under the late-mat threshold yet every frame has survivors, so
+            // decodeRemainingColumns runs on each one. A monotonic 'd > N' would instead give
+            // zero-survivor then high-selectivity frames and exercise barely one or two.
+            // ORDER BY k makes the output deterministic.
             assertSqlCursors(
-                    "SELECT k, count(), max(v) FROM nat WHERE d > 5_000 ORDER BY k",
-                    "SELECT k, count(), max(v) FROM src WHERE d > 5_000 ORDER BY k"
+                    "SELECT k, count(), max(v) FROM nat WHERE d < 10 ORDER BY k",
+                    "SELECT k, count(), max(v) FROM src WHERE d < 10 ORDER BY k"
             );
         });
     }
