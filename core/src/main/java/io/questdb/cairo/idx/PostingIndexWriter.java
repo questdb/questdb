@@ -4196,20 +4196,15 @@ public class PostingIndexWriter implements IndexWriter {
             int maxStrideTotal = (int) maxStrideTotalL;
 
             if (maxValueCutoff < Long.MAX_VALUE) {
-                if (coverCount == 0) {
-                    // Streaming rollback (non-covering): decode each key once to
-                    // find the cutoff (filterCountsForRollback), then re-encode
-                    // the surviving prefix per key via reencodeWithPerKeyStreaming.
-                    // Peak heap is one key (maxKeyCount longs, the full per-key
-                    // max), not the whole index, so no pre-flight is needed.
-                    //
-                    // Covering rollback stays on the monolithic path below: the
-                    // covered sidecar's reopen/recovery semantics (cover-source
-                    // read at reopen, staged-file cleanup on sidecar-sync
-                    // failure) are not satisfied by the seal streaming encoder
-                    // and would return null covered values on the recovery path.
-                    // Streaming the covered rollback is a focused follow-up.
+                if (canStreamRollback()) {
+                    // Streaming rollback (non-covering, or path-based fixed-size
+                    // covers): decode each key once to find the cutoff
+                    // (filterCountsForRollback), then re-encode the surviving
+                    // prefix per key via reencodeWithPerKeyStreaming. Peak heap is
+                    // one key (maxKeyCount longs, the full per-key max), not the
+                    // whole index, so no pre-flight is needed.
                     long keyBuffer = Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    boolean reencodeStarted = false;
                     try {
                         int newKeyCount = filterCountsForRollback(maxValueCutoff, totalCountsAddr, keyBuffer, maxKeyCount);
                         if (newKeyCount == 0) {
@@ -4218,25 +4213,47 @@ public class PostingIndexWriter implements IndexWriter {
                             setMaxValue(maxValue);
                         } else {
                             keyCount = newKeyCount;
+                            if (coverCount > 0) {
+                                // The rollback (unlike the seal flow) has not
+                                // opened the covered sidecar files; open them at
+                                // the new sealTxn so the streaming sidecar write
+                                // inside reencodeWithPerKeyStreaming has targets
+                                // and rebuilds the .pc for the surviving rows.
+                                closeSidecarMems();
+                                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
+                            }
+                            reencodeStarted = true;
                             reencodeWithPerKeyStreaming(newSealTxn, maxValue, totalCountsAddr, keyBuffer, maxKeyCount);
-                            // Sync the chain publish now -- the new .pv is
+                            // Sync the chain publish now -- the new .pv/.pc are
                             // already synced inside reencodeWithPerKeyStreaming --
-                            // so once rollbackToMaxValue queues the old .pv for
-                            // purge and the purge job unlinks it, a power loss
-                            // cannot recover a committed chain head pointing at a
-                            // deleted file. The seal path defers this to seal()'s
-                            // unconditional .pk sync; the rollback path has no
-                            // such follow-up, so sync here (as reencodeMonolithic
-                            // does for the covering rollback).
+                            // so once rollbackToMaxValue queues the old files for
+                            // purge, a power loss cannot recover a committed chain
+                            // head pointing at a deleted file. The seal path defers
+                            // this to seal()'s unconditional .pk sync; the rollback
+                            // path has no such follow-up.
                             if (keyMem.isOpen()) {
                                 keyMem.sync(false);
                             }
                         }
+                    } catch (Throwable th) {
+                        // reencodeWithPerKeyStreaming never reaches publishToChain
+                        // on a throw (it is the last step), so the staged
+                        // .pv/.pc at newSealTxn were never published and the chain
+                        // still references the old .pv. Drop the staged files. The
+                        // new .pv may already be switched into valueMem; the
+                        // caller marks the writer distressed and replaces it, so
+                        // the unlinked-but-mapped file is released on close.
+                        if (reencodeStarted) {
+                            closeSidecarMems();
+                            unlinkOrphanSealFiles(newSealTxn);
+                        }
+                        throw th;
                     } finally {
                         Unsafe.free(keyBuffer, (long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     }
                 } else {
-                    // Covering rollback keeps the monolithic decode + filter.
+                    // Var-size covering, or addr-based (O3) covering, keeps the
+                    // monolithic decode + filter.
                     // Bound the whole-index decode with a pre-flight so a large
                     // covered index degrades to a clear, actionable error instead
                     // of a raw OOM. The monolithic decode holds every value at
@@ -4349,8 +4366,40 @@ public class PostingIndexWriter implements IndexWriter {
      * affects stride layout. Rollback is rare and operates on small data.
      */
     /**
-     * Pass 1 of the streaming (non-covering) rollback.
-     * Decodes each key from every generation into {@code keyBuffer},
+     * Whether the rollback re-encode can take the streaming path (peak bounded
+     * by the largest single key) rather than the whole-index monolithic decode.
+     * No covers stream always. Fixed-size covers stream when the covered sources
+     * are the on-disk column files (path-based); the streaming sidecar write
+     * opens those at the new sealTxn and reads them back out of the freshly
+     * sealed gen 0. Var-size covers and addr-based (O3, caller-owned mappings)
+     * covers stay monolithic.
+     */
+    private boolean canStreamRollback() {
+        if (coverCount == 0) {
+            return true;
+        }
+        if (hasVarSizeCover()) {
+            return false;
+        }
+        return coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0;
+    }
+
+    /**
+     * True if any active covered column is variable-size (shift &lt; 0).
+     * Mirrors the guard in {@link #reencodeWithPerKeyStreaming}.
+     */
+    private boolean hasVarSizeCover() {
+        for (int c = 0; c < coverCount; c++) {
+            if (coveredColumnIndices.getQuick(c) >= 0 && coveredColumnShifts.getQuick(c) < 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Pass 1 of the streaming rollback (no covers or path-based fixed-size
+     * covers). Decodes each key from every generation into {@code keyBuffer},
      * binary-searches the rollback
      * cutoff (the per-key run is sorted ascending, so survivors are the leading
      * prefix &lt;= {@code maxValueCutoff}), and overwrites
