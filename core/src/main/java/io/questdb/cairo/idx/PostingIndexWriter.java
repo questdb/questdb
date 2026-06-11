@@ -4196,43 +4196,76 @@ public class PostingIndexWriter implements IndexWriter {
             int maxStrideTotal = (int) maxStrideTotalL;
 
             if (maxValueCutoff < Long.MAX_VALUE) {
-                // Rollback path: monolithic decode + filter + re-encode to new
-                // file. Rollback is rare and operates on small data volumes, so
-                // the whole-index decode buffer is acceptable -- but bound it
-                // with a pre-flight so a large index degrades to a clear,
-                // actionable error instead of a raw mid-allocation RSS failure
-                // (the seal paths already pre-flight; this one did not). The
-                // monolithic decode holds every value at once
-                // (totalValueCount * 8) plus the per-key offsets table, the
-                // packedResiduals scratch and one stride's encode trial.
-                final long rssLimit = Unsafe.getRssMemLimit();
-                if (rssLimit > 0) {
-                    long rollbackPeak = totalValueCount * Long.BYTES                 // allValuesAddr (fresh)
-                            + (long) keyCount * Long.BYTES                           // keyOffsetsAddr (fresh)
-                            + (long) Math.max(0, maxStrideTotal - packedResidualsCapacity) * Long.BYTES  // packedResiduals (marginal; persists)
-                            + maxStrideTrialSize                                     // worst-stride bpTrialBuf (fresh)
-                            + encodeCtxPeakBytes(maxKeyCount)
-                            + sealAuxiliaryBufferBytes();
-                    long headroom = Math.max(0L, rssLimit - Unsafe.getRssMemUsed());
-                    if (rollbackPeak > headroom) {
-                        throw CairoException.critical(0)
-                                .put("posting index rollback would exceed RSS limit [totalValues=").put(totalValueCount)
-                                .put(", rollbackPeak=").put(rollbackPeak)
-                                .put(", rssUsed=").put(Unsafe.getRssMemUsed())
-                                .put(", rssLimit=").put(rssLimit)
-                                .put("]; reduce partition size or raise RSS_MEM_LIMIT");
+                if (coverCount == 0) {
+                    // Streaming rollback: decode each key once to find the
+                    // cutoff (filterCountsForRollback), then re-encode the
+                    // surviving prefix per key via reencodeWithPerKeyStreaming.
+                    // Peak heap is one key (maxKeyCount longs, the full per-key
+                    // max), not the whole index -- so no pre-flight is needed.
+                    long keyBuffer = Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    try {
+                        int newKeyCount = filterCountsForRollback(maxValueCutoff, totalCountsAddr, keyBuffer, maxKeyCount);
+                        if (newKeyCount == 0) {
+                            // Every value was above the cutoff; nothing survives.
+                            truncate();
+                            setMaxValue(maxValue);
+                        } else {
+                            keyCount = newKeyCount;
+                            reencodeWithPerKeyStreaming(newSealTxn, maxValue, totalCountsAddr, keyBuffer, maxKeyCount);
+                            // Sync the chain publish now -- the new .pv is
+                            // already synced inside reencodeWithPerKeyStreaming --
+                            // so once rollbackToMaxValue queues the old .pv for
+                            // purge and the purge job unlinks it, a power loss
+                            // cannot recover a committed chain head pointing at a
+                            // deleted file. The seal path defers this to seal()'s
+                            // unconditional .pk sync; the rollback path has no
+                            // such follow-up, so sync here (as reencodeMonolithic
+                            // does for the covering rollback).
+                            if (keyMem.isOpen()) {
+                                keyMem.sync(false);
+                            }
+                        }
+                    } finally {
+                        Unsafe.free(keyBuffer, (long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     }
+                } else {
+                    // Covering rollback keeps the monolithic decode + filter:
+                    // the streaming sidecar writer would need the cutoff woven
+                    // in (and refuses var-size covers). Bound the whole-index
+                    // decode with a pre-flight so a large covered index degrades
+                    // to a clear, actionable error instead of a raw OOM. The
+                    // monolithic decode holds every value at once
+                    // (totalValueCount * 8) plus the per-key offsets table, the
+                    // packedResiduals scratch and one stride's encode trial.
+                    final long rssLimit = Unsafe.getRssMemLimit();
+                    if (rssLimit > 0) {
+                        long rollbackPeak = totalValueCount * Long.BYTES                 // allValuesAddr (fresh)
+                                + (long) keyCount * Long.BYTES                           // keyOffsetsAddr (fresh)
+                                + (long) Math.max(0, maxStrideTotal - packedResidualsCapacity) * Long.BYTES  // packedResiduals (marginal; persists)
+                                + maxStrideTrialSize                                     // worst-stride bpTrialBuf (fresh)
+                                + encodeCtxPeakBytes(maxKeyCount)
+                                + sealAuxiliaryBufferBytes();
+                        long headroom = Math.max(0L, rssLimit - Unsafe.getRssMemUsed());
+                        if (rollbackPeak > headroom) {
+                            throw CairoException.critical(0)
+                                    .put("posting index covering rollback would exceed RSS limit [totalValues=").put(totalValueCount)
+                                    .put(", rollbackPeak=").put(rollbackPeak)
+                                    .put(", rssUsed=").put(Unsafe.getRssMemUsed())
+                                    .put(", rssLimit=").put(rssLimit)
+                                    .put("]; reduce partition size or raise RSS_MEM_LIMIT");
+                        }
+                    }
+                    // Pre-size packedResiduals for the rollback's downstream
+                    // encoder; outside the seal path the auto-grow inside
+                    // writePackedStride handles it.
+                    if (maxStrideTotal > packedResidualsCapacity) {
+                        packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
+                                (long) packedResidualsCapacity * Long.BYTES,
+                                (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        packedResidualsCapacity = maxStrideTotal;
+                    }
+                    reencodeMonolithic(maxValue, maxValueCutoff, totalCountsAddr, totalValueCount);
                 }
-                // Pre-size packedResiduals for the rollback's downstream
-                // encoder; outside the seal path the auto-grow inside
-                // writePackedStride handles it.
-                if (maxStrideTotal > packedResidualsCapacity) {
-                    packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
-                            (long) packedResidualsCapacity * Long.BYTES,
-                            (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    packedResidualsCapacity = maxStrideTotal;
-                }
-                reencodeMonolithic(maxValue, maxValueCutoff, totalCountsAddr, totalValueCount);
             } else {
                 // Seal path. Pick between the fast stride-chunked decode (peak
                 // bounded by the largest single stride's aggregate row count)
@@ -4310,6 +4343,69 @@ public class PostingIndexWriter implements IndexWriter {
      * is needed for inPlace because the filter can change keyCount, which
      * affects stride layout. Rollback is rare and operates on small data.
      */
+    /**
+     * Pass 1 of the streaming (non-covering) rollback. Decodes each key from
+     * every generation into {@code keyBuffer}, binary-searches the rollback
+     * cutoff (the per-key run is sorted ascending, so survivors are the leading
+     * prefix &lt;= {@code maxValueCutoff}), and overwrites
+     * {@code totalCountsAddr[key]} with the surviving count. Returns the new key
+     * count (highest surviving key + 1); 0 means every value was rolled back and
+     * the caller truncates. Peak heap is one key ({@code maxKeyCount} longs), not
+     * the whole index. {@link #reencodeWithPerKeyStreaming} then re-decodes each
+     * key and encodes the surviving prefix.
+     */
+    private int filterCountsForRollback(long maxValueCutoff, long totalCountsAddr, long keyBuffer, int maxKeyCount) {
+        int newKeyCount = 0;
+        final int oldKeyCount = keyCount;
+        for (int key = 0; key < oldKeyCount; key++) {
+            int origCount = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
+            if (origCount == 0) {
+                continue;
+            }
+            int stride = key / PostingIndexUtils.DENSE_STRIDE;
+            int j = key % PostingIndexUtils.DENSE_STRIDE;
+            int decodedTotal = 0;
+            for (int gen = 0; gen < genCount; gen++) {
+                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                long genBase = valueMem.addressOf(genFileOffset);
+                long appendAddr = keyBuffer + (long) decodedTotal * Long.BYTES;
+                if (genKeyCount < 0) {
+                    decodedTotal += decodeSparseGenSingleKey(genBase, -genKeyCount, key, appendAddr);
+                } else if (stride < PostingIndexUtils.strideCount(genKeyCount)) {
+                    decodedTotal += decodeDenseGenSingleKey(genBase, genKeyCount, stride, j, appendAddr);
+                }
+            }
+            // decodedTotal equals the full per-key count totalCountsAddr held
+            // before this pass; maxKeyCount (the full max) bounds keyBuffer.
+            assert decodedTotal <= maxKeyCount;
+            if (decodedTotal != origCount) {
+                throw CairoException.critical(0)
+                        .put("posting index rollback decode mismatch [key=").put(key)
+                        .put(", expected=").put(origCount)
+                        .put(", decoded=").put(decodedTotal).put(']');
+            }
+            int lo = 0, hi = decodedTotal - 1, cut = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                long midVal = Unsafe.getLong(keyBuffer + (long) mid * Long.BYTES);
+                if (midVal <= maxValueCutoff) {
+                    cut = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            int newCount = cut + 1;
+            Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, newCount);
+            if (newCount > 0) {
+                newKeyCount = key + 1;
+            }
+        }
+        return newKeyCount;
+    }
+
     private void reencodeMonolithic(long maxValue, long maxValueCutoff, long totalCountsAddr, long totalValueCount) {
         final int oldKeyCount = keyCount;
         final int oldGenCount = genCount;
@@ -4835,10 +4931,15 @@ public class PostingIndexWriter implements IndexWriter {
                             decodedTotal += decodeDenseGenSingleKey(genBase, genKeyCount, s, j, appendAddr);
                         }
                     }
-                    if (decodedTotal != count) {
+                    // Seal: count == decodedTotal (the full key). Rollback:
+                    // count is the surviving prefix (values <= the cutoff), so
+                    // encodeKeyNative below writes the leading `count` values
+                    // and drops the filtered tail. Decoding fewer than the
+                    // surviving count is a corruption.
+                    if (decodedTotal < count) {
                         throw CairoException.critical(0)
-                                .put("posting index streaming decode mismatch [key=").put(strideStart + j)
-                                .put(", expected=").put(count)
+                                .put("posting index streaming decode short [key=").put(strideStart + j)
+                                .put(", surviving=").put(count)
                                 .put(", decoded=").put(decodedTotal).put(']');
                     }
 

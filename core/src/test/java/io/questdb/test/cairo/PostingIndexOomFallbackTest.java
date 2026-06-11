@@ -471,6 +471,81 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
     }
 
     /**
+     * The non-covering rollback streams per key (decode -> filter at the
+     * cutoff -> re-encode the surviving prefix), so its peak heap is the
+     * largest single key, not the whole index. Here 300 keys * 4k rows is
+     * ~9.6 MiB of values; under a 4 MiB headroom the old whole-index decode
+     * (totalValueCount * 8) could not run, but the streaming rollback's per-key
+     * buffer (~32 KiB) fits. The rollback keeps exactly the rowids &lt;= the
+     * cutoff and drops the rest.
+     */
+    @Test
+    public void testStreamingRollbackUnderRssPressure() throws Exception {
+        final int keys = 300;            // > 256 -> multiple strides
+        final int rowsPerKey = 4_000;
+        final int totalRows = keys * rowsPerKey;
+        final long cutoff = totalRows / 2 - 1;   // keep rowids 0..cutoff
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "streaming_rollback";
+                final ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keys; k++) {
+                    oracle.add(new LongList());
+                }
+
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    long row = 0;
+                    for (int r = 0; r < rowsPerKey; r++) {
+                        for (int k = 0; k < keys; k++) {
+                            writer.add(k, row);
+                            if (row <= cutoff) {
+                                oracle.getQuick(k).add(row);
+                            }
+                            row++;
+                        }
+                    }
+                    writer.setMaxValue(totalRows - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // 4 MiB headroom: below the ~9.6 MiB whole-index decode the
+                    // monolithic rollback would allocate (and its pre-flight
+                    // would reject), but far above the streaming per-key buffer.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 4L * 1024L * 1024L);
+                    try {
+                        writer.rollbackValues(cutoff);
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+                    Assert.assertEquals("rollback should take the real-discard reencode path",
+                            cutoff, writer.getMaxValue());
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < keys; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE);
+                        int idx = 0;
+                        while (c.hasNext()) {
+                            Assert.assertTrue("key " + k + " extra row at " + idx, idx < expected.size());
+                            Assert.assertEquals("key " + k + " rowid " + idx, expected.getQuick(idx), c.next());
+                            idx++;
+                        }
+                        Assert.assertEquals("key " + k + " short-count", expected.size(), idx);
+                        Misc.free(c);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * Streaming compaction explicitly refuses var-size cover columns
      * with an actionable error message. The fast path still handles
      * var-size cover data; this guard only applies when the pre-flight
