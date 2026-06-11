@@ -9,8 +9,8 @@ use crate::parquet_read::decode::{
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
-    FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL,
-    FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
+    VarcharSliceBufGuard, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
+    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
@@ -182,6 +182,11 @@ impl ParquetDecoder {
         row_group_lo: u32,
         row_group_hi: u32,
     ) -> ParquetResult<usize> {
+        // Release the varchar-slice reuse pool and scratch vecs on every exit
+        // path, including the error returns below: buffers stranded in the
+        // context after a failed decode are invisible to the Java cache budget.
+        let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+        let ctx = ctx_guard.ctx();
         if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -273,7 +278,6 @@ impl ParquetDecoder {
             }
         }
 
-        ctx.clear_reuse_pool();
         Ok(decoded)
     }
 
@@ -292,6 +296,11 @@ impl ParquetDecoder {
         row_group_hi: u32,
         rows_filter: &[i64],
     ) -> ParquetResult<usize> {
+        // Release the varchar-slice reuse pool and scratch vecs on every exit
+        // path, including the error returns below: buffers stranded in the
+        // context after a failed decode are invisible to the Java cache budget.
+        let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+        let ctx = ctx_guard.ctx();
         if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -401,7 +410,6 @@ impl ParquetDecoder {
             }
         }
 
-        ctx.clear_reuse_pool();
         Ok(output_count)
     }
 
@@ -455,8 +463,8 @@ impl ParquetDecoder {
         column_chunk_bufs.reset();
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
-        // allocation per column chunk. Clear at the top in case a prior call returned
-        // early (the normal end-of-chunk path drains both via append).
+        // allocation per column chunk. Defensive clear: the end-of-chunk append and the
+        // row-group-level VarcharSliceBufGuard normally leave both empty already.
         varchar_slice_page_bufs.clear();
         varchar_slice_dict_bufs.clear();
 
@@ -735,8 +743,8 @@ impl ParquetDecoder {
         column_chunk_bufs.reset();
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
-        // allocation per column chunk. Clear at the top in case a prior call returned
-        // early (the normal end-of-chunk path drains both via append).
+        // allocation per column chunk. Defensive clear: the end-of-chunk append and the
+        // row-group-level VarcharSliceBufGuard normally leave both empty already.
         varchar_slice_page_bufs.clear();
         varchar_slice_dict_bufs.clear();
 

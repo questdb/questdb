@@ -2369,6 +2369,14 @@ mod tests {
             ctx.varchar_slice_buf_pool.is_empty(),
             "row-group decode must release the varchar-slice reuse pool"
         );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "row-group decode must leave the page-buffer scratch empty"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "row-group decode must leave the dict-buffer scratch empty"
+        );
     }
 
     #[test]
