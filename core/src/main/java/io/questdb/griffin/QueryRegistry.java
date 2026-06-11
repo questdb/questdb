@@ -254,7 +254,7 @@ public class QueryRegistry {
      * <p>
      * The byte state field is separate from the lifecycle word despite the
      * overlapping vocabulary: it carries the informational status
-     * (idle/active/cancelled) that query_activity() renders via getStateText(),
+     * (idle/active/cancelled) that query_activity() renders via State.getText(),
      * and it never synchronizes anything. cancel() writes it while holding the
      * CANCELLING guard, so query_activity() snapshots observe it consistently
      * with the rest of the entry.
@@ -336,10 +336,6 @@ public class QueryRegistry {
 
         public byte getState() {
             return state;
-        }
-
-        public String getStateText() {
-            return State.getText(state);
         }
 
         public long getWorkerId() {
