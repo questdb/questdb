@@ -251,13 +251,16 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 }
 
                 this.queryId = queryId;
-                // Read state first: cancel() writes changedAtNs then state while it
-                // holds the CANCELLING guard, and the closing recheck validates state.
-                // Reading state before changedAtNs makes it the snapshot's version
-                // guard. If a concurrent cancel() lands, either the recheck rejects the
-                // row, or observing the new state already implies the preceding
-                // changedAtNs write is visible to the later read, so the pair stays
-                // consistent rather than showing 'cancelled' with a stale state_change.
+                // state is the field the closing recheck validates (getState() == state),
+                // so read it first to anchor the snapshot: cancel() bumps state
+                // ACTIVE -> CANCELLED while holding the CANCELLING guard, so a cancel that
+                // lands after this read but before the recheck flips getState() and the row
+                // is rejected. state and changedAtNs are plain fields with no release/acquire
+                // ordering between them, so this is best-effort: a cancel racing the copy can
+                // still leave a torn (state, changedAtNs) pair that passes the recheck. That
+                // only yields a cosmetically inconsistent query_activity() row (e.g.
+                // 'cancelled' with a stale state_change); it never corrupts query results nor
+                // exposes a recycled entry - the lifecycle-word recheck below rules that out.
                 this.state = entry.getState();
                 this.workerId = entry.getWorkerId();
                 this.registeredAtNs = entry.getRegisteredAtNs();
