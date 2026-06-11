@@ -4334,17 +4334,31 @@ public class PostingIndexWriter implements IndexWriter {
                 } catch (Throwable th) {
                     // A throw BEFORE publishToChain (the last step of
                     // reencodeWithPerKeyStreaming) leaves the staged .pv/.pc at
-                    // newSealTxn unpublished and the chain still on the old .pv:
-                    // drop the staged files and restore keyCount (set above before
-                    // the reencode). The new .pv may already be switched into
-                    // valueMem, but the caller marks the writer distressed and
-                    // replaces it, releasing the unlinked-but-mapped file on close.
+                    // newSealTxn unpublished and the chain still on the old .pv.
+                    // How to drop them depends on whether the value file was
+                    // already switched into valueMem -- switchToSealedValueFile
+                    // advances sealTxn to newSealTxn as its last step, so
+                    // sealTxn == newSealTxn iff the swap completed:
+                    //   - switched: valueMem (and the open sidecarMems) are mapped
+                    //     to newSealTxn, so an immediate unlink would fail on
+                    //     Windows. Defer to the purge job with the widest safe
+                    //     window, matching rebuildSidecarsByCopy's post-switch
+                    //     handling. No reader can pin them -- the chain still
+                    //     references the old .pv.
+                    //   - not switched: nothing maps the staged files yet, so free
+                    //     the staging maps and unlink directly.
+                    // Either way restore keyCount (set above before the reencode).
                     // A throw AFTER publish (the post-publish .pk sync) must leave
                     // the now-live files alone; only propagate so the writer is
                     // distressed.
                     if (reencodeStarted && !reencodePublished) {
-                        closeSidecarMems();
-                        unlinkOrphanSealFiles(newSealTxn);
+                        if (sealTxn == newSealTxn) {
+                            scheduleOrphanPurge(newSealTxn);
+                        } else {
+                            Misc.free(sealValueMem);
+                            closeSidecarMems();
+                            unlinkOrphanSealFiles(newSealTxn);
+                        }
                         keyCount = oldKeyCount;
                     }
                     throw th;

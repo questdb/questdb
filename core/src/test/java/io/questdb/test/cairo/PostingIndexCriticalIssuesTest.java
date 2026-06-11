@@ -4462,7 +4462,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackRealDiscardSidecarSyncFailureUnlinksStagedSealFiles() throws Exception {
+    public void testRollbackRealDiscardSidecarSyncFailureSchedulesStagedSealFilePurge() throws Exception {
         final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
         ff = pcSync;
         assertMemoryLeak(ff, () -> {
@@ -4512,13 +4512,23 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals("test must fail exactly one staged .pc sync", 1, pcSync.failureCount());
 
+                    // The .pc sync fails AFTER reencodeWithPerKeyStreaming switched
+                    // valueMem onto the new .pv (post-switch), so the staged files
+                    // are mapped -- an immediate unlink would fail on Windows. The
+                    // catch defers them to the purge job instead (matching the seal
+                    // path's rebuildSidecarsByCopy). The chain still references the
+                    // old .pv, so the staged files stay on disk until the deferred
+                    // purge runs, and exactly one orphan purge is queued.
+                    Assert.assertEquals("post-switch failure must queue exactly one orphan purge",
+                            1, writer.getPendingPurgesSizeForTesting());
+
                     LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
-                    Assert.assertFalse("staged rollback .pv must be unlinked [path=" + pv + ']',
+                    Assert.assertTrue("staged rollback .pv stays until the deferred purge [path=" + pv + ']',
                             configuration.getFilesFacade().exists(pv));
 
                     LPSZ pc = PostingIndexUtils.coverDataFileName(
                             path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1);
-                    Assert.assertFalse("staged rollback .pc must be unlinked [path=" + pc + ']',
+                    Assert.assertTrue("staged rollback .pc stays until the deferred purge [path=" + pc + ']',
                             configuration.getFilesFacade().exists(pc));
                 }
             }
