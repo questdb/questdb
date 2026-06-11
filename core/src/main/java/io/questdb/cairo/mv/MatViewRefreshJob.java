@@ -772,6 +772,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable MatViewRefreshTask refreshTask
     ) {
         if (th instanceof CairoException ex) {
+            if (ex.isAuthorizationError()) {
+                // A read-only refusal from the role gate (the node is, or just became, a replica):
+                // the refresh job acquires its WalWriter via the read-only chokepoint, which throws
+                // an authorization error on a replica. This is a transient role condition, NOT a
+                // refresh failure -- re-enqueue the task so it retries after a re-promote, and do
+                // NOT invalidate the view or its dependents. The refresh job runs under the internal
+                // all-access context, so an authorization error here can only be the read-only gate;
+                // a genuine ACL denial cannot reach this path.
+                if (stateStore != null) {
+                    if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                        stateStore.enqueueIncrementalRefresh(viewToken);
+                    } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
+                        stateStore.enqueueFullRefresh(viewToken);
+                    } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
+                        stateStore.enqueueRangeRefresh(viewToken, refreshTask.rangeFrom, refreshTask.rangeTo);
+                    } else {
+                        return false;
+                    }
+                    LOG.debug().$("materialized view refresh deferred, node is read-only [view=").$(viewToken).I$();
+                    return true;
+                }
+                // No store to re-enqueue against (an inner refresh-time failure rather than the
+                // acquire path). The caller's outer handling will still skip invalidation only if
+                // we return true, but we cannot requeue here, so fall through to today's semantics.
+                return false;
+            }
             if (ex.isTableDoesNotExist()) {
                 // Can be that the mat view underlying table is in the middle of being renamed at this moment,
                 // do not invalidate the view in this case.

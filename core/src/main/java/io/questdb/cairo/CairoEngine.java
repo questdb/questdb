@@ -474,85 +474,62 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
-                    try {
-                        MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
-                        if (viewDefinition == null) {
-                            viewDefinition = new MatViewDefinition();
-                            MatViewDefinition.readFrom(
-                                    this,
-                                    viewDefinition,
-                                    reader,
-                                    path,
-                                    pathLen,
-                                    tableToken
-                            );
-                            if (matViewGraph.addView(viewDefinition)) {
-                                matViewStateStore.createViewState(viewDefinition);
-                            }
-                        }
+                    // Boot path: read the on-disk definition when the graph has not seen this view yet,
+                    // adding it to the graph and creating its state. createState=false here so a view
+                    // already present in the graph keeps its existing state -- buildViewGraphs runs once
+                    // at boot before the store has any state.
+                    loadMatViewIntoStore(
+                            tableToken,
+                            path,
+                            pathLen,
+                            reader,
+                            walEventReader,
+                            txnMem,
+                            matViewStateReader,
+                            false
+                    );
+                }
+            }
+        }
+    }
 
-                        final MatViewState state = matViewStateStore.getViewState(tableToken);
-                        // Can be null if the state store implementation is no-op.
-                        // The no-op state store does nothing on view creation and other operations
-                        // and is used when mat views are disabled.
-                        if (state != null) {
-                            final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
-                            final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
-                            if (!baseTableExists) {
-                                // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view does not exist [table=").$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
-                                continue;
-                            }
-
-                            if (!baseTableToken.isWal()) {
-                                // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view is not WAL table [table=").$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
-                                continue;
-                            }
-
-                            path.trimTo(pathLen).concat(tableToken);
-                            if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
-                                LOG.info().$("could not find materialized view state, default values will be used [table=")
-                                        .$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                continue;
-                            }
-
-                            state.initFromReader(matViewStateReader);
-                            if (state.isInvalid()) {
-                                continue;
-                            }
-                            long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
-                            if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
-                                LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
-                                        .$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
-                                        .$(", baseTableTxn=").$(baseTableLastTxn)
-                                        .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                                // Kickstart immediate refresh.
-                                matViewStateStore.enqueueIncrementalRefresh(tableToken);
-                            }
-                        }
-                    } catch (Throwable th) {
-                        final LogRecord rec = LOG.error().$("could not load materialized view [view=").$(tableToken);
-                        if (th instanceof CairoException ce) {
-                            rec.$(", msg=").$safe(ce.getFlyweightMessage())
-                                    .$(", errno=").$(ce.getErrno());
-                        } else {
-                            rec.$(", msg=").$safe(th.getMessage());
-                        }
-                        rec.I$();
-                    }
+    /**
+     * Repopulates the live mat-view state store from the view graph and the on-disk {@code _mv}
+     * state, for every mat-view already present in {@code matViewGraph}. Unlike
+     * {@link #buildViewGraphs()} (which only creates state for views not yet in the graph), this
+     * forces {@code createViewState} for each graph view that has no state yet, so a freshly built
+     * store on a role promote ends up populated rather than empty. Idempotent: a view that already
+     * has state is re-initialized from disk, not duplicated.
+     * <p>
+     * Used by the enterprise role switch: a promote builds a real {@link MatViewStateStore} and then
+     * calls this to hydrate it before writes open, so refresh resumes from the persisted baselines
+     * instead of triggering a full-refresh storm.
+     */
+    public void hydrateMatViewStateStore() {
+        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        getTableTokens(tableTokenBucket, false);
+        try (
+                Path path = new Path();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
+        ) {
+            path.of(configuration.getDbRoot());
+            final int pathLen = path.size();
+            final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                final TableToken tableToken = tableTokenBucket.get(i);
+                if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                    loadMatViewIntoStore(
+                            tableToken,
+                            path,
+                            pathLen,
+                            reader,
+                            walEventReader,
+                            txnMem,
+                            matViewStateReader,
+                            true
+                    );
                 }
             }
         }
@@ -2242,6 +2219,110 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.viewDoesNotExist(tableToken.getTableName());
         }
         return state.getViewMetadata();
+    }
+
+    /**
+     * Loads one mat-view's definition and persisted state into the live mat-view state store.
+     * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
+     * {@link #hydrateMatViewStateStore()} (role promote, {@code forceCreateState=true}). When
+     * {@code forceCreateState} is true, a view already present in the graph still has its state
+     * created so a freshly built store on promote is populated; when false, only a brand-new graph
+     * entry gets its state created (the boot semantics).
+     */
+    private void loadMatViewIntoStore(
+            TableToken tableToken,
+            Path path,
+            int pathLen,
+            BlockFileReader reader,
+            WalEventReader walEventReader,
+            MemoryCMR txnMem,
+            MatViewStateReader matViewStateReader,
+            boolean forceCreateState
+    ) {
+        try {
+            MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
+            if (viewDefinition == null) {
+                viewDefinition = new MatViewDefinition();
+                MatViewDefinition.readFrom(
+                        this,
+                        viewDefinition,
+                        reader,
+                        path,
+                        pathLen,
+                        tableToken
+                );
+                if (matViewGraph.addView(viewDefinition)) {
+                    matViewStateStore.createViewState(viewDefinition);
+                }
+            } else if (forceCreateState && matViewStateStore.getViewState(tableToken) == null) {
+                // The graph already knows this view but the (freshly built) store has no state for
+                // it yet -- the role-promote rehydration case. Create the state from the graph
+                // definition so the store is populated rather than empty.
+                matViewStateStore.createViewState(viewDefinition);
+            }
+
+            final MatViewState state = matViewStateStore.getViewState(tableToken);
+            // Can be null if the state store implementation is no-op.
+            // The no-op state store does nothing on view creation and other operations
+            // and is used when mat views are disabled.
+            if (state != null) {
+                final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
+                final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
+                if (!baseTableExists) {
+                    // Print a warning, but let the mat view load in invalid state.
+                    LOG.info().$("base table for materialized view does not exist [table=").$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .I$();
+                    matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
+                    return;
+                }
+
+                if (!baseTableToken.isWal()) {
+                    // Print a warning, but let the mat view load in invalid state.
+                    LOG.info().$("base table for materialized view is not WAL table [table=").$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .I$();
+                    matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
+                    return;
+                }
+
+                path.trimTo(pathLen).concat(tableToken);
+                if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
+                    LOG.info().$("could not find materialized view state, default values will be used [table=")
+                            .$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .I$();
+                    return;
+                }
+
+                state.initFromReader(matViewStateReader);
+                if (state.isInvalid()) {
+                    return;
+                }
+                long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
+                if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
+                    LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
+                            .$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
+                            .$(", baseTableTxn=").$(baseTableLastTxn)
+                            .I$();
+                    matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
+                } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                    // Kickstart immediate refresh.
+                    matViewStateStore.enqueueIncrementalRefresh(tableToken);
+                }
+            }
+        } catch (Throwable th) {
+            final LogRecord rec = LOG.error().$("could not load materialized view [view=").$(tableToken);
+            if (th instanceof CairoException ce) {
+                rec.$(", msg=").$safe(ce.getFlyweightMessage())
+                        .$(", errno=").$(ce.getErrno());
+            } else {
+                rec.$(", msg=").$safe(th.getMessage());
+            }
+            rec.I$();
+        }
     }
 
     private void notifyViewStoresAboutDrop(TableToken droppedToken) {
