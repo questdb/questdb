@@ -134,12 +134,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalAggregationOverflowToleratedByOracle() throws Exception {
-        // Bug #1 from the window-function fuzzing: a sum/avg over a high-precision
+        // Bug from window-function fuzzing: a sum/avg over a high-precision
         // DECIMAL (Decimal256-backed) whose running total exceeds Decimal256's
         // 256-bit capacity raises a CairoException "... aggregation failed: an
-        // overflow occurred". This is a genuine, data-dependent arithmetic limit --
+        // overflow occurred". This is a genuine, data-dependent arithmetic limit -
         // the plain group-by sum/avg overflows identically on the same data, and
-        // WindowDecimalFunctionTest pins it -- so the oracle must treat it as an
+        // WindowDecimalFunctionTest pins it - so the oracle must treat it as an
         // accepted skip rather than reporting it as an engine defect. Drive the
         // repro queries straight through QueryRunner.run() to exercise the real
         // classification path.
@@ -351,8 +351,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     // call must draw the same number and order of rnd ops as the
                     // first. The two calls only differ in whether they consult
                     // the BindContext (which uses its own seeded Rnd), so adding
-                    // any rnd operation to the bind path -- or skipping one on
-                    // the literal path -- desynchronises the two trees and the
+                    // any rnd operation to the bind path - or skipping one on
+                    // the literal path - desynchronises the two trees and the
                     // shapes will diverge. Take care when modifying any code
                     // reachable from QueryGenerator.generate().
                     if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
