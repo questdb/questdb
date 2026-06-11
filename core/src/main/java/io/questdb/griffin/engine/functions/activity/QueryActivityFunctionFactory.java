@@ -151,6 +151,22 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 clear();
             }
 
+            private static boolean copy(CharSequence source, StringSink target) {
+                target.clear();
+                if (source != null) {
+                    final int len = source.length();
+                    try {
+                        // The source may shrink while we copy; reject the row instead of exposing a torn string.
+                        target.put(source, 0, len);
+                    } catch (IndexOutOfBoundsException e) {
+                        target.clear();
+                        return false;
+                    }
+                    return source.length() == len;
+                }
+                return true;
+            }
+
             @Override
             public boolean getBool(int col) {
                 if (col == 7) {
@@ -265,22 +281,6 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 }
 
                 return entry.getLifecycle() == lifecycle && entry.getState() == state;
-            }
-
-            private static boolean copy(CharSequence source, StringSink target) {
-                target.clear();
-                if (source != null) {
-                    final int len = source.length();
-                    try {
-                        // The source may shrink while we copy; reject the row instead of exposing a torn string.
-                        target.put(source, 0, len);
-                    } catch (IndexOutOfBoundsException e) {
-                        target.clear();
-                        return false;
-                    }
-                    return source.length() == len;
-                }
-                return true;
             }
         }
     }

@@ -109,6 +109,10 @@ public class QueryRegistry {
                     entry.cancel();
                     entry.changedAtNs = clock.getTicks();
                     entry.state = Entry.State.CANCELLED;
+                    // Log inside the guard: it reads entry.query, which a concurrent
+                    // register() would overwrite once the entry is released and recycled.
+                    // The chars are copied into the async log buffer synchronously, so the
+                    // owner's retire() busy-wait stays short.
                     LOG.info().$("cancelling query [user=").$(securityContext.getPrincipal()).$(",queryId=").$(queryId).$(",sql=").$(entry.query).I$();
                     return true;
                 } finally {
@@ -276,6 +280,14 @@ public class QueryRegistry {
         private byte state;
         private long workerId;
 
+        public static boolean isActiveLifecycle(long queryId, long lifecycle) {
+            return lifecycle == lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
+        }
+
+        private static long lifecycle(long queryId, long state) {
+            return (queryId << 2) | state;
+        }
+
         public void cancel() {
             cancelled.set(true);
         }
@@ -336,14 +348,6 @@ public class QueryRegistry {
 
         public boolean isWAL() {
             return isWAL;
-        }
-
-        public static boolean isActiveLifecycle(long queryId, long lifecycle) {
-            return lifecycle == lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
-        }
-
-        private static long lifecycle(long queryId, long state) {
-            return (queryId << 2) | state;
         }
 
         /**
