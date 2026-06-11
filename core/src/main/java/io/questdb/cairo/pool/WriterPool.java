@@ -650,9 +650,16 @@ public class WriterPool extends AbstractPool {
                     iterator.remove();
                     removed = true;
                 }
-            } else if (e.lockFd != -1 && deadline == Long.MAX_VALUE) {
-                // do not release locks unless pool is shutting down, which is
-                // indicated via deadline to be Long.MAX_VALUE
+            } else if (e.lockFd != -1 && isClosed()) {
+                // Close a held .lock fd ONLY while the pool itself is shutting down. close()
+                // sets the closed flag before closePool() reaches this releaseAll(Long.MAX_VALUE),
+                // so genuine shutdown still releases the lock. A live-engine caller that passes
+                // Long.MAX_VALUE to force an idle reap (e.g. a role-switch drain) must NOT land
+                // here: closing the lock fd and removing the entry of an in-flight lock() holder
+                // would let the next get() build a second TableWriter on the same table,
+                // breaking the single-writer-per-table invariant. Gating on isClosed() instead
+                // of the deadline value keeps that hazard out of every live-engine path while
+                // leaving the shutdown release intact.
                 if (ff.close(e.lockFd)) {
                     e.lockFd = -1;
                     iterator.remove();
