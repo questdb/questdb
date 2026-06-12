@@ -1806,22 +1806,32 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     if FILL_NULLS {
                         while output_row < row_hi && (current_row + bit_offset) < run_end_in_page {
                             let abs_row = page_row_start + current_row + bit_offset;
-                            let in_filter = filter_idx < filter_len
-                                && (rows_filter[filter_idx] as usize + row_group_lo) == abs_row;
-
-                            if in_filter {
-                                if get_bit_at(values, bit_offset) {
-                                    sink.push()?;
-                                } else {
-                                    sink.push_null()?;
-                                }
+                            while filter_idx < filter_len
+                                && (rows_filter[filter_idx] as usize + row_group_lo) < abs_row
+                            {
                                 filter_idx += 1;
+                            }
+                            let gap = if filter_idx < filter_len {
+                                (rows_filter[filter_idx] as usize + row_group_lo) - abs_row
                             } else {
-                                if get_bit_at(values, bit_offset) {
-                                    sink.skip(1)?;
-                                }
+                                row_hi - output_row
+                            };
+                            let bulk = gap
+                                .min(row_hi - output_row)
+                                .min(run_end_in_page - (current_row + bit_offset));
+                            if bulk > 0 {
+                                sink.skip(count_ones_in_bitmap(values, bit_offset, bulk))?;
+                                sink.push_nulls(bulk)?;
+                                bit_offset += bulk;
+                                output_row += bulk;
+                                continue;
+                            }
+                            if get_bit_at(values, bit_offset) {
+                                sink.push()?;
+                            } else {
                                 sink.push_null()?;
                             }
+                            filter_idx += 1;
                             bit_offset += 1;
                             output_row += 1;
                         }
@@ -1908,22 +1918,34 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     if FILL_NULLS {
                         while output_row < row_hi && (current_row + row_offset) < run_end_in_page {
                             let abs_row = page_row_start + current_row + row_offset;
-                            let in_filter = filter_idx < filter_len
-                                && (rows_filter[filter_idx] as usize + row_group_lo) == abs_row;
-
-                            if in_filter {
-                                if is_set {
-                                    sink.push()?;
-                                } else {
-                                    sink.push_null()?;
-                                }
+                            while filter_idx < filter_len
+                                && (rows_filter[filter_idx] as usize + row_group_lo) < abs_row
+                            {
                                 filter_idx += 1;
+                            }
+                            let gap = if filter_idx < filter_len {
+                                (rows_filter[filter_idx] as usize + row_group_lo) - abs_row
                             } else {
+                                row_hi - output_row
+                            };
+                            let bulk = gap
+                                .min(row_hi - output_row)
+                                .min(run_end_in_page - (current_row + row_offset));
+                            if bulk > 0 {
                                 if is_set {
-                                    sink.skip(1)?;
+                                    sink.skip(bulk)?;
                                 }
+                                sink.push_nulls(bulk)?;
+                                row_offset += bulk;
+                                output_row += bulk;
+                                continue;
+                            }
+                            if is_set {
+                                sink.push()?;
+                            } else {
                                 sink.push_null()?;
                             }
+                            filter_idx += 1;
                             row_offset += 1;
                             output_row += 1;
                         }
@@ -1971,16 +1993,26 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
             while output_row < row_hi {
                 let abs_row = page_row_start + page_row;
-                let in_filter = filter_idx < filter_len
-                    && (rows_filter[filter_idx] as usize + row_group_lo) == abs_row;
-
-                if in_filter {
-                    sink.push()?;
+                while filter_idx < filter_len
+                    && (rows_filter[filter_idx] as usize + row_group_lo) < abs_row
+                {
                     filter_idx += 1;
-                } else {
-                    sink.skip(1)?;
-                    sink.push_null()?;
                 }
+                let gap = if filter_idx < filter_len {
+                    (rows_filter[filter_idx] as usize + row_group_lo) - abs_row
+                } else {
+                    row_hi - output_row
+                };
+                let bulk = gap.min(row_hi - output_row);
+                if bulk > 0 {
+                    sink.skip(bulk)?;
+                    sink.push_nulls(bulk)?;
+                    page_row += bulk;
+                    output_row += bulk;
+                    continue;
+                }
+                sink.push()?;
+                filter_idx += 1;
                 page_row += 1;
                 output_row += 1;
             }
@@ -2101,7 +2133,10 @@ fn count_ones_in_bitmap(values: &[u8], offset: usize, length: usize) -> usize {
 fn get_bit_at(values: &[u8], bit_offset: usize) -> bool {
     let byte_idx = bit_offset >> 3;
     let bit_idx = bit_offset & 7;
-    unsafe { (values.get_unchecked(byte_idx) >> bit_idx) & 1 == 1 }
+    debug_assert!(byte_idx < values.len());
+    values
+        .get(byte_idx)
+        .is_some_and(|byte| (byte >> bit_idx) & 1 == 1)
 }
 
 fn decode_null_bitmap<'a>(
