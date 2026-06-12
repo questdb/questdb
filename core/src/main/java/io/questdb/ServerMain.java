@@ -438,7 +438,7 @@ public class ServerMain implements Closeable {
                 orchestrator = newOrchestrator(
                         bootstrap.getLog(),
                         null,   // workerPoolManager exposed lazily after WPM envelope reaches DEGRADED
-                        null    // tokio runtime -- enterprise plans (Plan 04) override registerComponents to provide
+                        null    // tokio runtime -- the enterprise build overrides registerComponents to provide
                 );
                 freeOnExit(orchestrator);
                 // Halt worker pools before the rollback stop loop frees component resources.
@@ -827,7 +827,7 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * D-04: FactoryProvider already built in the ServerMain constructor at line :93.
+     * FactoryProvider is already built in the ServerMain constructor at line :93.
      * This envelope performs a no-op state transition (INIT -> STARTING -> READY)
      * and has no hard deps.
      */
@@ -851,7 +851,7 @@ public class ServerMain implements Closeable {
 
         @Override
         public void start(io.questdb.lifecycle.LifecycleContext ctx) {
-            // D-04: FactoryProvider built in ServerMain ctor at line :93. No-op state transition.
+            // FactoryProvider is built in the ServerMain ctor at line :93. No-op state transition.
             ctx.publish(io.questdb.lifecycle.State.STARTING);
             ctx.publish(io.questdb.lifecycle.State.READY);
         }
@@ -863,7 +863,7 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * D-04: CairoEngine already built in the ServerMain constructor at line :90.
+     * CairoEngine is already built in the ServerMain constructor at line :90.
      * This envelope performs a no-op state transition (INIT -> STARTING -> READY)
      * and hard-deps on factory-provider.
      */

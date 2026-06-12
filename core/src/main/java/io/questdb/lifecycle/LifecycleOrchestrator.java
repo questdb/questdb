@@ -363,7 +363,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
     }
 
     protected void cascadeFailedThroughHardDeps(String failedName) {
-        // BFS through reverse hard-dep adjacency. Skip soft deps per D-07.
+        // BFS through reverse hard-dep adjacency. Soft deps do not propagate failure, so skip them.
         for (int i = 0, n = registry.size(); i < n; i++) {
             Component c = registry.getQuick(i);
             ObjList<String> hard = c.hardRequiredDependencies();
@@ -416,7 +416,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
         do {
             prev = ref.get();
             if (prev == State.FAILED && next != State.FAILED) {
-                // FAILED is terminal -- ignore late publishes per D-11.
+                // FAILED is a terminal state; ignore any late publish that tries to leave it.
                 injectedLog.error()
                         .$("rejecting transition from FAILED component=").$(name)
                         .$(" attempted to=").$(next)
