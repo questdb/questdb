@@ -361,6 +361,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if the factory opts in to having the post-filter pushed into it
+     * via {@link #setPushdownFilterCondition(ObjList)}, independently of parquet
+     * partition pruning. Table functions that can evaluate filter conditions
+     * themselves override this to return true.
+     *
+     * @return true if the factory supports generic filter pushdown
+     */
+    default boolean supportsFilterPushdown() {
+        return false;
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
      *
