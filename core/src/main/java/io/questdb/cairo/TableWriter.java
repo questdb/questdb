@@ -8148,9 +8148,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } else {
                         final long parquetFileSize = Unsafe.getLong(blockAddress + 7 * Long.BYTES);
                         if (parquetFileSize > -1) {
-                            // partitionMutates is true here, so this is a native
-                            // partition that was mutated in place and then encoded
-                            // back to parquet.
+                            // The parquet O3 update ran in place: processParquetPartition
+                            // appended row groups to the existing data.parquet and
+                            // published partitionMutates=1 with the new file size. The
+                            // directory and partition name txn stay; only the row count
+                            // and the committed file length move.
                             txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
