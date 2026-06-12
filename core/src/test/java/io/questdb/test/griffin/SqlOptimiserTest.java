@@ -2561,7 +2561,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: -10
+                            Encode sort light lo: -10
                               keys: [s, ts]
                                 PageFrame
                                     Row forward scan
@@ -2588,7 +2588,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: -10 partiallySorted: true
+                            Encode sort light lo: -10 partiallySorted: true
                               keys: [ts, s]
                                 PageFrame
                                     Row forward scan
@@ -2730,7 +2730,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "order by pickup_datetime desc, cab_type desc limit 100;")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 100 partiallySorted: true
+                            Encode sort light lo: 100 partiallySorted: true
                               keys: [pickup_datetime desc, cab_type desc]
                                 PageFrame
                                     Row backward scan
@@ -2748,7 +2748,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "order by pickup_datetime desc, cab_type desc limit 100, 110;")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 100 hi: 110
+                            Encode sort light lo: 100 hi: 110
                               keys: [pickup_datetime desc, cab_type desc]
                                 PageFrame
                                     Row forward scan
@@ -3607,7 +3607,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Encode sort light
                               keys: [timestamp, side desc]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side]
                                     PageFrame
                                         Row backward scan
@@ -3649,7 +3649,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Encode sort light
                               keys: [timestamp, side]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side desc]
                                     PageFrame
                                         Row backward scan
@@ -3674,7 +3674,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [timestamp, side desc]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side]
                                     PageFrame
                                         Row backward scan
@@ -3739,7 +3739,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Encode sort light
                               keys: [timestamp, side desc, symbol]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side, symbol desc]
                                     PageFrame
                                         Row backward scan
@@ -3762,7 +3762,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -1, -3;")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: -1 hi: -3 partiallySorted: true
+                            Encode sort light lo: -1 hi: -3 partiallySorted: true
                               keys: [timestamp, side desc]
                                 PageFrame
                                     Row forward scan
@@ -4345,38 +4345,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToKeyedQuery() throws Exception {
-        // Pins the optimizer rewrite shape (Long Top K above Async Group By
-        // with a timestamp_floor_utc keyFunctions entry) so silent regressions
-        // such as a cursor-path fallback, lost LIMIT pushdown, or parallelism
-        // drop fail the test. Correctness is already covered by
-        // SampleByTest#testSampleByFromToIsAllowedForKeyedQueries.
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.FROM_TO_DDL);
-            final String query = """
-                    SELECT ts, count, s
-                    FROM fromto
-                    SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'
-                    LIMIT 6""";
-            assertQuery(query)
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Long Top K lo: 6
-                              keys: [ts asc]
-                                Async Group By workers: 1
-                                  keys: [ts,s]
-                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
-                            """);
-        });
-    }
-
-    @Test
     public void testSampleByFromToFillNullWithExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
@@ -4419,6 +4387,38 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             2018-01-19T00:00:00.000000Z\tnull\tnull
                             2018-01-24T00:00:00.000000Z\tnull\tnull
                             2018-01-29T00:00:00.000000Z\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToKeyedQuery() throws Exception {
+        // Pins the optimizer rewrite shape (Long Top K above Async Group By
+        // with a timestamp_floor_utc keyFunctions entry) so silent regressions
+        // such as a cursor-path fallback, lost LIMIT pushdown, or parallelism
+        // drop fail the test. Correctness is already covered by
+        // SampleByTest#testSampleByFromToIsAllowedForKeyedQueries.
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+            final String query = """
+                    SELECT ts, count, s
+                    FROM fromto
+                    SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'
+                    LIMIT 6""";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Long Top K lo: 6
+                              keys: [ts asc]
+                                Async Group By workers: 1
+                                  keys: [ts,s]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: fromto
+                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
         });
     }

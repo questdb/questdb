@@ -453,7 +453,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 3,
                                 """
                                         QUERY PLAN[VARCHAR]
-                                        Sort light lo: $0::int hi: $1::int
+                                        Encode sort light lo: $0::int hi: $1::int
                                           keys: [sum desc]
                                             GroupBy vectorized: false
                                               keys: [col1]
@@ -471,7 +471,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 2,
                                 """
                                         QUERY PLAN[VARCHAR]
-                                        Sort light lo: $0::int hi: $1::int
+                                        Encode sort light lo: $0::int hi: $1::int
                                           keys: [sum desc]
                                             GroupBy vectorized: false
                                               keys: [col1]
@@ -489,7 +489,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 -1,
                                 """
                                         QUERY PLAN[VARCHAR]
-                                        Sort light lo: $0::int hi: $1::int
+                                        Encode sort light lo: $0::int hi: $1::int
                                           keys: [sum desc]
                                             GroupBy vectorized: false
                                               keys: [col1]
@@ -507,7 +507,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 -5,
                                 """
                                         QUERY PLAN[VARCHAR]
-                                        Sort light lo: $0::int hi: $1::int
+                                        Encode sort light lo: $0::int hi: $1::int
                                           keys: [sum desc]
                                             GroupBy vectorized: false
                                               keys: [col1]
