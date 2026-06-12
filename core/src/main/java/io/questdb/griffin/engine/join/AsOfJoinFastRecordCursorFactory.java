@@ -175,8 +175,16 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
             masterKeyRecord = masterRecord;
-            masterSinkTarget.reopen();
-            slaveSinkTarget.reopen();
+            try {
+                // reopen() allocates the sink heaps lazily; if the second one trips the RSS
+                // limit, close the first so a failed getCursor() does not orphan its memory.
+                masterSinkTarget.reopen();
+                slaveSinkTarget.reopen();
+            } catch (Throwable th) {
+                masterSinkTarget.close();
+                slaveSinkTarget.close();
+                throw th;
+            }
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
