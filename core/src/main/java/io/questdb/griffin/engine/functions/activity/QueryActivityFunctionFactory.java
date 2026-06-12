@@ -148,9 +148,9 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return entryIds.getQuick(entryIndex);
                 } else if (col == 1) {
                     return entry.getWorkerId();
-                } else if (col == 8) {
-                    return entry.getMemoryUsed();
                 } else if (col == 9) {
+                    return entry.getMemoryUsed();
+                } else if (col == 10) {
                     return entry.getMemoryLimit();
                 }
 
@@ -165,7 +165,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return entry.getPrincipal();
                 } else if (col == 6) {
                     return entry.getStateText();
-                } else if (col == 10) {
+                } else if (col == 8) {
                     return entry.getQuery();
                 }
 
@@ -231,9 +231,9 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("state_change", ColumnType.TIMESTAMP_MICRO));
         metadata.add(new TableColumnMetadata("state", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("is_wal", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("memory_used", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("memory_limit", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
         METADATA = metadata;
     }
 }

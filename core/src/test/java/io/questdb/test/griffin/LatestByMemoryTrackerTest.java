@@ -30,6 +30,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -92,7 +95,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY"
             );
             drainWalQueue();
-            assertBreach("SELECT * FROM tab_idx LATEST ON ts PARTITION BY sym");
+            assertBreach("SELECT * FROM tab_idx LATEST ON ts PARTITION BY sym", LatestByAllIndexedRecordCursorFactory.class);
         });
     }
 
@@ -134,7 +137,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
             drainWalQueue();
-            assertBreach("SELECT * FROM tab_noidx LATEST ON ts PARTITION BY k");
+            assertBreach("SELECT * FROM tab_noidx LATEST ON ts PARTITION BY k", LatestByAllFilteredRecordCursorFactory.class);
         });
     }
 
@@ -178,7 +181,8 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             assertBreach(
                     "WITH yy AS (SELECT ts, k, max(v) v FROM tab_sub SAMPLE BY 1s ALIGN TO FIRST OBSERVATION) " +
-                            "SELECT * FROM yy LATEST ON ts PARTITION BY k"
+                            "SELECT * FROM yy LATEST ON ts PARTITION BY k",
+                    LatestByRecordCursorFactory.class
             );
         });
     }
@@ -226,6 +230,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                  RecordCursorFactory factory = compiler.compile(
                          "SELECT * FROM tab_loop LATEST ON ts PARTITION BY k", sqlExecutionContext
                  ).getRecordCursorFactory()) {
+                assertInTree(factory, LatestByAllFilteredRecordCursorFactory.class);
                 for (int i = 0; i < 20; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         long rows = 0;
@@ -259,6 +264,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                  RecordCursorFactory factory = compiler.compile(
                          "SELECT * FROM tab_open LATEST ON ts PARTITION BY k", sqlExecutionContext
                  ).getRecordCursorFactory()) {
+                assertInTree(factory, LatestByAllFilteredRecordCursorFactory.class);
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertNotNull(cursor);
@@ -272,11 +278,12 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertBreach(String sql) throws Exception {
+    private static void assertBreach(String sql, Class<?> expectedFactory) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = cq.getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertInTree(factory, expectedFactory);
                 //noinspection StatementWithEmptyBody
                 while (cursor.hasNext()) {
                     // drain until breach
@@ -288,5 +295,20 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
             }
         }
+    }
+
+    private static void assertInTree(RecordCursorFactory factory, Class<?> factoryClass) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (factoryClass.isInstance(cur)) {
+                return;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
     }
 }

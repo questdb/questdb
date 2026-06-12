@@ -228,12 +228,12 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * bound tracker is closed or returned to its provider's pool; the map must not
      * outlive the tracker it was bound to.
      * <p>
-     * The default implementation is a no-op for maps that have not been wired to
-     * the per-query memory limit yet.
+     * Abstract on purpose: a new allocating map that forgets to wire the tracker
+     * would silently charge the global counter only - the exact asymmetric wiring
+     * the per-query memory limit exists to prevent. A non-allocating map should
+     * still implement this as an explicit no-op.
      */
-    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
-        // no-op
-    }
+    void setMemoryTracker(@Nullable MemoryTracker tracker);
 
     long size();
 

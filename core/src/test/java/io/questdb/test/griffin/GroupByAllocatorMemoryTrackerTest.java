@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,20 +43,23 @@ import org.junit.Test;
  * {@link io.questdb.griffin.engine.groupby.FastGroupByAllocator} and the
  * {@link io.questdb.std.DirectLongLongHashMap} chunk index it owns.
  * <p>
- * The synchronous GROUP BY factories
- * ({@link io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory} and
- * {@link io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory})
- * construct their allocator in lazy mode and bind the active workload's
+ * The synchronous keyed GROUP BY factory
+ * ({@link io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory})
+ * constructs its allocator in lazy mode and binds the active workload's
  * MemoryTracker before the first cursor open. GROUP BY functions that hold
  * per-group state allocate it through the bound allocator, so a runaway
  * aggregate crosses the per-query limit at the offending allocation site.
  * <p>
- * {@code count_distinct} is the vehicle here because its set state
+ * {@code count_distinct} is the vehicle here. With an outer GROUP BY key its
+ * per-group set state
  * ({@link io.questdb.griffin.engine.groupby.GroupByLongHashSet}) is allocated
- * through the GROUP BY allocator. The non-keyed variant is the cleanest proof:
- * it carries no tracker-aware map (the single aggregate value lives in a
- * {@code SimpleMapValue}), so the only allocations charged to the per-query
- * counter come from the allocator.
+ * through the GROUP BY allocator. Without an outer key the optimiser rewrites
+ * {@code count_distinct(v)} to {@code count(*)} over {@code SELECT DISTINCT v},
+ * so the plan is a
+ * {@link io.questdb.griffin.engine.groupby.CountRecordCursorFactory} over a
+ * keyed {@code GroupByRecordCursorFactory} whose data map of distinct values
+ * grows through the same allocator. Both shapes breach inside
+ * {@code GroupByRecordCursorFactory}, which is what the routing guards pin.
  * <p>
  * The per-query limit and the allocator's default chunk size are applied per
  * test in {@link #setUp()} via {@code setProperty}, re-applied because
@@ -102,6 +106,7 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
                 final CompiledQuery cq = compiler.compile("SELECT k, count_distinct(v) FROM tab GROUP BY k", sqlExecutionContext);
                 try (RecordCursorFactory factory = cq.getRecordCursorFactory();
                      RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertInTree(factory, GroupByRecordCursorFactory.class);
                     //noinspection StatementWithEmptyBody
                     while (cursor.hasNext()) {
                         // drain until breach
@@ -136,11 +141,11 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testNotKeyedCountDistinctFailsOnLargeSet() throws Exception {
-        // Sync non-keyed GROUP BY: count_distinct over many distinct values
-        // grows a single GroupByLongHashSet through the allocator. There is no
-        // tracker-aware map on this path (the aggregate lives in a
-        // SimpleMapValue), so the breach is charged solely to the allocator -
-        // the cleanest demonstration of the non-keyed allocator wiring.
+        // count_distinct(v) with no outer key is rewritten to count(*) over
+        // SELECT DISTINCT v, so the plan is a CountRecordCursorFactory over a
+        // keyed GroupByRecordCursorFactory. The distinct values grow that keyed
+        // GROUP BY's data map through the allocator; the map's doublings cross
+        // the per-query limit, charged to the allocator-bound tracker.
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute("CREATE TABLE tab AS (SELECT x AS v FROM long_sequence(50_000))");
@@ -149,6 +154,7 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
                 final CompiledQuery cq = compiler.compile("SELECT count_distinct(v) FROM tab", sqlExecutionContext);
                 try (RecordCursorFactory factory = cq.getRecordCursorFactory();
                      RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertInTree(factory, GroupByRecordCursorFactory.class);
                     //noinspection StatementWithEmptyBody
                     while (cursor.hasNext()) {
                         // drain until breach
@@ -174,6 +180,7 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile("SELECT count_distinct(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, GroupByRecordCursorFactory.class);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.fail("expected a per-query memory breach during cursor open");
                 } catch (CairoException e) {
@@ -218,6 +225,7 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile("SELECT count_distinct(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, GroupByRecordCursorFactory.class);
                 for (int i = 0; i < 20; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         long rows = 0;
@@ -229,5 +237,20 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertInTree(RecordCursorFactory factory, Class<?> factoryClass) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (factoryClass.isInstance(cur)) {
+                return;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
     }
 }

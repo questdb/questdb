@@ -364,13 +364,22 @@ impl QdbAllocator {
         Ok(())
     }
 
-    fn track_allocate(&self, malloced_size: usize) {
+    /// Charges the requested `layout.size()`, not the slice length the allocator
+    /// returned. `deallocate` only ever sees `layout.size()` (the true length is
+    /// not recoverable at free time), so tracking the requested size on both
+    /// sides keeps the counters exactly balanced. An allocator that returns
+    /// excess capacity would otherwise drift `tracker_used` upward forever, and
+    /// a drifted counter makes every later `check_alloc_limit` spuriously fail.
+    /// `check_alloc_limit` already gates on the requested size, so this also
+    /// keeps the limit check and the counter consistent. With std `Global`, which
+    /// returns exactly `layout.size()`, the two are identical anyway.
+    fn track_allocate(&self, requested_size: usize) {
         self.tagged_used()
-            .fetch_add(malloced_size, COUNTER_ORDERING);
+            .fetch_add(requested_size, COUNTER_ORDERING);
         self.rss_mem_used()
-            .fetch_add(malloced_size, COUNTER_ORDERING);
+            .fetch_add(requested_size, COUNTER_ORDERING);
         if let Some(tracker_used) = self.tracker_used() {
-            tracker_used.fetch_add(malloced_size, COUNTER_ORDERING);
+            tracker_used.fetch_add(requested_size, COUNTER_ORDERING);
         }
         self.malloc_count().fetch_add(1, COUNTER_ORDERING);
     }
@@ -432,7 +441,7 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .allocate(Self::aligned_layout(layout)?)
             .map_err(|error| save_oom_err(error, layout.size()))?;
-        self.track_allocate(allocated.len());
+        self.track_allocate(layout.size());
         Ok(allocated)
     }
 
@@ -441,7 +450,7 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .allocate_zeroed(Self::aligned_layout(layout)?)
             .map_err(|error| save_oom_err(error, layout.size()))?;
-        self.track_allocate(allocated.len());
+        self.track_allocate(layout.size());
         Ok(allocated)
     }
 
@@ -471,8 +480,7 @@ unsafe impl Allocator for QdbAllocator {
                 Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
-        let true_delta = allocated.len() - old_layout.size();
-        self.track_grow(true_delta);
+        self.track_grow(delta);
         Ok(allocated)
     }
 
@@ -492,8 +500,7 @@ unsafe impl Allocator for QdbAllocator {
                 Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
-        let true_delta = allocated.len() - old_layout.size();
-        self.track_grow(true_delta);
+        self.track_grow(delta);
         Ok(allocated)
     }
 
@@ -512,8 +519,7 @@ unsafe impl Allocator for QdbAllocator {
                 Self::aligned_layout(new_layout)?,
             )
             .map_err(|error| save_oom_err(error, delta))?;
-        let true_delta = old_layout.size() - allocated.len();
-        self.track_shrink(true_delta);
+        self.track_shrink(delta);
         Ok(allocated)
     }
 }
