@@ -1374,13 +1374,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      * in-lock re-check AND operation.execute() because the DDL externalizes inside execute() with no
      * separable commit chokepoint. The READ side lets concurrent commits on other tables/protocols run
      * in parallel with this DDL; only the role flip (which takes the WRITE side) is excluded from it.
+     * <p>
+     * Both refusal checks consult the SAME ReadOnlyStatementGate predicate the pre-execution gate in
+     * msgExecute uses -- NOT a blanket isReadOnlyMode() refusal -- because the gate carries the one
+     * DDL exemption a read-only replica must keep: the admin's DROP of the HTTP parquet exporter's
+     * leftover temp table (the only DROP a replica permits; see ReadOnlyStatementGate). A blanket
+     * refusal here would refuse the exempted DROP the pre-gate just allowed through.
      */
     private long executeDdlFenced(
             SqlExecutionContext sqlExecutionContext,
             SCSequence tempSequence,
             boolean reportAffectedRows
     ) throws SqlException {
-        if (engine.isReadOnlyMode()) {
+        if (engine.isReadOnlyMode()
+                && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
             throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
         long affectedRowCount = 0;
@@ -1391,7 +1398,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
             // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
             // cannot interleave (its write acquire waits), while other commits share the read side.
-            if (engine.isReadOnlyMode()) {
+            if (engine.isReadOnlyMode()
+                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
                 throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
             try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {

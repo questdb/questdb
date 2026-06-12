@@ -28,12 +28,17 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.mp.SCSequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -55,8 +60,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * operation.execute() is NOT called when the engine is read-only and an authorization error is thrown
  * -- both fail before the fix.
  * <p>
- * GREEN state (after the fix): executeDdlFenced re-checks isReadOnlyMode() under the role-switch lock
- * before executing, refusing with the standard authorization error.
+ * GREEN state (after the fix): executeDdlFenced re-checks the read-only state under the role-switch
+ * lock before executing, refusing with the standard authorization error.
+ * <p>
+ * Both fence checks consult the shared ReadOnlyStatementGate predicate, NOT a blanket
+ * isReadOnlyMode() refusal: the gate carries the one DDL exemption a read-only replica must keep --
+ * the admin's DROP of the HTTP parquet exporter's leftover temp table. A blanket refusal regressed
+ * exactly that flow (ReplicationAclTest.testReplicaParquetExportFails, CI build 241196), so the tests
+ * here set the entry's real sqlType the production CTAS/CREATE/DROP arms would carry, and the
+ * exemption case asserts the exempted DROP executes on a read-only node.
  * <p>
  * The private executeDdlFenced(...) is reached via reflection (the same technique
  * TableUpdateDetailsCommitAtomicityTest uses for releaseWriter): the production callers wire it into
@@ -77,6 +89,7 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
             try (CairoEngine flipEngine = buildFlipAfterFirstCallEngine(readOnlyCallCount)) {
                 PGPipelineEntry entry = new PGPipelineEntry(flipEngine);
                 setOperation(entry, fakeOperation(executeCalled));
+                setSqlType(entry, CompiledQuery.CREATE_TABLE_AS_SELECT);
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(flipEngine);
                 try {
                     callExecuteDdlFenced(entry, ctx, true);
@@ -103,6 +116,7 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
             try (CairoEngine primaryEngine = buildPrimaryEngine()) {
                 PGPipelineEntry entry = new PGPipelineEntry(primaryEngine);
                 setOperation(entry, fakeOperation(executeCalled));
+                setSqlType(entry, CompiledQuery.CREATE_TABLE_AS_SELECT);
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(primaryEngine);
                 callExecuteDdlFenced(entry, ctx, true);
                 Assert.assertEquals("operation.execute() must be called once on a primary node", 1, executeCalled.get());
@@ -111,8 +125,10 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
     }
 
     /**
-     * CREATE/DROP arm (reportAffectedRows=false) on a read-only node: refuse with the standard
-     * authorization error and never call operation.execute().
+     * CREATE/DROP arm (reportAffectedRows=false) on a read-only node: a genuine client DROP (NOT the
+     * exempted export-temp-table drop) must refuse with the standard authorization error and never
+     * call operation.execute(). Drives a real GenericDropOperation targeting an ordinary table name so
+     * the gate predicate's exemption check runs and correctly does NOT exempt it.
      */
     @Test
     public void testCreateDropRefusedOnReadOnlyReplica() throws Exception {
@@ -120,7 +136,8 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
             AtomicInteger executeCalled = new AtomicInteger(0);
             try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
                 PGPipelineEntry entry = new PGPipelineEntry(readOnlyEngine);
-                setOperation(entry, fakeOperation(executeCalled));
+                setOperation(entry, recordingDropOperation("ordinary_client_table", executeCalled));
+                setSqlType(entry, CompiledQuery.DROP);
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(readOnlyEngine);
                 try {
                     callExecuteDdlFenced(entry, ctx, false);
@@ -129,6 +146,37 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
                     assertReadOnlyRefusal(e);
                 }
                 Assert.assertEquals("operation.execute() must not be called on a read-only node", 0, executeCalled.get());
+            }
+        });
+    }
+
+    /**
+     * The export-temp-table DROP exemption must survive the fence: the admin's DROP of the HTTP
+     * parquet exporter's leftover temp table is the ONE DROP a read-only replica permits (the
+     * pre-execution gate lets it through via ReadOnlyStatementGate), so the fence must let it execute
+     * rather than re-refusing it with a blanket read-only check.
+     * <p>
+     * RED state (the regression this pins, CI build 241196): executeDdlFenced refused with a blanket
+     * isReadOnlyMode() check, so the exempted DROP the pre-gate had just allowed died with "replica
+     * access is read-only" -- ReplicationAclTest.testReplicaParquetExportFails on all 10 jobs.
+     * GREEN state: both fence checks consult ReadOnlyStatementGate.isRefusedOnReadOnly, which exempts
+     * this DROP; operation.execute() runs exactly once on the read-only node.
+     */
+    @Test
+    public void testExportTempTableDropExecutesOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger executeCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
+                String exportTempName = readOnlyEngine.getConfiguration().getParquetExportTableNamePrefix() + "1234";
+                PGPipelineEntry entry = new PGPipelineEntry(readOnlyEngine);
+                setOperation(entry, recordingDropOperation(exportTempName, executeCalled));
+                setSqlType(entry, CompiledQuery.DROP);
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(readOnlyEngine);
+                callExecuteDdlFenced(entry, ctx, false);
+                Assert.assertEquals(
+                        "the exempted export-temp-table DROP must execute on a read-only node",
+                        1, executeCalled.get()
+                );
             }
         });
     }
@@ -169,16 +217,7 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
      * read-only/flipped node the fence must refuse before this is ever reached.
      */
     private static Operation fakeOperation(AtomicInteger executeCalled) {
-        OperationFuture fut = (OperationFuture) Proxy.newProxyInstance(
-                OperationFuture.class.getClassLoader(),
-                new Class[]{OperationFuture.class},
-                (proxy, method, args) -> switch (method.getName()) {
-                    case "await" -> null;
-                    case "getAffectedRowsCount" -> 0L;
-                    case "close" -> null;
-                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
-                }
-        );
+        OperationFuture fut = noopFuture();
         return (Operation) Proxy.newProxyInstance(
                 Operation.class.getClassLoader(),
                 new Class[]{Operation.class},
@@ -193,10 +232,45 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
         );
     }
 
+    private static OperationFuture noopFuture() {
+        return (OperationFuture) Proxy.newProxyInstance(
+                OperationFuture.class.getClassLoader(),
+                new Class[]{OperationFuture.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "await" -> null;
+                    case "getAffectedRowsCount" -> 0L;
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
+                }
+        );
+    }
+
+    /**
+     * A real GenericDropOperation (a concrete class, so the gate predicate's instanceof + entity-name
+     * exemption check runs against it) whose execute() only records the call. The entity name decides
+     * the gate verdict: an export-prefixed name is the exempt drop, any other name a genuine client
+     * DROP.
+     */
+    private static Operation recordingDropOperation(String tableName, AtomicInteger executeCalled) {
+        return new GenericDropOperation(OperationCodes.DROP_TABLE, null, tableName, 0, false) {
+            @Override
+            public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) {
+                executeCalled.incrementAndGet();
+                return noopFuture();
+            }
+        };
+    }
+
     private static void setOperation(PGPipelineEntry entry, Operation operation) throws Exception {
         Field f = PGPipelineEntry.class.getDeclaredField("operation");
         f.setAccessible(true);
         f.set(entry, operation);
+    }
+
+    private static void setSqlType(PGPipelineEntry entry, short sqlType) throws Exception {
+        Field f = PGPipelineEntry.class.getDeclaredField("sqlType");
+        f.setAccessible(true);
+        f.setShort(entry, sqlType);
     }
 
     private CairoEngine buildFlipAfterFirstCallEngine(AtomicInteger callCount) throws Exception {
