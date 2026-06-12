@@ -55,6 +55,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (!isFindPending) {
             findRecord();
             hasNext = isRecordFound;

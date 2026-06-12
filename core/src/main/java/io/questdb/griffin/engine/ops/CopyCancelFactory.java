@@ -119,7 +119,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
                 }
             }
         }
-        cursor.toTop();
+        cursor.of(executionContext.getCircuitBreaker());
         return cursor;
     }
 

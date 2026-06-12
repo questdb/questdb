@@ -335,6 +335,9 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         }
 
         private void buildValue() {
+            // Consult the breaker before iterating, so an empty master (whose loop below never runs)
+            // still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
             slaveTimeFrameHelper.toTop();

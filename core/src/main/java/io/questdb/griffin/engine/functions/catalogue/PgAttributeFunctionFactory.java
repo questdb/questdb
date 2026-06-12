@@ -106,6 +106,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
             final CairoEngine engine = executionContext.getCairoEngine();
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);

@@ -270,7 +270,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             }
             // Entry is now owned by the task
             entry = null;
-            cursor.toTop();
+            cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         } catch (SqlException | CairoException ex) {
             exportIdSink.clear();

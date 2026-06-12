@@ -189,6 +189,9 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
+        // Consult the breaker before dispatching frames, so an empty base scan (which dispatches no
+        // frames and runs no per-frame worker checks) still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
         frameSequence.dispatchAndAwait();

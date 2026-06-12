@@ -46,6 +46,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private RowCursor rowCursor;
 
@@ -115,6 +116,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
+                // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 frameAddressCache.add(frameCount, frame);
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
                 rowCursor = Misc.free(rowCursor);
@@ -148,6 +151,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
+        circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        // Consult the breaker at open, so a scan over an empty table (zero frames, so the per-frame
+        // check in hasNext never runs) still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTripped();
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);

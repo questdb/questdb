@@ -49,6 +49,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
@@ -219,6 +220,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // hasNext()'s merge finds no per-key heads and
                 // openNextPartitionCursors() opens nothing, so it reports no rows.
                 multiKeyCursor.of(frameCursor);
+                multiKeyCursor.circuitBreaker = executionContext.getCircuitBreaker();
                 multiKeyCursor.latestByFilter = latestByFilter;
                 if (latestByFilter != null) {
                     latestByFilter.init(multiKeyCursor, executionContext);
@@ -237,6 +239,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             singleKeyCursor.resolveKey(resolvedKey);
             singleKeyCursor.of(frameCursor);
+            singleKeyCursor.circuitBreaker = executionContext.getCircuitBreaker();
             singleKeyCursor.latestByFilter = latestByFilter;
             if (latestByFilter != null) {
                 latestByFilter.init(singleKeyCursor, executionContext);
@@ -479,6 +482,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final int[] requiredIncludeIndices;
         protected final SymbolTable[] symTablesCache;
         protected final int[] symbolIncludeCols;
+        protected SqlExecutionCircuitBreaker circuitBreaker;
         protected CoveringRowCursor currentRowCursor;
         protected PartitionFrameCursor frameCursor;
         protected Function latestByFilter;
@@ -522,6 +526,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            // Consult the breaker at the top, so empty/no-match scans (frameCursor null, or no rows for
+            // the key) still observe cancellation, and long index scans stay cancellable.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (frameCursor == null) {
                 return false;
             }
@@ -1906,6 +1913,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            // Consult the breaker at the top, so empty/no-match scans (frameCursor null, or no resolved
+            // keys) still observe cancellation, and long multi-key merges stay cancellable.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (frameCursor == null) {
                 return false;
             }

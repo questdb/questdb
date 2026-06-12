@@ -96,6 +96,8 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             Record keyRecord
     ) {
         final Record record = cursor.getRecord();
+        // Consult the breaker before the build loop, so an empty build side still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTripped();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
@@ -123,6 +125,8 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             Record keyRecord
     ) {
         final Record record = cursor.getRecord();
+        // Consult the breaker before the build loop, so an empty build side still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTripped();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 

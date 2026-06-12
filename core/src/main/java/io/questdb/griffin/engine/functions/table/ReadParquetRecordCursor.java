@@ -95,6 +95,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
     private long addr = 0;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
@@ -252,6 +253,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         // Reopen the file, it could have changed
         this.fd = TableUtils.openRO(ff, path, LOG);
         this.fileSize = ff.length(fd);
@@ -339,6 +341,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean switchToNextRowGroup() {
+        // Consult the breaker once per row group (and once on the first call, even for an empty file),
+        // so a long sequential parquet scan stays cancellable.
+        circuitBreaker.statefulThrowExceptionIfTripped();
         dataPtrs.clear();
         auxPtrs.clear();
         while (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {

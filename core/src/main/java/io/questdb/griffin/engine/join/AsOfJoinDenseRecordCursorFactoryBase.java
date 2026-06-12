@@ -179,6 +179,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         @Override
         public boolean hasNext() {
+            // Consult the breaker at the top, so an empty master still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (!masterCursor.hasNext()) {
                 return false;
             }

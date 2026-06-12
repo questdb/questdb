@@ -75,6 +75,7 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             recordA.curr += step;
             if (step >= 0) {
                 return recordA.curr <= end;

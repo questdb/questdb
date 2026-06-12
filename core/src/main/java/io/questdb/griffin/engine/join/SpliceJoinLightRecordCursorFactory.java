@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -118,7 +119,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -164,6 +165,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         private final JoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean dualRecord;
         private boolean fetchMaster = true;
         private boolean fetchSlave = true;
@@ -223,6 +225,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (dualRecord) {
                 slaveRecordLeads();
                 dualRecord = false;
@@ -358,7 +361,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             }
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.circuitBreaker = circuitBreaker;
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.reopen();

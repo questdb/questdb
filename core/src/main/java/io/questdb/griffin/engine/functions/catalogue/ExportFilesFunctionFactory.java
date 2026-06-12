@@ -87,6 +87,7 @@ public class ExportFilesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
             cursor.toTop();
             return cursor;
         }

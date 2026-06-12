@@ -95,6 +95,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (!areRecordsFound) {
             findRecords();
             toTop();

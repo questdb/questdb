@@ -96,6 +96,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
             engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;

@@ -119,7 +119,7 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
                 );
                 copyRequestPubSeq.done(processingCursor);
                 record.setValue(importIdSink);
-                cursor.toTop();
+                cursor.of(executionContext.getCircuitBreaker());
                 return cursor;
             } catch (Throwable ex) {
                 copyImportContext.clear();

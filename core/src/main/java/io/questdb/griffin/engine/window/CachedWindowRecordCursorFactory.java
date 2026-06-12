@@ -399,6 +399,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void buildRecordChain() {
+            // Consult the breaker before building, so even an empty base scan (whose per-row loops below
+            // never run) still observes cancellation. Runs once per cursor open, guarded by isRecordChainBuilt.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             // step #1: store source cursor in record list
             // - add record list's row ids to all trees, which will put these row ids in necessary order
             // for this we will be using out comparator, which helps tree compare long values

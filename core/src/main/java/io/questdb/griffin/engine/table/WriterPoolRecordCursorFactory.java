@@ -59,6 +59,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
         WriterPoolCursor writerPoolCursor = new WriterPoolCursor();
         writerPoolCursor.of(cairoEngine.getWriterPoolEntries());
         return writerPoolCursor;

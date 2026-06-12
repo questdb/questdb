@@ -75,6 +75,8 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     @Override
     public boolean hasNext() {
         if (!isTreeMapBuilt) {
+            // Consult the breaker before building, so an empty base scan still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             buildTreeMap();
             rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;

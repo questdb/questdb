@@ -45,6 +45,7 @@ import io.questdb.std.ObjList;
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private boolean isExhausted;
     private boolean isOpen;
@@ -130,6 +131,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private void buildValue() {
+        // Consult the breaker before dispatching frames, so an empty base scan (which dispatches no
+        // frames and runs no per-frame checks) still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTripped();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
         frameSequence.dispatchAndAwait();
@@ -162,6 +166,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             atom.reopen();
         }
         this.frameSequence = frameSequence;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         this.isValueBuilt = false;
         recordA.of(atom.getOwnerMapValue());
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
