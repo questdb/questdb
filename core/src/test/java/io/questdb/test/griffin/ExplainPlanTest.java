@@ -733,13 +733,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .assertsPlan("""
-                    Limit value: 3 skip-rows-max: 0 take-rows-max: 3
-                        CachedWindowLight
-                          unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                    """);
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                CachedWindowLight
+                                  unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """);
 
             assertQuery(sql)
                     .noLeakCheck()
@@ -1096,14 +1096,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                    Distinct
-                      keys: avg
-                        CachedWindowLight
-                          unorderedFunctions: [avg(event) over (partition by [1])]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: test
-                    """);
+                            Distinct
+                              keys: avg
+                                CachedWindowLight
+                                  unorderedFunctions: [avg(event) over (partition by [1])]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: test
+                            """);
 
             assertQuery(query)
                     .noLeakCheck()
@@ -10286,29 +10286,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
-    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
-    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
-        // ORDER BY str references a column absent from the SELECT list, forcing the
-        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
-        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
-        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
-        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
-        // and is not what the gate inspects.
-        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            VirtualRecord
-                              functions: [x+1,x,str]
-                                Async JIT Top K lo: 10 workers: 1
-                                  filter: str is not null
-                                  keys: [str desc]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: xx
-                        """);
-    }
-
     @Test // two-bound LIMIT is not a top-K candidate; Sort light handles it
     public void testSelectWhereOrderByLimit9() throws Exception {
         assertQuery("select x, * from xx where str is not null order by str desc limit 10, 20")
@@ -10322,21 +10299,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
-                        """);
-    }
-
-    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
-    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
-        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            Async JIT Top K lo: 10 workers: 1
-                              filter: str is not null
-                              keys: [str desc, x]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: xx
                         """);
     }
 
@@ -10361,6 +10323,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
+        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            Async JIT Top K lo: 10 workers: 1
+                              filter: str is not null
+                              keys: [str desc, x]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: xx
+                        """);
+    }
+
     @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
     public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
         assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10")
@@ -10372,6 +10349,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Async JIT Top K lo: 10 workers: 1
                                   filter: str is not null
                                   keys: [str desc, x]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: xx
+                        """);
+    }
+
+    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
+    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
+        // ORDER BY str references a column absent from the SELECT list, forcing the
+        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
+        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
+        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
+        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
+        // and is not what the gate inspects.
+        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            VirtualRecord
+                              functions: [x+1,x,str]
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: str is not null
+                                  keys: [str desc]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
@@ -11897,13 +11897,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t")
                 .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
                 .assertsPlan("""
-                CachedWindowLight
-                  orderedFunctions: [[l] => [row_number()]]
-                  unorderedFunctions: [row_number() over (partition by [l])]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: t
-                """);
+                        CachedWindowLight
+                          orderedFunctions: [[l] => [row_number()]]
+                          unorderedFunctions: [row_number() over (partition by [l])]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                        """);
     }
 
     @Test
@@ -11911,14 +11911,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select str, ts, l, 10, row_number() over ( partition by l order by ts) from t")
                 .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
                 .assertsPlan("""
-                CachedWindowLight
-                  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]
-                    VirtualRecord
-                      functions: [str,ts,l,10]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: t
-                """);
+                        CachedWindowLight
+                          orderedFunctions: [[ts] => [row_number() over (partition by [l])]]
+                            VirtualRecord
+                              functions: [str,ts,l,10]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                        """);
     }
 
     @Test
@@ -11945,52 +11945,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                    CachedWindowLight
-                      orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),\
-                    sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: tab
-                    """);
+                            CachedWindowLight
+                              orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),\
+                            sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
 
             assertQuery("select ts, i, j, " + "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " + "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " + "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " + "from tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Window
-                      functions: [avg(j) over (partition by [i] rows between 1 preceding and current row),\
-                    sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: tab
-                    """);
+                            Window
+                              functions: [avg(j) over (partition by [i] rows between 1 preceding and current row),\
+                            sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
 
             assertQuery("select row_number() over (partition by i order by i desc, j asc), " + "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " + "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " + "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " + "from tab " + "order by ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                    SelectedRecord
-                        CachedWindowLight
-                          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],\
-                    [j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),\
-                    sum(j) over (partition by [i] rows between unbounded preceding and current row),\
-                    first_value(j) over (partition by [i] rows between unbounded preceding and current row)]]
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                    """);
+                            SelectedRecord
+                                CachedWindowLight
+                                  orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],\
+                            [j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),\
+                            sum(j) over (partition by [i] rows between unbounded preceding and current row),\
+                            first_value(j) over (partition by [i] rows between unbounded preceding and current row)]]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: tab
+                            """);
 
             assertQuery("select row_number() over (partition by i order by i desc, j asc), " + "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        rank() over (partition by j, i) " + "from tab order by ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                    SelectedRecord
-                        CachedWindowLight
-                          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row),\
-                    sum(j) over (partition by [i,j] rows between unbounded preceding and current row),\
-                    first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]
-                          unorderedFunctions: [rank() over (partition by [j,i])]
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                    """);
+                            SelectedRecord
+                                CachedWindowLight
+                                  orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row),\
+                            sum(j) over (partition by [i,j] rows between unbounded preceding and current row),\
+                            first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]
+                                  unorderedFunctions: [rank() over (partition by [j,i])]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: tab
+                            """);
         });
     }
 
@@ -12210,38 +12210,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc" + ") ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    GroupBy vectorized: false
-                      values: [sum(avg),sum(sum),first(first_value)]
-                        Window
-                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: cpu_ts
-                    """);
+                            GroupBy vectorized: false
+                              values: [sum(avg),sum(sum),first(first_value)]
+                                Window
+                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: cpu_ts
+                            """);
 
             assertQuery("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by 1 desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [sum desc]
-                        GroupBy vectorized: false
-                          values: [sum(avg),sum(sum),first(first_value)]
-                            Window
-                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [sum desc]
+                                GroupBy vectorized: false
+                                  values: [sum(avg),sum(sum),first(first_value)]
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: cpu_ts
+                            """);
 
             assertQuery("select sum(avg), sum(sum), count(first_value) from ( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            ") order by 1 desc")
+                    "select ts, hostname, usage_system, " +
+                    "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                    "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                    "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                    "from (select * from cpu_ts order by ts desc) " +
+                    ") order by 1 desc")
                     .noLeakCheck()
                     .assertsPlan("""
                             Encode sort
@@ -12266,144 +12266,144 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " + "from cpu_ts " + "order by ts desc " + ") order by ts asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [ts]
-                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
-                            Window
-                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [ts]
+                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [ts desc]
-                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
-                            Window
-                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [ts desc]
+                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by hostname")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [hostname]
-                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
-                            Window
-                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [hostname]
+                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    CachedWindowLight
-                      orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: cpu_ts
-                    """);
+                            CachedWindowLight
+                              orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    CachedWindowLight
-                      orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
-                        PageFrame
-                            Row backward scan
-                            Frame backward scan on: cpu_ts
-                    """);
+                            CachedWindowLight
+                              orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by hostname ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [hostname]
-                        Window
-                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [hostname]
+                                Window
+                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by hostname ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [hostname]
-                        Window
-                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [hostname]
+                                Window
+                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts desc " + ") order by ts asc ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [ts]
-                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
-                            Window
-                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [ts]
+                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts asc " + ") order by ts desc ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [ts desc]
-                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
-                            Window
-                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [ts desc]
+                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
+                            """);
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc ) " + "order by ts asc " + ") order by hostname ")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Encode sort
-                      keys: [hostname]
-                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
-                            Window
-                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cpu_ts
-                    """);
+                            Encode sort
+                              keys: [hostname]
+                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
+                            """);
         });
     }
 

@@ -486,6 +486,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
+        // Pin the sort limits to the server's unbounded default (Long.MAX_VALUE); summing the two
+        // operands must not overflow to a negative budget that collapses maxEntries to 0.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tv\trow_number\n" +
+                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
+        });
+    }
+
+    @Test
     public void testCachedWindowLightCumeDistTwoPassUnderLightFactory() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
@@ -654,9 +675,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testCachedWindowLightNullSortKeyOrdering() throws Exception {
-        // NULLs in the ordered sort key flow through the encoded sort buffer. A NULL long
-        // encodes as Long.MIN_VALUE, so ascending order places NULLs first; the two NULL rows
-        // tie-break by ascending base-scan order (dense rowIndex), matching the non-light path.
+        // NULL long encodes as Long.MIN_VALUE, so ascending order places NULLs first; the two
+        // NULL rows tie-break by ascending base-scan order (dense rowIndex), as the tree path does.
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());

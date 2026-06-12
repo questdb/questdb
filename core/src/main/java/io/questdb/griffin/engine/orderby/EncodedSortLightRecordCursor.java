@@ -44,7 +44,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
@@ -71,11 +70,10 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
-            // Clamp each operand to MAX_HEAP_SIZE_LIMIT before adding so an unset (Long.MAX_VALUE)
-            // cap does not overflow into a negative budget.
-            final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), MAX_HEAP_SIZE_LIMIT);
-            final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_HEAP_SIZE_LIMIT);
-            this.maxEntryMemBytes = Math.min(keyCap + valueCap, MAX_HEAP_SIZE_LIMIT);
+            this.maxEntryMemBytes = SortKeyType.maxHeapBytes(
+                    configuration.getSqlSortKeyMaxBytes(),
+                    configuration.getSqlSortLightValueMaxBytes()
+            );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } finally {

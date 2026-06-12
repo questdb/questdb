@@ -40,7 +40,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 final class EncodedWindowSortBuffer implements WindowSortBuffer {
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
@@ -69,9 +68,9 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
                     MemoryTag.NATIVE_DEFAULT,
                     true
             );
-            this.maxEntryMemBytes = Math.min(
-                    configuration.getSqlSortKeyMaxBytes() + configuration.getSqlSortLightValueMaxBytes(),
-                    MAX_HEAP_SIZE_LIMIT
+            this.maxEntryMemBytes = SortKeyType.maxHeapBytes(
+                    configuration.getSqlSortKeyMaxBytes(),
+                    configuration.getSqlSortLightValueMaxBytes()
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.entryMem = mem;
