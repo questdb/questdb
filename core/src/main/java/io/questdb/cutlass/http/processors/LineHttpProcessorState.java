@@ -46,7 +46,6 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.Zip;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -69,7 +68,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private final int maxResponseErrorMessageLength;
     private final LineTcpParser parser;
     private final AdaptiveRecvBuffer recvBuffer;
-    private final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16);
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     int errorLine = -1;
     private Status currentStatus = Status.OK;
@@ -98,7 +96,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampUnit(),
-                utf8Sink,
                 engine.getConfiguration().getMaxFileNameLength(),
                 engine.getConfiguration().getMaxSqlRecompileAttempts()
         );
@@ -137,11 +134,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     @Override
     public void close() {
+        Misc.free(appender);
         Misc.free(recvBuffer);
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
         Misc.free(parser);
-        Misc.free(utf8Sink);
         cleanupGzip();
     }
 
