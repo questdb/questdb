@@ -600,6 +600,46 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinFilterPushedThroughView() throws Exception {
+        // Regression lock-in: a subquery wraps an ASOF join and the consumer filters by the master
+        // (trades) key. The master is index 0 (inner), so the guard in
+        // deriveTransitiveFiltersFromPushedPredicate passes and the constant propagates across the
+        // equi-join key onto the ASOF slave (quotes), exactly as it does for the inline query. The
+        // equi-join key q.sym = t.sym forces any matched quote to share the filtered symbol, so
+        // pre-filtering the slave cannot change which row ASOF picks. This guards that behaviour and
+        // its result.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (sym SYMBOL INDEX, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                      ('AA', 10.0, '2024-01-01T00:01:00.000000Z'),
+                      ('BB', 20.0, '2024-01-01T00:02:00.000000Z'),
+                      ('AA', 11.0, '2024-01-01T00:04:00.000000Z')""");
+            execute("""
+                    INSERT INTO quotes VALUES
+                      ('AA', 1.0, '2024-01-01T00:00:00.000000Z'),
+                      ('BB', 2.0, '2024-01-01T00:00:00.000000Z'),
+                      ('AA', 1.5, '2024-01-01T00:03:00.000000Z')""");
+            // trades AA @00:01 -> latest AA quote at or before 00:01 is bid 1.0 @00:00
+            // trades AA @00:04 -> latest AA quote at or before 00:04 is bid 1.5 @00:03
+            // the BB trade is excluded by the filter
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT t.sym AS k, t.px, q.bid
+                      FROM trades t ASOF JOIN quotes q ON q.sym = t.sym
+                    ) WHERE k = 'AA'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tpx\tbid
+                            AA\t10.0\t1.0
+                            AA\t11.0\t1.5
+                            """);
+        });
+    }
+
+    @Test
     public void testAsOfJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -5236,6 +5276,57 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                               filter: entity_id='x'
                                             Frame forward scan on: events
                             """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterStacksWithSubQueryInternalWhere() throws Exception {
+        // The subquery already carries its own internal WHERE (a.av='keep'), processed during
+        // optimiseJoins. The consumer then adds WHERE k='x', which moveWhereInsideSubQueries pushes
+        // into the same nested model. The pushed predicate must AND with the pre-existing internal
+        // filter (concatFilters), not clobber it, while still deriving bkey='x' on the slave. Only the
+        // ('x','keep') master row survives both filters, and it attaches the matching tb row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'keep'), ('x', 'drop'), ('y', 'keep')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                      WHERE a.av = 'keep'
+                    ) WHERE k = 'x'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tav\tbv
+                            x\tkeep\tbx
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterWithNullConstantThroughView() throws Exception {
+        // A NULL constant filter on the master key returns no rows ("col = NULL" is never true). The
+        // subquery-wrapped form behaves exactly like the inline query: "k = NULL" is folded to a
+        // deferred symbol filter (rendered as "=0") and pushed across the equi-join key onto the slave
+        // scan just as it is inline, and both produce an empty result. Even with a NULL-extended slave,
+        // the join condition (slave.key = master.key) cannot match when the master key is NULL, so the
+        // pushdown is lossless. Guards the NULL-constant pushdown path against regressions.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                    ) WHERE k = NULL""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tav\tbv\n");
         });
     }
 
@@ -11680,6 +11771,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: a
                         """);
+    }
+
+    @Test
+    public void testSelfJoinFilterPushedThroughView() throws Exception {
+        // Regression lock-in for a self-join wrapped in a subquery: both join instances reference the
+        // same table and the same column name 'k'. The constant pinned to the master instance
+        // (a.k='x') must propagate to the slave instance (b.k) without conflating the two
+        // identically-named columns - addTransitiveFilters matches on both name AND join-model index,
+        // so only the slave's own key is filtered. ORDER BY makes the hash-join output deterministic.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL INDEX, v STRING)");
+            execute("INSERT INTO t VALUES ('x', 'x1'), ('x', 'x2'), ('y', 'y1')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.k AS ka, a.v AS av, b.v AS bv
+                      FROM t a JOIN t b ON b.k = a.k
+                    ) WHERE ka = 'x' ORDER BY av, bv""")
+                    .noLeakCheck()
+                    .returns("""
+                            ka\tav\tbv
+                            x\tx1\tx1
+                            x\tx1\tx2
+                            x\tx2\tx1
+                            x\tx2\tx2
+                            """);
+        });
     }
 
     @Test

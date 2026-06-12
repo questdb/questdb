@@ -2962,6 +2962,10 @@ public class SqlOptimiser implements Mutable {
             return;
         }
 
+        // optimiseJoins has already run, so the const maps hold its stale entries; reset them to
+        // hold only this predicate before deriving. No clean-up clear is needed afterwards: the next
+        // invocation resets here again, optimiseJoins (the only other reader) ran in an earlier pass,
+        // and clear() resets the maps before the next query.
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
@@ -2969,9 +2973,6 @@ public class SqlOptimiser implements Mutable {
         constNameToNode.put(name, constNode);
         constNameToToken.put(name, node.token);
         addTransitiveFilters(nested);
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
     }
 
     /**
