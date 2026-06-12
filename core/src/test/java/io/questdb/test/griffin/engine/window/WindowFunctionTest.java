@@ -1441,10 +1441,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testCumeDistMixedPartitionKeyTypes() throws Exception {
-        // cume_dist()/percent_rank() over (partition by ...) are two-pass, so they always take the
-        // cached path where the partition map is built in-loop, while the generator's reusable
-        // key-types buffer still describes this function's PARTITION BY. Pair each with a window
-        // function partitioned by a different type to confirm the buffer is captured, not aliased.
+        // Defensive only: this test cannot regress-guard the copyKeyTypes() snapshot in
+        // CumeDist/PercentRank. cume_dist()/percent_rank() are two-pass, so they always take the
+        // cached path, where initRecordComparator() builds the partition map in-loop while the
+        // generator's reusable key-types buffer still describes this function's PARTITION BY -- the
+        // buffer is consumed before any later window column rebuilds it, so the snapshot is never
+        // load-bearing here and the test passes with or without it. The snapshot is still correct
+        // hardening (the streaming over-partition path can rebuild the buffer before use); the test
+        // that actually exercises and guards it is testRankOverPartitionMixedPartitionKeyTypes. This
+        // case stays as a paired-mixed-key smoke test on the cached path.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table tab (ts #TIMESTAMP, sym symbol, b byte) timestamp(ts) partition by day",

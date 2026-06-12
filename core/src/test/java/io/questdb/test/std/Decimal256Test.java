@@ -37,12 +37,16 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
  * Tests for the consolidated Decimal256 class
  */
 public class Decimal256Test {
+
+    private static final BigInteger U256_MOD = BigInteger.ONE.shiftLeft(256);
+    private static final BigInteger U64_MASK = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
 
     @Test(expected = NumericException.class)
     public void testAddOverflow() {
@@ -2778,6 +2782,36 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testUncheckedSubtractBigIntegerOracleFuzz() {
+        // uncheckedSubtract performs raw two's-complement 256-bit subtraction (no scale alignment,
+        // no overflow check), so its result must equal (a - b) reduced mod 2^256 for arbitrary
+        // limbs. A BigInteger oracle over random 256-bit operands pins the full borrow propagation
+        // and the negation carry-chain that the hand-picked cases below only sample, and the
+        // uncheckedAdd/uncheckedSubtract round-trip confirms the two helpers cancel exactly.
+        final Rnd rnd = TestUtils.generateRandom(null);
+        final Decimal256 a = new Decimal256();
+        final Decimal256 b = new Decimal256();
+        final Decimal256 result = new Decimal256();
+        for (int i = 0; i < 1_000_000; i++) {
+            final long aHH = rnd.nextLong(), aHL = rnd.nextLong(), aLH = rnd.nextLong(), aLL = rnd.nextLong();
+            final long bHH = rnd.nextLong(), bHL = rnd.nextLong(), bLH = rnd.nextLong(), bLL = rnd.nextLong();
+            a.ofRaw(aHH, aHL, aLH, aLL);
+            b.ofRaw(bHH, bHL, bLH, bLL);
+            final BigInteger expectedDiff = unsigned256(a).subtract(unsigned256(b)).mod(U256_MOD);
+
+            result.copyFrom(a);
+            Decimal256.uncheckedSubtract(result, b);
+            Assert.assertEquals("a - b at iteration " + i, expectedDiff, unsigned256(result));
+
+            // a + b - b must recover a exactly, regardless of either operand's limbs.
+            result.copyFrom(a);
+            Decimal256.uncheckedAdd(result, b);
+            Decimal256.uncheckedSubtract(result, b);
+            Assert.assertEquals("a + b - b at iteration " + i, unsigned256(a), unsigned256(result));
+        }
+    }
+
+    @Test
     public void testUncheckedSubtractBorrowsAcrossLimbs() {
         Decimal256 result = new Decimal256();
         result.ofRaw(0, 0, 1, 0); // lh = 1, i.e. raw value 2^64
@@ -2790,6 +2824,23 @@ public class Decimal256Test {
         Assert.assertEquals(0, result.getHl());
         Assert.assertEquals(0, result.getLh());
         Assert.assertEquals(-1L, result.getLl()); // all-ones low limb
+    }
+
+    @Test
+    public void testUncheckedSubtractBorrowsThroughAllLimbs() {
+        // 2^192 - 1 forces the borrow to propagate the whole way: ll -> lh -> hl -> hh, leaving the
+        // three lower limbs all-ones and clearing the top limb.
+        Decimal256 result = new Decimal256();
+        result.ofRaw(1, 0, 0, 0); // raw value 2^192
+        Decimal256 b = new Decimal256();
+        b.ofRaw(0, 0, 0, 1); // raw value 1
+
+        Decimal256.uncheckedSubtract(result, b);
+
+        Assert.assertEquals(0L, result.getHh());
+        Assert.assertEquals(-1L, result.getHl());
+        Assert.assertEquals(-1L, result.getLh());
+        Assert.assertEquals(-1L, result.getLl());
     }
 
     @Test
@@ -2820,6 +2871,37 @@ public class Decimal256Test {
         Decimal256.uncheckedSubtract(acc, v);
 
         Assert.assertTrue(acc.isZero());
+    }
+
+    @Test
+    public void testUncheckedSubtractNegationCarriesAcrossZeroLimbs() {
+        // Subtracting 2^128 from zero negates b, whose two's-complement carry must ripple across the
+        // two zero low limbs (ll and lh stay 0) before settling, yielding -(2^128) = all-ones in the
+        // two high limbs.
+        Decimal256 result = new Decimal256();
+        result.ofRaw(0, 0, 0, 0);
+        Decimal256 b = new Decimal256();
+        b.ofRaw(0, 1, 0, 0); // raw value 2^128
+
+        Decimal256.uncheckedSubtract(result, b);
+
+        Assert.assertEquals(-1L, result.getHh());
+        Assert.assertEquals(-1L, result.getHl());
+        Assert.assertEquals(0L, result.getLh());
+        Assert.assertEquals(0L, result.getLl());
+    }
+
+    // Reconstructs the unsigned 256-bit value the four raw limbs encode, so a BigInteger oracle can
+    // mirror uncheckedSubtract's two's-complement (mod 2^256) arithmetic regardless of sign.
+    private static BigInteger unsigned256(Decimal256 d) {
+        return unsigned64(d.getHh()).shiftLeft(192)
+                .or(unsigned64(d.getHl()).shiftLeft(128))
+                .or(unsigned64(d.getLh()).shiftLeft(64))
+                .or(unsigned64(d.getLl()));
+    }
+
+    private static BigInteger unsigned64(long v) {
+        return BigInteger.valueOf(v).and(U64_MASK);
     }
 
     private void printTable(String name, long[][] table) {

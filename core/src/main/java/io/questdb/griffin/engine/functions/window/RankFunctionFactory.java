@@ -468,11 +468,25 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     final int orderByColumn = Math.abs(encoded) - 1;
                     listColumnFilter.add(orderByColumn + 1);
                     final TableColumnMetadata src = metadata.getColumnMetadata(orderByColumn);
+                    final int orderByColumnType = src.getColumnType();
+                    // The compacted MapValue holds the previous row's ORDER BY values, and computeNext
+                    // caches them through setLeft, overwrites the slots with the current row, then
+                    // compares. That is sound only when each value is cached by value: a var-size
+                    // column (STRING, VARCHAR, BINARY, array, INTERVAL) or a non-static symbol would be
+                    // cached as a flyweight aliasing the record and get corrupted by the overwrite,
+                    // silently producing wrong ranks. Only the designated timestamp and static indexed
+                    // SYMBOLs reach the streaming path today; assert the cached-by-value invariant so a
+                    // future routing change that admits another type fails fast here instead of
+                    // returning wrong results.
+                    assert ColumnType.isFixedSize(orderByColumnType)
+                            || (ColumnType.isSymbol(orderByColumnType) && src.isSymbolTableStatic())
+                            : "streaming rank ORDER BY column must be fixed-size or a static symbol, was "
+                            + ColumnType.nameOf(orderByColumnType);
                     // Synthetic unique names keep duplicate ORDER BY columns from clashing; only the
                     // type and the static-symbol flag matter to the comparator and the rank maps.
                     orderByMetadata.add(new TableColumnMetadata(
                             "k" + i,
-                            src.getColumnType(),
+                            orderByColumnType,
                             IndexType.NONE,
                             0,
                             src.isSymbolTableStatic(),
@@ -480,7 +494,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     ));
                     compactOrderIndices.add(encoded < 0 ? -(i + 1) : (i + 1));
                     streamingSymbolTableIndices[i] = orderByColumn;
-                    chainTypes.add(src.getColumnType());
+                    chainTypes.add(orderByColumnType);
                 }
 
                 chainTypeIndex = orderByCount;
