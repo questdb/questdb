@@ -4279,6 +4279,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinFilterPushedThroughViewReturnsCorrectRows() throws Exception {
+        // Row-level guard for testInnerJoinFilterPushedThroughView with distinct master/slave tables.
+        // withPlanContaining is what proves the optimisation: a plan that forgot to derive the slave
+        // filter would still return the right rows (the post-join WHERE k='x' filters correctly either
+        // way), so the bkey fragment guards the transitive push, while .returns confirms exactly the
+        // surviving master row is kept and the 'y' row excluded. With data present, 'x' resolves to
+        // symbol key 1, so both filters render by resolved key (akey=1/bkey=1) rather than the
+        // deferred ='x' form the no-data plan-only sibling shows - exercising the resolved-key path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a JOIN tb b ON b.bkey = a.akey
+                    ) WHERE k = 'x'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: akey=1", "filter: bkey=1")
+                    .returns("""
+                            k\tav\tbv
+                            x\tax\tbx
+                            """);
+        });
+    }
+
+    @Test
     public void testIntersect1() throws Exception {
         assertQuery("select * from a intersect select * from a")
                 .ddl("create table a ( i int, s string);")
@@ -5033,6 +5062,45 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                           filter: bkey=:kp::string
                                         Frame forward scan on: tb
                         """);
+    }
+
+    @Test
+    public void testLeftJoinFilterByBindVariablePushedThroughViewReturnsCorrectRows() throws Exception {
+        // Executes the bind-variable pushdown (the plan-only sibling is
+        // testLeftJoinFilterByBindVariablePushedThroughView). The derived slave filter shares the bind
+        // ExpressionNode by reference with the master predicate - one node feeds both scans - so this
+        // proves both scans actually read the bound value at execution. The re-bind to 'y' then proves
+        // the shared node re-reads rather than freezing on the first bound value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            String query = """
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                    ) WHERE k = :kp""";
+            bindVariableService.clear();
+            bindVariableService.setStr("kp", "x");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: akey=:kp::string", "filter: bkey=:kp::string")
+                    .returns("""
+                            k\tav\tbv
+                            x\tax\tbx
+                            """);
+            // re-bind: the shared const node must re-read, not return the stale 'x' row
+            bindVariableService.setStr("kp", "y");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tav\tbv
+                            y\tay\tby
+                            """);
+        });
     }
 
     @Test
