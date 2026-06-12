@@ -653,6 +653,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightNullSortKeyOrdering() throws Exception {
+        // NULLs in the ordered sort key flow through the encoded sort buffer. A NULL long
+        // encodes as Long.MIN_VALUE, so ascending order places NULLs first; the two NULL rows
+        // tie-break by ascending base-scan order (dense rowIndex), matching the non-light path.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, null), (2, 30), (3, 10), (4, null), (5, 20)");
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts	v	row_number
+                            1970-01-01T00:00:00.000001Z	null	1
+                            1970-01-01T00:00:00.000002Z	30	5
+                            1970-01-01T00:00:00.000003Z	10	3
+                            1970-01-01T00:00:00.000004Z	null	2
+                            1970-01-01T00:00:00.000005Z	20	4
+                            """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
     public void testCachedWindowLightParallelEncodedSortBranch() throws Exception {
         // Set the parallel-sort threshold below the row count so Vect.sortEncodedEntries
         // takes the parallel branch when finishPut runs under the LIGHT factory.
@@ -677,7 +701,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, (65 - x) from long_sequence(64)");
             assertQuery("SELECT v, row_number FROM (SELECT v, row_number() OVER (ORDER BY v) FROM tab) " +
-                            "WHERE v <= 5 OR v >= 62 ORDER BY v")
+                    "WHERE v <= 5 OR v >= 62 ORDER BY v")
                     .noLeakCheck()
                     .returns("""
                             v\trow_number
@@ -807,7 +831,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "rnd_bin(2, 2, 0), ARRAY[1.0, 2.0]" +
                     ")");
             assertQuery("SELECT row_number() OVER (ORDER BY vSort), vGeoB, vGeoS, vGeoI, vGeoL, " +
-                            "vL256, vUuid, vBin, vArr FROM tab")
+                    "vL256, vUuid, vBin, vArr FROM tab")
                     .noLeakCheck()
                     .assertsPlan("""
                             CachedWindowLight
@@ -817,8 +841,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """);
             assertQuery("SELECT count() cnt FROM (" +
-                            "SELECT row_number() OVER (ORDER BY vSort), vGeoB, vGeoS, vGeoI, vGeoL, " +
-                            "vL256, vUuid, vBin, vArr FROM tab)")
+                    "SELECT row_number() OVER (ORDER BY vSort), vGeoB, vGeoS, vGeoI, vGeoL, " +
+                    "vL256, vUuid, vBin, vArr FROM tab)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1748,40 +1772,40 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [cume_dist() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             // ORDER BY non-timestamp column -> dismissOrder=false path (the previously-broken one).
             assertQuery("SELECT cume_dist() OVER (ORDER BY val) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT cume_dist() OVER (PARTITION BY i ORDER BY val) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 
@@ -6343,15 +6367,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j) over (), " +
-                            "lag(j) over (), " +
-                            "lead(j) ignore nulls over (), " +
-                            "lag(j) ignore nulls over (), " +
-                            "lead(j) respect nulls over (), " +
-                            "lag(j) respect nulls over (), " +
-                            "lead(m) respect nulls over (), " +
-                            "lag(m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j) over (), " +
+                    "lag(j) over (), " +
+                    "lead(j) ignore nulls over (), " +
+                    "lag(j) ignore nulls over (), " +
+                    "lead(j) respect nulls over (), " +
+                    "lag(j) respect nulls over (), " +
+                    "lead(m) respect nulls over (), " +
+                    "lag(m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6367,15 +6391,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(d) over (), " +
-                            "lag(d) over (), " +
-                            "lead(d) ignore nulls over (), " +
-                            "lag(d) ignore nulls over (), " +
-                            "lead(d) respect nulls over (), " +
-                            "lag(d) respect nulls over (), " +
-                            "lead(m) respect nulls over (), " +
-                            "lag(m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(d) over (), " +
+                    "lag(d) over (), " +
+                    "lead(d) ignore nulls over (), " +
+                    "lag(d) ignore nulls over (), " +
+                    "lead(d) respect nulls over (), " +
+                    "lag(d) respect nulls over (), " +
+                    "lead(m) respect nulls over (), " +
+                    "lag(m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6391,15 +6415,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(ts) over (), " +
-                            "lag(ts) over (), " +
-                            "lead(ts) ignore nulls over (), " +
-                            "lag(ts) ignore nulls over (), " +
-                            "lead(ts) respect nulls over (), " +
-                            "lag(ts) respect nulls over (), " +
-                            "lead(m) respect nulls over (), " +
-                            "lag(m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(ts) over (), " +
+                    "lag(ts) over (), " +
+                    "lead(ts) ignore nulls over (), " +
+                    "lag(ts) ignore nulls over (), " +
+                    "lead(ts) respect nulls over (), " +
+                    "lag(ts) respect nulls over (), " +
+                    "lead(m) respect nulls over (), " +
+                    "lag(m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6415,31 +6439,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (), " +
-                            "lag(j, 0) over (), " +
-                            "lead(j, 0) ignore nulls over (), " +
-                            "lag(j, 0) ignore nulls over (), " +
-                            "lead(j, 0) respect nulls over (), " +
-                            "lag(j, 0) respect nulls over (), " +
-                            "lead(d, 0) over (), " +
-                            "lag(d, 0) over (), " +
-                            "lead(d, 0) ignore nulls over (), " +
-                            "lag(d, 0) ignore nulls over (), " +
-                            "lead(d, 0) respect nulls over (), " +
-                            "lag(d, 0) respect nulls over (), " +
-                            "lead(ts, 0) over (), " +
-                            "lag(ts, 0) over (), " +
-                            "lead(ts, 0) ignore nulls over (), " +
-                            "lag(ts, 0) ignore nulls over (), " +
-                            "lead(ts, 0) respect nulls over (), " +
-                            "lag(ts, 0) respect nulls over (), " +
-                            "lead(m, 0) over (), " +
-                            "lag(m, 0) over (), " +
-                            "lead(m, 0) ignore nulls over (), " +
-                            "lag(m, 0) ignore nulls over (), " +
-                            "lead(m, 0) respect nulls over (), " +
-                            "lag(m, 0) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j, 0) over (), " +
+                    "lag(j, 0) over (), " +
+                    "lead(j, 0) ignore nulls over (), " +
+                    "lag(j, 0) ignore nulls over (), " +
+                    "lead(j, 0) respect nulls over (), " +
+                    "lag(j, 0) respect nulls over (), " +
+                    "lead(d, 0) over (), " +
+                    "lag(d, 0) over (), " +
+                    "lead(d, 0) ignore nulls over (), " +
+                    "lag(d, 0) ignore nulls over (), " +
+                    "lead(d, 0) respect nulls over (), " +
+                    "lag(d, 0) respect nulls over (), " +
+                    "lead(ts, 0) over (), " +
+                    "lag(ts, 0) over (), " +
+                    "lead(ts, 0) ignore nulls over (), " +
+                    "lag(ts, 0) ignore nulls over (), " +
+                    "lead(ts, 0) respect nulls over (), " +
+                    "lag(ts, 0) respect nulls over (), " +
+                    "lead(m, 0) over (), " +
+                    "lag(m, 0) over (), " +
+                    "lead(m, 0) ignore nulls over (), " +
+                    "lag(m, 0) ignore nulls over (), " +
+                    "lead(m, 0) respect nulls over (), " +
+                    "lag(m, 0) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6456,31 +6480,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 3) over (), " +
-                            "lag(j, 3) over (), " +
-                            "lead(j, 3) ignore nulls over (), " +
-                            "lag(j, 3) ignore nulls over (), " +
-                            "lead(j, 3) respect nulls over (), " +
-                            "lag(j, 3) respect nulls over (), " +
-                            "lead(d, 3) over (), " +
-                            "lag(d, 3) over (), " +
-                            "lead(d, 3) ignore nulls over (), " +
-                            "lag(d, 3) ignore nulls over (), " +
-                            "lead(d, 3) respect nulls over (), " +
-                            "lag(d, 3) respect nulls over (), " +
-                            "lead(ts, 3) over (), " +
-                            "lag(ts, 3) over (), " +
-                            "lead(ts, 3) ignore nulls over (), " +
-                            "lag(ts, 3) ignore nulls over (), " +
-                            "lead(ts, 3) respect nulls over (), " +
-                            "lag(ts, 3) respect nulls over (), " +
-                            "lead(m, 3) over (), " +
-                            "lag(m, 3) over (), " +
-                            "lead(m, 3) ignore nulls over (), " +
-                            "lag(m, 3) ignore nulls over (), " +
-                            "lead(m, 3) respect nulls over (), " +
-                            "lag(m, 3) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j, 3) over (), " +
+                    "lag(j, 3) over (), " +
+                    "lead(j, 3) ignore nulls over (), " +
+                    "lag(j, 3) ignore nulls over (), " +
+                    "lead(j, 3) respect nulls over (), " +
+                    "lag(j, 3) respect nulls over (), " +
+                    "lead(d, 3) over (), " +
+                    "lag(d, 3) over (), " +
+                    "lead(d, 3) ignore nulls over (), " +
+                    "lag(d, 3) ignore nulls over (), " +
+                    "lead(d, 3) respect nulls over (), " +
+                    "lag(d, 3) respect nulls over (), " +
+                    "lead(ts, 3) over (), " +
+                    "lag(ts, 3) over (), " +
+                    "lead(ts, 3) ignore nulls over (), " +
+                    "lag(ts, 3) ignore nulls over (), " +
+                    "lead(ts, 3) respect nulls over (), " +
+                    "lag(ts, 3) respect nulls over (), " +
+                    "lead(m, 3) over (), " +
+                    "lag(m, 3) over (), " +
+                    "lead(m, 3) ignore nulls over (), " +
+                    "lag(m, 3) ignore nulls over (), " +
+                    "lead(m, 3) respect nulls over (), " +
+                    "lag(m, 3) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6496,31 +6520,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (), " +
-                            "lag(j, 2, j + 1) over (), " +
-                            "lead(j, 2, j + 1) ignore nulls over (), " +
-                            "lag(j, 2, j + 1) ignore nulls over (), " +
-                            "lead(j, 2, j + 1) respect nulls over (), " +
-                            "lag(j, 2, j + 1) respect nulls over (), " +
-                            "lead(d, 2, d + 1) over (), " +
-                            "lag(d, 2, d + 1) over (), " +
-                            "lead(d, 2, j + 1) ignore nulls over (), " +
-                            "lag(d, 2, j + 1) ignore nulls over (), " +
-                            "lead(d, 2, j + 1) respect nulls over (), " +
-                            "lag(d, 2, j + 1) respect nulls over (), " +
-                            "lead(ts, 2, ts + 10) over (), " +
-                            "lag(ts, 2, ts + 10) over (), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (), " +
-                            "lead(m, 2, m) over (), " +
-                            "lag(m, 2, m) over (), " +
-                            "lead(m, 2, m) ignore nulls over (), " +
-                            "lag(m, 2, m) ignore nulls over (), " +
-                            "lead(m, 2, m) respect nulls over (), " +
-                            "lag(m, 2, m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j, 2, j + 1) over (), " +
+                    "lag(j, 2, j + 1) over (), " +
+                    "lead(j, 2, j + 1) ignore nulls over (), " +
+                    "lag(j, 2, j + 1) ignore nulls over (), " +
+                    "lead(j, 2, j + 1) respect nulls over (), " +
+                    "lag(j, 2, j + 1) respect nulls over (), " +
+                    "lead(d, 2, d + 1) over (), " +
+                    "lag(d, 2, d + 1) over (), " +
+                    "lead(d, 2, j + 1) ignore nulls over (), " +
+                    "lag(d, 2, j + 1) ignore nulls over (), " +
+                    "lead(d, 2, j + 1) respect nulls over (), " +
+                    "lag(d, 2, j + 1) respect nulls over (), " +
+                    "lead(ts, 2, ts + 10) over (), " +
+                    "lag(ts, 2, ts + 10) over (), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (), " +
+                    "lead(m, 2, m) over (), " +
+                    "lag(m, 2, m) over (), " +
+                    "lead(m, 2, m) ignore nulls over (), " +
+                    "lag(m, 2, m) ignore nulls over (), " +
+                    "lead(m, 2, m) respect nulls over (), " +
+                    "lag(m, 2, m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6536,31 +6560,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (order by ts desc), " +
-                            "lag(j, 2, j + 1) over (order by ts desc), " +
-                            "lead(j, 2, j + 1) ignore nulls over (order by ts desc), " +
-                            "lag(j, 2, j + 1) ignore nulls over (order by ts desc), " +
-                            "lead(j, 2, j + 1) respect nulls over (order by ts desc), " +
-                            "lag(j, 2, j + 1) respect nulls over (order by ts desc), " +
-                            "lead(d, 2, d + 1) over (), " +
-                            "lag(d, 2, d + 1) over (), " +
-                            "lead(d, 2, d + 1) ignore nulls over (order by ts desc), " +
-                            "lag(d, 2, d + 1) ignore nulls over (order by ts desc), " +
-                            "lead(d, 2, d + 1) respect nulls over (order by ts desc), " +
-                            "lag(d, 2, d + 1) respect nulls over (order by ts desc), " +
-                            "lead(ts, 2, ts + 10) over (), " +
-                            "lag(ts, 2, ts + 10) over (), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
-                            "lead(m, 2, m) over (), " +
-                            "lag(m, 2, m) over (), " +
-                            "lead(m, 2, m) ignore nulls over (order by ts desc), " +
-                            "lag(m, 2, m) ignore nulls over (order by ts desc), " +
-                            "lead(m, 2, m) respect nulls over (order by ts desc), " +
-                            "lag(m, 2, m) respect nulls over (order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 2, j + 1) over (order by ts desc), " +
+                    "lag(j, 2, j + 1) over (order by ts desc), " +
+                    "lead(j, 2, j + 1) ignore nulls over (order by ts desc), " +
+                    "lag(j, 2, j + 1) ignore nulls over (order by ts desc), " +
+                    "lead(j, 2, j + 1) respect nulls over (order by ts desc), " +
+                    "lag(j, 2, j + 1) respect nulls over (order by ts desc), " +
+                    "lead(d, 2, d + 1) over (), " +
+                    "lag(d, 2, d + 1) over (), " +
+                    "lead(d, 2, d + 1) ignore nulls over (order by ts desc), " +
+                    "lag(d, 2, d + 1) ignore nulls over (order by ts desc), " +
+                    "lead(d, 2, d + 1) respect nulls over (order by ts desc), " +
+                    "lag(d, 2, d + 1) respect nulls over (order by ts desc), " +
+                    "lead(ts, 2, ts + 10) over (), " +
+                    "lag(ts, 2, ts + 10) over (), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
+                    "lead(m, 2, m) over (), " +
+                    "lag(m, 2, m) over (), " +
+                    "lead(m, 2, m) ignore nulls over (order by ts desc), " +
+                    "lag(m, 2, m) ignore nulls over (order by ts desc), " +
+                    "lead(m, 2, m) respect nulls over (order by ts desc), " +
+                    "lag(m, 2, m) respect nulls over (order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6576,31 +6600,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (order by ts desc), " +
-                            "lag(j, 0) over (order by ts desc), " +
-                            "lead(j, 0) ignore nulls over (order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (order by ts desc), " +
-                            "lead(j, 0) respect nulls over (order by ts desc), " +
-                            "lag(j, 0) respect nulls over (order by ts desc), " +
-                            "lead(j, 0) over (), " +
-                            "lag(j, 0) over (), " +
-                            "lead(j, 0) ignore nulls over (order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (order by ts desc), " +
-                            "lead(j, 0) respect nulls over (order by ts desc), " +
-                            "lag(j, 0) respect nulls over (order by ts desc), " +
-                            "lead(ts, 0) over (), " +
-                            "lag(ts, 0) over (), " +
-                            "lead(ts, 0) ignore nulls over (order by ts desc), " +
-                            "lag(ts, 0) ignore nulls over (order by ts desc), " +
-                            "lead(ts, 0) respect nulls over (order by ts desc), " +
-                            "lag(ts, 0) respect nulls over (order by ts desc), " +
-                            "lead(m, 0) over (), " +
-                            "lag(m, 0) over (), " +
-                            "lead(m, 0) ignore nulls over (order by ts desc), " +
-                            "lag(m, 0) ignore nulls over (order by ts desc), " +
-                            "lead(m, 0) respect nulls over (order by ts desc), " +
-                            "lag(m, 0) respect nulls over (order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 0) over (order by ts desc), " +
+                    "lag(j, 0) over (order by ts desc), " +
+                    "lead(j, 0) ignore nulls over (order by ts desc), " +
+                    "lag(j, 0) ignore nulls over (order by ts desc), " +
+                    "lead(j, 0) respect nulls over (order by ts desc), " +
+                    "lag(j, 0) respect nulls over (order by ts desc), " +
+                    "lead(j, 0) over (), " +
+                    "lag(j, 0) over (), " +
+                    "lead(j, 0) ignore nulls over (order by ts desc), " +
+                    "lag(j, 0) ignore nulls over (order by ts desc), " +
+                    "lead(j, 0) respect nulls over (order by ts desc), " +
+                    "lag(j, 0) respect nulls over (order by ts desc), " +
+                    "lead(ts, 0) over (), " +
+                    "lag(ts, 0) over (), " +
+                    "lead(ts, 0) ignore nulls over (order by ts desc), " +
+                    "lag(ts, 0) ignore nulls over (order by ts desc), " +
+                    "lead(ts, 0) respect nulls over (order by ts desc), " +
+                    "lag(ts, 0) respect nulls over (order by ts desc), " +
+                    "lead(m, 0) over (), " +
+                    "lag(m, 0) over (), " +
+                    "lead(m, 0) ignore nulls over (order by ts desc), " +
+                    "lag(m, 0) ignore nulls over (order by ts desc), " +
+                    "lead(m, 0) respect nulls over (order by ts desc), " +
+                    "lag(m, 0) respect nulls over (order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6616,13 +6640,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j) over (), " +
-                            "lag(j) ignore nulls over (), " +
-                            "lag(j) respect nulls over (), " +
-                            "lag(d) over (), " +
-                            "lag(ts) over (), " +
-                            "lag(m) over () " +
-                            "from tab ")
+                    "lag(j) over (), " +
+                    "lag(j) ignore nulls over (), " +
+                    "lag(j) respect nulls over (), " +
+                    "lag(d) over (), " +
+                    "lag(ts) over (), " +
+                    "lag(m) over () " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6639,13 +6663,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 3) over (), " +
-                            "lag(j, 3) ignore nulls over (), " +
-                            "lag(j, 3) respect nulls over (), " +
-                            "lag(d, 3) over (), " +
-                            "lag(ts, 3) over (), " +
-                            "lag(m, 3) over () " +
-                            "from tab ")
+                    "lag(j, 3) over (), " +
+                    "lag(j, 3) ignore nulls over (), " +
+                    "lag(j, 3) respect nulls over (), " +
+                    "lag(d, 3) over (), " +
+                    "lag(ts, 3) over (), " +
+                    "lag(m, 3) over () " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6662,13 +6686,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 2, j + 1) over (), " +
-                            "lag(j, 2, j + 1) ignore nulls over (), " +
-                            "lag(j, 2, j + 1) respect nulls over (), " +
-                            "lag(d, 2, d + 1) over (), " +
-                            "lag(ts, 2, ts + 10) over (), " +
-                            "lag(m, 2, m) over () " +
-                            "from tab ")
+                    "lag(j, 2, j + 1) over (), " +
+                    "lag(j, 2, j + 1) ignore nulls over (), " +
+                    "lag(j, 2, j + 1) respect nulls over (), " +
+                    "lag(d, 2, d + 1) over (), " +
+                    "lag(ts, 2, ts + 10) over (), " +
+                    "lag(m, 2, m) over () " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6695,31 +6719,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j) over (partition by i), " +
-                            "lag(j) over (partition by i), " +
-                            "lead(j) ignore nulls over (partition by i), " +
-                            "lag(j) ignore nulls over (partition by i), " +
-                            "lead(j) respect nulls over (partition by i), " +
-                            "lag(j) respect nulls over (partition by i), " +
-                            "lead(d) over (partition by i), " +
-                            "lag(d) over (partition by i), " +
-                            "lead(d) ignore nulls over (partition by i), " +
-                            "lag(d) ignore nulls over (partition by i), " +
-                            "lead(d) respect nulls over (partition by i), " +
-                            "lag(d) respect nulls over (partition by i), " +
-                            "lead(ts) over (partition by i), " +
-                            "lag(ts) over (partition by i), " +
-                            "lead(ts) ignore nulls over (partition by i), " +
-                            "lag(ts) ignore nulls over (partition by i), " +
-                            "lead(ts) respect nulls over (partition by i), " +
-                            "lag(ts) respect nulls over (partition by i), " +
-                            "lead(m) over (partition by i), " +
-                            "lag(m) over (partition by i), " +
-                            "lead(m) ignore nulls over (partition by i), " +
-                            "lag(m) ignore nulls over (partition by i), " +
-                            "lead(m) respect nulls over (partition by i), " +
-                            "lag(m) respect nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j) over (partition by i), " +
+                    "lag(j) over (partition by i), " +
+                    "lead(j) ignore nulls over (partition by i), " +
+                    "lag(j) ignore nulls over (partition by i), " +
+                    "lead(j) respect nulls over (partition by i), " +
+                    "lag(j) respect nulls over (partition by i), " +
+                    "lead(d) over (partition by i), " +
+                    "lag(d) over (partition by i), " +
+                    "lead(d) ignore nulls over (partition by i), " +
+                    "lag(d) ignore nulls over (partition by i), " +
+                    "lead(d) respect nulls over (partition by i), " +
+                    "lag(d) respect nulls over (partition by i), " +
+                    "lead(ts) over (partition by i), " +
+                    "lag(ts) over (partition by i), " +
+                    "lead(ts) ignore nulls over (partition by i), " +
+                    "lag(ts) ignore nulls over (partition by i), " +
+                    "lead(ts) respect nulls over (partition by i), " +
+                    "lag(ts) respect nulls over (partition by i), " +
+                    "lead(m) over (partition by i), " +
+                    "lag(m) over (partition by i), " +
+                    "lead(m) ignore nulls over (partition by i), " +
+                    "lag(m) ignore nulls over (partition by i), " +
+                    "lead(m) respect nulls over (partition by i), " +
+                    "lag(m) respect nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6735,31 +6759,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (partition by i), " +
-                            "lag(j, 0) over (partition by i), " +
-                            "lead(j, 0) ignore nulls over (partition by i), " +
-                            "lag(j, 0) ignore nulls over (partition by i), " +
-                            "lead(j, 0) ignore nulls over (partition by i), " +
-                            "lag(j, 0) ignore nulls over (partition by i), " +
-                            "lead(d, 0) over (partition by i), " +
-                            "lag(d, 0) over (partition by i), " +
-                            "lead(d, 0) ignore nulls over (partition by i), " +
-                            "lag(d, 0) ignore nulls over (partition by i), " +
-                            "lead(d, 0) ignore nulls over (partition by i), " +
-                            "lag(d, 0) ignore nulls over (partition by i), " +
-                            "lead(ts, 0) over (partition by i), " +
-                            "lag(ts, 0) over (partition by i), " +
-                            "lead(ts, 0) ignore nulls over (partition by i), " +
-                            "lag(ts, 0) ignore nulls over (partition by i), " +
-                            "lead(ts, 0) ignore nulls over (partition by i), " +
-                            "lag(ts, 0) ignore nulls over (partition by i), " +
-                            "lead(m, 0) over (partition by i), " +
-                            "lag(m, 0) over (partition by i), " +
-                            "lead(m, 0) ignore nulls over (partition by i), " +
-                            "lag(m, 0) ignore nulls over (partition by i), " +
-                            "lead(m, 0) ignore nulls over (partition by i), " +
-                            "lag(m, 0) ignore nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j, 0) over (partition by i), " +
+                    "lag(j, 0) over (partition by i), " +
+                    "lead(j, 0) ignore nulls over (partition by i), " +
+                    "lag(j, 0) ignore nulls over (partition by i), " +
+                    "lead(j, 0) ignore nulls over (partition by i), " +
+                    "lag(j, 0) ignore nulls over (partition by i), " +
+                    "lead(d, 0) over (partition by i), " +
+                    "lag(d, 0) over (partition by i), " +
+                    "lead(d, 0) ignore nulls over (partition by i), " +
+                    "lag(d, 0) ignore nulls over (partition by i), " +
+                    "lead(d, 0) ignore nulls over (partition by i), " +
+                    "lag(d, 0) ignore nulls over (partition by i), " +
+                    "lead(ts, 0) over (partition by i), " +
+                    "lag(ts, 0) over (partition by i), " +
+                    "lead(ts, 0) ignore nulls over (partition by i), " +
+                    "lag(ts, 0) ignore nulls over (partition by i), " +
+                    "lead(ts, 0) ignore nulls over (partition by i), " +
+                    "lag(ts, 0) ignore nulls over (partition by i), " +
+                    "lead(m, 0) over (partition by i), " +
+                    "lag(m, 0) over (partition by i), " +
+                    "lead(m, 0) ignore nulls over (partition by i), " +
+                    "lag(m, 0) ignore nulls over (partition by i), " +
+                    "lead(m, 0) ignore nulls over (partition by i), " +
+                    "lag(m, 0) ignore nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6776,31 +6800,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 3) over (partition by i), " +
-                            "lag(j, 3) over (partition by i), " +
-                            "lead(j, 3) ignore nulls over (partition by i), " +
-                            "lag(j, 3) ignore nulls over (partition by i), " +
-                            "lead(j, 3) respect nulls over (partition by i), " +
-                            "lag(j, 3) respect nulls over (partition by i), " +
-                            "lead(d, 3) over (partition by i), " +
-                            "lag(d, 3) over (partition by i), " +
-                            "lead(d, 3) ignore nulls over (partition by i), " +
-                            "lag(d, 3) ignore nulls over (partition by i), " +
-                            "lead(d, 3) respect nulls over (partition by i), " +
-                            "lag(d, 3) respect nulls over (partition by i), " +
-                            "lead(ts, 3) over (partition by i), " +
-                            "lag(ts, 3) over (partition by i), " +
-                            "lead(ts, 3) ignore nulls over (partition by i), " +
-                            "lag(ts, 3) ignore nulls over (partition by i), " +
-                            "lead(ts, 3) respect nulls over (partition by i), " +
-                            "lag(ts, 3) respect nulls over (partition by i), " +
-                            "lead(m, 3) over (partition by i), " +
-                            "lag(m, 3) over (partition by i), " +
-                            "lead(m, 3) ignore nulls over (partition by i), " +
-                            "lag(m, 3) ignore nulls over (partition by i), " +
-                            "lead(m, 3) respect nulls over (partition by i), " +
-                            "lag(m, 3) respect nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j, 3) over (partition by i), " +
+                    "lag(j, 3) over (partition by i), " +
+                    "lead(j, 3) ignore nulls over (partition by i), " +
+                    "lag(j, 3) ignore nulls over (partition by i), " +
+                    "lead(j, 3) respect nulls over (partition by i), " +
+                    "lag(j, 3) respect nulls over (partition by i), " +
+                    "lead(d, 3) over (partition by i), " +
+                    "lag(d, 3) over (partition by i), " +
+                    "lead(d, 3) ignore nulls over (partition by i), " +
+                    "lag(d, 3) ignore nulls over (partition by i), " +
+                    "lead(d, 3) respect nulls over (partition by i), " +
+                    "lag(d, 3) respect nulls over (partition by i), " +
+                    "lead(ts, 3) over (partition by i), " +
+                    "lag(ts, 3) over (partition by i), " +
+                    "lead(ts, 3) ignore nulls over (partition by i), " +
+                    "lag(ts, 3) ignore nulls over (partition by i), " +
+                    "lead(ts, 3) respect nulls over (partition by i), " +
+                    "lag(ts, 3) respect nulls over (partition by i), " +
+                    "lead(m, 3) over (partition by i), " +
+                    "lag(m, 3) over (partition by i), " +
+                    "lead(m, 3) ignore nulls over (partition by i), " +
+                    "lag(m, 3) ignore nulls over (partition by i), " +
+                    "lead(m, 3) respect nulls over (partition by i), " +
+                    "lag(m, 3) respect nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6816,31 +6840,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (partition by i), " +
-                            "lag(j, 2, j + 1) over (partition by i), " +
-                            "lead(j, 2, j + 1) ignore nulls over (partition by i), " +
-                            "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
-                            "lead(j, 2, j + 1) respect nulls over (partition by i), " +
-                            "lag(j, 2, j + 1) respect nulls over (partition by i), " +
-                            "lead(d, 2, d + 1) over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i), " +
-                            "lead(d, 2, d + 1) ignore nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) ignore nulls over (partition by i), " +
-                            "lead(d, 2, d + 1) respect nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) respect nulls over (partition by i), " +
-                            "lead(ts, 2, ts + 10) over (partition by i), " +
-                            "lag(ts, 2, ts + 10) over (partition by i), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (partition by i), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (partition by i), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (partition by i), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (partition by i), " +
-                            "lead(m, 2, m) over (partition by i), " +
-                            "lag(m, 2, m) over (partition by i), " +
-                            "lead(m, 2, m) ignore nulls over (partition by i), " +
-                            "lag(m, 2, m) ignore nulls over (partition by i), " +
-                            "lead(m, 2, m) respect nulls over (partition by i), " +
-                            "lag(m, 2, m) respect nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j, 2, j + 1) over (partition by i), " +
+                    "lag(j, 2, j + 1) over (partition by i), " +
+                    "lead(j, 2, j + 1) ignore nulls over (partition by i), " +
+                    "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
+                    "lead(j, 2, j + 1) respect nulls over (partition by i), " +
+                    "lag(j, 2, j + 1) respect nulls over (partition by i), " +
+                    "lead(d, 2, d + 1) over (partition by i), " +
+                    "lag(d, 2, d + 1) over (partition by i), " +
+                    "lead(d, 2, d + 1) ignore nulls over (partition by i), " +
+                    "lag(d, 2, d + 1) ignore nulls over (partition by i), " +
+                    "lead(d, 2, d + 1) respect nulls over (partition by i), " +
+                    "lag(d, 2, d + 1) respect nulls over (partition by i), " +
+                    "lead(ts, 2, ts + 10) over (partition by i), " +
+                    "lag(ts, 2, ts + 10) over (partition by i), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (partition by i), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (partition by i), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (partition by i), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (partition by i), " +
+                    "lead(m, 2, m) over (partition by i), " +
+                    "lag(m, 2, m) over (partition by i), " +
+                    "lead(m, 2, m) ignore nulls over (partition by i), " +
+                    "lag(m, 2, m) ignore nulls over (partition by i), " +
+                    "lead(m, 2, m) respect nulls over (partition by i), " +
+                    "lag(m, 2, m) respect nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6856,31 +6880,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (partition by i order by ts desc), " +
-                            "lag(j, 2, j + 1) over (partition by i order by ts desc), " +
-                            "lead(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lag(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lead(d, 2, d + 1) over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i), " +
-                            "lead(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lag(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 2, ts + 10) over (partition by i), " +
-                            "lag(ts, 2, ts + 10) over (partition by i), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
-                            "lead(m, 2, m) over (partition by i), " +
-                            "lag(m, 2, m) over (partition by i), " +
-                            "lead(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(m, 2, m) respect nulls over (partition by i order by ts desc), " +
-                            "lag(m, 2, m) respect nulls over (partition by i order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 2, j + 1) over (partition by i order by ts desc), " +
+                    "lag(j, 2, j + 1) over (partition by i order by ts desc), " +
+                    "lead(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lag(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lead(d, 2, d + 1) over (partition by i), " +
+                    "lag(d, 2, d + 1) over (partition by i), " +
+                    "lead(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lag(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 2, ts + 10) over (partition by i), " +
+                    "lag(ts, 2, ts + 10) over (partition by i), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
+                    "lead(m, 2, m) over (partition by i), " +
+                    "lag(m, 2, m) over (partition by i), " +
+                    "lead(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(m, 2, m) respect nulls over (partition by i order by ts desc), " +
+                    "lag(m, 2, m) respect nulls over (partition by i order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6896,31 +6920,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (partition by i order by ts desc), " +
-                            "lag(j, 0) over (partition by i order by ts desc), " +
-                            "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(j, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(j, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lead(d, 0) over (partition by i order by ts desc), " +
-                            "lag(d, 0) over (partition by i order by ts desc), " +
-                            "lead(d, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(d, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(d, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(d, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 0) over (partition by i order by ts desc), " +
-                            "lag(ts, 0) over (partition by i order by ts desc), " +
-                            "lead(ts, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lead(m, 0) over (partition by i order by ts desc), " +
-                            "lag(m, 0) over (partition by i order by ts desc), " +
-                            "lead(m, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(m, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(m, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(m, 0) respect nulls over (partition by i order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 0) over (partition by i order by ts desc), " +
+                    "lag(j, 0) over (partition by i order by ts desc), " +
+                    "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(j, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(j, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lead(d, 0) over (partition by i order by ts desc), " +
+                    "lag(d, 0) over (partition by i order by ts desc), " +
+                    "lead(d, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(d, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(d, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(d, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 0) over (partition by i order by ts desc), " +
+                    "lag(ts, 0) over (partition by i order by ts desc), " +
+                    "lead(ts, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lead(m, 0) over (partition by i order by ts desc), " +
+                    "lag(m, 0) over (partition by i order by ts desc), " +
+                    "lead(m, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(m, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(m, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(m, 0) respect nulls over (partition by i order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6936,13 +6960,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j) over (partition by i), " +
-                            "lag(j) ignore nulls over (partition by i), " +
-                            "lag(j) respect nulls over (partition by i), " +
-                            "lag(d) over (partition by i), " +
-                            "lag(ts) over (partition by i), " +
-                            "lag(m) over (partition by i) " +
-                            "from tab ")
+                    "lag(j) over (partition by i), " +
+                    "lag(j) ignore nulls over (partition by i), " +
+                    "lag(j) respect nulls over (partition by i), " +
+                    "lag(d) over (partition by i), " +
+                    "lag(ts) over (partition by i), " +
+                    "lag(m) over (partition by i) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6959,13 +6983,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 3) over (partition by i), " +
-                            "lag(j, 3) ignore nulls over (partition by i), " +
-                            "lag(j, 3) respect nulls over (partition by i), " +
-                            "lag(d, 3) over (partition by i), " +
-                            "lag(ts, 3) over (partition by i), " +
-                            "lag(m, 3) over (partition by i) " +
-                            "from tab ")
+                    "lag(j, 3) over (partition by i), " +
+                    "lag(j, 3) ignore nulls over (partition by i), " +
+                    "lag(j, 3) respect nulls over (partition by i), " +
+                    "lag(d, 3) over (partition by i), " +
+                    "lag(ts, 3) over (partition by i), " +
+                    "lag(m, 3) over (partition by i) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6982,13 +7006,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 2, j + 1) over (partition by i), " +
-                            "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
-                            "lag(j, 2, j + 1) respect nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i), " +
-                            "lag(ts, 2, ts + 1) over (partition by i), " +
-                            "lag(m, 2, m) over (partition by i) " +
-                            "from tab ")
+                    "lag(j, 2, j + 1) over (partition by i), " +
+                    "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
+                    "lag(j, 2, j + 1) respect nulls over (partition by i), " +
+                    "lag(d, 2, d + 1) over (partition by i), " +
+                    "lag(ts, 2, ts + 1) over (partition by i), " +
+                    "lag(m, 2, m) over (partition by i) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -7116,11 +7140,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x::date from long_sequence(3)");
 
             assertQuery("SELECT ts, " +
-                            "lead(ts, 0) OVER () AS lead_ts, " +
-                            "lag(ts, 0) OVER () AS lag_ts, " +
-                            "lead(m, 0) OVER () AS lead_m, " +
-                            "lag(m, 0) OVER () AS lag_m " +
-                            "FROM tab")
+                    "lead(ts, 0) OVER () AS lead_ts, " +
+                    "lag(ts, 0) OVER () AS lag_ts, " +
+                    "lead(m, 0) OVER () AS lead_m, " +
+                    "lag(m, 0) OVER () AS lag_m " +
+                    "FROM tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -10267,15 +10291,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("""
-                        SELECT x, row_number() OVER (
-                            ORDER BY x asc
-                            RANGE UNBOUNDED PRECEDING
-                        )
-                        FROM long_sequence(10)
-                        limit -10""")
-                                       .expectSize()
-                                       .noLeakCheck()
-                                       .returns("""
+                SELECT x, row_number() OVER (
+                    ORDER BY x asc
+                    RANGE UNBOUNDED PRECEDING
+                )
+                FROM long_sequence(10)
+                limit -10""")
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         x\trow_number
                         1\t1
                         2\t2
@@ -10627,49 +10651,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [ntile(3) over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [ntile(3) over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ts, ntile(2) OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             assertQuery("SELECT ts, cume_dist() OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [cume_dist() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ts, cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             assertQuery("SELECT ts, nth_value(val, 2) OVER (PARTITION BY i) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 
@@ -12197,11 +12221,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, nth_value(val, 2) over (order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -12240,11 +12264,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -15508,11 +15532,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, nth_value(val, 2) over (order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -15551,11 +15575,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -15756,11 +15780,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             // NthValueOverUnboundedRowsFrameFunction (default frame with order by)
             assertQuery("select ts, nth_value(val, 2) over (order by ts) from tab")
                     .noLeakCheck()
@@ -15805,11 +15829,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             // NthValueOverUnboundedPartitionFrameFunction, RANGE variant -- default frame
             // for "partition by x order by y" is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab")
@@ -16347,56 +16371,56 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [ntile(3) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [ntile(3) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [ntile(3) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [ntile(3) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [ntile(3) over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [ntile(3) over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (ORDER BY val) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i ORDER BY val) FROM tab")
                     .noLeakCheck()
                     .assertsPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                                      orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 
@@ -16802,8 +16826,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // row_number()
             assertQuery("select row_number() over (partition by i order by ts desc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "from tab " +
+                    "order by ts asc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -16818,8 +16842,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts desc)" +
-                            "from tab " +
-                            "order by ts desc")
+                    "from tab " +
+                    "order by ts desc")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -16835,8 +16859,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "from tab " +
+                    "order by ts asc")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -16852,8 +16876,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "from tab " +
+                    "order by ts desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -16868,8 +16892,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by i, j asc) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "from tab " +
+                    "order by ts desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -16884,27 +16908,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc), " +
-                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   rank() over (partition by i order by j asc), " +
-                            "   dense_rank() over (partition by i order by j asc), " +
-                            "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc), " +
-                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
-                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   rank() over (partition by i order by j asc), " +
+                    "   dense_rank() over (partition by i order by j asc), " +
+                    "   lag(j) over (partition by i order by j asc), " +
+                    "   lead(j) over (partition by i order by j asc), " +
+                    "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                    "   lead(j) ignore nulls over (partition by i order by j asc) " +
+                    "from tab " +
+                    "order by ts asc")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
@@ -16919,27 +16943,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
 
             assertQuery("select row_number() over (partition by i order by ts asc), " +
-                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   rank() over (partition by i order by j asc), " +
-                            "   dense_rank() over (partition by i order by j asc), " +
-                            "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc), " +
-                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
-                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   rank() over (partition by i order by j asc), " +
+                    "   dense_rank() over (partition by i order by j asc), " +
+                    "   lag(j) over (partition by i order by j asc), " +
+                    "   lead(j) over (partition by i order by j asc), " +
+                    "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                    "   lead(j) ignore nulls over (partition by i order by j asc) " +
+                    "from tab " +
+                    "order by ts asc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -16954,27 +16978,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc), " +
-                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   rank() over (partition by i order by j asc), " +
-                            "   dense_rank() over (partition by i order by j asc), " +
-                            "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc), " +
-                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
-                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   rank() over (partition by i order by j asc), " +
+                    "   dense_rank() over (partition by i order by j asc), " +
+                    "   lag(j) over (partition by i order by j asc), " +
+                    "   lead(j) over (partition by i order by j asc), " +
+                    "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                    "   lead(j) ignore nulls over (partition by i order by j asc) " +
+                    "from tab " +
+                    "order by ts desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -17620,11 +17644,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(true)
                     .withPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                                      unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns(expectedResult1);
 
             String expectedResult = replaceTimestampSuffix("""
@@ -17657,11 +17681,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(true)
                     .withPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                                      unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns(expectedResult);
         });
     }
@@ -19301,11 +19325,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan(replacePlanTimestamp((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """))
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """))
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n");
 
             assertQuery("select ts, i, j, first_value(j) over(), first_value(j) ignore nulls over(), last_value(j) over(), last_value(j) ignore nulls over(), avg(j) over (), sum(j) over (), count(*) over (), count(j) over (), count(sym) over (), count(c) over (), " +
@@ -19316,11 +19340,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """)
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -19343,11 +19367,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -19370,11 +19394,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """)
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -19397,11 +19421,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                                      unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -19424,11 +19448,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan((cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
-                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """)
+                                      unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -19633,12 +19657,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """ +
                             (cacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             """
-                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: sym deferred: true
-                                          filter: sym='X'
-                                        Frame forward scan on: tab
-                            """)
+                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
             // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
@@ -19652,12 +19676,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """ +
                             (cacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             """
-                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index backward scan on: sym deferred: true
-                                          filter: sym='X'
-                                        Frame backward scan on: tab
-                            """)
+                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index backward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
             // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
@@ -19673,15 +19697,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """ +
                             (cacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
                             """
-                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                        FilterOnValues symbolOrder: asc
-                                            Cursor-order scan
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='X'
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='Y'
-                                            Frame forward scan on: tab
-                            """)
+                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                                FilterOnValues symbolOrder: asc
+                                                    Cursor-order scan
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='X'
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='Y'
+                                                    Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
         });
     }

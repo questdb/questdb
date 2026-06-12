@@ -482,7 +482,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 final int fnCount = backwardUnorderedFunctions.size();
                 for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    positionRecordA(rIdx);
+                    positionRecordABaseOnly(rIdx);
                     for (int j = 0; j < fnCount; j++) {
                         backwardUnorderedFunctions.getQuick(j).pass1(recordA, rIdx, lightSpi);
                     }
