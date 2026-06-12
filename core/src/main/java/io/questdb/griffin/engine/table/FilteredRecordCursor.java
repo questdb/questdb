@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -84,6 +85,11 @@ class FilteredRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         base.recordAt(record, atRowId);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        base.setParquetDecodeHint(hint);
     }
 
     @Override
