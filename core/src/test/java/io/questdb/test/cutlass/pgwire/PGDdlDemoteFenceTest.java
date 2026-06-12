@@ -151,6 +151,49 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
     }
 
     /**
+     * Default-arm leg: a refused-set statement that carries no compiled Operation and re-executes via
+     * engine.execute(sqlText) -- REFRESH_MAT_VIEW, chosen because it has no eager EntCairoEngine
+     * acquire-gate backstop, so the fence is its only protection. On a flipped (read-only) node
+     * executeFenced must refuse with the standard authorization error and never reach engine.execute.
+     */
+    @Test
+    public void testDefaultArmRefusedOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger executeCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyCountingEngine(executeCalled)) {
+                PGPipelineEntry entry = new PGPipelineEntry(readOnlyEngine);
+                setSqlType(entry, CompiledQuery.REFRESH_MAT_VIEW);
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(readOnlyEngine);
+                try {
+                    callExecuteFenced(entry, ctx);
+                    Assert.fail("executeFenced must throw authorization for a refused default-arm type on a read-only node");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+                Assert.assertEquals("engine.execute() must not be called on a read-only node", 0, executeCalled.get());
+            }
+        });
+    }
+
+    /**
+     * Default-arm leg on a PRIMARY node: a refused-set default-arm type executes exactly once -- the
+     * fence must not refuse a legitimate statement.
+     */
+    @Test
+    public void testDefaultArmOnPrimaryExecutes() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger executeCalled = new AtomicInteger(0);
+            try (CairoEngine primaryEngine = buildPrimaryCountingEngine(executeCalled)) {
+                PGPipelineEntry entry = new PGPipelineEntry(primaryEngine);
+                setSqlType(entry, CompiledQuery.REFRESH_MAT_VIEW);
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(primaryEngine);
+                callExecuteFenced(entry, ctx);
+                Assert.assertEquals("engine.execute() must be called once on a primary node", 1, executeCalled.get());
+            }
+        });
+    }
+
+    /**
      * The export-temp-table DROP exemption must survive the fence: the admin's DROP of the HTTP
      * parquet exporter's leftover temp table is the ONE DROP a read-only replica permits (the
      * pre-execution gate lets it through via ReadOnlyStatementGate), so the fence must let it execute
@@ -200,6 +243,23 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
         m.setAccessible(true);
         try {
             m.invoke(entry, ctx, null, reportAffectedRows);
+        } catch (java.lang.reflect.InvocationTargetException ite) {
+            Throwable cause = ite.getCause();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            if (cause instanceof Exception) {
+                throw (Exception) cause;
+            }
+            throw ite;
+        }
+    }
+
+    private static void callExecuteFenced(PGPipelineEntry entry, SqlExecutionContext ctx) throws Exception {
+        Method m = PGPipelineEntry.class.getDeclaredMethod("executeFenced", SqlExecutionContext.class);
+        m.setAccessible(true);
+        try {
+            m.invoke(entry, ctx);
         } catch (java.lang.reflect.InvocationTargetException ite) {
             Throwable cause = ite.getCause();
             if (cause instanceof RuntimeException) {
@@ -292,6 +352,38 @@ public class PGDdlDemoteFenceTest extends AbstractCairoTest {
             @Override
             public boolean isReadOnlyMode() {
                 return false;
+            }
+        };
+    }
+
+    private CairoEngine buildPrimaryCountingEngine(AtomicInteger executeCalled) throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq) {
+                executeCalled.incrementAndGet();
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return false;
+            }
+        };
+    }
+
+    private CairoEngine buildReadOnlyCountingEngine(AtomicInteger executeCalled) throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq) {
+                executeCalled.incrementAndGet();
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return true;
             }
         };
     }

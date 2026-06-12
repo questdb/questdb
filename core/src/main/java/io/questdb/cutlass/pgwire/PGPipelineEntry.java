@@ -726,11 +726,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // execute statements that either have not been parse-executed
                     // or we are re-executing it from a prepared statement
                     if (!empty) {
-                        engine.getMetrics().pgWireMetrics().markStart();
-                        try {
-                            engine.execute(sqlText, sqlExecutionContext);
-                        } finally {
-                            engine.getMetrics().pgWireMetrics().markComplete();
+                        // Default-arm statements with no compiled Operation re-execute via
+                        // engine.execute(sqlText). Route refused-set types (TRUNCATE, RENAME_TABLE,
+                        // CREATE_VIEW, ALTER_VIEW, ALTER_STORAGE_POLICY, REFRESH_MAT_VIEW) through the
+                        // demote fence so the gate set and the fence set cannot drift apart -- the routing
+                        // decision consults the shared ReadOnlyStatementGate predicate, not a second
+                        // hand-built case list.
+                        if (ReadOnlyStatementGate.isRefusedOnReadOnly(this.sqlType, operation, engine.getConfiguration())) {
+                            executeFenced(sqlExecutionContext);
+                        } else {
+                            engine.getMetrics().pgWireMetrics().markStart();
+                            try {
+                                engine.execute(sqlText, sqlExecutionContext);
+                            } finally {
+                                engine.getMetrics().pgWireMetrics().markComplete();
+                            }
                         }
                     }
                     break;
@@ -1413,6 +1423,37 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             engine.getMetrics().pgWireMetrics().markComplete();
         }
         return affectedRowCount;
+    }
+
+    /**
+     * Demote write-fence for the default-arm statements that carry no compiled Operation and so
+     * re-execute via engine.execute(sqlText) -- TRUNCATE, RENAME_TABLE, CREATE_VIEW, ALTER_VIEW,
+     * ALTER_STORAGE_POLICY, REFRESH_MAT_VIEW. Like executeDdlFenced, these externalize during execute()
+     * with no separable commit chokepoint, so the pre-execution gate in msgExecute is check-then-act: a
+     * flip landing after that gate but during the re-compile/execute would otherwise run unfenced. Some
+     * of these types have an eager EntCairoEngine acquire-gate backstop (getTableWriterAPI/rename/
+     * replaceViewDefinition), but ALTER_STORAGE_POLICY and REFRESH_MAT_VIEW do not, so the fence set must
+     * match the ReadOnlyStatementGate refusal set rather than a hand-built subset.
+     * <p>
+     * The same reasoning executeDdlFenced documents applies: the role-switch read lock held across the
+     * in-lock re-check AND engine.execute() serializes the statement against the flip (which takes the
+     * write side), and the in-lock re-check consults the shared ReadOnlyStatementGate predicate -- not a
+     * blanket isReadOnlyMode() -- so the gate set and fence set cannot drift apart.
+     */
+    private void executeFenced(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.getMetrics().pgWireMetrics().markStart();
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            if (engine.isReadOnlyMode()
+                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            engine.execute(sqlText, sqlExecutionContext);
+        } finally {
+            lock.unlock();
+            engine.getMetrics().pgWireMetrics().markComplete();
+        }
     }
 
     private short getPgResultSetColumnFormatCode(int columnIndex) {
