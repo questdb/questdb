@@ -200,6 +200,7 @@ public class PostingIndexWriter implements IndexWriter {
     private int genCount;
     private boolean hasPendingData;
     private boolean hasSpillData;
+    private boolean isLastSealStreaming;
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
@@ -938,6 +939,18 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public int getTimestampColumnIndex() {
         return timestampColumnIndex;
+    }
+
+    /**
+     * Which path the last seal() that reached the fast-vs-streaming selection
+     * took: {@code true} for the per-key streaming compaction, {@code false} for
+     * the fast stride-decoding path. Lets a test assert the RSS pre-flight
+     * actually routed to streaming rather than inferring it from a
+     * regression-fragile headroom band.
+     */
+    @TestOnly
+    public boolean isLastSealStreamingForTesting() {
+        return isLastSealStreaming;
     }
 
     @Override
@@ -4540,6 +4553,7 @@ public class PostingIndexWriter implements IndexWriter {
                 final long headroom = rssLimit > 0 ? Math.max(0L, rssLimit - rssUsed) : Long.MAX_VALUE;
 
                 if (fastPathPeakBytes <= headroom) {
+                    isLastSealStreaming = false;
                     if (maxStrideTotal > packedResidualsCapacity) {
                         packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
                                 (long) packedResidualsCapacity * Long.BYTES,
@@ -4555,6 +4569,7 @@ public class PostingIndexWriter implements IndexWriter {
                         Unsafe.free(strideValsAddr, (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     }
                 } else if (streamingPathPeakBytes <= headroom) {
+                    isLastSealStreaming = true;
                     LOG.info().$("posting seal falling back to per-key streaming compaction ")
                             .$("[maxStrideTotal=").$(maxStrideTotal)
                             .$(", maxKeyCount=").$(maxKeyCount)

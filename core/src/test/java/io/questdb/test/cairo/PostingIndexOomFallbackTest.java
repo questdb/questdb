@@ -1456,9 +1456,13 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
     @Test
     public void testSealVarIncludeReachesStreamingSuccessPathUnderTightHeadroom() throws Exception {
         final int keys = 250;          // < DENSE_STRIDE (256): all keys in one stride
-        final int rowsPerKey = 256;
+        // Many values widen the fast-vs-streaming peak gap (the difference is the
+        // per-stride decode buffers, ~24 B/value), so the chosen headroom sits well
+        // inside the band even under the suite's noisier RSS and seal()'s early
+        // spill free (which both shift the effective headroom by ~1-3 MiB).
+        final int rowsPerKey = 1600;
         final int totalRows = keys * rowsPerKey;
-        final int payloadBytes = 32;
+        final int payloadBytes = 16;
         final int binStride = Long.BYTES + payloadBytes;
         final long binDataSize = (long) totalRows * binStride;
         final long binAuxSize = (long) (totalRows + 1) * Long.BYTES;
@@ -1496,17 +1500,26 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                         writer.setMaxValue(row - 1);
                         writer.commit();
 
-                        // Measured peaks for this 64K-value var cover: fast-path
-                        // ~3.0 MiB (the whole stride's decode buffers -- strideVals +
+                        // Measured peaks for this 400k-value var cover: fast-path
+                        // ~13.4 MiB (the whole stride's decode buffers -- strideVals +
                         // packedResiduals + packedBuf, ~24 B/value), streaming ~1.1 MiB
-                        // (worst single key + the ~1 MiB FSST batch floor). A 2 MiB
-                        // headroom rejects the fast path and fits streaming.
-                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 2L * 1024L * 1024L);
+                        // (worst single key + the ~1 MiB FSST batch floor). A 4 MiB
+                        // headroom -- effective ~7 MiB after seal()'s early spill free
+                        // pushes it up -- sits 6+ MiB below the fast peak and 3 MiB above
+                        // the streaming peak, so RSS noise cannot flip the routing.
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 4L * 1024L * 1024L);
                         try {
                             writer.seal();
                         } finally {
                             Unsafe.setRssMemLimit(savedLimit);
                         }
+                        // Independent path signal: the pre-flight MUST have routed to
+                        // the per-key streaming encoder (the headroom is far below the
+                        // fast-path peak), not merely "the seal succeeded" -- which is
+                        // true on both paths and would silently pass if an estimator
+                        // change later let the fast path fit.
+                        Assert.assertTrue("the tight headroom must force the per-key streaming seal path",
+                                writer.isLastSealStreamingForTesting());
                     }
 
                     // Every BINARY value reads back unchanged through the covering
@@ -1524,14 +1537,17 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                                 int seen = 0;
                                 while (cc.hasNext()) {
                                     long rowId = cc.next();
+                                    // length + both boundary bytes catch a scrambled
+                                    // per-row offset; checking every byte of 400k values
+                                    // would dominate the test runtime.
                                     Assert.assertEquals("BINARY length [key=" + k + ", rowId=" + rowId + "]",
                                             payloadBytes, cc.getCoveredBinLen(0));
                                     BinarySequence bin = cc.getCoveredBin(0);
                                     Assert.assertNotNull("cover BINARY null [key=" + k + ", rowId=" + rowId + "]", bin);
-                                    for (int b = 0; b < payloadBytes; b++) {
-                                        Assert.assertEquals("BINARY byte [key=" + k + ", rowId=" + rowId + ", b=" + b + "]",
-                                                phrase[b % phrase.length], bin.byteAt(b));
-                                    }
+                                    Assert.assertEquals("BINARY first byte [key=" + k + ", rowId=" + rowId + "]",
+                                            phrase[0], bin.byteAt(0));
+                                    Assert.assertEquals("BINARY last byte [key=" + k + ", rowId=" + rowId + "]",
+                                            phrase[(payloadBytes - 1) % phrase.length], bin.byteAt(payloadBytes - 1));
                                     seen++;
                                 }
                                 Assert.assertEquals("row count for key=" + k, rowsPerKey, seen);
