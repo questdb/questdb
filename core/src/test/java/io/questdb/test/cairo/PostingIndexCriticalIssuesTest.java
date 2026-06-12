@@ -4415,7 +4415,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     /**
      * A real-discard rollback (indexed rowids above the rollback point) runs
-     * {@code reencodeMonolithic}: it syncs the new .pv, publishes the new
+     * the streaming rollback re-encoder (reencodeWithPerKeyStreaming): it syncs
+     * the new .pv, publishes the new
      * sealTxn's chain entry into .pk and returns, and
      * {@code rollbackToMaxValue} immediately queues the superseded .pv/.pc
      * for purge. {@code PostingSealPurgeOperator} unlinks queued files with
@@ -4530,6 +4531,80 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1);
                     Assert.assertTrue("staged rollback .pc stays until the deferred purge [path=" + pc + ']',
                             configuration.getFilesFacade().exists(pc));
+
+                    // C1: the post-switch failure left the writer internally
+                    // inconsistent (chain head at the old sealTxn, valueMem at the
+                    // staged one), so it is poisoned -- any further rollback / seal
+                    // / commit must throw rather than re-drive the poisoned state
+                    // (which could append a chain entry at the staged sealTxn and
+                    // let the deferred [0, MAX) purge delete the now-live file).
+                    try {
+                        writer.rollbackValues(30);
+                        Assert.fail("poisoned writer must reject further rollbacks");
+                    } catch (CairoException poisoned) {
+                        TestUtils.assertContains(poisoned.getFlyweightMessage(), "poisoned");
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * A pre-switch failure: the staged .pv msync (reencodeWithPerKeyStreaming,
+     * before switchToSealedValueFile) fails, so the value file was never
+     * switched into valueMem. The catch's not-switched branch frees the staging
+     * map, unlinks the staged .pv, and restores keyCount/valueMemSize -- no
+     * orphan purge is queued (nothing was published) and the writer stays
+     * usable. Guards C2 (reencodeStarted set before the sidecar staging) and C3
+     * (valueMemSize restored on the pre-switch path).
+     */
+    @Test
+    public void testRollbackPreSwitchValueSyncFailureCleansUpAndKeepsWriterUsable() throws Exception {
+        final PvSyncFailingFacade pvSync = new PvSyncFailingFacade();
+        ff = pvSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_pre_switch_pv_sync_fail";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 100; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    final int keyCountBefore = writer.getKeyCount();
+
+                    pvSync.arm();
+                    try {
+                        writer.rollbackValues(49);
+                        Assert.fail("expected staged .pv sync failure");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "[test] staged .pv sync failed");
+                    } finally {
+                        pvSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one staged .pv sync", 1, pvSync.failureCount());
+
+                    // Not-switched cleanup: nothing was published, so no orphan
+                    // purge is queued and the staged .pv is unlinked directly.
+                    Assert.assertEquals("pre-switch failure must NOT queue an orphan purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pv must be unlinked on the pre-switch path [path=" + pv + ']',
+                            configuration.getFilesFacade().exists(pv));
+
+                    // keyCount and maxValue restored -- the failed rollback left no trace.
+                    Assert.assertEquals("keyCount must be restored after a pre-switch failure",
+                            keyCountBefore, writer.getKeyCount());
+                    Assert.assertEquals("maxValue must be unchanged after a pre-switch failure",
+                            99L, writer.getMaxValue());
+
+                    // Pre-switch failures do NOT poison the writer (unlike
+                    // post-switch), so a retried rollback succeeds.
+                    writer.rollbackValues(49);
+                    Assert.assertEquals("retried rollback must succeed", 49L, writer.getMaxValue());
                 }
             }
         });
@@ -9129,6 +9204,88 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         boolean hasPkMapping() {
             return !pkMappings.isEmpty();
+        }
+    }
+
+    /**
+     * Fails the staged .pv msync (the {@code sealValueMem.sync} inside
+     * reencodeWithPerKeyStreaming, BEFORE switchToSealedValueFile) the first
+     * time it fires while armed. Tracks only the .pv files opened while armed --
+     * the new sealTxn's staged value file -- so the pre-existing committed .pv
+     * (opened before arming) is left alone. Drives the pre-switch cleanup
+     * branch of the rollback catch.
+     */
+    private static class PvSyncFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pvMappings = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> stagedPvFds = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            stagedPvFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && stagedPvFds.containsKey(fd)) {
+                pvMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pvMappings.remove(addr) != null && newAddr != -1) {
+                pvMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pvMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armed.set(false);
+                        failures.incrementAndGet();
+                        throw CairoException.critical(0).put("[test] staged .pv sync failed");
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pvMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && armed.get() && name != null && Utf8s.containsAscii(name, ".pv")) {
+                stagedPvFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        int failureCount() {
+            return failures.get();
         }
     }
 
