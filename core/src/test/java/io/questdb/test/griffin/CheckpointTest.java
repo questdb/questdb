@@ -954,7 +954,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot open parquet file for _pm generation");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read size of restored parquet file");
                     // The diagnostic must name the failing partition, not just the table root.
                     TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
@@ -1002,7 +1002,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot open parquet file for _pm generation");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read size of restored parquet file");
                     // The diagnostic must name the failing partition, not just the table root.
                     TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }

@@ -670,25 +670,24 @@ public class TableSnapshotRestore implements QuietCloseable {
             // size are not part of the MVCC-visible state and must not be published.
             long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
 
-            // Open data.parquet to validate it against _txn and, when the _pm
-            // sidecar is missing or does not resolve at the committed size,
-            // generate _pm from it.
+            // Validate data.parquet against _txn by its size alone. This serial
+            // loop visits every parquet partition of every restored table, so it
+            // reads the size by path instead of opening an fd; only the
+            // regeneration branch below opens the file.
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            long parquetFd = ff.openRO(tablePath.$());
-            if (parquetFd < 0) {
+            long onDiskSize = ff.length(tablePath.$());
+            if (onDiskSize < 0) {
                 // Keep the full data.parquet path in the message: the same restore
                 // can cover hundreds of parquet partitions, and the operator needs
                 // to know which one failed. rebuildTableFiles() restores tablePath
                 // to the table root in its finally block.
-                throw CairoException.critical(ff.errno()).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+                throw CairoException.critical(ff.errno()).put("cannot read size of restored parquet file [path=").put(tablePath).put(']');
             }
-            long onDiskSize = ff.length(parquetFd);
             // This must run even when _pm was restored alongside the partition:
             // an undersized data.parquet means the snapshot paired _txn with a
             // stale or truncated parquet file, and reading the partition at the
             // committed size would produce garbage.
             if (onDiskSize < parquetFileSize) {
-                ff.close(parquetFd);
                 throw CairoException.critical(0)
                         .put("restored parquet file is shorter than committed size [path=").put(tablePath)
                         .put(", committed=").put(parquetFileSize)
@@ -699,7 +698,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(tablePath.$())) {
                 if (isParquetMetaResolvable(tablePath, parquetFileSize)) {
-                    ff.close(parquetFd);
                     tablePath.trimTo(plen);
                     continue;
                 }
@@ -711,13 +709,18 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // data.parquet, which the committed-size check above has already
                 // validated.
                 if (!ff.removeQuiet(tablePath.$())) {
-                    int errno = ff.errno();
-                    ff.close(parquetFd);
-                    throw CairoException.critical(errno).put("cannot remove unresolvable _pm file [path=").put(tablePath).put(']');
+                    throw CairoException.critical(ff.errno()).put("cannot remove unresolvable _pm file [path=").put(tablePath).put(']');
                 }
                 LOG.info().$("removed unresolvable _pm of restored parquet partition for regeneration [path=").$(tablePath).I$();
             }
 
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            long parquetFd = ff.openRO(tablePath.$());
+            if (parquetFd < 0) {
+                throw CairoException.critical(ff.errno()).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+            }
+
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
             if (parquetMetaFd < 0) {
                 int errno = ff.errno();
@@ -758,8 +761,8 @@ public class TableSnapshotRestore implements QuietCloseable {
      * Reports whether the {@code _pm} sidecar at {@code parquetMetaPath} resolves a
      * footer for the committed parquet file size from {@code _txn}. A corrupt file
      * (bad CRC, partial write, header size exceeding the file length) surfaces as
-     * {@code false} rather than an exception: the caller holds {@code data.parquet}
-     * already validated against the committed size and can regenerate the sidecar.
+     * {@code false} rather than an exception: the caller has already validated
+     * {@code data.parquet} against the committed size and can regenerate the sidecar.
      */
     private boolean isParquetMetaResolvable(Path parquetMetaPath, long parquetFileSize) {
         final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
