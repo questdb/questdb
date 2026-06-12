@@ -117,10 +117,12 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableJitCompiler);
         testParallelTopK(
                 "SELECT * FROM tab ORDER BY key DESC, price ASC LIMIT 3;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-01-01T00:57:36.000000Z\tk4\t4.0\t4\tnull\n" +
-                        "1970-01-01T02:09:36.000000Z\tk4\t9.0\t9\tnull\n" +
-                        "1970-01-01T03:21:36.000000Z\tk4\t14.0\t14\tnull\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-01-01T00:57:36.000000Z\tk4\t4.0\t4\tnull
+                        1970-01-01T02:09:36.000000Z\tk4\t9.0\t9\tnull
+                        1970-01-01T03:21:36.000000Z\tk4\t14.0\t14\tnull
+                        """
         );
     }
 
@@ -139,7 +141,7 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                         final int rowCount = 3_000 + rnd.nextInt(7_000);
                         createTypeMatrixTable(engine, sqlExecutionContext, rowCount);
@@ -186,8 +188,10 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
     public void testParallelTopKFilter() throws Exception {
         testParallelTopK(
                 "SELECT * FROM tab WHERE key = 'k0' ORDER BY price DESC LIMIT 1;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0
+                        """
         );
     }
 
@@ -195,10 +199,12 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
     public void testParallelTopKIntrinsicsFilter() throws Exception {
         testParallelTopK(
                 "SELECT * FROM tab WHERE ts in '1970-02' ORDER BY colTop LIMIT 3;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-01T00:00:00.000000Z\tk0\t3100.0\t3100\t3100.0\n" +
-                        "1970-02-01T00:14:24.000000Z\tk1\t3101.0\t3101\t3101.0\n" +
-                        "1970-02-01T00:28:48.000000Z\tk2\t3102.0\t3102\t3102.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-01T00:00:00.000000Z\tk0\t3100.0\t3100\t3100.0
+                        1970-02-01T00:14:24.000000Z\tk1\t3101.0\t3101\t3101.0
+                        1970-02-01T00:28:48.000000Z\tk2\t3102.0\t3102\t3102.0
+                        """
         );
     }
 
@@ -209,10 +215,12 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         // The query won't use the parallel factory due to virtual base factory.
         testParallelTopK(
                 "SELECT * FROM tab ORDER BY concat(key, 'foobar'), ts DESC LIMIT 3;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n" +
-                        "1970-02-10T10:48:00.000000Z\tk0\t4045.0\t4045\t4045.0\n" +
-                        "1970-02-10T09:36:00.000000Z\tk0\t4040.0\t4040\t4040.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0
+                        1970-02-10T10:48:00.000000Z\tk0\t4045.0\t4045\t4045.0
+                        1970-02-10T09:36:00.000000Z\tk0\t4040.0\t4040\t4040.0
+                        """
         );
     }
 
@@ -225,8 +233,10 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                     bindVariableService.setStr("asym", "k0");
                 },
                 "SELECT * FROM tab WHERE key = :asym ORDER BY price DESC LIMIT 1;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0
+                        """
         );
     }
 
