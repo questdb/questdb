@@ -348,6 +348,74 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Classifies the arithmetic result type code of a numeric expression
+     * subtree (column / bind variable / numeric constant / + - * / over them),
+     * or {@link #UNDEFINED_CODE} for anything that is not pure numeric
+     * arithmetic. Mirrors the implicit-promotion rules the Java filter applies,
+     * so {@link #containsNarrowIntArithUnderLong} can spot an INT-width product
+     * that wraps mod 2^32 once it feeds a LONG-width operation.
+     */
+    private int arithExprType(ExpressionNode node) {
+        if (node == null) {
+            return UNDEFINED_CODE;
+        }
+        switch (node.type) {
+            case ExpressionNode.LITERAL: {
+                int index = metadata.getColumnIndexQuiet(node.token);
+                if (index == -1) {
+                    return UNDEFINED_CODE;
+                }
+                return columnTypeCode(ColumnType.tagOf(metadata.getColumnType(index)));
+            }
+            case ExpressionNode.BIND_VARIABLE: {
+                Function bindFunction = lookupBindVariable(node.token);
+                return bindFunction != null
+                        ? bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()))
+                        : UNDEFINED_CODE;
+            }
+            case ExpressionNode.CONSTANT: {
+                int typeCode = floatConstantTypeCode(node.token);
+                if (typeCode != UNDEFINED_CODE) {
+                    return typeCode;
+                }
+                typeCode = longConstantTypeCode(node.token);
+                if (typeCode != UNDEFINED_CODE) {
+                    return typeCode;
+                }
+                // A plain integer literal that parses as int stays I4; anything
+                // else (symbol / date / geo string) is not numeric arithmetic.
+                try {
+                    Numbers.parseInt(node.token);
+                    return I4_TYPE;
+                } catch (NumericException notInt) {
+                    return UNDEFINED_CODE;
+                }
+            }
+            case ExpressionNode.OPERATION: {
+                // Unary minus carries the type of its single operand.
+                if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+                    return arithExprType(node.rhs);
+                }
+                if (!isArithmeticOperation(node)) {
+                    return UNDEFINED_CODE;
+                }
+                // A pure-constant integer arithmetic subtree folds to a single
+                // constant in descend(), so it never wraps at runtime: type it
+                // by the folded value's width.
+                try {
+                    long folded = tryFoldConstantArith(node);
+                    return (int) folded != folded ? I8_TYPE : I4_TYPE;
+                } catch (NumericException notConstant) {
+                    // Not a pure-constant subtree; fall through to operand promotion.
+                }
+                return promoteArithType(arithExprType(node.lhs), arithExprType(node.rhs));
+            }
+            default:
+                return UNDEFINED_CODE;
+        }
+    }
+
     private static byte bindVariableTypeCode(int columnTypeTag) {
         return switch (columnTypeTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
@@ -535,6 +603,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return UNDEFINED_CODE;
     }
 
+    /**
+     * Promotes two arithmetic operand type codes to the result type code of a
+     * binary arithmetic operation, following QuestDB's widening rules: a
+     * DOUBLE / FLOAT operand makes the result floating point, otherwise the
+     * result is the wider of the two integer widths. Returns
+     * {@link #UNDEFINED_CODE} when either operand is not a recognised numeric
+     * type.
+     */
+    private static int promoteArithType(int a, int b) {
+        if (a == UNDEFINED_CODE || b == UNDEFINED_CODE) {
+            return UNDEFINED_CODE;
+        }
+        if (a == F8_TYPE || b == F8_TYPE) {
+            return F8_TYPE;
+        }
+        if (a == F4_TYPE || b == F4_TYPE) {
+            return F4_TYPE;
+        }
+        // Integer widths order as I1=0 < I2=1 < I4=2 < I8=4, so the wider type
+        // is the larger code.
+        return Math.max(a, b);
+    }
+
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
         int position = node.position;
         CharSequence token = node.token;
@@ -630,6 +721,39 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } else {
             predicates.add(node);
         }
+    }
+
+    /**
+     * Walks a predicate looking for an INT-width arithmetic operation nested as
+     * an operand of a LONG-width arithmetic operation. The Java filter reads
+     * such an inner subtree through MulInt / AddInt / SubInt#getLong, which
+     * widen to 64 bits and never wrap, whereas the JIT computes the inner
+     * product at int32 width (wrapping mod 2^32) and only sign-extends the
+     * wrapped result. The narrow-widen pre-pass normally reconciles the two by
+     * pre-widening every narrow operand to i64, but a FLOAT / DOUBLE source in
+     * the predicate suppresses that widening, re-introducing the divergence --
+     * so the caller rejects JIT compilation for this shape and lets the Java
+     * filter handle it.
+     */
+    private boolean containsNarrowIntArithUnderLong(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (isArithmeticOperation(node) && arithExprType(node) == I8_TYPE
+                && (isUnsafeNarrowIntArith(node.lhs) || isUnsafeNarrowIntArith(node.rhs))) {
+            return true;
+        }
+        if (containsNarrowIntArithUnderLong(node.lhs) || containsNarrowIntArithUnderLong(node.rhs)) {
+            return true;
+        }
+        if (node.args != null) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                if (containsNarrowIntArithUnderLong(node.args.getQuick(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
@@ -870,6 +994,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return columnNode != null && isBooleanColumn(columnNode);
         }
         return false;
+    }
+
+    /**
+     * Returns true when {@code node} is an INT-width arithmetic operation that
+     * can overflow int32 at runtime -- it is + - * / whose promoted type is INT
+     * over at least one non-constant operand. Pure-constant subtrees are
+     * excluded because descend() already folds them at full precision.
+     */
+    private boolean isUnsafeNarrowIntArith(ExpressionNode node) {
+        if (node == null || !isArithmeticOperation(node) || arithExprType(node) != I4_TYPE) {
+            return false;
+        }
+        try {
+            tryFoldConstantArith(node);
+            return false; // pure-constant: folded in descend(), never wraps
+        } catch (NumericException dataDependent) {
+            return true;
+        }
     }
 
     private Function lookupBindVariable(CharSequence token) {
@@ -2030,7 +2172,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return rootNode != null;
         }
 
-        public void onNodeDescended(final ExpressionNode node) {
+        public void onNodeDescended(final ExpressionNode node) throws SqlException {
             if (rootNode == null) {
                 boolean topLevelOperation = isTopLevelOperation(node);
                 boolean topLevelBooleanColumn = isTopLevelBooleanColumn(node);
@@ -2051,6 +2193,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         // Detector does not throw; defensive only.
                         needsNarrowI64Widening = false;
                         hasFloatInPredicate = false;
+                    }
+                    // When the narrow-widen pre-pass declines to widen (a float
+                    // source suppresses it), an INT-width arithmetic subtree
+                    // nested under a LONG-width operation would wrap mod 2^32 in
+                    // the JIT while the Java filter reads it at long width via
+                    // MulInt / AddInt / SubInt#getLong. Reject JIT for this shape
+                    // and fall back to the Java filter.
+                    if (!needsNarrowI64Widening && containsNarrowIntArithUnderLong(node)) {
+                        throw SqlException.position(node.position)
+                                .put("int32 arithmetic nested under int64 arithmetic with a float operand");
                     }
                 }
                 if (topLevelBooleanColumn) {

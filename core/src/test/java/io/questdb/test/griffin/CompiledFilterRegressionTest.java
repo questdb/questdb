@@ -1061,6 +1061,31 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntArithUnderLongWithFloat() throws Exception {
+        // A narrow INT arithmetic subtree (c8 * -776782) that overflows int32
+        // and feeds a LONG-width multiply diverged between the JIT and the Java
+        // filter when a FLOAT comparison suppressed the narrow-to-i64 widening:
+        // the JIT wrapped the inner product mod 2^32 while the Java filter read
+        // it at long width via MulInt#getLong. The serializer now rejects JIT
+        // for this shape and falls back to the Java filter, so both agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 LONG, c2 SHORT, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), rnd_short(), " +
+                    "rnd_int(-1000000, 1000000, 8), rnd_float(8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
+                    "FROM long_sequence(122)");
+
+            // Diverging shapes: JIT must fall back to the Java filter.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))", false);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776782))", false);
+            // Control shapes that stay correct under JIT must still compile.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 * -776782)", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * c8)", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE (c8 * -776782) > 0", true);
+        });
+    }
+
+    @Test
     public void testNotInOperatorFloat() throws Exception {
         // Tests NOT IN operator with floats
         final String ddl = "create table x as " +
@@ -1519,6 +1544,35 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private void assertGeneratedQueryNullable(CharSequence ddl, FilterGenerator gen) throws Exception {
         assertGeneratedQuery(ddl, gen, false);
+    }
+
+    /**
+     * Runs {@code query} with JIT disabled and with JIT enabled and asserts the
+     * two cursors produce identical output. {@code expectJit} pins whether the
+     * JIT-enabled run is expected to compile a filter (true) or fall back to the
+     * Java filter (false), guarding against both the divergence and over-eager
+     * fallback.
+     */
+    private void assertJitMatchesJava(CharSequence query, boolean expectJit) throws SqlException {
+        StringSink javaSink = new StringSink();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
+            }
+        }
+
+        StringSink jit = new StringSink();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertEquals("unexpected compiled-filter usage for query: " + query,
+                    expectJit, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), jit);
+            }
+        }
+        TestUtils.assertEquals("JIT vs Java result mismatch for query: " + query, javaSink, jit);
     }
 
     private void assertJitCountQuery(CharSequence countQuery, long expectedCount) throws SqlException {
