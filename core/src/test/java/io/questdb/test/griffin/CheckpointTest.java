@@ -116,7 +116,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.*;
 
@@ -796,6 +798,89 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointRecoveryWithStaleIndex_rebuildTrue() throws Exception {
         testCheckpointRecoveryWithStaleIndex(true);
+    }
+
+    @Test
+    public void testCheckpointRestoreDrainInterruptThrowsAndRestoresStatus() throws Exception {
+        // finalizeParallelTasks must not abandon a still-running rebuild task
+        // when the draining thread is interrupted: freeing the shared
+        // native-backed readers under a live task would be a use-after-free, so
+        // it keeps draining. get() swallows the interrupt status, so the method
+        // restores it on the way out, and - with no task failure - reports the
+        // interruption as a "parallel task interrupted" CairoException.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z')
+                    """);
+
+            TableToken token = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+
+            engine.clear();
+
+            // The bitmap index rebuild task for sym blocks in openRO until the
+            // test releases it, so the drain is parked in Future.get() when the
+            // interrupt is delivered.
+            final SOCountDownLatch taskRunning = new SOCountDownLatch(1);
+            final AtomicBoolean releaseTask = new AtomicBoolean();
+            final FilesFacade blockingFf = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, "sym.d")) {
+                        taskRunning.countDown();
+                        while (!releaseTask.get()) {
+                            Os.pause();
+                        }
+                    }
+                    return super.openRO(name);
+                }
+            };
+            CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return blockingFf;
+                }
+            };
+
+            final AtomicReference<Throwable> thrown = new AtomicReference<>();
+            final AtomicBoolean interruptStatusRestored = new AtomicBoolean();
+            final Thread restoreThread = new Thread(() -> {
+                try (
+                        TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig);
+                        Path tablePath = new Path().of(dbRoot).concat(token).slash()
+                ) {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                } catch (Throwable th) {
+                    thrown.set(th);
+                    interruptStatusRestored.set(Thread.currentThread().isInterrupted());
+                }
+            }, "restore-drain-interrupt");
+            restoreThread.start();
+
+            taskRunning.await();
+            restoreThread.interrupt();
+            // Let the interrupt land in the parked Future.get() before the held
+            // task is released, so the drain takes its interrupt arm; the
+            // awaitDone interrupt check makes this robust either way.
+            Os.sleep(100);
+            releaseTask.set(true);
+            restoreThread.join();
+
+            final Throwable th = thrown.get();
+            Assert.assertNotNull("rebuildTableFiles should have thrown", th);
+            Assert.assertTrue("expected CairoException, got: " + th, th instanceof CairoException);
+            TestUtils.assertContains(((CairoException) th).getFlyweightMessage(), "parallel task interrupted");
+            Assert.assertTrue("the draining thread's interrupt status must be restored", interruptStatusRestored.get());
+        });
     }
 
     @Test
