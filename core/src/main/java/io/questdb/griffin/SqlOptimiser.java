@@ -3057,8 +3057,8 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * True when the criteria's AND-spine contains a plain cross-table equality (column = column,
-     * two different tables, no functions or nulls) whose higher table index equals {@code joinIndex}
-     * -- the condition under which analyseEquals builds a join context FOR THIS join, so
+     * two different tables, no functions or nulls) whose higher table index equals {@code joinIndex}:
+     * the condition under which analyseEquals builds a join context FOR THIS join, so
      * homogenizeCrossJoins leaves its RIGHT/FULL OUTER type alone. The higher-index test mirrors
      * analyseEquals: a barrier join keeps its equi context only when the equality's slave index (the
      * higher of the two) is the join's own model index. An ON clause that forward-references a later

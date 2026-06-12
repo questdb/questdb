@@ -6280,6 +6280,40 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullLiteralMasterFilterStaysPostJoin() throws Exception {
+        // A NULL-literal master predicate (m.x = null, which QuestDB evaluates as IS NULL) keeps the
+        // NULL-master rows instead of dropping them, the opposite of the operator/equality tests. It
+        // still must stay a post-join filter: pushing it into the master sub-query strips it from the
+        // post-join stage, so the NULL-master rows that the join synthesizes afterwards bypass it. The
+        // matched master row (x=5) fails IS NULL and is dropped; the single NULL-master row passes and
+        // is the only survivor under RIGHT/FULL/SPLICE. Pushing the predicate left the matched row in
+        // and re-leaked the NULL-master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (5, 1, 2)");
+            execute("CREATE TABLE s (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES (1, 1), (2, 3)");
+
+            final String expected = "x\nnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.x FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.x = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.x=null")
+                        .returns(expected);
+            }
+
+            // SPLICE NULL-extends the master for the pre-master timestamp; only that NULL-master row
+            // passes IS NULL, the prevailing-master rows (x=5) are dropped.
+            assertQuery("SELECT m.x FROM m SPLICE JOIN s WHERE m.x = null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.x=null")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testOperatorMasterFilterStaysPostJoin() throws Exception {
         // assignFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
         // master to a post-join filter; the existing folded-FALSE splice test only exercises that
@@ -6680,6 +6714,74 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery(fullJoinQuery)
                     .noLeakCheck()
                     .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSpliceColumnEqColumnMasterFilterStaysPostJoin() throws Exception {
+        // SPLICE variant of testColumnEqColumnMasterFilterStaysPostJoin: a same-table column
+        // comparison (m.c1 = m.c2) is single-table, so it used to be pushed into the master
+        // sub-query. SPLICE NULL-extends the master (slave-only timestamps emit NULL-master rows),
+        // so pushing it emptied the master and paired each slave timestamp with a NULL master,
+        // leaking a row per slave-only timestamp. Held post-join the splice keeps the prevailing
+        // master row, which c1=c2 drops, and the single pre-master NULL-master row, which c1=c2
+        // keeps because null=null is true for INT, leaving exactly one (null,null) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, c2 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (1, 2, 2)");
+            execute("CREATE TABLE s (sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s leads (ts=1) and trails (ts=3) the single master row at ts=2; the ts=1 row is a
+            // pre-master NULL-master splice row, the ts=2/ts=3 rows carry the prevailing (1,2) master.
+            execute("INSERT INTO s VALUES (10, 1), (20, 3)");
+
+            assertQuery("SELECT m.c1, m.c2 FROM m SPLICE JOIN s WHERE m.c1 = m.c2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.c1=m.c2")
+                    .returns("c1\tc2\nnull\tnull\n");
+        });
+    }
+
+    @Test
+    public void testSpliceConstOnLhsMasterFilterStaysPostJoin() throws Exception {
+        // Const-on-LHS variant of testSpliceJoinMasterFilterProjectsSlaveColumn: the equality is
+        // written 'A' = m.k, so analyseEquals routes it through the case-0 (constant on the left)
+        // branch rather than case-1. That branch registers the literal const for the transitive
+        // slave prune, but addTransitiveFilters must still skip the push for SPLICE: SPLICE is a
+        // temporal prevailing join, so pruning the slave to key 'A' shifts which slave row prevails
+        // at each master timestamp and diverges the literal from the bind form. The master-side
+        // predicate stays a post-join filter and the slave column is projected to surface a diverging
+        // prevailing value if the const were wrongly pushed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, mv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('A',1,1),('B',2,2),('A',3,5)");
+            execute("CREATE TABLE s (k SYMBOL, sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The B-key slave rows (99@1, 88@4) prevail at master timestamps for key A; pruning them
+            // would change the prevailing slave value, so the literal and bind forms would diverge.
+            execute("INSERT INTO s VALUES ('A',10,0),('B',99,1),('A',20,3),('B',88,4),('A',30,6)");
+
+            final String expected = """
+                    k\tmv\tsv
+                    A\t1\tnull
+                    A\t1\t20
+                    A\t3\t20
+                    A\t3\t30
+                    """;
+
+            // Literal form: the predicate stays a post-join Filter over a full slave scan (no
+            // 'A'=k pushed into the slave sub-query). The plan normalizes 'A'=m.k to m.k='A'.
+            bindVariableService.clear();
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE 'A' = m.k ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: m.k='A'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result.
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "A");
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE :v::SYMBOL = m.k ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
                     .returns(expected);
         });
     }
@@ -7571,6 +7673,31 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceOperatorMasterFilterStaysPostJoin() throws Exception {
+        // SPLICE variant of testOperatorMasterFilterStaysPostJoin: assignFilters routes a non-folded
+        // operator predicate (m.c1 < 100) on a NULL-extending master to a post-join filter; the only
+        // existing SPLICE master-filter test for a live operator is the folded-FALSE case. The master
+        // row (c1=50) passes the filter, so pushing the predicate into the master leaves it unchanged,
+        // but it also strips the post-join filter, leaking the pre-master NULL-master splice row that
+        // c1<100 must drop (NULL<100 is NULL/false). Held post-join, only the two prevailing-master
+        // rows survive.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (50, 2)");
+            execute("CREATE TABLE s (sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s@1 leads the single master row (a NULL-master splice row); s@3 trails it (prevailing
+            // master 50). The leading row must be filtered out, the two prevailing rows kept.
+            execute("INSERT INTO s VALUES (10, 1), (20, 3)");
+
+            assertQuery("SELECT m.c1 FROM m SPLICE JOIN s WHERE m.c1 < 100")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.c1<100")
+                    .returns("c1\n50\n50\n");
+        });
+    }
+
+    @Test
     public void testStackedNullingJoinsMasterFilterStaysPostJoin() throws Exception {
         // Two stacked nulling joins both NULL-extend the master mm. masterNullingJoinIndex must
         // anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not the inner
@@ -7780,6 +7907,39 @@ public class JoinTest extends AbstractCairoTest {
                             \uDBAE\uDD12ɜ|\t\uDBAE\uDD12ɜ|\t-2013119811
                             \uDBAD\uDCF1푻䑫\t\uDBAD\uDCF1푻䑫\t-681264014
                             """);
+        });
+    }
+
+    @Test
+    public void testThreeTableMasterFilterStaysPostJoin() throws Exception {
+        // A WHERE predicate that references THREE master tables (t0.a + t1.b + t2.c > 0), wrapped in a
+        // sub-query so moveWhereInsideSubQueries re-anchors it. The multi-table branch there routes
+        // through lastNullingJoinAfterReferencedTables, whose loop over the referenced indexes only
+        // iterated over two entries in every other test. A later RIGHT/FULL join NULL-extends t0, t1
+        // and t2 for the unmatched t3 key 2; the predicate must stay above that join. Anchoring at the
+        // highest referenced model index (t2's inner join) would leak the (null,null,null,2) row -- 2
+        // rows for 1. The matched row (1+2+3=6 > 0) survives; the NULL-master row (null+...>0 is
+        // NULL/false) is dropped.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (2, 1)");
+            execute("CREATE TABLE t2 (c INT, k INT)");
+            execute("INSERT INTO t2 VALUES (3, 1)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2)");
+
+            final String expected = "a\tb\tc\tk\n1\t2\t3\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a, b, c, k FROM (SELECT t0.a a, t1.b b, t2.c c, t3.k k " +
+                        "FROM t0 JOIN t1 ON t0.k = t1.k JOIN t2 ON t1.k = t2.k " + joinType + " JOIN t3 ON t3.k = t2.k) " +
+                        "WHERE a + b + c > 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: 0<t0.a+t1.b+t2.c")
+                        .returns(expected);
+            }
         });
     }
 
