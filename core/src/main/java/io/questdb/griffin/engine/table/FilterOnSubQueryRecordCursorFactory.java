@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -58,6 +59,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     private final Function filter;
     private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
+    private final HeapRowCursorFactory rowCursorFactory;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -77,10 +79,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         this.func = func;
         cursorFactories = new ObjList<>();
         cursorFactoriesIdx = new int[]{0};
+        rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         final PageFrameRecordCursorImpl pageFrameRecordCursor = new PageFrameRecordCursorImpl(
                 configuration,
                 metadata,
-                new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                rowCursorFactory,
                 false,
                 filter
         );
@@ -110,6 +113,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     protected void _close() {
         super._close();
         Misc.free(filter);
+        Misc.free(rowCursorFactory);
         Misc.free(cursor);
         recordCursorFactory.close();
         factoriesA.clear();
@@ -212,6 +216,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         @Override
         public void recordAt(Record record, long atRowId) {
             delegate.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            delegate.setParquetDecodeHint(hint);
         }
 
         @Override

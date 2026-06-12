@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -130,12 +131,14 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // Assign base cursor first, so close() frees it if entryMem.reopen() throws.
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
         }
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
         entrySize = keyType.entrySize();
@@ -154,6 +157,12 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(record, atRowId);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        // We emit out of order, so of() pins the base to SCATTERED. An outer MONOTONIC push
+        // (e.g. an ASOF light join slave) must not downgrade it and force base re-decodes.
     }
 
     @Override

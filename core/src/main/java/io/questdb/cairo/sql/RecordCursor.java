@@ -293,6 +293,22 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     long preComputedStateSize();
 
     /**
+     * Declares the access pattern the enclosing factory will use when calling
+     * {@link #recordAt(Record, long)} on this cursor. The Parquet decode-buffer
+     * pool scales its byte budget by the hint: monotonic walks get a smaller
+     * effective ceiling, scattered walks get the full configured budget.
+     * Wrappers that hold a delegate cursor must forward the call. Factories
+     * that copy delegate records into a heap-allocated chain or map before
+     * iteration (e.g. non-light sorts and hash/asof joins) intentionally skip
+     * this hint because the underlying cursor is exhausted once and never
+     * random-accessed.
+     *
+     * @param hint the access pattern of upcoming {@code recordAt} calls
+     */
+    default void setParquetDecodeHint(ParquetDecodeHint hint) {
+    }
+
+    /**
      * Returns the total number of records available in this cursor.
      * <p>
      * Not all record cursor implementations can determine their size efficiently.

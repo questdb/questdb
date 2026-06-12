@@ -47,11 +47,10 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                                 Encode sort light
                                   keys: [b1]
                                     CachedWindowLight
-                                      orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]
-                                        SelectedRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: y
+                                      orderedFunctions: [[b desc] => [row_number() over (partition by [a])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: y
                             """);
 
             assertQuery(query)

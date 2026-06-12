@@ -428,7 +428,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
-    private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
     private final long qwpUdpCommitInterval;
@@ -528,7 +527,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowJoinEnabled;
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
-    private final int sqlParquetFrameCacheCapacity;
+    private final long sqlParquetCacheMemorySize;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -1882,18 +1881,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
-            this.qwpMaxSchemasPerConnection = getInt(
-                    properties,
-                    env,
-                    PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION,
-                    QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
-            );
-            if (qwpMaxSchemasPerConnection < 1) {
-                throw new ServerConfigurationException(
-                        PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION.getPropertyPath()
-                                + " must be at least 1"
-                );
-            }
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -2214,7 +2201,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewCoveringIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED, false);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
-            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
+            this.sqlParquetCacheMemorySize = Math.max(getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256L * Numbers.SIZE_1MB), 0L);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -3461,6 +3448,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES,
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY,
+                    PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE
             );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
@@ -4750,8 +4741,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlParquetFrameCacheCapacity() {
-            return sqlParquetFrameCacheCapacity;
+        public long getSqlParquetCacheMemorySize() {
+            return sqlParquetCacheMemorySize;
         }
 
         @Override
@@ -5981,11 +5972,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpMaxRowsPerTable() {
             return qwpMaxRowsPerTable;
-        }
-
-        @Override
-        public int getQwpMaxSchemasPerConnection() {
-            return qwpMaxSchemasPerConnection;
         }
 
         @Override

@@ -28,17 +28,20 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * QWP egress message-kind discriminator. The first byte of every egress payload
- * identifies which of the egress message types it carries. See
- * {@code docs/qwp/wire-egress.md} sec 5 for the authoritative list.
+ * identifies which of the egress message types it carries. See the QWP egress
+ * protocol reference at
+ * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/}
+ * for the authoritative list.
  */
 public final class QwpEgressMsgKind {
     /**
      * Server-to-client connection-cache reset. Body:
-     * {@code reset_mask:u8} with bit 0 = SYMBOL dict, bit 1 = schema cache.
+     * {@code reset_mask:u8} with bit 0 = SYMBOL dict.
      * Sent between result boundaries when a cache reaches its configured
      * soft cap. Recipient clears the indicated caches; subsequent RESULT_BATCH
-     * and schema-reference frames assume a fresh starting state. See
-     * {@code docs/qwp/wire-egress.md} sec 12.
+     * frames assume a fresh starting state. See the QWP egress protocol
+     * reference at
+     * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/}.
      */
     public static final byte CACHE_RESET = 0x17;
     public static final byte CANCEL = 0x14;
@@ -46,10 +49,13 @@ public final class QwpEgressMsgKind {
      * {@code SERVER_INFO.capabilities} bit advertising that the frame ends with
      * an additional {@code zone_id:u16_len+utf8} field after {@code node_id}.
      * Servers set the bit when the operator has configured a zone; clients use
-     * the value to prefer same-zone endpoints (see {@code docs/qwp/failover.md}
-     * sec 2 and {@code docs/qwp/wire-egress.md} sec 11.8). When the bit is
-     * unset, the trailer is absent entirely so a v2.0 client reading a v2.1
-     * server with no zone configured sees the original byte layout.
+     * the value to prefer same-zone endpoints (see
+     * {@code https://questdb.com/docs/high-availability/client-failover/concepts/}
+     * and the QWP egress protocol reference at
+     * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/}).
+     * When the bit is
+     * unset, the trailer is absent entirely so a client built against the
+     * zone-less layout sees the byte layout it expects.
      */
     public static final int CAP_ZONE = 0x00000001;
     public static final byte CREDIT = 0x15;
@@ -68,13 +74,6 @@ public final class QwpEgressMsgKind {
      * {@code RESULT_BATCH} delta section starts at {@code deltaStart=0}.
      */
     public static final byte RESET_MASK_DICT = 0x01;
-    /**
-     * Reset mask bit: clear the connection-scoped schema-id cache.
-     * After receiving, the peer discards every previously assigned schema
-     * id; the next {@code RESULT_BATCH} ships the schema in full mode
-     * (not reference mode) with a fresh id.
-     */
-    public static final byte RESET_MASK_SCHEMAS = 0x02;
     public static final byte RESULT_BATCH = 0x11;
     public static final byte RESULT_END = 0x12;
     /**
@@ -104,8 +103,8 @@ public final class QwpEgressMsgKind {
     public static final byte ROLE_STANDALONE = 0;
     /**
      * Server-to-client. Unsolicited frame delivered as the first QWP message on
-     * every v2 WebSocket connection (see {@code QwpConstants.VERSION_2}). Carries
-     * the server's replication role, monotonic role epoch, cluster and node
+     * every WebSocket connection. Carries the server's replication role,
+     * monotonic role epoch, cluster and node
      * identifiers, a capabilities bitfield, and the server's wall-clock
      * nanoseconds at send time.
      * <p>

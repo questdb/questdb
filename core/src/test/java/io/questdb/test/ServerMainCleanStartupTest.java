@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -68,6 +67,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 }, "select wait_wal_table('y')")
                         .noLeakCheck()
                         .expectSize()
+                        .noMemoryUsageCheck()
                         .returns("""
                                 wait_wal_table('y')
                                 true
@@ -87,6 +87,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
                 }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .returns("""
                                 table_name\townership_reason
                                 y\t
@@ -104,6 +105,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
                 }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .returns("table_name\townership_reason\n");
             }
         });

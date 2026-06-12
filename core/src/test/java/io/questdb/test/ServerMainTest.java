@@ -664,7 +664,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.work.stealing.threshold\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.work.stealing.spin.timeout\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT\t50000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.read.parquet.enabled\tQDB_CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parquet.cache.memory.size\tQDB_CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parquet.row.group.pruning.enabled\tQDB_CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.compile.view.model.pool.capacity\tQDB_CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
@@ -988,7 +988,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
                                     "qwp.egress.compression.force.level\tQDB_QWP_EGRESS_COMPRESSION_FORCE_LEVEL\t0\tdefault\tfalse\ttrue\n" +
                                     "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
-                                    "qwp.max.schemas.per.connection\tQDB_QWP_MAX_SCHEMAS_PER_CONNECTION\t65535\tdefault\tfalse\tfalse\n" +
                                     "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                                     "qwp.max.uncommitted.rows\tQDB_QWP_MAX_UNCOMMITTED_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +

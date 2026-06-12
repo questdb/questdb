@@ -774,7 +774,7 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
-    int getSqlParquetFrameCacheCapacity();
+    long getSqlParquetCacheMemorySize();
 
     int getSqlPivotMaxProducedColumns();
 

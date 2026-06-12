@@ -7407,7 +7407,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   keys: [column desc, a0, berlin_ts desc]
                                     Async Group By workers: 1
                                       keys: [ts,berlin_ts,a0,column]
-                                      keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(ts1),10*a0]
+                                      keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(ts),10*a0]
                                       values: [sum(b)]
                                       filter: null
                                         SelectedRecord

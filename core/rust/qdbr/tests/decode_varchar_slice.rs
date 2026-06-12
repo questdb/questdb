@@ -449,6 +449,38 @@ fn test_varchar_slice_all_nulls() {
 }
 
 #[test]
+fn test_varchar_slice_all_nulls_delta_length() {
+    // All-null VarcharSlice page with DELTA_LENGTH_BYTE_ARRAY. The lengths page is
+    // a value_count=0 DELTA_BINARY_PACKED header decoded via
+    // DeltaLAVarcharSliceDecoder -> MiniblockIterator::try_new -- the decoder the
+    // all-null delta fix touches. The other all-null slice tests only cover Plain
+    // and RleDictionary, leaving this (delta) read path uncovered end-to-end.
+    let count = 500;
+    let values: Vec<ByteArray> = Vec::new();
+    let expected_values: Vec<String> = (0..count).map(|_| String::new()).collect();
+    let nulls = vec![true; count];
+
+    for version in &VERSIONS {
+        eprintln!("Testing all nulls DeltaLengthByteArray with version={version:?}");
+        let schema = optional_byte_array_schema("col", Some(LogicalType::String));
+        let props = qdb_props_ascii(
+            ColumnTypeTag::VarcharSlice,
+            *version,
+            Encoding::DeltaLengthByteArray,
+            true,
+        );
+        encode_decode_and_verify_varchar_slice(
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            true,
+        );
+    }
+}
+
+#[test]
 fn test_varchar_slice_utf8() {
     let count = 100;
     let values: Vec<ByteArray> = (0..count)

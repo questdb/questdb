@@ -86,7 +86,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
-            @NotNull RecordSink recordSink,
+            @Nullable RecordSink recordSink,
             long pageSize,
             int maxPages,
             String maxPagesConfigKey

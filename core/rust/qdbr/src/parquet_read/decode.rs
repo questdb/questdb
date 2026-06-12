@@ -51,22 +51,28 @@ impl ColumnChunkBuffers {
             aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
+            page_buffers_size: 0,
             page_buffers: Vec::new(),
         }
     }
 
+    // Unconditional re-read so a hypothetical second call between resets cannot keep
+    // a stale ptr after a Vec reallocation.
     pub fn refresh_ptrs(&mut self) {
-        if self.data_ptr.is_null() {
-            self.data_size = self.data_vec.len();
-            self.data_ptr = self.data_vec.as_mut_ptr();
-        }
+        self.data_size = self.data_vec.len();
+        self.data_ptr = self.data_vec.as_mut_ptr();
 
-        if self.aux_ptr.is_null() {
-            self.aux_size = self.aux_vec.len();
-            self.aux_ptr = self.aux_vec.as_mut_ptr();
-        }
+        self.aux_size = self.aux_vec.len();
+        self.aux_ptr = self.aux_vec.as_mut_ptr();
+
+        // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
+        self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
     }
 
+    // Callers drain `page_buffers` (into a reuse pool) before invoking; this only clears
+    // the outer Vec and the inner data/aux vectors. The inner Vecs keep their capacity
+    // so the next decode can grow into them via realloc only when the new chunk exceeds
+    // the buffer's historical peak.
     pub fn reset(&mut self) {
         self.data_vec.clear();
         self.data_size = 0;
@@ -76,6 +82,7 @@ impl ColumnChunkBuffers {
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
 
+        self.page_buffers_size = 0;
         self.page_buffers.clear();
     }
 }
@@ -2289,6 +2296,90 @@ mod tests {
     const UUID_NULL: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128];
 
     #[test]
+    fn page_buffers_size_tracks_retained_page_bytes() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        // Fresh buffer: nothing retained.
+        bufs.refresh_ptrs();
+        assert_eq!(bufs.page_buffers_size, 0);
+
+        // A VarcharSlice decode retains decompressed page/dict buffers here, with the
+        // aux pointers referencing them. refresh_ptrs must sum their lengths so the
+        // Java decode-cache budget counts the string bytes.
+        bufs.page_buffers.push(vec![0u8; 100]);
+        bufs.page_buffers.push(vec![0u8; 56]);
+        bufs.refresh_ptrs();
+        assert_eq!(bufs.page_buffers_size, 156);
+
+        // reset() must zero it so a reused buffer does not carry stale bytes.
+        bufs.reset();
+        assert_eq!(bufs.page_buffers_size, 0);
+        assert!(bufs.page_buffers.is_empty());
+    }
+
+    #[test]
+    fn decode_row_group_clears_varchar_slice_reuse_pool() {
+        // The VarcharSlice page-buffer reuse pool lives on the DecodeContext, which outlives
+        // individual decode-cache entries. Spare buffers left in it are uncounted by the Java
+        // byte budget and would otherwise survive cache eviction and releaseParquetBuffers(),
+        // letting the budget read zero while RSS still held varchar page allocations. A
+        // row-group decode must drop the pool at the end. The live buffers a decode produces
+        // are held in ColumnChunkBuffers::page_buffers (counted), not the pool.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 10;
+        let row_group_size = 50;
+        let data_page_size = 50;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        // Simulate spare page buffers retained from a prior column-chunk decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        decoder
+            .decode_row_group(
+                &mut ctx,
+                &mut rgb,
+                &[(0, column_type)],
+                0,
+                0,
+                row_count as u32,
+            )
+            .unwrap();
+
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "row-group decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "row-group decode must leave the page-buffer scratch empty"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "row-group decode must leave the dict-buffer scratch empty"
+        );
+    }
+
+    #[test]
     fn test_decode_int_column_v2_nulls() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -3873,6 +3964,324 @@ mod tests {
         expected.extend_from_slice(&be_to_le_truncate(&values[0], 8));
         expected.extend_from_slice(&be_to_le_truncate(&values[1], 8));
         assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
+    }
+
+    // Decode an all-null V1 page whose DELTA_BINARY_PACKED values buffer is EMPTY
+    // (no header) -- the shape pre-fix QuestDB and some foreign encoders produce
+    // -- through the real decode_page path, asserting every row is the given
+    // Int64-width null sentinel. Every all-null integration test goes through the
+    // current header-emitting writer, so this is the only coverage of
+    // MiniblockIterator::try_new's empty-buffer branch via decode_page. Reverting
+    // just the reader fix makes this fail (try_new rejects the empty buffer)
+    // while the integration round-trips still pass.
+    fn assert_empty_delta_int64_page_all_null(column_type: ColumnType, null_sentinel: i64) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // Definition levels: n rows, all null (level 0), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(0u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        // The values buffer is left empty -- the shape this branch must tolerate.
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaBinaryPacked.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::Int64,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+
+        assert_eq!(bufs.data_vec.len(), n * size_of::<i64>());
+        let out: &[i64] = unsafe { std::slice::from_raw_parts(bufs.data_vec.as_ptr().cast(), n) };
+        assert_eq!(out, &[null_sentinel; 10]);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_buffer_decodes_all_null() {
+        // LONG: the common all-null delta column type.
+        assert_empty_delta_int64_page_all_null(ColumnTypeTag::Long.into_type(), i64::MIN);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_buffer_decimal64_all_null() {
+        // Decimal64 (Int64 physical type) also dispatches DELTA pages, with its
+        // own null sentinel. QuestDB's writer never emits DELTA for decimals, so
+        // this reader-side path is only reachable from foreign files; covers the
+        // distinct decode.rs dispatch arm.
+        assert_empty_delta_int64_page_all_null(ColumnTypeTag::Decimal64.into_type(), i64::MIN);
+    }
+
+    // Decode an all-null V1 ByteArray page (n rows, every definition level 0) whose
+    // values buffer is exactly `values`, through the real decode_page dispatch, and
+    // return its (data_vec, aux_vec). With `values` empty this is the header-less
+    // shape a foreign encoder can emit for an all-null DELTA varlen column and that
+    // read_parquet() hands straight to the slicers.
+    fn decode_all_null_varlen_page(
+        column_type: ColumnType,
+        encoding: Encoding,
+        values: &[u8],
+    ) -> (Vec<u8>, Vec<u8>) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // Definition levels: n rows, all null (level 0), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(0u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        buffer.extend_from_slice(values);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: encoding.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+        (
+            bufs.data_vec.as_slice().to_vec(),
+            bufs.aux_vec.as_slice().to_vec(),
+        )
+    }
+
+    // A compliant zero-value delta header for `encoding` -- the self-describing
+    // shape a spec-following encoder emits for an all-null page. It decodes cleanly
+    // today (block_size/num_mini_blocks are non-zero), so it serves as the golden
+    // reference for what the header-less empty-buffer page must decode to.
+    fn compliant_zero_value_delta_values(encoding: Encoding) -> Vec<u8> {
+        let mut values = Vec::new();
+        match encoding {
+            Encoding::DeltaLengthByteArray => {
+                parquet2::encoding::delta_length_byte_array::encode(
+                    std::iter::empty::<&[u8]>(),
+                    &mut values,
+                );
+            }
+            Encoding::DeltaByteArray => {
+                parquet2::encoding::delta_byte_array::encode(
+                    std::iter::empty::<&[u8]>(),
+                    &mut values,
+                );
+            }
+            other => panic!("unsupported delta encoding {other:?}"),
+        }
+        assert!(
+            !values.is_empty(),
+            "reference zero-value header must be non-empty"
+        );
+        values
+    }
+
+    // An all-null varlen page whose values buffer is EMPTY (no delta header) must
+    // decode byte-identically to the same page carrying a compliant zero-value
+    // delta header. For an all-null page the values buffer is never read, so the
+    // two agree -- but before the slicer empty-buffer guard, the empty buffer drove
+    // the vendored parquet2 delta decoder into a 0/0 division that panicked and
+    // aborted the JVM across the JNI boundary.
+    fn assert_empty_delta_varlen_page_all_null(column_type: ColumnType, encoding: Encoding) {
+        let reference = compliant_zero_value_delta_values(encoding);
+        let (empty_data, empty_aux) = decode_all_null_varlen_page(column_type, encoding, &[]);
+        let (ref_data, ref_aux) = decode_all_null_varlen_page(column_type, encoding, &reference);
+        assert_eq!(
+            empty_data, ref_data,
+            "data_vec from empty buffer must match the compliant zero-value page"
+        );
+        assert_eq!(
+            empty_aux, ref_aux,
+            "aux_vec from empty buffer must match the compliant zero-value page"
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_string_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_varchar_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_binary_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Binary.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_array_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            encode_array_type(ColumnTypeTag::Double, 1).unwrap(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_byte_array_buffer_varchar_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_byte_array_buffer_varchar_slice_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::VarcharSlice.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_string_null_layout() {
+        // Anchors the golden-reference checks above: confirm the all-null result is
+        // genuine, not merely a non-panicking artifact. A QuestDB String column
+        // materializes each null row as a -1 length marker (4 bytes), no payload.
+        let (data, _aux) = decode_all_null_varlen_page(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+            &[],
+        );
+        assert_eq!(data.len(), 10 * size_of::<i32>());
+        let lengths: &[i32] = unsafe { std::slice::from_raw_parts(data.as_ptr().cast(), 10) };
+        assert_eq!(lengths, &[-1i32; 10]);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_partial_null_errors_not_panics() {
+        // A corrupt page that claims a non-null (definition level 1) yet provides
+        // an EMPTY values buffer must surface a clean decode error, never abort the
+        // JVM. The empty-buffer try_new guard alone would relocate the parquet2 0/0
+        // panic into DeltaLengthArraySlicer::next()'s length-index lookup; the
+        // bounds check there turns it into a Layout error instead.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // One non-null followed by nine nulls, RLE-encoded (bit width 1).
+        let levels = [1u32, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, levels.into_iter(), n, 1).unwrap();
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        // values buffer intentionally empty -- contradicts the claimed non-null.
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaLengthByteArray.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::String.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let err = decode_page(&page, None, &mut bufs, col_info, 0, n)
+            .expect_err("a non-null claim over an empty values buffer must be a decode error");
+        assert!(
+            err.to_string().contains("not enough length values"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
