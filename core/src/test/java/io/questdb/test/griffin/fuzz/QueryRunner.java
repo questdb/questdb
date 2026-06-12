@@ -144,14 +144,18 @@ public final class QueryRunner {
     // to fail with "column not found", which the caller treats as "candidate
     // is not a constant arithmetic subtree" and skips.
     private static final GenericRecordMetadata EMPTY_METADATA = new GenericRecordMetadata();
-    // Fault-injection tuning. The malloc fault arms the RSS limit at the current
-    // usage plus a small random slack so the query's next sizeable native
-    // allocation trips the real out-of-memory path; the file fault fails one of
-    // the first N filesystem ops; and the per-query leak slack absorbs pooled
-    // growth that survives a releaseInactive() drain (the compiler cache is
-    // excluded separately, see stableMemUsed).
-    private static final long FAULT_MALLOC_SLACK_MIN = 4 * 1024;
-    private static final int FAULT_MALLOC_SLACK_RANGE = 256 * 1024;
+    // Fault-injection tuning. The malloc fault arms the RSS limit at the
+    // post-compile usage plus a small random slack so the next native heap
+    // allocation in the cursor-construction/iteration phase trips the real
+    // out-of-memory path (see runRawMallocFault for why arming waits until
+    // after compile); the file fault fails one of the first N filesystem ops;
+    // and the per-query leak slack absorbs pooled growth that survives a
+    // releaseInactive() drain (the compiler cache is excluded separately, see
+    // stableMemUsed). The slack stays small: arming after compile already skips
+    // the parser/compiler allocations, so a wide slack would only let the
+    // cursor phase's own allocations slip under the limit and no-op the fault.
+    private static final long FAULT_MALLOC_SLACK_MIN = 0;
+    private static final int FAULT_MALLOC_SLACK_RANGE = 4 * 1024;
     private static final int FAULT_MAX_FILE_OPS = 48;
     private static final int FAULT_MAX_FN_CALLS = 40;
     private static final long FAULT_MEM_LEAK_SLACK = 256 * 1024;
@@ -172,8 +176,15 @@ public final class QueryRunner {
     private final FailureFileFacade failureFf;
     // Fault kinds available this run; FILE is present only when failureFf != null.
     private final FaultType[] faultTypes;
+    // Per-type count of faults armed on a query, indexed by FaultType.ordinal().
+    // A fault that arms but is never reached (the query did fewer ops than the
+    // random trigger point, or allocated less than the malloc slack) is a no-op;
+    // the armed-vs-fired ratio measures how often each fault kind actually bites.
+    private final int[] faultsArmedByType = new int[FaultType.values().length];
     // Count of injected faults that actually fired (vs armed but not reached).
     private int faultsFired;
+    // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
+    private final int[] faultsFiredByType = new int[FaultType.values().length];
     // Reused per parseFunction call. Stateful (metadataStack, function stacks)
     // but parseFunction is contractually re-entrant: it pushes/pops its own
     // state in try/finally, so a single instance is safe across the runner's
@@ -248,8 +259,16 @@ public final class QueryRunner {
         return faultTypes[rnd.nextInt(faultTypes.length)];
     }
 
+    public int getFaultsArmed(FaultType type) {
+        return faultsArmedByType[type.ordinal()];
+    }
+
     public int getFaultsFired() {
         return faultsFired;
+    }
+
+    public int getFaultsFired(FaultType type) {
+        return faultsFiredByType[type.ordinal()];
     }
 
     public Result run(GeneratedQuery query) {
@@ -282,6 +301,7 @@ public final class QueryRunner {
      */
     public Result runFault(GeneratedQuery query, FaultType type, Rnd rnd) {
         String sql = query.sql();
+        faultsArmedByType[type.ordinal()]++;
         // Drain pooled readers/writers so the post-fault delta reflects this query
         // alone, not state a pool legitimately retains across queries.
         engine.releaseInactive();
@@ -289,20 +309,24 @@ public final class QueryRunner {
         long fdBefore = Files.getOpenFileCount();
 
         int fileFailBaseline = failureFf != null ? failureFf.failureGenerated() : 0;
-        long savedRssLimit = 0;
+        // Saved unconditionally for MALLOC: the limit is armed inside
+        // runRawMallocFault after compile, so restore the prior value here
+        // whether or not the run reached the arming point.
+        long savedRssLimit = Unsafe.getRssMemLimit();
+        // Drawn here (not inside runRawMallocFault) so a MALLOC query draws
+        // exactly one rnd op whether or not it compiles, matching the FILE /
+        // FUNCTION arming draws and keeping the seeded stream replay-stable.
+        long mallocSlack = 0;
         switch (type) {
             case FILE -> failureFf.setToFailAfter(1 + rnd.nextInt(FAULT_MAX_FILE_OPS));
-            case MALLOC -> {
-                savedRssLimit = Unsafe.getRssMemLimit();
-                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + FAULT_MALLOC_SLACK_MIN + rnd.nextInt(FAULT_MALLOC_SLACK_RANGE));
-            }
+            case MALLOC -> mallocSlack = FAULT_MALLOC_SLACK_MIN + rnd.nextInt(FAULT_MALLOC_SLACK_RANGE);
             case FUNCTION -> TestFaultFunctionFactory.armToFailAfter(rnd.nextInt(FAULT_MAX_FN_CALLS));
         }
         Outcome outcome;
         // Read the file-failure count before disarming: clearFailures() resets it.
         int fileFiredAfter = fileFailBaseline;
         try {
-            outcome = runRaw(sql, rowsA);
+            outcome = type == FaultType.MALLOC ? runRawMallocFault(sql, rowsA, mallocSlack) : runRaw(sql, rowsA);
             if (failureFf != null) {
                 fileFiredAfter = failureFf.failureGenerated();
             }
@@ -320,6 +344,7 @@ public final class QueryRunner {
         };
         if (faultFired) {
             faultsFired++;
+            faultsFiredByType[type.ordinal()]++;
         }
         // Oracle 1: the fault must not be swallowed. A FILE op failure may be
         // handled gracefully (a non-fatal -1 return), so only the deterministic
@@ -1421,6 +1446,43 @@ public final class QueryRunner {
     private Outcome runRaw(String sql, StringSink rows) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            int rowsRead;
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                RecordMetadata metadata = factory.getMetadata();
+                rowsRead = materialize(cursor, metadata, metadata.getColumnCount(), rows);
+            }
+            return Outcome.ok(rowsRead, false, false);
+        } catch (SqlException e) {
+            return Outcome.error(e, e.getFlyweightMessage().toString(), false);
+        } catch (ImplicitCastException e) {
+            return Outcome.error(e, e.getFlyweightMessage().toString(), false);
+        } catch (NumericException e) {
+            return Outcome.error(e, "", false);
+        } catch (Exception t) {
+            String msg = t.getMessage();
+            return Outcome.error(t, msg == null ? "" : msg, false);
+        }
+    }
+
+    /**
+     * Runs a query for the MALLOC fault, arming the RSS limit only after the
+     * factory compiles. Arming around the whole run (compile included) let the
+     * random slack be consumed by parser/compiler allocations -- which vary per
+     * query and are excluded from the leak baseline anyway -- so the limit
+     * frequently never bit during the phase the oracle cares about and the
+     * fault no-op'd. Compiling first, then arming at the post-compile usage plus
+     * a small slack, puts the trip squarely in {@code getCursor()} construction
+     * (opening readers, allocating maps / group-by allocators / record and tree
+     * chains) and iteration -- the resource-acquiring paths whose error-path
+     * cleanup this oracle verifies. The caller restores the prior RSS limit in
+     * its {@code finally}; a compile failure throws before arming, which the
+     * caller classifies as "fault not reached". {@code slack} is the pre-drawn
+     * random headroom above the post-compile usage at which the limit is armed.
+     */
+    private Outcome runRawMallocFault(String sql, StringSink rows, long slack) {
+        rows.clear();
+        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
             int rowsRead;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();

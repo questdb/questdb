@@ -410,6 +410,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")
                 .$();
+        LOG.info().$("fuzz faults by type: ")
+                .$("FILE ").$(runner.getFaultsFired(FaultType.FILE)).$('/').$(runner.getFaultsArmed(FaultType.FILE))
+                .$(", MALLOC ").$(runner.getFaultsFired(FaultType.MALLOC)).$('/').$(runner.getFaultsArmed(FaultType.MALLOC))
+                .$(", FUNCTION ").$(runner.getFaultsFired(FaultType.FUNCTION)).$('/').$(runner.getFaultsArmed(FaultType.FUNCTION))
+                .$(" (fired/armed)")
+                .$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);
