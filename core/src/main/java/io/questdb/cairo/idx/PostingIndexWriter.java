@@ -2020,7 +2020,7 @@ public class PostingIndexWriter implements IndexWriter {
     private void checkNotPoisoned() {
         if (isPoisoned) {
             throw CairoException.critical(0)
-                    .put("posting index writer is poisoned by a rollback that failed after the value file switch; reopen the partition [index=")
+                    .put("posting index writer is poisoned by a seal or rollback that failed after the value file switch; reopen the partition [index=")
                     .put(indexName).put(']');
         }
     }
@@ -4091,6 +4091,7 @@ public class PostingIndexWriter implements IndexWriter {
         // behaviour, just now narrower (only post-switch throws).
         openSealValueFile(newSealTxn);
         boolean isSwitched = false;
+        boolean isPublished = false;
         try {
             long srcFd = valueMem.getFd();
             long dstFd = sealValueMem.getFd();
@@ -4150,33 +4151,43 @@ public class PostingIndexWriter implements IndexWriter {
                     /* overrideMinKey */ 0,
                     /* overrideMaxKey */ keyCount - 1
             );
+            // The chain entry at newSealTxn is now live and the writer is fully
+            // consistent (chain head, valueMem and sealTxn all at newSealTxn). A
+            // failure past this point (the .pk sync below) must leave the live
+            // files alone -- mirrors the rollback path's isReencodePublished.
+            isPublished = true;
             if (keyMem.isOpen()) {
                 keyMem.sync(false);
             }
         } catch (Throwable th) {
-            if (isSwitched) {
-                // valueMem / sidecarMems are now mapped to .{newSealTxn}; the
-                // chain still references oldSealTxn so no reader can ever pin
-                // them. Defer cleanup to the seal-purge job with the widest
-                // safe window. Picked up on the next publishPendingPurges drain.
-                // Same hazard as the post-switch rollback failure: the chain head
-                // is on the old .pv but valueMem on the staged one, so poison the
-                // writer rather than risk a later op publishing a chain entry at
-                // newSealTxn and letting the deferred purge delete the live file.
-                LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, poisoning writer and scheduling orphan purge [")
-                        .$("indexName=").$(indexName)
-                        .$(", newSealTxn=").$(newSealTxn)
-                        .$(']').$();
-                scheduleOrphanPurge(newSealTxn);
-                isPoisoned = true;
-            } else {
-                // No chain mutation, no mapping survives into the writer's
-                // valueMem swap -- safe to unlink the staging files directly.
-                // sealValueMem and any opened sidecarMems are closed inline so
-                // the unlinks land before any retry can race on the same name.
-                Misc.free(sealValueMem);
-                closeSidecarMems();
-                unlinkOrphanSealFiles(newSealTxn);
+            // A failure AFTER publishToChain leaves newSealTxn live and the writer
+            // fully consistent; the only loss is the unsynced .pk, which the next
+            // seal/commit re-syncs. Leave the live files alone -- just propagate.
+            if (!isPublished) {
+                if (isSwitched) {
+                    // Pre-publish, post-switch: valueMem / sidecarMems are mapped to
+                    // .{newSealTxn} but the chain still references oldSealTxn, so no
+                    // reader can pin them. Defer cleanup to the seal-purge job with
+                    // the widest safe window (the next publishPendingPurges drain).
+                    // The chain head is on the old .pv but valueMem on the staged
+                    // one, so poison the writer rather than risk a later op
+                    // publishing a chain entry at newSealTxn and letting the
+                    // deferred purge delete the live file.
+                    LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, poisoning writer and scheduling orphan purge [")
+                            .$("indexName=").$(indexName)
+                            .$(", newSealTxn=").$(newSealTxn)
+                            .$(']').$();
+                    scheduleOrphanPurge(newSealTxn);
+                    isPoisoned = true;
+                } else {
+                    // Pre-switch: no chain mutation, no mapping survives into the
+                    // writer's valueMem swap -- safe to unlink the staging files
+                    // directly. sealValueMem and any opened sidecarMems are closed
+                    // inline so the unlinks land before any retry races the name.
+                    Misc.free(sealValueMem);
+                    closeSidecarMems();
+                    unlinkOrphanSealFiles(newSealTxn);
+                }
             }
             throw th;
         }
