@@ -378,6 +378,11 @@ public class SortKeyEncoder implements QuietCloseable {
         throw new AssertionError("Failed to get static symbol table from " + symbolTable);
     }
 
+    private static boolean hasByteFF(long word) {
+        final long inv = ~word;
+        return ((inv - 0x0101010101010101L) & word & 0x8080808080808080L) != 0;
+    }
+
     private static void insertionSortRankMap(DirectIntList rankMap, StaticSymbolTable symbolTable, int lo, int hi) {
         for (int i = lo + 1; i <= hi; i++) {
             int key = rankMap.get(i);
@@ -389,6 +394,10 @@ public class SortKeyEncoder implements QuietCloseable {
             }
             rankMap.set(j + 1, key);
         }
+    }
+
+    private static CairoException invalidVarcharUtf8() {
+        return CairoException.nonCritical().put("cannot ORDER BY a VARCHAR with invalid UTF-8 (contains a 0xFF byte)");
     }
 
     private static boolean isBelowLong256Null(long l0, long l1, long l2, long l3) {
@@ -486,15 +495,23 @@ public class SortKeyEncoder implements QuietCloseable {
         final int size = value.size();
         long p = keyHeap.appendAddressFor(size + 2L);
         Unsafe.putByte(p++, (byte) (1 ^ mask));
-        // valid UTF-8 contains no 0xFF, so the per-byte +1 cannot carry
-        // across SWAR lanes
         final long wordMask = desc ? -1L : 0;
         int i = 0;
         for (; i + 8 <= size; i += 8, p += 8) {
-            Unsafe.putLong(p, (value.longAt(i) + 0x0101010101010101L) ^ wordMask);
+            final long word = value.longAt(i);
+            // The +1 shift reserves 0x00 as the terminator; a 0xFF byte would
+            // wrap to 0x00 and break the order. Valid UTF-8 has no 0xFF.
+            if (hasByteFF(word)) {
+                throw invalidVarcharUtf8();
+            }
+            Unsafe.putLong(p, (word + 0x0101010101010101L) ^ wordMask);
         }
         for (; i < size; i++, p++) {
-            Unsafe.putByte(p, (byte) ((value.byteAt(i) + 1) ^ mask));
+            final byte b = value.byteAt(i);
+            if (b == (byte) 0xFF) {
+                throw invalidVarcharUtf8();
+            }
+            Unsafe.putByte(p, (byte) ((b + 1) ^ mask));
         }
         Unsafe.putByte(p, mask);
     }

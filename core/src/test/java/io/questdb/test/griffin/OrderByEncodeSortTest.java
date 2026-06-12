@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
 import org.junit.Test;
@@ -1223,6 +1225,28 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             2
                             1
                             """);
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharInvalidUtf8() throws Exception {
+        // A VARCHAR can hold non-UTF-8 bytes (e.g. via ILP or CSV ingestion). The encoded
+        // sort rejects a 0xFF byte rather than emit a wrong order; the tree path
+        // (cairo.sql.order.by.sort.enabled=false) still sorts such data by unsigned bytes.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v VARCHAR)");
+            try (TableWriter writer = getWriter("x")) {
+                Utf8StringSink sink = new Utf8StringSink();
+                sink.putAny((byte) 0xFF);
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, sink);
+                row.append();
+                writer.commit();
+            }
+            assertQuery("SELECT * FROM x ORDER BY v")
+                    .noLeakCheck()
+                    .failsWith("invalid UTF-8");
         });
     }
 
