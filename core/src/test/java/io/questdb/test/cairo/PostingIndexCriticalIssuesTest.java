@@ -4778,6 +4778,122 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * rebuildSidecarsByCopy POST-switch, pre-publish failure (the staged .pc sync
+     * fails after switchToSealedValueFile but before publishToChain): the catch must
+     * orphan-purge the staged newSealTxn files over [0, MAX), leave the live
+     * oldSealTxn alone, and poison the writer. Mirrors the seal/rollback post-switch
+     * branches.
+     */
+    @Test
+    public void testRebuildSidecarsByCopyPostSwitchSidecarSyncFailurePoisonsWriter() throws Exception {
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rebuild_post_switch_pc_fail";
+            final long fakeColBytes = 32L << 3;
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.commitDense();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcSync.arm();
+                    try {
+                        writer.rebuildSidecars();
+                        Assert.fail("expected post-switch .pc sync failure during the covering rebuild");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+                    Assert.assertEquals("staged newSealTxn must be orphan-purged",
+                            1, writer.getPendingPurgesSizeForTesting());
+                    Assert.assertEquals("orphan purge spans the full txn window",
+                            Long.MAX_VALUE, writer.getPendingPurgeToTxnForTesting(0));
+                    assertPoisonedRejects("commit", writer::commit);
+                    assertPoisonedRejects("seal", writer::seal);
+                    assertPoisonedRejects("rollbackValues", () -> writer.rollbackValues(0));
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * rebuildSidecarsByCopy PRE-switch failure (the staged .pc open faults before
+     * switchToSealedValueFile): the catch must unlink the staged files directly,
+     * queue no purge, and leave the writer usable (nothing switched, no poison).
+     */
+    @Test
+    public void testRebuildSidecarsByCopyPreSwitchSidecarOpenFailureCleansUpAndKeepsWriterUsable() throws Exception {
+        final PcOpenFailingFacade pcOpen = new PcOpenFailingFacade();
+        ff = pcOpen;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rebuild_pre_switch_pc_open_fail";
+            final long fakeColBytes = 32L << 3;
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.commitDense();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcOpen.arm();
+                    try {
+                        writer.rebuildSidecars();
+                        Assert.fail("expected pre-switch .pc open failure during the covering rebuild");
+                    } catch (CairoException expected) {
+                        // openSidecarFiles' mem.of() throws on the injected -1 fd
+                    } finally {
+                        pcOpen.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one .pc0 open", 1, pcOpen.failureCount());
+
+                    // Pre-switch: the staged .pv is unlinked directly, no purge queued.
+                    final FilesFacade ff2 = configuration.getFilesFacade();
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pv unlinked on a pre-switch rebuild failure [path=" + pv + ']', ff2.exists(pv));
+                    Assert.assertEquals("pre-switch rebuild failure queues no purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+
+                    // Not poisoned (nothing switched): the retried rebuild succeeds.
+                    writer.rebuildSidecars();
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
      * The seal path must be poison-symmetric with rollback / rebuildSidecarsByCopy.
      * A post-switch (sealTxn advanced to newSealTxn) but pre-publish (.pc sync)
      * failure leaves valueMem at newSealTxn while the chain head still references
