@@ -218,13 +218,13 @@ steps:
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode -Dtest.include=$(includeTests)
+        "--batch-mode $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-        -P build-web-console
-         $(MAVEN_RUN_OPTS)"
+        $(WEB_CONSOLE_PROFILE)
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"

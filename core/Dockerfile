@@ -3,6 +3,8 @@ FROM debian:bookworm AS builder
 ARG tag_name
 ARG GRAAL_JDK_VERSION=25.0.2
 ARG TARGETARCH
+# Pinned cargo-deny version used to regenerate THIRD_PARTY_LICENSES.txt.
+ARG CARGO_DENY_VERSION=0.19.8
 
 ENV GOSU_VERSION=1.19-go1.25.10
 ENV DEBIAN_FRONTEND=noninteractive
@@ -66,6 +68,11 @@ RUN echo tag_name ${tag_name:-master}
 WORKDIR /build/questdb
 
 COPY . .
+
+# Refresh the bundled Rust third-party license attributions (shipped in the
+# distribution's legal/ dir and questdb.jar's META-INF) before packaging, so
+# they match the crates linked into libquestdbr. Installs cargo-deny if absent.
+RUN CARGO_DENY_VERSION="${CARGO_DENY_VERSION}" bash ci/generate_third_party_licenses.sh
 
 RUN mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P build-web-console,build-binaries
 

@@ -179,6 +179,14 @@ jobs:
           echo "=== All Rust libraries ==="
           find core/target/classes/io/questdb/bin/ -type f -exec ls -la {} \;
 
+      # Refresh the bundled Rust third-party license attributions (shipped in
+      # the no-jre / rt-linux legal/ dir and questdb.jar's META-INF) before
+      # packaging, so they match the crates linked into libquestdbr.
+      - name: Regenerate THIRD_PARTY_LICENSES.txt
+        run: bash ci/generate_third_party_licenses.sh
+        env:
+          CARGO_DENY_VERSION: "0.19.8"
+
       - name: Build QuestDB
         working-directory: core
         run: mvn package -DskipTests -DskipNative -Dhttp.keepAlive=false -P build-web-console,build-binaries
