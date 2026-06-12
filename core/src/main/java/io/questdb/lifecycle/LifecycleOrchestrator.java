@@ -131,10 +131,18 @@ public class LifecycleOrchestrator implements QuietCloseable {
         // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
         // the task exits without progressing further.
         executor.shutdown();
-        try {
-            executor.awaitTermination(30, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        // Rendezvous with any in-flight executor work (an enterprise role-switch cascade) before
+        // the stop loop frees component resources. The base implementation just awaits the executor
+        // for the default budget; the enterprise overlay overrides awaitInFlightWork to extend the
+        // await to the ACTIVE switch budget and to nudge the cascade (interrupt its drain sleep) so
+        // it observes shutdown promptly and exits at its next isClosing() boundary check. The bound
+        // is the switch budget, never an unbounded join -- a wedged cascade that exceeds even the
+        // budget falls through to the stop loop logged, not blocked forever.
+        if (!awaitInFlightWork()) {
+            injectedLog.error()
+                    .$("lifecycle executor did not drain within the close budget; proceeding to the "
+                            + "reverse-topo stop loop (in-flight task, if any, must self-terminate at its "
+                            + "next closed boundary check)").I$();
         }
         // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
         // assignment). In that case there are no started components -- skip the per-component stop
@@ -158,7 +166,16 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 // stop() is the only path that invokes signalRestoreCancel + awaitRestoreCancel,
                 // and without this the 30s SIGTERM window hangs until SIGKILL. The transition table
                 // permits STARTING -> STOPPING for this case.
-                if (current == State.READY || current == State.DEGRADED || current == State.STARTING) {
+                //
+                // SWITCHING is included for the same reason: a SIGTERM that arrives while an
+                // enterprise role-switch cascade has a component mid-switch leaves that component in
+                // SWITCHING. Skipping it here would let the reverse-topo stop loop free the
+                // component's dependents (and ultimately the engine) without ever calling the
+                // mid-switch component's stop() -- so a woken cascade step could touch a half-freed
+                // component. Stopping a SWITCHING component routes it through stop() like any other
+                // started component; the transition table permits SWITCHING -> STOPPING.
+                if (current == State.READY || current == State.DEGRADED || current == State.STARTING
+                        || current == State.SWITCHING) {
                     publishInternal(c.name(), State.STOPPING, null);
                     try {
                         c.stop();
@@ -268,6 +285,29 @@ public class LifecycleOrchestrator implements QuietCloseable {
     public State stateOf(String componentName) {
         AtomicReference<State> ref = states.get(componentName);
         return ref != null ? ref.get() : State.INIT;
+    }
+
+    /**
+     * Rendezvous hook invoked from {@link #close()} after {@code executor.shutdown()} and before
+     * the reverse-topo stop loop. The base implementation simply awaits the executor for the
+     * default 30s close budget so an in-flight task completes (or self-terminates at its next
+     * {@code closed.get()} boundary check) before any component is stopped.
+     * <p>
+     * Enterprise overlays override this to extend the await to the ACTIVE role-switch budget (a
+     * switch cascade can legitimately run longer than 30s while draining busy writers) and to nudge
+     * the cascade -- interrupt its drain sleep -- so it observes shutdown promptly. The bound is
+     * always finite (the switch budget, itself capped), never an unbounded join.
+     *
+     * @return {@code true} if the executor terminated within the budget; {@code false} if it
+     * timed out, in which case {@link #close()} logs and proceeds to the stop loop.
+     */
+    protected boolean awaitInFlightWork() {
+        try {
+            return executor.awaitTermination(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     protected void cascadeFailedThroughHardDeps(String failedName) {
