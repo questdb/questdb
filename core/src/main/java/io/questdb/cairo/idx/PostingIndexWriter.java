@@ -5085,8 +5085,11 @@ public class PostingIndexWriter implements IndexWriter {
 
                 for (int i = 0; i < activeKeyCount; i++) {
                     int key = Unsafe.getInt(genAddr + (long) i * Integer.BYTES);
+                    if (key < 0 || key >= keyCount) {
+                        continue; // corrupt sparse gen: key out of range; skip the OOB dirtyStridesAddr write
+                    }
                     int stride = key / PostingIndexUtils.DENSE_STRIDE;
-                    if (stride < sc && Unsafe.getByte(dirtyStridesAddr + stride) == 0) {
+                    if (Unsafe.getByte(dirtyStridesAddr + stride) == 0) {
                         Unsafe.putByte(dirtyStridesAddr + stride, (byte) 1);
                         dirtyCount++;
                     }
@@ -6599,6 +6602,11 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean writeSidecarVarGenBlockAttempt(
             MemoryMARW mem, int covIdx, long colTop, int colType, int totalValues, boolean longOffsets
     ) {
+        if (totalValues >= PostingIndexUtils.LONG_OFFSETS_FLAG) {
+            throw CairoException.critical(0)
+                    .put("posting index var cover gen block exceeds 2^30 values [totalValues=").put(totalValues)
+                    .put("]; the 4-byte count field shares bit 30/31 with the long-offset and FSST flags. Split the partition into smaller commits");
+        }
         mem.putInt(longOffsets ? totalValues | PostingIndexUtils.LONG_OFFSETS_FLAG : totalValues);
         long offsetsStart = mem.getAppendOffset();
         // Reserve the offsets region without zeroing -- writeVarOffset overwrites
