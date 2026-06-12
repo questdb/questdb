@@ -810,14 +810,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 // Opening the writer ran rollbackConditionally(3_100): the real
                 // discard streamed the var-size covered sidecar rebuild for the
                 // survivors. Covered reads must still serve the committed tags.
-                assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd FROM t_rb_evict_var WHERE sym = 'k0'")
+                assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
                         .withPlanContaining("CoveringIndex on: sym")
                         .returns("""
-                                c\tct\tcd
-                                10\t10\t10
+                                c\tct\tcd\tmn\tmx
+                                10\t10\t10\ttag_1200\ttag_900
                                 """);
 
                 // O3 append touching only key 'k0': one stride dirty, the
@@ -835,26 +835,26 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd FROM t_rb_evict_var WHERE sym = 'k0'")
+            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
                     .withPlanContaining("CoveringIndex on: sym")
                     .returns("""
-                            c\tct\tcd
-                            60\t60\t60
+                            c\tct\tcd\tmn\tmx
+                            60\t60\t60\ttagO3_0\ttag_900
                             """);
             // 'k1' lives in the stride the post-rollback commit left clean; its
             // covered var-size values come from the sidecar the rollback rebuilt.
             // 11 rows, each with a distinct tag -> count_distinct must be 11.
-            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd FROM t_rb_evict_var WHERE sym = 'k1'")
+            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k1'")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
                     .withPlanContaining("CoveringIndex on: sym")
                     .returns("""
-                            c\tct\tcd
-                            11\t11\t11
+                            c\tct\tcd\tmn\tmx
+                            11\t11\t11\ttag2_1\ttag_901
                             """);
         });
     }
@@ -4850,6 +4850,78 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     assertPoisonedRejects("seal", writer::seal);
                     assertPoisonedRejects("setMaxValue", () -> writer.setMaxValue(100));
                     assertPoisonedRejects("sync", () -> writer.sync(false));
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * The seal path must clean up staged files on a PRE-switch failure, mirroring
+     * the rollback path -- otherwise the staged .pv/.pc leak permanently (the
+     * caller close()s a failed-seal writer, and no writer-open scan reclaims
+     * never-published sealTxn files). Here the staged .pv msync fails BEFORE
+     * switchToSealedValueFile advances sealTxn, so the writer is still consistent
+     * (chain + valueMem at oldSealTxn): the catch must unlink the staged .pv/.pc,
+     * queue no purge, and leave the writer usable (not poisoned).
+     */
+    @Test
+    public void testSealPreSwitchValueSyncFailureUnlinksStagedFilesAndKeepsWriterUsable() throws Exception {
+        final PvSyncFailingFacade pvSync = new PvSyncFailingFacade();
+        ff = pvSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "seal_pre_switch_pv_fail";
+            final long fakeColBytes = 32L << 3;
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < 16; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(15);
+                    writer.commit();
+                    for (int v = 16; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.commit();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                    writer.setNextTxnAtSeal(1L);
+
+                    pvSync.arm();
+                    try {
+                        writer.seal();
+                        Assert.fail("expected pre-switch .pv sync failure during seal");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pv sync failed");
+                    } finally {
+                        pvSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one staged .pv sync", 1, pvSync.failureCount());
+
+                    // The failure is BEFORE the switch, so the writer is consistent and
+                    // the catch must unlink the staged files directly (nothing is mapped
+                    // post-switch) and queue no purge.
+                    final FilesFacade ff2 = configuration.getFilesFacade();
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pv must be unlinked on a pre-switch seal failure [path=" + pv + ']', ff2.exists(pv));
+                    LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pc must be unlinked on a pre-switch seal failure [path=" + pc + ']', ff2.exists(pc));
+                    Assert.assertEquals("pre-switch seal failure must queue no purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+
+                    // Not poisoned (nothing switched): the retried seal succeeds.
+                    writer.seal();
                 }
             } finally {
                 Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);

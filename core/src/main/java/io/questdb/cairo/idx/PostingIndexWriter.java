@@ -672,6 +672,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void discardForRebuild() {
+        checkNotPoisoned();
         if (!keyMem.isOpen()) {
             return;
         }
@@ -1490,6 +1491,18 @@ public class PostingIndexWriter implements IndexWriter {
             if (sealTxn == newSealTxn && chain.getHeadSealTxn() != newSealTxn) {
                 scheduleOrphanPurge(newSealTxn);
                 isPoisoned = true;
+            } else if (sealTxn != newSealTxn) {
+                // Pre-switch failure: the switch never happened, so the writer is
+                // still consistent (chain + valueMem at oldSealTxn). Free the staging
+                // map, unlink the staged .pv/.pc directly (nothing references them
+                // yet), and drop sealTarget -- mirrors the rollback's not-switched
+                // branch. Without this the staged files leak permanently: the caller
+                // close()s a failed-seal writer and no writer-open scan reclaims
+                // never-published sealTxn files.
+                Misc.free(sealValueMem);
+                closeSidecarMems();
+                unlinkOrphanSealFiles(newSealTxn);
+                sealTarget = null;
             }
             throw th;
         } finally {
@@ -1647,6 +1660,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void truncate() {
+        checkNotPoisoned();
         freeNativeBuffers();
         if (partitionPath.size() > 0) {
             // Create a new empty .pv file. The old .pv stays on disk so
@@ -3925,11 +3939,13 @@ public class PostingIndexWriter implements IndexWriter {
     private void publishToChain(int newGenCount, int overrideGenIndex,
                                 long overrideFileOffset, long overrideSize,
                                 int overrideKeyCount, int overrideMinKey, int overrideMaxKey) {
-        // Structural backstop for the poison invariant: every chain mutation
-        // funnels through here, so a poisoned writer can never append or extend a
-        // chain entry at the staged sealTxn (which would let the deferred purge
-        // delete a now-live .pv) -- including via the flush paths the entry-point
-        // guards don't cover (add()'s spill flush, sync(), commitDense()).
+        // Structural backstop for the poison invariant: every PUBLISH funnels
+        // through here, so a poisoned writer can never append or extend a chain
+        // entry at the staged sealTxn (which would let the deferred purge delete a
+        // now-live .pv) -- including via the flush paths the entry-point guards
+        // don't cover (add()'s spill flush, sync(), commitDense()). The two chain
+        // mutators that bypass publishToChain -- truncate() and discardForRebuild()
+        // -- guard at their own entry instead.
         checkNotPoisoned();
         // The writer's sealTxn always points at the .pv file currently
         // mapped through valueMem. When chain.getHeadSealTxn() == sealTxn
@@ -5035,9 +5051,10 @@ public class PostingIndexWriter implements IndexWriter {
      * reader; the seal-purge job's scoreboard check is the safety net.
      * <p>
      * The outbox saturation policy mirrors {@link #recordPostingSealPurge}:
-     * if the queue is at capacity the oldest entry is dropped, since the
-     * next writer-open recovery walk will re-discover any leftover orphan
-     * files on disk.
+     * if the queue is at capacity the oldest entry is dropped. Its files are
+     * then left on disk -- the writer-open recovery walk is chain-driven and
+     * cannot re-discover a never-published orphan -- so the (bounded) leak
+     * relies on the global purge job draining the outbox before saturation.
      */
     private void scheduleOrphanPurge(long orphanSealTxn) {
         int outboxMax = configuration.getPostingSealPurgeOutboxMax();
