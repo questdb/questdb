@@ -58,6 +58,7 @@ import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -72,6 +73,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_LIMIT;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_QUERY;
@@ -598,8 +600,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
         SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         Operation op = cq.getOperation();
-        try (OperationFuture fut = op.execute(sqlExecutionContext, state.getEventSubSequence())) {
-            int waitResult = fut.await(getAsyncWriterStartTimeout(state));
+        try {
+            int waitResult = executeDdlFenced(
+                    sqlExecutionContext,
+                    cq.getType(),
+                    op,
+                    state.getEventSubSequence(),
+                    getAsyncWriterStartTimeout(state)
+            );
             if (waitResult != OperationFuture.QUERY_COMPLETE) {
                 state.setOperation(op);
                 // clear operation to report to avoid closing it
@@ -611,6 +619,62 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
         metrics.jsonQueryMetrics().markComplete();
         sendConfirmation(state, keepAliveHeader);
+    }
+
+    /**
+     * Demote write-fence for the HTTP /exec CTAS/CREATE/DROP/CREATE MAT VIEW/CREATE VIEW arms, the twin
+     * of pg-wire's PGPipelineEntry.executeDdlFenced. These DDL statements submit op.execute() outside any
+     * writer funnel, so the pre-compile gate in compileAndExecuteQuery is their only read-only check --
+     * and that read is check-then-act: the operation can begin while the node is still PRIMARY and
+     * externalize its effect (a fresh table, a CTAS data commit, a drop) on a node that flips to REPLICA
+     * mid-execute, acknowledging with HTTP 200 a change no uploader replicates.
+     * <p>
+     * For a non-WAL CTAS the data commit lives inside execute() (SqlCompilerImpl.copyTableData ->
+     * writer.commit(), with the writer built directly via new TableWriter, bypassing the pooled
+     * acquire-gates and so uncounted by the demote drain); for a WAL CTAS the externalization is the WAL
+     * pump inside the same execute(). Holding the role-switch READ lock across the in-lock re-check AND
+     * op.execute() serializes the whole operation against the flip and so closes both windows from one
+     * seam: either the flip ran first (we see REPLICA and refuse without executing) or the operation runs
+     * fully as PRIMARY and the flip's flag publish (which takes the WRITE side) waits behind it. The READ
+     * side lets concurrent commits on other tables/protocols run in parallel; only the role flip is
+     * excluded.
+     * <p>
+     * Both refusal checks consult the SAME ReadOnlyStatementGate predicate the pre-compile gate uses --
+     * NOT a blanket isReadOnlyMode() refusal -- because the gate carries the one DDL exemption a read-only
+     * replica must keep: the admin's DROP of the HTTP parquet exporter's leftover temp table. A blanket
+     * refusal here would refuse the exempted DROP the pre-gate just allowed through (the regression CI
+     * build 241196 caught).
+     * <p>
+     * The retry path (retryQueryExecution) needs no second fence: it only awaits the already-submitted
+     * future and never re-invokes op.execute(), so the fence span is this in-method execute+await only.
+     */
+    private int executeDdlFenced(
+            SqlExecutionContextImpl sqlExecutionContext,
+            int sqlType,
+            Operation op,
+            SCSequence eventSubSequence,
+            long awaitTimeout
+    ) throws SqlException {
+        if (engine.isReadOnlyMode()
+                && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
+            // lock around the REPLICA flag publish. op.execute() runs inside the read hold so the flip
+            // cannot interleave (its write acquire waits), while other commits share the read side.
+            if (engine.isReadOnlyMode()
+                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            try (OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)) {
+                return fut.await(awaitTimeout);
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
     // same as select new but disallows caching of EXPLAIN plans
