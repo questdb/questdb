@@ -34,6 +34,7 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -53,7 +54,6 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -157,8 +157,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 perWorkerFilters,
                 workerCount,
                 workerCount,
-                1, // owner memory pool capacity
-                1  // per-worker memory pool capacity
+                0L, // owner memory pool budget (single-buffer effective behavior)
+                0L  // per-worker memory pool budget
         );
 
         // Group by functions (ownership transferred from caller)
@@ -460,12 +460,14 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Initialize owner cursor
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
         ownerSlaveTimeFrameCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
+        ownerSlaveTimeFrameCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
 
         // Initialize per-worker cursors with the same shared state
         for (int i = 0, n = perWorkerSlaveTimeFrameCursors.size(); i < n; i++) {
             final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
             workerCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
+            workerCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 
