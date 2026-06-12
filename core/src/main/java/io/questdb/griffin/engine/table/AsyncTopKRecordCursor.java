@@ -85,7 +85,16 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
 
     @Override
     public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
-        target.ensureCapacity((emitEndAddr - emitStartAddr) / entrySize);
+        long parquetRowCount = 0;
+        for (long addr = emitStartAddr; addr < emitEndAddr; addr += entrySize) {
+            if (addressCache.getFrameFormat(Rows.toPartitionIndex(Unsafe.getLong(addr))) == PartitionFormat.PARQUET) {
+                parquetRowCount++;
+            }
+        }
+        if (parquetRowCount == 0) {
+            return;
+        }
+        target.ensureCapacity(parquetRowCount);
         for (long addr = emitStartAddr; addr < emitEndAddr; addr += entrySize) {
             final long rowId = Unsafe.getLong(addr);
             if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {

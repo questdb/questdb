@@ -245,10 +245,12 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 final SortKeyEncoder encoder = atom.getEncoder(slotId);
                 final EncodedTopKBuffer topK = atom.getTopK(slotId);
-                for (long p = 0, n = rows.size(); p < n; p++) {
-                    record.setRowIndex(rows.get(p));
-                    encoder.encode(record, topK.beginAppend(), record.getRowId());
-                    topK.endAppend();
+                if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, rows, topK)) {
+                    for (long p = 0, n = rows.size(); p < n; p++) {
+                        record.setRowIndex(rows.get(p));
+                        encoder.encode(record, topK.beginAppend(), record.getRowId());
+                        topK.endAppend();
+                    }
                 }
             } else {
                 if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, true)) {
@@ -299,10 +301,12 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 record.init(frameMemory);
                 final SortKeyEncoder encoder = atom.getEncoder(slotId);
                 final EncodedTopKBuffer topK = atom.getTopK(slotId);
-                for (long r = 0; r < frameRowCount; r++) {
-                    record.setRowIndex(r);
-                    encoder.encode(record, topK.beginAppend(), record.getRowId());
-                    topK.endAppend();
+                if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, frameRowCount, topK)) {
+                    for (long r = 0; r < frameRowCount; r++) {
+                        record.setRowIndex(r);
+                        encoder.encode(record, topK.beginAppend(), record.getRowId());
+                        topK.endAppend();
+                    }
                 }
             } else {
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);

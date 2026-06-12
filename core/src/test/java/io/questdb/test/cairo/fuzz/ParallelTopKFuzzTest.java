@@ -25,12 +25,15 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
@@ -49,9 +52,16 @@ import static io.questdb.test.cairo.fuzz.ParallelGroupByFuzzTest.assertQueries;
 // in CI frequently along with other fuzz tests.
 @RunWith(Parameterized.class)
 public class ParallelTopKFuzzTest extends AbstractCairoTest {
+    private static final String[] FIXED8_COLUMNS = {
+            "col_bool", "col_byte", "col_short", "col_char", "col_int", "col_float",
+            "col_sym", "col_sym_null", "col_ipv4", "col_long", "col_double", "col_date",
+            "col_geobyte", "col_geoshort", "col_geoint", "col_geolong",
+            "col_dec8", "col_dec16", "col_dec32", "col_dec64",
+    };
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    private static final String[] WIDE_COLUMNS = {"col_dec128", "col_dec256"};
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelTopK;
@@ -114,6 +124,64 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Validates the parallel encoded top-K against the serial tree-chain
+     * reference. Single-column keys exercise the frame batch encoder for every
+     * fixed-width-8 type; projecting only the sort column keeps the comparison
+     * deterministic on duplicate keys, while the unique col_id covers full-row
+     * emission. Multi-word decimal keys cover the per-row generic encoder.
+     */
+    @Test
+    public void testParallelTopKEncodedTypes() throws Exception {
+        Assume.assumeTrue(enableParallelTopK);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        final int rowCount = 3_000 + rnd.nextInt(7_000);
+                        createTypeMatrixTable(engine, sqlExecutionContext, rowCount);
+                        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+
+                        for (String col : FIXED8_COLUMNS) {
+                            final String desc = rnd.nextBoolean() ? " DESC" : "";
+                            final int k = 1 + rnd.nextInt(200);
+                            assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                        }
+                        for (String col : WIDE_COLUMNS) {
+                            final String desc = rnd.nextBoolean() ? " DESC" : "";
+                            final int k = 1 + rnd.nextInt(200);
+                            assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                        }
+
+                        // Unique keys make the full emitted rows deterministic.
+                        assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id DESC LIMIT " + (1 + rnd.nextInt(200)));
+
+                        // The filter reducer feeds the batch encoder its filtered row list.
+                        assertTopKMatch(
+                                engine, ctx,
+                                "SELECT col_long FROM tab WHERE col_long >= 3 ORDER BY col_long LIMIT " + (1 + rnd.nextInt(200))
+                        );
+                        assertTopKMatch(
+                                engine, ctx,
+                                "SELECT col_double FROM tab WHERE col_long >= 3 ORDER BY col_double DESC LIMIT " + (1 + rnd.nextInt(200))
+                        );
+
+                        // Multi-column keys take the per-row generic encoder.
+                        assertTopKMatch(
+                                engine, ctx,
+                                "SELECT * FROM tab ORDER BY col_int, col_sym, col_id LIMIT " + (1 + rnd.nextInt(200))
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     @Test
     public void testParallelTopKFilter() throws Exception {
         testParallelTopK(
@@ -160,6 +228,65 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                 "ts\tkey\tprice\tquantity\tcolTop\n" +
                         "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n"
         );
+    }
+
+    private void assertTopKMatch(CairoEngine engine, SqlExecutionContextImpl ctx, String query) throws Exception {
+        ctx.setParallelTopKEnabled(true);
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(engine, ctx, "EXPLAIN " + query, plan);
+        TestUtils.assertContains(plan, "Async");
+        TestUtils.assertContains(plan, "Top K");
+
+        final StringSink actual = new StringSink();
+        TestUtils.printSql(engine, ctx, query, actual);
+
+        ctx.setParallelTopKEnabled(false);
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        try {
+            final StringSink expected = new StringSink();
+            TestUtils.printSql(engine, ctx, query, expected);
+            TestUtils.assertEquals(query, expected, actual);
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            ctx.setParallelTopKEnabled(true);
+        }
+    }
+
+    private void createTypeMatrixTable(CairoEngine engine, SqlExecutionContext ctx, int rowCount) throws SqlException {
+        engine.execute(
+                "CREATE TABLE tab AS (SELECT" +
+                        " rnd_boolean() col_bool," +
+                        " rnd_byte() col_byte," +
+                        " rnd_short() col_short," +
+                        " rnd_char() col_char," +
+                        " rnd_int(0, 10, 2) col_int," +
+                        " rnd_float(2) col_float," +
+                        " rnd_symbol(16, 2, 6, 0) col_sym," +
+                        " rnd_symbol(16, 2, 6, 2) col_sym_null," +
+                        " rnd_ipv4() col_ipv4," +
+                        " rnd_long(0, 10, 2) col_long," +
+                        " rnd_double(2) col_double," +
+                        " rnd_date(0, 100_000_000_000L, 2) col_date," +
+                        " rnd_geohash(5) col_geobyte," +
+                        " rnd_geohash(10) col_geoshort," +
+                        " rnd_geohash(20) col_geoint," +
+                        " rnd_geohash(40) col_geolong," +
+                        " rnd_decimal(2, 1, 2) col_dec8," +
+                        " rnd_decimal(4, 2, 2) col_dec16," +
+                        " rnd_decimal(9, 3, 2) col_dec32," +
+                        " rnd_decimal(18, 4, 2) col_dec64," +
+                        " rnd_decimal(38, 5, 2) col_dec128," +
+                        " rnd_decimal(76, 6, 2) col_dec256," +
+                        " x col_id," +
+                        " timestamp_sequence(0, 1_000_000) ts" +
+                        " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts) PARTITION BY HOUR",
+                ctx
+        );
+        if (convertToParquet) {
+            // A row in a later partition makes the generated partitions convertible.
+            engine.execute("INSERT INTO tab(ts) VALUES ('2000-01-01')", ctx);
+            engine.execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", ctx);
+        }
     }
 
     private void testParallelTopK(String... queriesAndExpectedResults) throws Exception {

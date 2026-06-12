@@ -55,6 +55,9 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     private long compactionTrigger;
     private long count;
     private int entrySize;
+    // Unsigned-max sentinel rejects nothing; compact() publishes the leading
+    // threshold word here for FIRST N selections.
+    private long fastRejectKeyThreshold = -1L;
     private boolean hasThreshold;
     private boolean isFirstN;
     private int keyLongs;
@@ -85,6 +88,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     public void clear() {
         count = 0;
         hasThreshold = false;
+        fastRejectKeyThreshold = -1L;
         entryMem.clear();
     }
 
@@ -106,6 +110,17 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         if (count == compactionTrigger) {
             compact();
         }
+    }
+
+    /**
+     * Single-compare pre-encode rejection: a key whose leading word is strictly
+     * beyond the threshold's leading word cannot enter a FIRST N top-K regardless
+     * of tie-break words, so the caller can skip the entry write entirely. Keys
+     * equal on the leading word still go through the full {@link #endAppend()}
+     * compare. Never rejects for LAST N or before the first compaction.
+     */
+    public boolean fastRejectsKey(long key) {
+        return Long.compareUnsigned(key, fastRejectKeyThreshold) > 0;
     }
 
     public long getAddress() {
@@ -179,6 +194,9 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
             thresholdEntry[i] = Unsafe.getLong(boundaryAddr + 8L * i);
         }
         hasThreshold = true;
+        if (isFirstN) {
+            fastRejectKeyThreshold = thresholdEntry[0];
+        }
     }
 
     // Entries are unique by their trailing rowId word, so word-wise unsigned

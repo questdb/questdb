@@ -131,7 +131,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 this.perWorkerEncoders = new ObjList<>(workerCount);
                 this.perWorkerTopK = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerEncoders.extendAndSet(i, new SortKeyEncoder(orderByMetadata, orderByFilter));
+                    perWorkerEncoders.extendAndSet(i, new SortKeyEncoder(orderByMetadata, orderByFilter, ownerEncoder));
                     perWorkerTopK.extendAndSet(i, new EncodedTopKBuffer(configuration));
                 }
                 this.sortKeyColumnIndexes = SortKeyEncoder.extractSortKeyColumnIndexes(orderByFilter);
@@ -303,7 +303,9 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             assert keyType != SortKeyType.UNSUPPORTED;
             ownerTopK.of(keyType, true, lo);
             for (int i = 0; i < workerCount; i++) {
-                perWorkerEncoders.getQuick(i).init(symbolTableSource);
+                // Rank map building sorts the whole symbol dictionary; workers
+                // borrow the owner's maps instead of rebuilding identical ones.
+                perWorkerEncoders.getQuick(i).initFrom(ownerEncoder);
                 perWorkerTopK.getQuick(i).of(keyType, true, lo);
             }
         } else {
