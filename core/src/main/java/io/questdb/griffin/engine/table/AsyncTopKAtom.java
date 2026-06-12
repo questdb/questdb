@@ -94,8 +94,8 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                     perWorkerFilters,
                     workerCount,
                     0,
-                    configuration.getSqlParquetFrameCacheCapacity(),
-                    2
+                    configuration.getSqlParquetCacheMemorySize(),
+                    0L
             );
 
             this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, orderByFilter);

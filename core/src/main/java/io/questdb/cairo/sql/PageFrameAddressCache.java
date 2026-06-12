@@ -82,7 +82,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             return; // The page frame is already cached
         }
 
-        if (frame.getFormat() == PartitionFormat.NATIVE) {
+        final byte format = frame.getFormat();
+        if (format == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getPageAddress(columnIndex));
                 pageSizes.add(frame.getPageSize(columnIndex));
@@ -106,10 +107,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
-        frameFormats.add(frame.getFormat());
+        frameFormats.add(format);
         ParquetDecoder decoder = frame.getParquetDecoder();
         parquetDecoders.add(decoder);
-        assert (decoder != null && decoder.getFileSize() > 0) || frame.getFormat() != PartitionFormat.PARQUET;
+        assert (decoder != null && decoder.getFileSize() > 0) || format != PartitionFormat.PARQUET;
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
