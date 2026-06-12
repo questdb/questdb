@@ -4,9 +4,15 @@
 # native-lib loading from its own lib/ directory -- i.e. the exact artifact
 # users download and run.
 #
-# Runs on self-hosted Linux boxes (x64 + arm64), which carry the Rust toolchain
-# and a C compiler -- both now required because the native libraries are built
-# from source rather than committed.
+# The same job also runs the C++ glibc check: it dlopen()s the committed
+# libquestdb.so inside an old-glibc container (amazonlinux:2 on x64, almalinux:8
+# on arm64) to confirm the prebuilt C++ library still loads on the oldest
+# supported glibc. The Rust library is built from source per platform, so it
+# always matches its host and needs no glibc check. Folding it into this job
+# avoids a second checkout.
+#
+# Runs on self-hosted Linux boxes (x64 + arm64), which carry the Rust toolchain,
+# a C compiler, and Docker.
 jobs:
   - job: BuildAndSmokeTest
     displayName: "build + smoke test on"
@@ -18,10 +24,14 @@ jobs:
           poolName: "hetzner-incus"
           JAVA_HOME: "/opt/graalvm-25"
           JAVA_HOME_25_X64: "/opt/graalvm-25"
+          glibcImage: "amazonlinux:2"
+          libPath: "core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so"
         linux-arm64:
           poolName: "hetzner-incus-arm"
           JAVA_HOME: "/usr/lib/jvm/java-25-openjdk-arm64"
           JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-arm64"
+          glibcImage: "almalinux:8"
+          libPath: "core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so"
     pool:
       name: $(poolName)
     timeoutInMinutes: 60
@@ -33,6 +43,13 @@ jobs:
         fetchDepth: 1
         lfs: false
         submodules: true
+      # C++ glibc check: confirm the committed libquestdb.so loads on the oldest
+      # supported glibc. Runs before the build so a glibc regression fails fast.
+      - bash: |
+          set -eux
+          docker run --rm -v "$(Build.SourcesDirectory):/work" "$(glibcImage)" \
+            bash /work/ci/glibc_load_check.sh "$(libPath)"
+        displayName: "C++ glibc check: dlopen committed libquestdb on $(glibcImage)"
       - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
         displayName: "Ensure Rust is installed"
       - task: Maven@3
