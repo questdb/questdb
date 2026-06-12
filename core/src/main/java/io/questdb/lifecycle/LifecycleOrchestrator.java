@@ -59,6 +59,22 @@ public class LifecycleOrchestrator implements QuietCloseable {
     protected ObjList<Component> reverseTopoOrder;
     @Nullable
     protected ObjList<Component> topoOrder;
+    // The thread that called run() and is walking the boot topo order (each component's start()
+    // runs serially on this thread, including a long-running PITR restore that holds it for the
+    // whole boot). close() bounded-joins it before the reverse-topo stop loop so a SIGTERM that
+    // arrives mid-boot cannot free engine resources from under an in-flight start(). null before
+    // run() starts and after run() returns. volatile gives the close thread the happens-before
+    // edge to observe the captured (or cleared) reference.
+    @Nullable
+    private volatile Thread bootThread;
+    // Bound on how long close() waits for the boot thread to observe shutdown and unwind. The boot
+    // walk checks closed.get() between components and the in-flight start() (the restore) polls its
+    // own cancel flag, so a clean unwind is prompt; the bound only caps a wedged start() so close()
+    // can never block forever. A survivor past this bound is rendered safe by the engine's own
+    // isClosing() guards (a woken start() refuses to build native state on a closing engine), not by
+    // racing the free -- so this is a bounded join with an ownership backstop, never a bounded-join
+    // that then frees under a live writer.
+    private static final long BOOT_JOIN_BUDGET_MS = 30_000L;
     private final AtomicBoolean closed = new AtomicBoolean();
     // When a component's start() throws, the orchestrator retains the first such throwable and
     // the component name so run() can chain them into the LifecycleStartupException. Retaining
@@ -143,6 +159,34 @@ public class LifecycleOrchestrator implements QuietCloseable {
                     .$("lifecycle executor did not drain within the close budget; proceeding to the "
                             + "reverse-topo stop loop (in-flight task, if any, must self-terminate at its "
                             + "next closed boundary check)").I$();
+        }
+        // Rendezvous with an in-flight BOOT walk before the stop loop frees engine resources. The
+        // boot thread runs each component's start() serially (a PITR restore can hold it for the
+        // whole boot); a SIGTERM hook firing mid-boot must not let freeOnExit free the engine while
+        // an engine.load()/native restore is still running on the boot thread. closed is already
+        // true above, so the boot walk's between-components check exits and the in-flight start()
+        // observes shutdown (the restore polls its cancel flag, the SWITCHING/STARTING stop predicate
+        // routes a mid-restore component through stop()->signalRestoreCancel). The join is bounded:
+        // a wedged start() that ignores shutdown only delays close() by the budget, after which the
+        // stop loop proceeds and the engine's own isClosing() guards keep a late-woken start() from
+        // building native state on the closing engine -- ownership, not the race, is the backstop.
+        // Never self-join: run() calls close() on its own thread on a boot-essential failure.
+        final Thread boot = bootThread;
+        if (boot != null && boot != Thread.currentThread() && boot.isAlive()) {
+            try {
+                boot.join(BOOT_JOIN_BUDGET_MS);
+                if (boot.isAlive()) {
+                    injectedLog.error()
+                            .$("boot thread did not unwind within the close budget; proceeding to the "
+                                    + "reverse-topo stop loop (a late-woken start() is refused by the "
+                                    + "engine's closing guards, not freed under)").I$();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                injectedLog.error()
+                        .$("interrupted while joining the boot thread on close; proceeding to the "
+                                + "reverse-topo stop loop").I$();
+            }
         }
         // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
         // assignment). In that case there are no started components -- skip the per-component stop
@@ -234,7 +278,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
             throw new IllegalStateException("LifecycleOrchestrator.run may only be called once");
         }
         running.set(true);
-        startAllInTopologicalOrder();
+        // Publish the boot thread so a concurrent close() (the SIGTERM shutdown hook runs on a
+        // different thread) can bounded-join the in-flight boot walk before freeing engine state.
+        // Cleared in the finally so a completed boot leaves no stale handle for a later close().
+        bootThread = Thread.currentThread();
+        try {
+            startAllInTopologicalOrder();
+        } finally {
+            bootThread = null;
+        }
         if (anyFailed()) {
             close();
             // Chain the first failed component's throwable AND fold its message into the wrapper
