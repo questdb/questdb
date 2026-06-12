@@ -4181,6 +4181,64 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinFilterOnSecondTablePushedThroughView() throws Exception {
+        // A subquery wraps an INNER join. The WHERE filters by the SECOND (slave) table's join key.
+        // The predicate reaches the slave scan (tb: index scan, filter bkey='x'), but the first table
+        // stays a full scan - a constant pinned to the slave side is not propagated back to the
+        // master. This matches the plan of the equivalent inline query: the optimiser behaves the
+        // same with or without the enclosing view.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS ka, b.bkey AS kb, b.bv
+                  FROM ta a JOIN tb b ON b.bkey = a.akey
+                ) WHERE kb = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testInnerJoinFilterPushedThroughView() throws Exception {
+        // Same fix as the LEFT-join case, for an INNER join wrapped in a subquery. The WHERE filters
+        // by the FIRST (master) table's key (aliased as k). The optimiser pushes it into the master
+        // scan (ta) and derives the transitive filter for the second table (tb), so both sides become
+        // keyed lookups instead of full scans.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS k, a.av, b.bv
+                  FROM ta a JOIN tb b ON b.bkey = a.akey
+                ) WHERE k = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: akey deferred: true
+                                      filter: akey='x'
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
     public void testIntersect1() throws Exception {
         assertQuery("select * from a intersect select * from a")
                 .ddl("create table a ( i int, s string);")
@@ -4874,6 +4932,309 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               filter: length(s)=10
                               symbolFilter: s=1
                                 Frame backward scan on: a
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterByAliasPushedThroughView() throws Exception {
+        // Exercises alias rewriting on both sides: the join condition uses table aliases (a, b) and
+        // the WHERE filters by a column alias (k), which the subquery projects from a.akey. The
+        // optimiser resolves k back to a.akey, pushes it into the master scan (ta) and derives the
+        // transitive filter on the slave (tb), so both sides become keyed lookups.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS k, a.av, b.bv
+                  FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                ) WHERE k = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Left Outer Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: akey deferred: true
+                                      filter: akey='x'
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testLeftJoinFilterByBindVariablePushedThroughView() throws Exception {
+        // The pushed-down predicate is a bind variable, not a literal constant. It must propagate the
+        // same way: into the master scan (ta) and transitively onto the slave (tb), both rendered as
+        // "filter: <key>=:kp::string". This confirms bind parameters reach the slave scans too.
+        bindVariableService.clear();
+        bindVariableService.setStr("kp", "x");
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS k, a.av, b.bv
+                  FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                ) WHERE k = :kp""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Left Outer Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: akey deferred: true
+                                      filter: akey=:kp::string
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey=:kp::string
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testLeftJoinFilterOnSecondTableStaysPostJoinThroughView() throws Exception {
+        // A subquery wraps a LEFT join. The WHERE filters by the SECOND (slave) table's join key.
+        // Unlike the INNER case, a WHERE predicate on a left-joined slave column must run AFTER the
+        // join (it rejects the NULL-extended rows), so it stays a post-join "Filter" over the whole
+        // join and is not pushed into either scan. This matches the equivalent inline query and is
+        // intentionally left unchanged by the master-side pushdown.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS ka, b.bkey AS kb, b.bv
+                  FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                ) WHERE kb = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Filter filter: b.bkey='x'
+                                Hash Left Outer Join Light
+                                  condition: b.bkey=a.akey
+                                  symbolKeyJoin: true
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: ta
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testLeftJoinFilterPushedThroughView() throws Exception {
+        // A view encapsulates two LEFT JOINs onto 'events'. A consumer filters the view by the
+        // master-table key (entity_id, which maps to entity_terminal.id). The filter reaches the
+        // master scan (entity_terminal: Index forward scan, filter: id='x') AND is propagated across
+        // the equi-join keys (events.entity_id = e.id) into both left-joined 'events' scans as index
+        // lookups ("Index forward scan on: entity_id ... filter: entity_id='x'"), so the query does a
+        // keyed lookup instead of reading every event row.
+        // The resulting plan is identical to testLeftJoinFilterPushedWhenInlined, where the same
+        // predicate is written directly in the join's query model rather than through a view.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE entity_terminal (
+                      id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      status SYMBOL,
+                      last_event_id LONG
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE TABLE events (
+                      entity_id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      event_type SYMBOL,
+                      id LONG,
+                      payload STRING
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE VIEW entity_stats AS (
+                      SELECT
+                        e.id AS entity_id,
+                        e.created_at,
+                        e.status,
+                        related_event.created_at AS terminal_at,
+                        decision_event.payload AS decision_payload
+                      FROM entity_terminal e
+                      LEFT JOIN events decision_event
+                        ON decision_event.entity_id = e.id
+                        AND decision_event.created_at = e.created_at
+                        AND decision_event.event_type = 'decision'
+                      LEFT JOIN events related_event
+                        ON related_event.entity_id = e.id
+                        AND related_event.id = e.last_event_id
+                        AND related_event.event_type = 'terminal'
+                    )""");
+
+            assertQuery("SELECT * FROM entity_stats WHERE entity_id = 'x'")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: related_event.id=e.last_event_id and related_event.entity_id=e.id
+                                  symbolKeyJoin: true
+                                  filter: related_event.event_type='terminal'
+                                    Hash Left Outer Join Light
+                                      condition: decision_event.created_at=e.created_at and decision_event.entity_id=e.id
+                                      symbolKeyJoin: true
+                                      filter: decision_event.event_type='decision'
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: id deferred: true
+                                              filter: id='x'
+                                            Frame forward scan on: entity_terminal
+                                        Hash
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index forward scan on: entity_id deferred: true
+                                                  filter: entity_id='x'
+                                                Frame forward scan on: events
+                                    Hash
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: entity_id deferred: true
+                                              filter: entity_id='x'
+                                            Frame forward scan on: events
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterPushedThroughViewReturnsCorrectRows() throws Exception {
+        // Guards that pushing the filter into the left-joined 'events' scans (see
+        // testLeftJoinFilterPushedThroughView) preserves LEFT JOIN semantics: every master row that
+        // matches the filter survives, matched slave rows attach, and unmatched slaves stay NULL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE entity_terminal (
+                      id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      status SYMBOL,
+                      last_event_id LONG
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE TABLE events (
+                      entity_id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      event_type SYMBOL,
+                      id LONG,
+                      payload STRING
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE VIEW entity_stats AS (
+                      SELECT
+                        e.id AS entity_id,
+                        e.created_at,
+                        e.status,
+                        related_event.created_at AS terminal_at,
+                        decision_event.payload AS decision_payload
+                      FROM entity_terminal e
+                      LEFT JOIN events decision_event
+                        ON decision_event.entity_id = e.id
+                        AND decision_event.created_at = e.created_at
+                        AND decision_event.event_type = 'decision'
+                      LEFT JOIN events related_event
+                        ON related_event.entity_id = e.id
+                        AND related_event.id = e.last_event_id
+                        AND related_event.event_type = 'terminal'
+                    )""");
+            drainWalAndViewQueues();
+            // two 'x' master rows (one fully matched, one with no matching terminal) plus a 'y' row
+            // that the filter must exclude
+            execute("""
+                    INSERT INTO entity_terminal VALUES
+                      ('x', '2024-01-01T00:00:00.000000Z', 'open', 100),
+                      ('x', '2024-01-05T00:00:00.000000Z', 'reopened', 555),
+                      ('y', '2024-01-02T00:00:00.000000Z', 'closed', 200)""");
+            execute("""
+                    INSERT INTO events VALUES
+                      ('x', '2024-01-01T00:00:00.000000Z', 'decision', 1, 'dpx'),
+                      ('x', '2024-01-03T00:00:00.000000Z', 'terminal', 100, 'tp'),
+                      ('x', '2024-01-05T00:00:00.000000Z', 'decision', 7, 'dp5'),
+                      ('x', '2024-01-09T00:00:00.000000Z', 'terminal', 999, 'tpw'),
+                      ('y', '2024-01-02T00:00:00.000000Z', 'decision', 5, 'dpy')""");
+            drainWalQueue();
+
+            // row 1: decision matches (created_at=t1) and terminal matches (id=100 -> terminal_at=t3)
+            // row 2: decision matches (created_at=t5) but no terminal with id=555 -> terminal_at NULL
+            assertQuery("SELECT * FROM entity_stats WHERE entity_id = 'x' ORDER BY created_at")
+                    .noLeakCheck()
+                    .timestamp("created_at")
+                    .noRandomAccess()
+                    .returns("""
+                            entity_id\tcreated_at\tstatus\tterminal_at\tdecision_payload
+                            x\t2024-01-01T00:00:00.000000Z\topen\t2024-01-03T00:00:00.000000Z\tdpx
+                            x\t2024-01-05T00:00:00.000000Z\treopened\t\tdp5
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterPushedWhenInlined() throws Exception {
+        // Contrast to testLeftJoinFilterPushedThroughView. With the same joins written inline -
+        // so the WHERE filter lives in the same query model as the joins - the optimiser derives
+        // events.entity_id='x' transitively from e.id='x' and the equi-join keys, and pushes it
+        // into both left-joined 'events' scans as an index lookup
+        // ("Index forward scan on: entity_id ... filter: entity_id='x'").
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE entity_terminal (
+                      id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      status SYMBOL,
+                      last_event_id LONG
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE TABLE events (
+                      entity_id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      event_type SYMBOL,
+                      id LONG,
+                      payload STRING
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+
+            assertQuery("""
+                    SELECT
+                      e.id AS entity_id,
+                      e.created_at,
+                      e.status,
+                      related_event.created_at AS terminal_at,
+                      decision_event.payload AS decision_payload
+                    FROM entity_terminal e
+                    LEFT JOIN events decision_event
+                      ON decision_event.entity_id = e.id
+                      AND decision_event.created_at = e.created_at
+                      AND decision_event.event_type = 'decision'
+                    LEFT JOIN events related_event
+                      ON related_event.entity_id = e.id
+                      AND related_event.id = e.last_event_id
+                      AND related_event.event_type = 'terminal'
+                    WHERE e.id = 'x'""")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: related_event.id=e.last_event_id and related_event.entity_id=e.id
+                                  symbolKeyJoin: true
+                                  filter: related_event.event_type='terminal'
+                                    Hash Left Outer Join Light
+                                      condition: decision_event.created_at=e.created_at and decision_event.entity_id=e.id
+                                      symbolKeyJoin: true
+                                      filter: decision_event.event_type='decision'
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: id deferred: true
+                                              filter: id='x'
+                                            Frame forward scan on: entity_terminal
+                                        Hash
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index forward scan on: entity_id deferred: true
+                                                  filter: entity_id='x'
+                                                Frame forward scan on: events
+                                    Hash
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: entity_id deferred: true
+                                              filter: entity_id='x'
+                                            Frame forward scan on: events
                             """);
         });
     }
