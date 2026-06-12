@@ -1,11 +1,67 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ParquetLimitProbeTest extends AbstractCairoTest {
+
+    // Drive a clamped forward scan, leave recordA bound to a partial window, then use
+    // getRecordB()+recordAt() to randomly access rows in the SAME clamped frame. The
+    // record-based navigateTo must re-decode the clamped buffer to a full window in place
+    // without corrupting recordA, which holds the same buffer's address lists.
+    @Test
+    public void testRandomAccessDuringClampedScan() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 64);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, v VARCHAR, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, 's' || x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(50)");
+            execute("INSERT INTO x VALUES (0, 'v0', 's0', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            try (
+                    RecordCursorFactory factory = select("SELECT i, v, s FROM x WHERE ts in '2024-01-01'");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                // clamp: skip 0, only intend to read 3 rows -> landing frame decodes a 3-row window
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(0);
+                cursor.skipRows(counter, 3);
+                Record recordA = cursor.getRecord();
+                Record recordB = cursor.getRecordB();
+
+                Assert.assertTrue(cursor.hasNext());          // row 0
+                Assert.assertEquals(1, recordA.getInt(0));
+                long rowIdA0 = recordA.getRowId();
+
+                Assert.assertTrue(cursor.hasNext());          // row 1
+                Assert.assertEquals(2, recordA.getInt(0));
+
+                // random access far past the clamped 3-row window via recordB; forces a
+                // full re-decode of the same buffer.
+                cursor.recordAt(recordB, rowIdA0 + 40);
+                Assert.assertEquals(41, recordB.getInt(0));
+                Assert.assertEquals("v41", recordB.getStrA(1).toString());
+                Assert.assertEquals("s41", recordB.getStrA(2).toString());
+
+                // recordA must still read row 1 correctly after the in-place re-decode
+                Assert.assertEquals(2, recordA.getInt(0));
+                Assert.assertEquals("v2", recordA.getStrA(1).toString());
+                Assert.assertEquals("s2", recordA.getStrA(2).toString());
+
+                Assert.assertTrue(cursor.hasNext());          // row 2
+                Assert.assertEquals(3, recordA.getInt(0));
+                Assert.assertEquals("v3", recordA.getStrA(1).toString());
+
+                // clamp stops the scan after 3 rows
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
 
     // BINARY var-len column with a mid-frame offset. BinaryTypeDriver extends
     // StringTypeDriver, so it takes the aux-shift rebase path. Not covered by the
