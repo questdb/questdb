@@ -1750,7 +1750,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: a
                                 Hash
                                     SelectedRecord
-                                        Sort light
+                                        Encode sort light
                                           keys: [s]
                                             PageFrame
                                                 Row forward scan
@@ -10286,29 +10286,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
-    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
-    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
-        // ORDER BY str references a column absent from the SELECT list, forcing the
-        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
-        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
-        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
-        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
-        // and is not what the gate inspects.
-        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            VirtualRecord
-                              functions: [x+1,x,str]
-                                Async JIT Top K lo: 10 workers: 1
-                                  filter: str is not null
-                                  keys: [str desc]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: xx
-                        """);
-    }
-
     @Test // two-bound LIMIT is not a top-K candidate; Sort light handles it
     public void testSelectWhereOrderByLimit9() throws Exception {
         assertQuery("select x, * from xx where str is not null order by str desc limit 10, 20")
@@ -10322,21 +10299,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
-                        """);
-    }
-
-    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
-    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
-        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            Async JIT Top K lo: 10 workers: 1
-                              filter: str is not null
-                              keys: [str desc, x]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: xx
                         """);
     }
 
@@ -10361,6 +10323,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
+        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            Async JIT Top K lo: 10 workers: 1
+                              filter: str is not null
+                              keys: [str desc, x]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: xx
+                        """);
+    }
+
     @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
     public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
         assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10")
@@ -10372,6 +10349,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Async JIT Top K lo: 10 workers: 1
                                   filter: str is not null
                                   keys: [str desc, x]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: xx
+                        """);
+    }
+
+    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
+    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
+        // ORDER BY str references a column absent from the SELECT list, forcing the
+        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
+        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
+        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
+        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
+        // and is not what the gate inspects.
+        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            VirtualRecord
+                              functions: [x+1,x,str]
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: str is not null
+                                  keys: [str desc]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
