@@ -37,6 +37,7 @@ import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -625,6 +626,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            base.setParquetDecodeHint(hint);
         }
 
         @Override

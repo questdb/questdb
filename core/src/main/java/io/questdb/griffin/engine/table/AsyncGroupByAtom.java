@@ -125,8 +125,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     perWorkerFilters,
                     workerCount,
                     workerCount,
-                    1,
-                    1
+                    0L,
+                    0L
             );
 
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());

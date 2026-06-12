@@ -41,6 +41,7 @@ import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -224,6 +225,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
+            baseCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {

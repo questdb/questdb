@@ -51,22 +51,28 @@ impl ColumnChunkBuffers {
             aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
+            page_buffers_size: 0,
             page_buffers: Vec::new(),
         }
     }
 
+    // Unconditional re-read so a hypothetical second call between resets cannot keep
+    // a stale ptr after a Vec reallocation.
     pub fn refresh_ptrs(&mut self) {
-        if self.data_ptr.is_null() {
-            self.data_size = self.data_vec.len();
-            self.data_ptr = self.data_vec.as_mut_ptr();
-        }
+        self.data_size = self.data_vec.len();
+        self.data_ptr = self.data_vec.as_mut_ptr();
 
-        if self.aux_ptr.is_null() {
-            self.aux_size = self.aux_vec.len();
-            self.aux_ptr = self.aux_vec.as_mut_ptr();
-        }
+        self.aux_size = self.aux_vec.len();
+        self.aux_ptr = self.aux_vec.as_mut_ptr();
+
+        // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
+        self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
     }
 
+    // Callers drain `page_buffers` (into a reuse pool) before invoking; this only clears
+    // the outer Vec and the inner data/aux vectors. The inner Vecs keep their capacity
+    // so the next decode can grow into them via realloc only when the new chunk exceeds
+    // the buffer's historical peak.
     pub fn reset(&mut self) {
         self.data_vec.clear();
         self.data_size = 0;
@@ -76,6 +82,7 @@ impl ColumnChunkBuffers {
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
 
+        self.page_buffers_size = 0;
         self.page_buffers.clear();
     }
 }
@@ -2287,6 +2294,90 @@ mod tests {
     const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
     const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
     const UUID_NULL: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128];
+
+    #[test]
+    fn page_buffers_size_tracks_retained_page_bytes() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        // Fresh buffer: nothing retained.
+        bufs.refresh_ptrs();
+        assert_eq!(bufs.page_buffers_size, 0);
+
+        // A VarcharSlice decode retains decompressed page/dict buffers here, with the
+        // aux pointers referencing them. refresh_ptrs must sum their lengths so the
+        // Java decode-cache budget counts the string bytes.
+        bufs.page_buffers.push(vec![0u8; 100]);
+        bufs.page_buffers.push(vec![0u8; 56]);
+        bufs.refresh_ptrs();
+        assert_eq!(bufs.page_buffers_size, 156);
+
+        // reset() must zero it so a reused buffer does not carry stale bytes.
+        bufs.reset();
+        assert_eq!(bufs.page_buffers_size, 0);
+        assert!(bufs.page_buffers.is_empty());
+    }
+
+    #[test]
+    fn decode_row_group_clears_varchar_slice_reuse_pool() {
+        // The VarcharSlice page-buffer reuse pool lives on the DecodeContext, which outlives
+        // individual decode-cache entries. Spare buffers left in it are uncounted by the Java
+        // byte budget and would otherwise survive cache eviction and releaseParquetBuffers(),
+        // letting the budget read zero while RSS still held varchar page allocations. A
+        // row-group decode must drop the pool at the end. The live buffers a decode produces
+        // are held in ColumnChunkBuffers::page_buffers (counted), not the pool.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 10;
+        let row_group_size = 50;
+        let data_page_size = 50;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        // Simulate spare page buffers retained from a prior column-chunk decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        decoder
+            .decode_row_group(
+                &mut ctx,
+                &mut rgb,
+                &[(0, column_type)],
+                0,
+                0,
+                row_count as u32,
+            )
+            .unwrap();
+
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "row-group decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "row-group decode must leave the page-buffer scratch empty"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "row-group decode must leave the dict-buffer scratch empty"
+        );
+    }
 
     #[test]
     fn test_decode_int_column_v2_nulls() {
