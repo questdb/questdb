@@ -745,6 +745,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.incrementRefreshSeq();
             viewState.unlock();
             viewState.tryCloseIfDropped();
+            viewState.tryCloseIfClosed();
         }
 
         if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
@@ -1283,6 +1284,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             } finally {
                 viewState.unlock();
                 viewState.tryCloseIfDropped();
+                viewState.tryCloseIfClosed();
             }
             // Invalidate dependent views recursively.
             enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
@@ -1413,6 +1415,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } finally {
             viewState.unlock();
             viewState.tryCloseIfDropped();
+            viewState.tryCloseIfClosed();
         }
 
         return true;
@@ -1484,6 +1487,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     viewState.incrementRefreshSeq();
                     viewState.unlock();
                     viewState.tryCloseIfDropped();
+                    viewState.tryCloseIfClosed();
                 }
             }
         }
@@ -1594,6 +1598,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.incrementRefreshSeq();
             viewState.unlock();
             viewState.tryCloseIfDropped();
+            viewState.tryCloseIfClosed();
         }
     }
 
@@ -1741,6 +1746,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             } finally {
                 viewState.unlock();
                 viewState.tryCloseIfDropped();
+                viewState.tryCloseIfClosed();
             }
         }
     }
