@@ -799,6 +799,116 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreDrainsParallelTasksOnTaskFailure() throws Exception {
+        // When a parallel rebuild task fails, rebuildTableFiles() must reach
+        // quiescence before rethrowing: the enterprise backup restore
+        // quarantine-renames the failed table's directory and reloads the
+        // shared native-backed tableMetadata, columnVersionReader and txWriter
+        // objects for the next table, so abandoning still-running tasks is a
+        // use-after-free risk. The same agent must then fully process the next
+        // table: a stale abort flag would make its tasks silently skip their
+        // work.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fail (
+                        val DOUBLE,
+                        sym_fail SYMBOL INDEX,
+                        sym_slow SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fail VALUES
+                    (1.0, 'A', 'X', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', 'Y', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', 'X', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    CREATE TABLE t_next (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_next VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            sink.clear();
+            printSql("SELECT count() FROM t_next WHERE sym = 'A'");
+            final String expectedNextCount = sink.toString();
+
+            TableToken failToken = engine.verifyTableName("t_fail");
+            TableToken nextToken = engine.verifyTableName("t_next");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File failPartDir = findNativePartitionDir(new File(dbRoot, failToken.getDirName()), "2024-01-01", "sym_fail.d");
+
+            engine.clear();
+
+            // Delete sym_fail's data file from the first partition: the bitmap
+            // index rebuild task for it fails on opening the .d file while the
+            // sym_slow rebuild tasks are still held up in openRO below.
+            Assert.assertTrue("failed to delete sym_fail.d", new File(failPartDir, "sym_fail.d").delete());
+
+            final AtomicInteger slowOpensStarted = new AtomicInteger();
+            final AtomicInteger slowOpensFinished = new AtomicInteger();
+            final FilesFacade slowFf = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, "sym_slow.d")) {
+                        slowOpensStarted.incrementAndGet();
+                        Os.sleep(300);
+                        long fd = super.openRO(name);
+                        slowOpensFinished.incrementAndGet();
+                        return fd;
+                    }
+                    return super.openRO(name);
+                }
+            };
+            CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return slowFf;
+                }
+            };
+
+            try (TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig)) {
+                try (Path tablePath = new Path().of(dbRoot).concat(failToken).slash()) {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "error in parallel task");
+                    // Capture immediately: with the abandon-on-first-failure bug
+                    // the sym_slow tasks are still sleeping (or queued) here and
+                    // only catch up after the failure has been rethrown.
+                    final int started = slowOpensStarted.get();
+                    final int finished = slowOpensFinished.get();
+                    Assert.assertEquals(
+                            "rebuildTableFiles threw with parallel tasks still in flight [started=" + started + ", finished=" + finished + ']',
+                            started,
+                            finished
+                    );
+                    Assert.assertTrue("no sym_slow rebuild task completed before the failure was rethrown", finished > 0);
+                }
+
+                AtomicInteger nextSymbolFiles = new AtomicInteger();
+                try (Path tablePath = new Path().of(dbRoot).concat(nextToken).slash()) {
+                    restoreAgent.rebuildTableFiles(tablePath, nextSymbolFiles, true);
+                }
+                Assert.assertEquals("symbol rebuild tasks of the next table did not run", 1, nextSymbolFiles.get());
+            }
+
+            assertQuery("SELECT count() FROM t_next WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedNextCount);
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreFailsOnMissingParquetFile() throws Exception {
         // When both _pm and data.parquet are missing, rebuildTableFiles()
         // should throw CairoException from generateMissingParquetMetaFiles().
@@ -4105,6 +4215,18 @@ public class CheckpointTest extends AbstractCairoTest {
 
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    private static File findNativePartitionDir(File tableDir, String partitionPrefix, String requiredFile) {
+        File[] dirs = tableDir.listFiles((_, name) -> name.startsWith(partitionPrefix));
+        Assert.assertNotNull("no directories matching " + partitionPrefix, dirs);
+        for (File dir : dirs) {
+            if (new File(dir, requiredFile).exists()) {
+                return dir;
+            }
+        }
+        Assert.fail("no partition directory with " + requiredFile + " for " + partitionPrefix);
+        return null; // unreachable
     }
 
     private static File findParquetPartitionDir(File tableDir, String partitionPrefix) {

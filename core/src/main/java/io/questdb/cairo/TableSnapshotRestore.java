@@ -132,6 +132,10 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     @Override
     public void close() {
+        // Every restore path drains its tasks before returning, but freeing
+        // the native-backed objects below under a still-running task would be
+        // a use-after-free, so drain again as a backstop.
+        abortAndDrainParallelTasks();
         futures.clear();
         executor.shutdownNow();
         tableMetadata = Misc.free(tableMetadata);
@@ -187,31 +191,76 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
+    /**
+     * Awaits every submitted parallel task and surfaces the first failure.
+     * Returns or throws only after all tasks have completed: the tasks read
+     * the shared native-backed {@code tableMetadata}, {@code columnVersionReader}
+     * and {@code txWriter} objects, which callers reload for the next table,
+     * so abandoning a running task on failure would put those reloads under
+     * concurrent readers. Resets the abort flag before returning so the next
+     * table's tasks run normally.
+     */
     public void finalizeParallelTasks() {
         if (futures.size() > 0) {
             LOG.info().$("awaiting ").$(futures.size()).$(" parallel tasks to complete").I$();
         }
 
+        boolean failed = false;
+        String firstErrorMessage = null;
+        Throwable firstCause = null;
+        boolean interrupted = false;
         for (int i = 0, n = futures.size(); i < n; i++) {
             try {
                 futures.getQuick(i).get();
             } catch (InterruptedException e) {
-                LOG.error().$("parallel task interrupted ").$(e).I$();
-                throw CairoException.critical(0).put("parallel task interrupted");
-            } catch (ExecutionException e) {
-                Throwable cause = e.getCause();
-                if (cause != null) {
-                    LOG.critical().$("error in parallel task").$(cause).I$();
-                } else {
-                    LOG.critical().$("error in parallel task: ").$(e.getMessage()).I$();
+                // Keep draining: abandoning a running task is a use-after-free
+                // risk for the shared native-backed readers. get() cleared the
+                // interrupt status, so the retry blocks until the task is done;
+                // the status is restored once the drain completes. The abort
+                // flag makes tasks that have not started yet return immediately,
+                // bounding the wait.
+                abortParallelTasks.set(true);
+                interrupted = true;
+                //noinspection AssignmentToForLoopParameter
+                i--;
+            } catch (Throwable e) {
+                abortParallelTasks.set(true);
+                Throwable cause = e instanceof ExecutionException ? e.getCause() : e;
+                if (cause == null) {
+                    cause = e;
                 }
-                final CairoException ex = CairoException.critical(0)
-                        .put("error in parallel task")
-                        .put(": ")
-                        .put(cause != null ? cause.getMessage() : e.getMessage());
-                ex.initCause(cause != null ? cause : e);
-                throw ex;
+                LOG.critical().$("error in parallel task").$(cause).I$();
+                if (!failed) {
+                    failed = true;
+                    // CairoException instances are thread-local-reused: the worker
+                    // that threw this cause can overwrite it while the remaining
+                    // futures are drained. Materialize the message now and build
+                    // the thrown exception only after the drain.
+                    firstErrorMessage = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getName();
+                    firstCause = cause;
+                }
             }
+        }
+
+        // All tasks have completed; reset the abort flag so the tasks of the
+        // next table (enterprise backup restore continues after quarantining a
+        // failed table) do not silently skip their work.
+        abortParallelTasks.set(false);
+
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+            if (!failed) {
+                LOG.error().$("parallel task await interrupted").I$();
+                throw CairoException.critical(0).put("parallel task interrupted");
+            }
+        }
+        if (failed) {
+            final CairoException ex = CairoException.critical(0)
+                    .put("error in parallel task")
+                    .put(": ")
+                    .put(firstErrorMessage);
+            ex.initCause(firstCause);
+            throw ex;
         }
     }
 
@@ -339,15 +388,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             // Drain all parallel tasks (symbol rebuilds + bitmap index rebuilds)
-            // before returning, because tableMetadata and columnVersionReader are
-            // reused across tables. Without this, a parquet bitmap rebuild task
-            // from this table could still be running when the caller loads the
-            // next table's metadata into the same objects.
-            try {
-                finalizeParallelTasks();
-            } finally {
-                futures.clear();
-            }
+            // before going further, because tableMetadata, columnVersionReader
+            // and txWriter are reused across tables. Without this, a bitmap
+            // rebuild task from this table could still be running when the
+            // caller loads the next table's metadata into the same objects.
+            // finalizeParallelTasks returns or throws only after every
+            // submitted task has completed.
+            finalizeParallelTasks();
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
@@ -368,7 +415,17 @@ public class TableSnapshotRestore implements QuietCloseable {
                 );
                 ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
             }
+        } catch (Throwable th) {
+            // Any step above can throw with tasks still in flight: task
+            // submission itself can fail part-way, and finalizeParallelTasks
+            // rethrows the first task failure. Reach quiescence before
+            // propagating, because the caller may quarantine-rename the table
+            // directory the tasks write into and reload the shared
+            // native-backed metadata objects the tasks read.
+            abortAndDrainParallelTasks();
+            throw th;
         } finally {
+            futures.clear();
             tablePath.trimTo(pathTableLen);
         }
     }
@@ -490,6 +547,37 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
         }
         return -1;
+    }
+
+    /**
+     * Awaits every submitted parallel task without surfacing task failures;
+     * used on error paths that only need quiescence (the failure that gets
+     * reported is the one already in flight). Sets the abort flag for the
+     * duration of the drain so tasks that have not started yet return
+     * immediately, and resets it afterwards so the next table's tasks run
+     * normally. Restores the interrupt status if the draining thread is
+     * interrupted.
+     */
+    private void abortAndDrainParallelTasks() {
+        abortParallelTasks.set(true);
+        boolean interrupted = false;
+        for (int i = 0, n = futures.size(); i < n; i++) {
+            try {
+                futures.getQuick(i).get();
+            } catch (InterruptedException e) {
+                // get() cleared the interrupt status; retry so the drain still
+                // waits for the task, and restore the status after the loop
+                interrupted = true;
+                //noinspection AssignmentToForLoopParameter
+                i--;
+            } catch (Throwable ignore) {
+                // the task is done, which is all this path needs
+            }
+        }
+        abortParallelTasks.set(false);
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
