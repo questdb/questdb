@@ -410,19 +410,39 @@ public final class QueryRunner {
     /**
      * A high-precision DECIMAL (Decimal256-backed, precision &gt; 38) {@code sum}
      * or {@code avg} can legitimately overflow: summing values near the
-     * DECIMAL(76) maximum exceeds Decimal256's 256-bit capacity, so the engine
-     * raises a {@link CairoException} "... aggregation failed: an overflow
-     * occurred". The result is genuinely unrepresentable -- the non-window
-     * group-by {@code avg} / {@code sum} produces the identical overflow on the
-     * same data, and {@code WindowDecimalFunctionTest} pins it as the expected
-     * behaviour. This is a data-dependent arithmetic limit, not an internal
-     * engine error, so the oracle treats it like a {@link NumericException}
-     * overflow rather than reporting it as a failure. The match is narrow: only
-     * the decimal aggregation functions emit "aggregation failed", and every
-     * such message is an overflow.
+     * DECIMAL(76) maximum exceeds Decimal256's 256-bit capacity. The result is
+     * genuinely unrepresentable -- the non-window group-by {@code avg} /
+     * {@code sum} produces the identical overflow on the same data, and
+     * {@code WindowDecimalFunctionTest} pins it as the expected behaviour. This
+     * is a data-dependent arithmetic limit, not an internal engine error, so the
+     * oracle treats it like a {@link NumericException} overflow rather than
+     * reporting it as a failure.
+     * <p>
+     * The decimal sum/avg factories report this through two distinct
+     * {@link CairoException} message shapes, both of which carry the word
+     * "overflow":
+     * <ul>
+     *     <li>the explicit overflow-flag path emits
+     *     {@code "... aggregation failed: an overflow occurred"} after
+     *     {@code Decimal256.hasOverflowed()} trips;</li>
+     *     <li>a wrapping path catches a {@link Decimal256}
+     *     {@link NumericException} from {@code uncheckedAdd}/{@code divide} and
+     *     concatenates its flyweight message, which begins {@code "Overflow in
+     *     ..."} (addition, division, multiplication, or scale adjustment).</li>
+     * </ul>
+     * The match therefore requires <em>both</em> "aggregation failed" and
+     * "overflow" (case-insensitive). A bare "aggregation failed" check would also
+     * swallow a future non-overflow {@code NumericException} that the wrapping
+     * path concatenates verbatim -- a division-by-zero, an invalid scale, or any
+     * genuine engine bug -- silently turning a possible wrong result into an
+     * accepted skip. Demanding "overflow" reports those as failures instead.
      */
     private static boolean isDecimalAggregationOverflow(Throwable t) {
-        return t instanceof CairoException ce && Chars.contains(ce.getFlyweightMessage(), "aggregation failed");
+        if (!(t instanceof CairoException ce)) {
+            return false;
+        }
+        final CharSequence msg = ce.getFlyweightMessage();
+        return Chars.contains(msg, "aggregation failed") && Chars.containsLowerCase(msg, "overflow");
     }
 
     /**
