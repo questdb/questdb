@@ -1066,8 +1066,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // and feeds a LONG-width multiply diverged between the JIT and the Java
         // filter when a FLOAT comparison suppressed the narrow-to-i64 widening:
         // the JIT wrapped the inner product mod 2^32 while the Java filter read
-        // it at long width via MulInt#getLong. The serializer now rejects JIT
-        // for this shape and falls back to the Java filter, so both agree.
+        // it at long width via MulInt#getLong. The serializer now sign-extends
+        // exactly the narrow leaves under the LONG-width subtree, so the JIT
+        // stays on and both paths agree.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c0 LONG, c2 SHORT, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), rnd_short(), " +
@@ -1075,10 +1076,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
                     "FROM long_sequence(122)");
 
-            // Diverging shapes: JIT must fall back to the Java filter.
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))", false);
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776782))", false);
-            // Control shapes that stay correct under JIT must still compile.
+            // Previously diverging shapes: still JIT-compiled, now correct.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2000000000))", true);
+            // Control shapes that were always correct under JIT.
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 * -776782)", true);
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * c8)", true);
             assertJitMatchesJava("SELECT * FROM t WHERE (c8 * -776782) > 0", true);
