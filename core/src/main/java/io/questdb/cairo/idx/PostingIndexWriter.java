@@ -2148,56 +2148,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Per-key value count in a dense generation, read from the stride header
-     * without decoding any values. Count-only analogue of the first half of
-     * {@link #decodeDenseGenSingleKey}.
-     */
-    private int countInDenseGen(long genBase, int genKeyCount, int stride, int j) {
-        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-        long strideOff = Unsafe.getLong(genBase + (long) stride * Long.BYTES);
-        long nextStrideOff = Unsafe.getLong(genBase + (long) (stride + 1) * Long.BYTES);
-        if (nextStrideOff == strideOff) {
-            return 0;
-        }
-        long strideAddr = genBase + siSize + strideOff;
-        byte mode = Unsafe.getByte(strideAddr);
-        int genKs = PostingIndexUtils.keysInStride(genKeyCount, stride);
-        if (j >= genKs) {
-            return 0;
-        }
-        if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-            int startIdx = Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
-            return Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
-        } else {
-            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-            return Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
-        }
-    }
-
-    /**
-     * Per-key value count in a sparse generation, found by binary search on the
-     * sorted keyIds and read from the counts array without decoding any values.
-     * Count-only analogue of the first half of {@link #decodeSparseGenSingleKey}.
-     */
-    private int countInSparseGen(long genBase, int activeKeyCount, int key) {
-        long countsBase = genBase + (long) activeKeyCount * Integer.BYTES;
-        int lo = 0, hi = activeKeyCount - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            int midKey = Unsafe.getInt(genBase + (long) mid * Integer.BYTES);
-            if (midKey < key) {
-                lo = mid + 1;
-            } else if (midKey > key) {
-                hi = mid - 1;
-            } else {
-                return Unsafe.getInt(countsBase + (long) mid * Integer.BYTES);
-            }
-        }
-        return 0;
-    }
-
-    /**
      * Decode a single key's values from a dense generation. Used by the
      * per-key streaming compaction path. {@code stride} is the stride
      * index in this gen; {@code j} is the key offset within the stride.
@@ -2792,22 +2742,13 @@ public class PostingIndexWriter implements IndexWriter {
         int newKeyCount = 0;
         final int oldKeyCount = keyCount;
         // Resolve per-gen metadata once (valueMem is read-only in this pass, so
-        // the base addresses stay stable). The gen runs concatenate in ascending
-        // row order, so per-gen MAX_VALUE is monotonic: gens [0, straddleGen) are
-        // entirely <= cutoff (every value survives), gen straddleGen straddles the
-        // cutoff, and every gen above it is entirely rolled back. straddleGen is a
-        // per-gen property -- the same for every key -- so resolve it once.
+        // the base addresses stay stable).
         long[] genBases = new long[genCount];
         int[] genKeyCounts = new int[genCount];
-        int straddleGen = genCount;
         for (int gen = 0; gen < genCount; gen++) {
             long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
             genBases[gen] = valueMem.addressOf(keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET));
             genKeyCounts[gen] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            if (straddleGen == genCount
-                    && keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE) > maxValueCutoff) {
-                straddleGen = gen;
-            }
         }
         for (int key = 0; key < oldKeyCount; key++) {
             int origCount = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
@@ -2816,51 +2757,47 @@ public class PostingIndexWriter implements IndexWriter {
             }
             int stride = key / PostingIndexUtils.DENSE_STRIDE;
             int j = key % PostingIndexUtils.DENSE_STRIDE;
-            // Generations entirely <= cutoff survive in full -- take the per-key
-            // count straight from the gen header, decoding no values.
-            int survivors = 0;
-            for (int gen = 0; gen < straddleGen; gen++) {
+            // Decode the key from EVERY generation. The per-key concatenation is
+            // ascending (the indexer feeds each key's row ids monotonically), so the
+            // surviving prefix is found by a single binary search. Per-gen
+            // GEN_DIR_OFFSET_MAX_VALUE is a GLOBAL max across all keys, NOT a per-key
+            // bound, so it cannot be used to skip generations per key: keys from
+            // different commits interleave by row id, so a low-row-id key can still
+            // have survivors in a generation whose global max exceeds the cutoff.
+            int decodedTotal = 0;
+            for (int gen = 0; gen < genCount; gen++) {
                 int genKeyCount = genKeyCounts[gen];
+                long appendAddr = keyBuffer + (long) decodedTotal * Long.BYTES;
                 if (genKeyCount < 0) {
-                    survivors += countInSparseGen(genBases[gen], -genKeyCount, key);
+                    decodedTotal += decodeSparseGenSingleKey(genBases[gen], -genKeyCount, key, appendAddr);
                 } else if (stride < PostingIndexUtils.strideCount(genKeyCount)) {
-                    survivors += countInDenseGen(genBases[gen], genKeyCount, stride, j);
+                    decodedTotal += decodeDenseGenSingleKey(genBases[gen], genKeyCount, stride, j, appendAddr);
                 }
             }
-            // Only the straddling gen needs a real decode + binary search to split
-            // its values at the cutoff (its survivors are the leading prefix).
-            if (straddleGen < genCount) {
-                int genKeyCount = genKeyCounts[straddleGen];
-                int decoded = 0;
-                if (genKeyCount < 0) {
-                    decoded = decodeSparseGenSingleKey(genBases[straddleGen], -genKeyCount, key, keyBuffer);
-                } else if (stride < PostingIndexUtils.strideCount(genKeyCount)) {
-                    decoded = decodeDenseGenSingleKey(genBases[straddleGen], genKeyCount, stride, j, keyBuffer);
-                }
-                assert decoded <= maxKeyCount;
-                int lo = 0, hi = decoded - 1, cut = -1;
-                while (lo <= hi) {
-                    int mid = (lo + hi) >>> 1;
-                    long midVal = Unsafe.getLong(keyBuffer + (long) mid * Long.BYTES);
-                    if (midVal <= maxValueCutoff) {
-                        cut = mid;
-                        lo = mid + 1;
-                    } else {
-                        hi = mid - 1;
-                    }
-                }
-                survivors += cut + 1;
-            }
-            // survivors is a subset of the full per-key count; exceeding it means
-            // the gen headers disagree with the gen-dir totals (corruption).
-            if (survivors > origCount) {
+            // decodedTotal is the full per-key count totalCountsAddr held before this
+            // pass; a mismatch means the encoded blocks disagree with the gen-dir
+            // counts (corruption). maxKeyCount (the full max) bounds keyBuffer.
+            assert decodedTotal <= maxKeyCount;
+            if (decodedTotal != origCount) {
                 throw CairoException.critical(0)
-                        .put("posting index rollback survivor count over-run [key=").put(key)
-                        .put(", expected<=").put(origCount)
-                        .put(", survivors=").put(survivors).put(']');
+                        .put("posting index rollback decode mismatch [key=").put(key)
+                        .put(", expected=").put(origCount)
+                        .put(", decoded=").put(decodedTotal).put(']');
             }
-            Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, survivors);
-            if (survivors > 0) {
+            int lo = 0, hi = decodedTotal - 1, cut = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                long midVal = Unsafe.getLong(keyBuffer + (long) mid * Long.BYTES);
+                if (midVal <= maxValueCutoff) {
+                    cut = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            int newCount = cut + 1;
+            Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, newCount);
+            if (newCount > 0) {
                 newKeyCount = key + 1;
             }
         }
@@ -4730,15 +4667,6 @@ public class PostingIndexWriter implements IndexWriter {
                             decodedTotal += decodeSparseGenSingleKey(genBase, -genKeyCount, strideStart + j, appendAddr);
                         } else if (s < PostingIndexUtils.strideCount(genKeyCount)) {
                             decodedTotal += decodeDenseGenSingleKey(genBase, genKeyCount, s, j, appendAddr);
-                        }
-                        // Rollback early exit: survivors are the leading `count`
-                        // values (the gen runs concatenate in sorted-ascending row
-                        // order), so once at least `count` are decoded the rest lie
-                        // above the cutoff and would be dropped -- stop decoding the
-                        // later gens. Seals must keep decoding every gen so the
-                        // `!= count` over-decode corruption check below still fires.
-                        if (isRollback && decodedTotal >= count) {
-                            break;
                         }
                     }
                     // Seal (isRollback=false): decodedTotal must equal count (the
