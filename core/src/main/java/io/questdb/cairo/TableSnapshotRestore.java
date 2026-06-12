@@ -207,7 +207,6 @@ public class TableSnapshotRestore implements QuietCloseable {
 
         boolean failed = false;
         String firstErrorMessage = null;
-        Throwable firstCause = null;
         boolean interrupted = false;
         for (int i = 0, n = futures.size(); i < n; i++) {
             try {
@@ -237,7 +236,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                     // futures are drained. Materialize the message now and build
                     // the thrown exception only after the drain.
                     firstErrorMessage = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getName();
-                    firstCause = cause;
                 }
             }
         }
@@ -255,12 +253,17 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
         }
         if (failed) {
-            final CairoException ex = CairoException.critical(0)
+            // Deliberately no initCause(): the cause is the worker's
+            // thread-local-reused CairoException, which by now can hold a
+            // different task's message, and Throwable.initCause() on the
+            // thread-local instance returned by critical() succeeds only once
+            // per thread (clear() cannot reset the cause field), so the next
+            // failed table would hit IllegalStateException. The drain loop
+            // has already logged every failure with its cause.
+            throw CairoException.critical(0)
                     .put("error in parallel task")
                     .put(": ")
                     .put(firstErrorMessage);
-            ex.initCause(firstCause);
-            throw ex;
         }
     }
 

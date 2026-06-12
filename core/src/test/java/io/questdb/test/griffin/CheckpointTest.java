@@ -880,6 +880,13 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "error in parallel task");
+                    // The task's exception must not be attached as the cause:
+                    // it is the worker's thread-local-reused CairoException
+                    // (overwritable while the drain completes), and initCause()
+                    // on the rethrown thread-local instance succeeds only once
+                    // per thread, so the next failed table would hit
+                    // IllegalStateException instead of a CairoException.
+                    Assert.assertNull("parallel task failure must not retain the reused cause", e.getCause());
                     // Capture immediately: with the abandon-on-first-failure bug
                     // the sym_slow tasks are still sleeping (or queued) here and
                     // only catch up after the failure has been rethrown.
