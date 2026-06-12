@@ -6986,6 +6986,37 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinAsMasterOfSecondJoin() throws Exception {
+        // A splice join as the left (master) side of a following join used to leak the root
+        // table alias into the second join's metadata, crashing on a fully qualified column
+        // name. The splice result already carries qualified names, so the alias must be cleared.
+        assertMemoryLeak(() -> {
+            execute("create table m (k symbol, mv int, ts timestamp) timestamp(ts) partition by day");
+            execute("create table s (k symbol, sv int, ts timestamp) timestamp(ts) partition by day");
+            execute("create table r (k symbol, rv int, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into m values ('a', 1, '2020-01-01T00:00:00.000000Z')");
+            execute("insert into s values ('a', 2, '2020-01-01T00:00:00.000000Z')");
+            execute("insert into r values ('a', 3, '2020-01-01T00:00:00.000000Z'), ('b', 4, '2020-01-01T00:00:01.000000Z')");
+
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k right join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n\tnull\t4\n");
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k full join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n\tnull\t4\n");
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k inner join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n");
+        });
+    }
+
+    @Test
     public void testSpliceJoinFailsBecauseSubqueryDoesntSupportRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

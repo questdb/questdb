@@ -5628,6 +5628,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("splice join doesn't support full fat mode");
                                     }
                                 }
+                                // the splice join result carries fully qualified column names, so a
+                                // subsequent join must not re-apply the master alias
+                                masterAlias = null;
                                 break;
                             case IQueryModel.JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
