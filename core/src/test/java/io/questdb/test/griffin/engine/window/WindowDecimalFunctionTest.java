@@ -25,8 +25,12 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class WindowDecimalFunctionTest extends AbstractCairoTest {
@@ -8689,6 +8693,46 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumAvgDecimal256SlidingFrameEviction() throws Exception {
+        // Query fuzzer (window shapes): sum()/avg() over a Decimal256-backed DECIMAL(76, 6) cast
+        // running over a sliding frame fed the running accumulator through a raw 256-bit add
+        // (Decimal256.uncheckedAdd) but evicted the oldest value through a scale-aware subtract.
+        // The accumulator's scale field stayed 0 while the cast set the value scale to 6, so the
+        // first eviction rescaled the accumulator by 10^6, inflating every later row of the run by
+        // a constant. The accumulator instance is shared across the cursor's forward passes, so the
+        // corruption only showed on the very first pass (scale 0) and vanished after toTop() left
+        // the scale at 6 - a result that changed under re-iteration. The cast is load-bearing: a
+        // plain DECIMAL column read leaves the value scale at 0 and hides the mismatch. Materialize
+        // the raw first pass and the toTop pass separately: both must equal the hand-computed sums
+        // for the rows, partition-rows, range and partition-range sum frames plus the avg.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g SYMBOL, d DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("INSERT INTO t SELECT (x * 60_000_000)::TIMESTAMP, 'a', x::DOUBLE FROM long_sequence(10)");
+            final String expected = """
+                    ts\tsr\tspr\tsg\tspg\tapr
+                    1970-01-01T00:01:00.000000Z\t1.000000\t1.000000\t1.000000\t1.000000\t1.000000
+                    1970-01-01T00:02:00.000000Z\t3.000000\t3.000000\t3.000000\t3.000000\t1.500000
+                    1970-01-01T00:03:00.000000Z\t6.000000\t6.000000\t6.000000\t6.000000\t2.000000
+                    1970-01-01T00:04:00.000000Z\t10.000000\t10.000000\t10.000000\t10.000000\t2.500000
+                    1970-01-01T00:05:00.000000Z\t15.000000\t15.000000\t15.000000\t15.000000\t3.000000
+                    1970-01-01T00:06:00.000000Z\t21.000000\t21.000000\t21.000000\t21.000000\t3.500000
+                    1970-01-01T00:07:00.000000Z\t28.000000\t28.000000\t28.000000\t28.000000\t4.000000
+                    1970-01-01T00:08:00.000000Z\t36.000000\t36.000000\t36.000000\t36.000000\t4.500000
+                    1970-01-01T00:09:00.000000Z\t44.000000\t44.000000\t44.000000\t44.000000\t5.500000
+                    1970-01-01T00:10:00.000000Z\t52.000000\t52.000000\t52.000000\t52.000000\t6.500000
+                    """;
+            // Run each frame shape as its own single window function so the planner keeps it on the
+            // streaming executor, where the running accumulator is reused across the forward passes
+            // and the scale corruption surfaced on the very first pass.
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (ORDER BY ts ROWS BETWEEN 7 PRECEDING AND CURRENT ROW)", expected, 1);
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 7 PRECEDING AND CURRENT ROW)", expected, 2);
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (ORDER BY ts RANGE BETWEEN 7 minute PRECEDING AND CURRENT ROW)", expected, 3);
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (PARTITION BY g ORDER BY ts RANGE BETWEEN 7 minute PRECEDING AND CURRENT ROW)", expected, 4);
+            assertSlidingFrameFirstPass("avg((d)::DECIMAL(76, 6)) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 7 PRECEDING AND CURRENT ROW)", expected, 5);
+        });
+    }
+
+    @Test
     public void testSumDecimal128AccumulatorPromotion() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v decimal(18, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
@@ -11627,4 +11671,26 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         });
     }
 
+    // Materializes the raw first forward pass of a single sliding-frame window function and the
+    // post-toTop pass, asserting both equal the expected column (selected by index from the shared
+    // expected table). The first pass is the one that exposed the scale-mismatch eviction.
+    private void assertSlidingFrameFirstPass(String windowExpr, String expectedTable, int expectedCol) throws Exception {
+        StringSink expected = new StringSink();
+        String[] lines = expectedTable.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String[] cols = lines[i].split("\t");
+            expected.put(cols[0]).put('\t').put(i == 0 ? "w" : cols[expectedCol]).put('\n');
+        }
+        try (RecordCursorFactory factory = select("SELECT ts, " + windowExpr + " w FROM t")) {
+            StringSink firstPass = new StringSink();
+            StringSink secondPass = new StringSink();
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), firstPass, true, false);
+                cursor.toTop();
+                CursorPrinter.println(cursor, factory.getMetadata(), secondPass, true, false);
+            }
+            TestUtils.assertEquals(expected, firstPass);
+            TestUtils.assertEquals(firstPass, secondPass);
+        }
+    }
 }

@@ -908,6 +908,30 @@ public class Decimal256 implements Sinkable, Decimal {
     }
 
     /**
+     * Subtracts the raw 256-bit value of {@code b} from {@code result} in place, ignoring scale.
+     * <p>
+     * This is the subtraction counterpart of {@link #uncheckedAdd(Decimal256, Decimal256)}: both operands
+     * must already share the same scale, neither may be null, and the difference must fit within a
+     * {@link Decimal256}. No scale alignment, null handling, or overflow validation happens here, so callers
+     * must enforce those preconditions. Window sum/avg accumulators rely on this raw behaviour so that a value
+     * removed from a sliding frame cancels exactly the limbs that {@code uncheckedAdd} contributed.
+     *
+     * @param result the accumulator that receives the difference (updated in place)
+     * @param b      the value to subtract, interpreted using two's-complement semantics
+     */
+    public static void uncheckedSubtract(Decimal256 result, Decimal256 b) {
+        // Two's-complement negation of b, then raw 256-bit add.
+        long bLL = ~b.ll + 1;
+        long carry = bLL == 0L ? 1L : 0L;
+        long bLH = ~b.lh + carry;
+        carry = (carry == 1L && bLH == 0L) ? 1L : 0L;
+        long bHL = ~b.hl + carry;
+        carry = (carry == 1L && bHL == 0L) ? 1L : 0L;
+        long bHH = ~b.hh + carry;
+        uncheckedAdd(result, bHH, bHL, bLH, bLL);
+    }
+
+    /**
      * In-place addition.
      *
      * @throws NumericException if overflow occurs

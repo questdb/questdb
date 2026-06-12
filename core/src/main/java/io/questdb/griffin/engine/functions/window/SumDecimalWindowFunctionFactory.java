@@ -3543,7 +3543,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                                acc.subtract(scratch);
+                                Decimal256.uncheckedSubtract(acc, scratch);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -3824,7 +3824,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (frameLoBounded) {
                     readD256(memory, startOffset + loIdx * Decimal256.BYTES, scratch);
                     if (!scratch.isNull()) {
-                        acc.subtract(scratch);
+                        Decimal256.uncheckedSubtract(acc, scratch);
                         count--;
                     }
                 }
@@ -3986,7 +3986,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
                             readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            acc.subtract(scratch);
+                            Decimal256.uncheckedSubtract(acc, scratch);
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -4248,7 +4248,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (frameLoBounded) {
                 readD256(buffer, (long) loIdx * Decimal256.BYTES, scratch);
                 if (!scratch.isNull()) {
-                    acc.subtract(scratch);
+                    Decimal256.uncheckedSubtract(acc, scratch);
                     count--;
                 }
             }

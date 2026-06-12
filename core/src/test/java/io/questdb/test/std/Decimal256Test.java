@@ -2777,6 +2777,51 @@ public class Decimal256Test {
         Assert.assertEquals("-0.75", result.toString());
     }
 
+    @Test
+    public void testUncheckedSubtractBorrowsAcrossLimbs() {
+        Decimal256 result = new Decimal256();
+        result.ofRaw(0, 0, 1, 0); // lh = 1, i.e. raw value 2^64
+        Decimal256 b = new Decimal256();
+        b.ofRaw(1);
+
+        Decimal256.uncheckedSubtract(result, b); // 2^64 - 1
+
+        Assert.assertEquals(0, result.getHh());
+        Assert.assertEquals(0, result.getHl());
+        Assert.assertEquals(0, result.getLh());
+        Assert.assertEquals(-1L, result.getLl()); // all-ones low limb
+    }
+
+    @Test
+    public void testUncheckedSubtractIgnoresScale() {
+        // Raw limb subtraction must ignore the operands' scale fields, mirroring uncheckedAdd. The
+        // window sum/avg accumulators store same-scale raw limbs and pair the two helpers; a
+        // scale-aware subtract here would rescale the accumulator and corrupt the running total.
+        Decimal256 result = new Decimal256();
+        result.ofRaw(36_000_000L); // raw limbs only, scale left at 0
+        Decimal256 b = Decimal256.fromLong(1_000_000L, 6); // scale 6
+
+        Decimal256.uncheckedSubtract(result, b);
+
+        Assert.assertEquals(35_000_000L, result.getLl());
+        Assert.assertEquals(0, result.getLh());
+        Assert.assertEquals(0, result.getHl());
+        Assert.assertEquals(0, result.getHh());
+        Assert.assertEquals(0, result.getScale());
+    }
+
+    @Test
+    public void testUncheckedSubtractInvertsUncheckedAdd() {
+        Decimal256 acc = new Decimal256();
+        acc.ofRaw(0);
+        Decimal256 v = Decimal256.fromLong(123_456_789L, 3);
+
+        Decimal256.uncheckedAdd(acc, v);
+        Decimal256.uncheckedSubtract(acc, v);
+
+        Assert.assertTrue(acc.isZero());
+    }
+
     private void printTable(String name, long[][] table) {
         int l = table[0].length;
         System.err.printf("    private static final long[][] %s = new long[][]{\n", name);
