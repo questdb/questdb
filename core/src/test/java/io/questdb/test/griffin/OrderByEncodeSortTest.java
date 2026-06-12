@@ -596,6 +596,59 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitLoPosHiNegBindVariableReExecutionDesignatedTimestamp() throws Exception {
+        // Re-execution over a designated-timestamp table whose ORDER BY starts with the
+        // timestamp, so the factory selects the legacy partially-sorted cursor. A non-encodable
+        // varchar sort key keeps the encoded path out, so both flag parameterizations route here.
+        // Execution 1 (lo>=0, hi>=0) picks the partially-sorted cursor; execution 2 re-binds to
+        // (lo>=0, hi<0), installing the unbounded limit sentinel (-1). The early-stop must scan all
+        // timestamp groups for a negative limit, not bail at the first group boundary.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x AS v, ('k' || x)::varchar AS s, (x * 1_000_000)::timestamp AS ts " +
+                            "FROM long_sequence(7)" +
+                            ") TIMESTAMP(ts)"
+            );
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 3);
+            try (RecordCursorFactory factory = select("SELECT * FROM x ORDER BY ts, s LIMIT :lo, :hi")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+
+                // same factory, lo >= 0 / hi < 0: slice off one row at each end of the full set
+                bindVariableService.setLong("hi", -1);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            4\tk4\t1970-01-01T00:00:04.000000Z
+                            5\tk5\t1970-01-01T00:00:05.000000Z
+                            6\tk6\t1970-01-01T00:00:06.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+
+                // and back to the top-K shape
+                bindVariableService.setLong("hi", 3);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOrderByLimitLoPosHiNullBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
