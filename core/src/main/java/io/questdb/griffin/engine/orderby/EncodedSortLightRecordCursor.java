@@ -33,6 +33,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -47,6 +49,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
+    private final MemoryCARW keyHeap;
     private final long maxEntryMemBytes;
     private final long parallelThreshold;
     private RecordCursor baseCursor;
@@ -77,6 +80,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_HEAP_SIZE_LIMIT);
             this.maxEntryMemBytes = Math.min(keyCap + valueCap, MAX_HEAP_SIZE_LIMIT);
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
+            final long keyHeapPageSize = configuration.getSqlSortKeyPageSize();
+            this.keyHeap = new MemoryCARWImpl(
+                    keyHeapPageSize,
+                    (int) Math.min(Integer.MAX_VALUE, maxEntryMemBytes / keyHeapPageSize + 1),
+                    MemoryTag.NATIVE_DEFAULT,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
+            );
             this.isOpen = true;
         } finally {
             if (!this.isOpen) {
@@ -141,6 +151,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
+        if (keyType.isVariable()) {
+            encoder.setKeyHeap(keyHeap);
+        }
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
         longsPerEntry = entrySize / Long.BYTES;
@@ -177,6 +190,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildAndSort() {
+        final boolean isVariable = keyType.isVariable();
         // Pre-allocate if size is known
         try {
             long estimatedSize = baseCursor.size();
@@ -191,7 +205,20 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             // Collect (key, rowId) entries
             entryMem.clear();
             count = 0;
-            if (estimatedSize > 0) {
+            if (isVariable) {
+                keyHeap.close();
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    entryMem.ensureCapacity(longsPerEntry);
+                    long addr = entryMem.getAppendAddress();
+                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                    entryMem.skip(longsPerEntry);
+                    count++;
+                    if (count * entrySize + keyHeap.getAppendOffset() > maxEntryMemBytes) {
+                        throwLimitOverflow();
+                    }
+                }
+            } else if (estimatedSize > 0) {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     long addr = entryMem.getAppendAddress();
@@ -216,20 +243,26 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             Misc.free(encoder);
         }
 
-        if (count <= 1) {
-            startAddr = entryMem.getAddress() + rowIdOffset;
-            toTop();
-            return;
+        if (count > 1) {
+            if (isVariable) {
+                long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
+                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
+            } else {
+                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
+            }
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
-
-        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        if (isVariable) {
+            // emit reads only rowIds; the key heap is not needed past the sort
+            keyHeap.close();
+        }
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
     }
 
     private void forceClose() {
         Misc.free(entryMem);
+        Misc.free(keyHeap);
         Misc.free(encoder);
         baseCursor = Misc.free(baseCursor);
         baseRecord = null;

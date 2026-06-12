@@ -64,6 +64,13 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                             " rnd_decimal(18, 4, 2) col_dec64," +
                             " rnd_decimal(38, 5, 2) col_dec128," +
                             " rnd_decimal(76, 6, 2) col_dec256," +
+                            " rnd_uuid4() col_uuid," +
+                            " rnd_long256() col_long256," +
+                            " to_long128(rnd_long(), rnd_long()) col_long128," +
+                            " rnd_str(1, 24, 2) col_str," +
+                            " rnd_str(16, 64, 2) col_str_long," +
+                            " rnd_varchar(1, 24, 2) col_varchar," +
+                            " rnd_varchar(16, 64, 2) col_varchar_long," +
                             " timestamp_sequence(0, 1_000_000) ts" +
                             " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts)"
             );
@@ -91,10 +98,21 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                     new Column("col_dec64", 8),
                     new Column("col_dec128", 16),
                     new Column("col_dec256", 32),
+                    new Column("col_uuid", 16),
+                    new Column("col_long256", 32),
+                    new Column("col_long128", 16),
                     new Column("ts", 8),
             };
 
-            int[] targetMaxBytes = {8, 16, 24, 32};
+            Column[] varColumns = {
+                    new Column("col_str", 0),
+                    new Column("col_str_long", 0),
+                    new Column("col_varchar", 0),
+                    new Column("col_varchar_long", 0),
+                    new Column("col_sym", 0),
+            };
+
+            int[] targetMaxBytes = {8, 16, 24, 32, 40, 48, 64};
 
             // Light path
             for (int targetMax : targetMaxBytes) {
@@ -127,6 +145,35 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                             "non-light"
                     );
                 }
+            }
+
+            // Variable-length keys: random fixed columns mixed with string columns
+            for (int attempt = 0; attempt < 10; attempt++) {
+                ObjList<Column> selected = selectColumns(rnd, columns, 8 + rnd.nextInt(57));
+                selected.add(varColumns[rnd.nextInt(varColumns.length)]);
+                if (rnd.nextBoolean()) {
+                    selected.add(varColumns[rnd.nextInt(varColumns.length)]);
+                }
+                shuffleColumns(rnd, selected);
+                long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
+                StringSink orderByClause = buildOrderByClause(rnd, selected);
+                assertSortMatch(orderByClause, "SELECT * FROM fuzz_sort ORDER BY ", -1, "light variable");
+            }
+
+            for (int attempt = 0; attempt < 5; attempt++) {
+                ObjList<Column> selected = selectColumns(rnd, columns, 8 + rnd.nextInt(57));
+                selected.add(varColumns[rnd.nextInt(varColumns.length)]);
+                shuffleColumns(rnd, selected);
+                long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
+                StringSink orderByClause = buildOrderByClause(rnd, selected);
+                assertSortMatch(
+                        orderByClause,
+                        "SELECT * FROM (fuzz_sort UNION ALL SELECT * FROM fuzz_sort WHERE false) ORDER BY ",
+                        -1,
+                        "non-light variable"
+                );
             }
         });
     }
@@ -186,6 +233,15 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
         return selected;
     }
 
+    private static void shuffleColumns(Rnd rnd, ObjList<Column> columns) {
+        for (int i = columns.size() - 1; i > 0; i--) {
+            int j = rnd.nextInt(i + 1);
+            Column tmp = columns.getQuick(i);
+            columns.setQuick(i, columns.getQuick(j));
+            columns.setQuick(j, tmp);
+        }
+    }
+
     private void assertSortMatch(
             CharSequence orderByClause,
             String queryPrefix,
@@ -204,8 +260,10 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
         printSql(query, actual);
 
         StringSink msg = new StringSink();
-        msg.put(path).put(" mismatch for ORDER BY ").put(orderByClause)
-                .put(" (target key <= ").put(targetMax).put(" bytes)");
+        msg.put(path).put(" mismatch for ORDER BY ").put(orderByClause);
+        if (targetMax > 0) {
+            msg.put(" (target key <= ").put(targetMax).put(" bytes)");
+        }
         TestUtils.assertEquals(msg.toString(), expected, actual);
     }
 
