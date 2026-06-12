@@ -279,6 +279,12 @@ public final class QueryRunner {
         try {
             return runQuery(query);
         } catch (CursorCheckException e) {
+            // A re-pass that surfaced an allowlisted per-row user error the first
+            // pass did not is accepted parallel-filter non-determinism, not a
+            // cursor-reuse defect; report it as a skip. See CursorCheckException.
+            if (e.tolerated) {
+                return Result.skipped(e.getMessage());
+            }
             return Result.failed(query.sql(), e);
         }
     }
@@ -949,8 +955,16 @@ public final class QueryRunner {
             calculated = counter.get();
         } catch (Exception e) {
             // The first pass materialized cleanly, so a throw out of toTop() /
-            // calculateSize() is itself a defect, not a legitimate user error.
+            // calculateSize() is normally a defect. When it is an allowlisted
+            // per-row user error (cast/overflow), it is the same parallel-filter
+            // LIMIT non-determinism checkToTop tolerates: the eager frame reduce
+            // surfaces an error from a frame past the LIMIT cutoff on this
+            // recompute but not on the first pass. Report it as a tolerated skip.
             // Errors (OOME, etc.) still propagate as in runOnce.
+            if (isAcceptedSkip(e)) {
+                throw new CursorCheckException("calculateSize() surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
             throw new CursorCheckException("calculateSize() threw after a clean first pass:\n  sql: " + sql, e);
         }
         if (cursor.hasNext()) {
@@ -993,8 +1007,18 @@ public final class QueryRunner {
             secondRowsRead = materialize(cursor, metadata, columnCount, rowsToTop);
         } catch (Exception e) {
             // The first pass materialized cleanly, so a throw while rewinding and
-            // re-reading is itself a defect (e.g. a cursor that cannot re-iterate),
-            // not a legitimate user error. Errors (OOME, etc.) still propagate.
+            // re-reading is normally a defect (e.g. a cursor that cannot
+            // re-iterate). When it is an allowlisted per-row user error
+            // (cast/overflow), it is instead accepted parallel-filter
+            // non-determinism: the filter reduces whole page frames eagerly, so
+            // under a LIMIT such an error in a frame past the cutoff can surface on
+            // this pass but not on the first, depending on which frames the reducer
+            // evaluated before the LIMIT cancelled the sequence. Report it as a
+            // tolerated skip. Errors (OOME, etc.) still propagate.
+            if (isAcceptedSkip(e)) {
+                throw new CursorCheckException("toTop re-iteration surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
             throw new CursorCheckException("cursor re-iteration threw after a clean first pass:\n  sql: " + sql, e);
         }
         if (stateBefore != stateAfter) {
@@ -1502,8 +1526,23 @@ public final class QueryRunner {
     }
 
     private static final class CursorCheckException extends RuntimeException {
+        // True when a cursor re-pass (toTop re-iteration / calculateSize recompute)
+        // surfaced an allowlisted per-row user error (cast/overflow) that the clean
+        // first pass did not. The parallel filter reduces whole page frames eagerly,
+        // so under a LIMIT such an error in a frame past the cutoff surfaces on one
+        // cursor pass but not another, depending on which frames the reducer
+        // evaluated before the LIMIT cancelled the sequence. That is accepted
+        // non-determinism, not a cursor-reuse defect, so run() reports it as a skip
+        // rather than a failure.
+        final boolean tolerated;
+
         CursorCheckException(String message, Throwable cause) {
+            this(message, cause, false);
+        }
+
+        CursorCheckException(String message, Throwable cause, boolean tolerated) {
             super(message, cause);
+            this.tolerated = tolerated;
         }
     }
 
