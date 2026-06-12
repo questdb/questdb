@@ -66,7 +66,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -203,7 +203,7 @@ public class TableUpdateDetails implements Closeable {
             if (writerAPI != null) {
                 try {
                     if (commitOnClose) {
-                        final ReentrantLock lock = engine.getRoleSwitchLock();
+                        final Lock lock = engine.getRoleSwitchReadLock();
                         lock.lock();
                         try {
                             if (!engine.isReadOnlyMode()) {
@@ -247,7 +247,7 @@ public class TableUpdateDetails implements Closeable {
             //       flip publishes REPLICA afterwards the row is already safely committed
             //       on the (still-PRIMARY-at-that-moment) node.
             // This closes the TOCTOU window between the gate-read and writerAPI.commit().
-            final ReentrantLock lock = engine.getRoleSwitchLock();
+            final Lock lock = engine.getRoleSwitchReadLock();
             lock.lock();
             try {
                 // Authoritative in-lock re-check. The read-only refusal is thrown from outside
@@ -497,7 +497,7 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    final ReentrantLock lock = engine.getRoleSwitchLock();
+                    final Lock lock = engine.getRoleSwitchReadLock();
                     lock.lock();
                     try {
                         if (!engine.isReadOnlyMode()) {

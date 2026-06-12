@@ -53,7 +53,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -156,13 +156,14 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             releaseWriterCache();
             return;
         }
-        // Hold the role-switch lock across the authoritative re-check and the actual
+        // Hold the role-switch READ lock across the authoritative re-check and the actual
         // commits, matching the TCP TableUpdateDetails discipline. The role-flip path in
-        // EntCairoEngine acquires the same lock around the REPLICA flag publish, so either
-        // the flip runs first (we see REPLICA on the in-lock re-check and skip the flush) or
-        // we run first (we flush as PRIMARY and the flip waits). This closes the window where
-        // a node demoted mid-ingest would otherwise flush a cached writer to a read-only replica.
-        final ReentrantLock lock = engine.getRoleSwitchLock();
+        // EntCairoEngine acquires the WRITE side of this lock around the REPLICA flag publish, so
+        // either the flip runs first (we see REPLICA on the in-lock re-check and skip the flush) or
+        // we run first (we flush as PRIMARY and the flip's write acquire waits for this read hold).
+        // This closes the window where a node demoted mid-ingest would otherwise flush a cached
+        // writer to a read-only replica, while other commit paths share the read side concurrently.
+        final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
             if (engine.isReadOnlyMode()) {

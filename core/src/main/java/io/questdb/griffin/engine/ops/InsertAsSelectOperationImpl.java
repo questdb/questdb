@@ -46,7 +46,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Lock;
 
 public class InsertAsSelectOperationImpl implements InsertOperation {
     private static final Log LOG = LogFactory.getLog(InsertAsSelectOperationImpl.class);
@@ -154,12 +154,14 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                 writer.rollback();
                 throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
-            final ReentrantLock lock = engine.getRoleSwitchLock();
+            final Lock lock = engine.getRoleSwitchReadLock();
             lock.lock();
             try {
-                // Authoritative in-lock re-check against the role flip, which holds the same lock
-                // around the REPLICA flag publish. Either the flip ran first (we see REPLICA and
-                // refuse without committing) or we run first (we commit as PRIMARY and the flip waits).
+                // Authoritative in-lock re-check against the role flip, which holds the WRITE side of
+                // this lock around the REPLICA flag publish. Either the flip ran first (we see REPLICA
+                // and refuse without committing) or we run first (we commit as PRIMARY and the flip's
+                // write acquire waits for this read hold to release). Concurrent commits on other
+                // tables/protocols share the read side and never serialize against each other.
                 if (engine.isReadOnlyMode()) {
                     writer.rollback();
                     throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);

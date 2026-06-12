@@ -98,7 +98,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
 import static io.questdb.cutlass.pgwire.PGConnectionContext.*;
@@ -385,12 +385,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             rollback(pendingWriters);
             throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
-        // Hold the role-switch lock across the authoritative re-check and the actual commit. The
-        // role-flip path in EntCairoEngine acquires the same lock around the REPLICA flag publish, so
-        // either (a) the flip runs first: we see REPLICA on the in-lock re-check and refuse without
-        // committing; or (b) we run first: we commit as PRIMARY and the flip waits. This closes the
-        // TOCTOU window between the gate-read and writerAPI.commit().
-        final ReentrantLock lock = engine.getRoleSwitchLock();
+        // Hold the role-switch READ lock across the authoritative re-check and the actual commit. The
+        // role-flip path in EntCairoEngine acquires the WRITE side of this lock around the REPLICA flag
+        // publish, so either (a) the flip runs first: we see REPLICA on the in-lock re-check and refuse
+        // without committing; or (b) we run first: we commit as PRIMARY and the flip's write acquire
+        // waits for this read hold to release. This closes the TOCTOU window between the gate-read and
+        // writerAPI.commit(), while concurrent commits on other protocols share the read side.
+        final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
             // Authoritative in-lock re-check. Thrown raw (before the commit try below) so it surfaces
@@ -1369,9 +1370,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      * whole operation against the flip: either the flip ran first (we see REPLICA and refuse without
      * executing) or the operation runs fully as PRIMARY and the flip's flag publish waits behind it.
      * <p>
-     * This takes the same exclusive role-switch lock the ILP and pg-wire commit fences take today; the
-     * next wave converts the whole acquirer set to a shared/exclusive discipline so a long DDL no longer
-     * stalls a concurrent commit. The lock is not redesigned here.
+     * This takes the role-switch READ lock the ILP and pg-wire commit fences take, held across the
+     * in-lock re-check AND operation.execute() because the DDL externalizes inside execute() with no
+     * separable commit chokepoint. The READ side lets concurrent commits on other tables/protocols run
+     * in parallel with this DDL; only the role flip (which takes the WRITE side) is excluded from it.
      */
     private long executeDdlFenced(
             SqlExecutionContext sqlExecutionContext,
@@ -1383,11 +1385,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         long affectedRowCount = 0;
         engine.getMetrics().pgWireMetrics().markStart();
-        final ReentrantLock lock = engine.getRoleSwitchLock();
+        final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
-            // Authoritative in-lock re-check against the role flip, which holds the same lock around the
-            // REPLICA flag publish. The execute runs inside the lock so the flip cannot interleave.
+            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
+            // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
+            // cannot interleave (its write acquire waits), while other commits share the read side.
             if (engine.isReadOnlyMode()) {
                 throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }

@@ -152,7 +152,8 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -184,11 +185,17 @@ public class CairoEngine implements Closeable, WriterSource {
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final RecentWriteTracker recentWriteTracker;
-    // Held by TableUpdateDetails.commit/closeNoLock/releaseWriter while re-checking read-only
-    // mode and calling writerAPI.commit(). The role-flip path in EntCairoEngine acquires this
-    // lock around the REPLICA flag publish so no client commit can slip through the gate-read
-    // and land on the replica. The lock is never held across drainWriterPool.
-    private final ReentrantLock roleSwitchLock = new ReentrantLock();
+    // Fences client commits against the PRIMARY-to-REPLICA role flip. Commit/DDL paths
+    // (TableUpdateDetails.commit/closeNoLock/releaseWriter, the /exec and pg-wire executor
+    // commits, the ILP-UDP flush) hold the READ side while re-checking read-only mode and
+    // calling writerAPI.commit(); the role-flip path in EntCairoEngine holds the WRITE side
+    // around the REPLICA flag publish only. Read/read concurrency restores N-way commit
+    // throughput across tables and protocols; the read/write exclusion is the invariant that
+    // keeps a commit from slipping through the gate-read and landing on a demoting node. The
+    // write side is never held across drainWriterPool. A plain OSS deployment that never flips
+    // role only ever pays an uncontended read acquire (a single CAS in the common case), so no
+    // separate "no flip path" gate is needed.
+    private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
@@ -1028,8 +1035,16 @@ public class CairoEngine implements Closeable, WriterSource {
         return recentWriteTracker;
     }
 
-    public ReentrantLock getRoleSwitchLock() {
-        return roleSwitchLock;
+    public Lock getRoleSwitchReadLock() {
+        return roleSwitchLock.readLock();
+    }
+
+    public int getRoleSwitchReadLockCount() {
+        return roleSwitchLock.getReadLockCount();
+    }
+
+    public Lock getRoleSwitchWriteLock() {
+        return roleSwitchLock.writeLock();
     }
 
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
