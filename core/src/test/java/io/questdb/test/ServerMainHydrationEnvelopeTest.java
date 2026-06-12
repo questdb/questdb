@@ -73,39 +73,41 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
 
     @Test
     public void compileAllViewsRanOnProductionBoot() throws Exception {
-        final AtomicInteger createViewCompilerContextCalls = new AtomicInteger();
+        assertMemoryLeak(() -> {
+            final AtomicInteger createViewCompilerContextCalls = new AtomicInteger();
 
-        // Wire a Bootstrap that returns a CairoEngine subclass which counts
-        // createViewCompilerContext invocations. With the dedicated view-compiler pool disabled
-        // (see setUp), the ONLY OSS caller of this method on the boot path is
-        // ViewCompilerJob.compileAllViews(engine, ...), so a single increment proves compileAllViews ran.
-        Bootstrap bootstrap = new Bootstrap(new PropBootstrapConfiguration(), getServerMainArgs()) {
-            @Override
-            public CairoEngine newCairoEngine() {
-                CairoConfiguration cfg = getConfiguration().getCairoConfiguration();
-                return new CairoEngine(cfg, new QdbrWalLocker(), true) {
-                    @Override
-                    public ViewCompilerExecutionContext createViewCompilerContext(int workerCount) {
-                        createViewCompilerContextCalls.incrementAndGet();
-                        return super.createViewCompilerContext(workerCount);
-                    }
-                };
+            // Wire a Bootstrap that returns a CairoEngine subclass which counts
+            // createViewCompilerContext invocations. With the dedicated view-compiler pool disabled
+            // (see setUp), the ONLY OSS caller of this method on the boot path is
+            // ViewCompilerJob.compileAllViews(engine, ...), so a single increment proves compileAllViews ran.
+            Bootstrap bootstrap = new Bootstrap(new PropBootstrapConfiguration(), getServerMainArgs()) {
+                @Override
+                public CairoEngine newCairoEngine() {
+                    CairoConfiguration cfg = getConfiguration().getCairoConfiguration();
+                    return new CairoEngine(cfg, new QdbrWalLocker(), true) {
+                        @Override
+                        public ViewCompilerExecutionContext createViewCompilerContext(int workerCount) {
+                            createViewCompilerContextCalls.incrementAndGet();
+                            return super.createViewCompilerContext(workerCount);
+                        }
+                    };
+                }
+            };
+
+            try (ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start(false);
+                // Wait for the hydration thread to actually run its body. awaitStartup() joins both
+                // hydrateMetadataThread and compileViewsThread. After the fix, the compile-views
+                // thread is created+started by the new HydrationEnvelope; pre-fix it is null and
+                // awaitStartup() returns immediately, so the counter assertion below is what fails.
+                serverMain.awaitStartup();
+                Assert.assertEquals(
+                        "compileAllViews must run on the production boot path "
+                                + "(observed createViewCompilerContext invocation count)",
+                        1,
+                        createViewCompilerContextCalls.get()
+                );
             }
-        };
-
-        try (ServerMain serverMain = new ServerMain(bootstrap)) {
-            serverMain.start(false);
-            // Wait for the hydration thread to actually run its body. awaitStartup() joins both
-            // hydrateMetadataThread and compileViewsThread. After the fix, the compile-views
-            // thread is created+started by the new HydrationEnvelope; pre-fix it is null and
-            // awaitStartup() returns immediately, so the counter assertion below is what fails.
-            serverMain.awaitStartup();
-            Assert.assertEquals(
-                    "compileAllViews must run on the production boot path "
-                            + "(observed createViewCompilerContext invocation count)",
-                    1,
-                    createViewCompilerContextCalls.get()
-            );
-        }
+        });
     }
 }

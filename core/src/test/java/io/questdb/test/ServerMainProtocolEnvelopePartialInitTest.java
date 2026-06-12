@@ -91,118 +91,124 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
 
     @Test
     public void partialInitFreesAllocatedResources_IlpTcp() throws Exception {
-        try (ServerMain server = new ServerMain(getServerMainArgs()) {
-            @Override
-            protected Services services() {
-                return new Services() {
-                    @Override
-                    public LineTcpReceiver createLineTcpReceiver(
-                            LineTcpReceiverConfiguration config,
-                            CairoEngine cairoEngine,
-                            WorkerPoolManager workerPoolManager,
-                            AtomicBoolean acceptOpen
-                    ) {
-                        // First step: succeed via real factory.
-                        return Services.INSTANCE.createLineTcpReceiver(config, cairoEngine, workerPoolManager, acceptOpen);
-                    }
+        assertMemoryLeak(() -> {
+            try (ServerMain server = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected Services services() {
+                    return new Services() {
+                        @Override
+                        public LineTcpReceiver createLineTcpReceiver(
+                                LineTcpReceiverConfiguration config,
+                                CairoEngine cairoEngine,
+                                WorkerPoolManager workerPoolManager,
+                                AtomicBoolean acceptOpen
+                        ) {
+                            // First step: succeed via real factory.
+                            return Services.INSTANCE.createLineTcpReceiver(config, cairoEngine, workerPoolManager, acceptOpen);
+                        }
 
-                    @Override
-                    public AbstractLineProtoUdpReceiver createLineUdpReceiver(
-                            LineUdpReceiverConfiguration config,
-                            CairoEngine cairoEngine,
-                            WorkerPoolManager workerPoolManager,
-                            AtomicBoolean acceptOpen
-                    ) {
-                        throw new RuntimeException("forced-mid-init-throw [ilp-tcp partial-init test]");
-                    }
-                };
+                        @Override
+                        public AbstractLineProtoUdpReceiver createLineUdpReceiver(
+                                LineUdpReceiverConfiguration config,
+                                CairoEngine cairoEngine,
+                                WorkerPoolManager workerPoolManager,
+                                AtomicBoolean acceptOpen
+                        ) {
+                            throw new RuntimeException("forced-mid-init-throw [ilp-tcp partial-init test]");
+                        }
+                    };
+                }
+            }) {
+                server.testInitForEnvelopeTests();
+                Component envelope = server.testNewIlpTcpEnvelope();
+                LifecycleContext ctx = newDetachedContext(server, envelope.name());
+                boolean threw = false;
+                try {
+                    envelope.start(ctx);
+                } catch (Throwable t) {
+                    threw = true;
+                }
+                Assert.assertTrue("ilp-tcp envelope.start() must propagate the forced throw", threw);
+                Object leakedTcp = readField(envelope, "lineTcpReceiver");
+                Assert.assertNull(
+                        "lineTcpReceiver must be freed and nulled by the partial-init catch-rethrow "
+                                + "(actual value: " + leakedTcp + ")",
+                        leakedTcp
+                );
             }
-        }) {
-            server.testInitForEnvelopeTests();
-            Component envelope = server.testNewIlpTcpEnvelope();
-            LifecycleContext ctx = newDetachedContext(server, envelope.name());
-            boolean threw = false;
-            try {
-                envelope.start(ctx);
-            } catch (Throwable t) {
-                threw = true;
-            }
-            Assert.assertTrue("ilp-tcp envelope.start() must propagate the forced throw", threw);
-            Object leakedTcp = readField(envelope, "lineTcpReceiver");
-            Assert.assertNull(
-                    "lineTcpReceiver must be freed and nulled by the partial-init catch-rethrow "
-                            + "(actual value: " + leakedTcp + ")",
-                    leakedTcp
-            );
-        }
+        });
     }
 
     @Test
     public void partialInitFreesAllocatedResources_MinHttp() throws Exception {
-        try (ServerMain server = new ServerMain(getServerMainArgs()) {
-            @Override
-            protected Services services() {
-                return new Services() {
-                    @Override
-                    public HttpServer createMinHttpServer(HttpServerConfiguration configuration, WorkerPool workerPool) {
-                        // The MinHttpEnvelope.start() body has already allocated `pool` and
-                        // assigned it to the envelope field. Throw here so the catch-rethrow
-                        // path is exercised.
-                        throw new RuntimeException("forced-mid-init-throw [min-http partial-init test]");
-                    }
-                };
+        assertMemoryLeak(() -> {
+            try (ServerMain server = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected Services services() {
+                    return new Services() {
+                        @Override
+                        public HttpServer createMinHttpServer(HttpServerConfiguration configuration, WorkerPool workerPool) {
+                            // The MinHttpEnvelope.start() body has already allocated `pool` and
+                            // assigned it to the envelope field. Throw here so the catch-rethrow
+                            // path is exercised.
+                            throw new RuntimeException("forced-mid-init-throw [min-http partial-init test]");
+                        }
+                    };
+                }
+            }) {
+                server.testInitForEnvelopeTests();
+                // The MinHttpEnvelope.start() driven via the orchestrator path normally consults
+                // ServerMain.this.orchestrator via testInitForEnvelopeTests(); register a fresh
+                // MinHttpEnvelope and drive start() directly so the throw fires.
+                Component envelope = newMinHttpEnvelopeViaReflection(server);
+                LifecycleContext ctx = newDetachedContext(server, envelope.name());
+                boolean threw = false;
+                try {
+                    envelope.start(ctx);
+                } catch (Throwable t) {
+                    threw = true;
+                }
+                Assert.assertTrue("min-http envelope.start() must propagate the forced throw", threw);
+                Object leakedPool = readField(envelope, "pool");
+                Assert.assertNull(
+                        "pool must be halted and nulled by the partial-init catch-rethrow "
+                                + "(actual value: " + leakedPool + ")",
+                        leakedPool
+                );
             }
-        }) {
-            server.testInitForEnvelopeTests();
-            // The MinHttpEnvelope.start() driven via the orchestrator path normally consults
-            // ServerMain.this.orchestrator via testInitForEnvelopeTests(); register a fresh
-            // MinHttpEnvelope and drive start() directly so the throw fires.
-            Component envelope = newMinHttpEnvelopeViaReflection(server);
-            LifecycleContext ctx = newDetachedContext(server, envelope.name());
-            boolean threw = false;
-            try {
-                envelope.start(ctx);
-            } catch (Throwable t) {
-                threw = true;
-            }
-            Assert.assertTrue("min-http envelope.start() must propagate the forced throw", threw);
-            Object leakedPool = readField(envelope, "pool");
-            Assert.assertNull(
-                    "pool must be halted and nulled by the partial-init catch-rethrow "
-                            + "(actual value: " + leakedPool + ")",
-                    leakedPool
-            );
-        }
+        });
     }
 
     @Test
     public void partialInitFreesAllocatedResources_WebHttp() throws Exception {
-        try (ServerMain server = new ServerMain(getServerMainArgs()) {
-            @Override
-            protected <T extends Component> T findEnvelope(String name, Class<T> type) {
-                // The WebHttpEnvelope.start() body has already allocated `server` via
-                // services().createHttpServer(...). Throw here at the cross-envelope lookup
-                // step so the catch-rethrow path is exercised AFTER server is non-null.
-                throw new RuntimeException("forced-mid-init-throw [web-http partial-init test]");
+        assertMemoryLeak(() -> {
+            try (ServerMain server = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected <T extends Component> T findEnvelope(String name, Class<T> type) {
+                    // The WebHttpEnvelope.start() body has already allocated `server` via
+                    // services().createHttpServer(...). Throw here at the cross-envelope lookup
+                    // step so the catch-rethrow path is exercised AFTER server is non-null.
+                    throw new RuntimeException("forced-mid-init-throw [web-http partial-init test]");
+                }
+            }) {
+                server.testInitForEnvelopeTests();
+                Component envelope = server.testNewWebHttpEnvelope();
+                LifecycleContext ctx = newDetachedContext(server, envelope.name());
+                boolean threw = false;
+                try {
+                    envelope.start(ctx);
+                } catch (Throwable t) {
+                    threw = true;
+                }
+                Assert.assertTrue("web-http envelope.start() must propagate the forced throw", threw);
+                Object leakedServer = readField(envelope, "server");
+                Assert.assertNull(
+                        "server must be freed and nulled by the partial-init catch-rethrow "
+                                + "(actual value: " + leakedServer + ")",
+                        leakedServer
+                );
             }
-        }) {
-            server.testInitForEnvelopeTests();
-            Component envelope = server.testNewWebHttpEnvelope();
-            LifecycleContext ctx = newDetachedContext(server, envelope.name());
-            boolean threw = false;
-            try {
-                envelope.start(ctx);
-            } catch (Throwable t) {
-                threw = true;
-            }
-            Assert.assertTrue("web-http envelope.start() must propagate the forced throw", threw);
-            Object leakedServer = readField(envelope, "server");
-            Assert.assertNull(
-                    "server must be freed and nulled by the partial-init catch-rethrow "
-                            + "(actual value: " + leakedServer + ")",
-                    leakedServer
-            );
-        }
+        });
     }
 
     /**
