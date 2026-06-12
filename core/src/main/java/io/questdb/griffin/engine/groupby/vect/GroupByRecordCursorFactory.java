@@ -195,8 +195,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
-                // We're using page frame memory only and do single scan, hence cache size of 1.
-                frameMemoryPools.add(new PageFrameMemoryPool(1));
+                // Single sequential scan; no LRU caching needed across frames.
+                frameMemoryPools.add(new PageFrameMemoryPool(0L));
             }
         } catch (Throwable th) {
             close();

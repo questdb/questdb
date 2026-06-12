@@ -32,6 +32,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -91,6 +92,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
+            baseCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             return cursor.of(baseCursor, executionContext);
         } catch (Throwable th) {
             cursor.close();
@@ -220,6 +222,11 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         @Override
         public void recordAt(Record record, long atRowId) {
             baseCursor.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
         }
 
         @Override
