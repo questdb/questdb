@@ -5,6 +5,7 @@ mod tests;
 
 use crate::allocator::{AcVec, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_read::decoders::MiniblockIterator;
 use parquet2::encoding::delta_bitpacked;
 
 use std::mem::size_of;
@@ -279,12 +280,12 @@ impl<'a> DeltaLengthArraySlicer<'a> {
             .collect::<Result<Vec<_>, _>>()?;
 
         // The concatenated values start after the FULL lengths block. A partial
-        // decode (row_count < page rows) leaves the decoder mid-block, so drain
-        // the remaining lengths before taking consumed_bytes() as the data start.
-        for r in decoder.by_ref() {
-            r.map_err(|_| fmt_err!(Layout, "not enough length values to iterate"))?;
-        }
-        let data_offset = decoder.consumed_bytes();
+        // decode (row_count < page rows) leaves the parquet2 decoder mid-block, so
+        // locate the data start from the per-miniblock bitwidth headers instead --
+        // O(page_rows / miniblock_size) byte arithmetic with no value unpacking,
+        // versus draining every remaining length. Mirrors DeltaLAVarcharSliceDecoder.
+        let (iterator, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(data)?;
+        let data_offset = iterator.get_end_pointer()? as usize - data.as_ptr() as usize;
         Ok(Self {
             data: &data[data_offset..],
             sliced_row_count,
@@ -405,14 +406,13 @@ impl<'a> DeltaBytesArraySlicer<'a> {
             .collect::<Result<Vec<_>, _>>()?;
 
         // The suffix-lengths block starts after the FULL prefix-lengths block, and
-        // the concatenated values after the FULL suffix block. A partial decode
-        // (row_count < page rows) leaves a decoder mid-block, so drain each block
-        // before taking consumed_bytes() as the next offset.
-        for r in &mut decoder {
-            r.map_err(|_| fmt_err!(Layout, "not enough prefix values to iterate"))?;
-        }
-        let mut data_offset = decoder.consumed_bytes();
-        let mut decoder = delta_bitpacked::Decoder::try_new(&values[data_offset..])?;
+        // the concatenated values after the FULL suffix block. Locate each block end
+        // from the per-miniblock bitwidth headers (O(page_rows / miniblock_size) byte
+        // arithmetic, no value unpacking) instead of draining every length value.
+        let (prefix_iter, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(values)?;
+        let mut data_offset = prefix_iter.get_end_pointer()? as usize - values.as_ptr() as usize;
+        let suffix_values = &values[data_offset..];
+        let mut decoder = delta_bitpacked::Decoder::try_new(suffix_values)?;
         let suffix: Vec<i32> = (&mut decoder)
             .take(row_count)
             .map(|r| {
@@ -420,10 +420,9 @@ impl<'a> DeltaBytesArraySlicer<'a> {
                 checked_len(v)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        for r in &mut decoder {
-            r.map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))?;
-        }
-        data_offset += decoder.consumed_bytes();
+        let (suffix_iter, _): (MiniblockIterator<i32>, _) =
+            MiniblockIterator::try_new(suffix_values)?;
+        data_offset += suffix_iter.get_end_pointer()? as usize - suffix_values.as_ptr() as usize;
 
         Ok(Self {
             prefix: prefix.into_iter(),

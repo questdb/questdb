@@ -27,6 +27,7 @@ pub use self::dictionary::{
 };
 pub use converters::*;
 pub use delta_binary_packed::DeltaBinaryPackedDecoder;
+pub(crate) use delta_binary_packed::MiniblockIterator;
 pub use delta_length_array::DeltaLAVarcharSliceDecoder;
 pub use plain::{PlainBooleanDecoder, PlainPrimitiveDecoder};
 pub use rle::{RepeatN, RleBooleanDecoder, RleIterator};
