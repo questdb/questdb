@@ -557,9 +557,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             long parquetFd = ff.openRO(tablePath.$());
             if (parquetFd < 0) {
-                int errno = ff.errno();
-                tablePath.trimTo(plen);
-                throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+                // Keep the full data.parquet path in the message: the same restore
+                // can cover hundreds of parquet partitions, and the operator needs
+                // to know which one failed. rebuildTableFiles() restores tablePath
+                // to the table root in its finally block.
+                throw CairoException.critical(ff.errno()).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
             }
             long onDiskSize = ff.length(parquetFd);
             // This must run even when _pm was restored alongside the partition:
@@ -568,7 +570,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             // committed size would produce garbage.
             if (onDiskSize < parquetFileSize) {
                 ff.close(parquetFd);
-                tablePath.trimTo(plen);
                 throw CairoException.critical(0)
                         .put("restored parquet file is shorter than committed size [path=").put(tablePath)
                         .put(", committed=").put(parquetFileSize)
@@ -587,7 +588,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             if (parquetMetaFd < 0) {
                 int errno = ff.errno();
                 ff.close(parquetFd);
-                tablePath.trimTo(plen);
                 throw CairoException.critical(errno).put("cannot create _pm file [path=").put(tablePath).put(']');
             }
 

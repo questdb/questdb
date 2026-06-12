@@ -838,6 +838,56 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot open parquet file for _pm generation");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsOnMissingParquetFileWithPmPresent() throws Exception {
+        // A parquet partition with no data.parquet must fail the restore even
+        // when the _pm sidecar exists: an existing _pm used to short-circuit
+        // the partition before any validation, so the missing file surfaced
+        // only at query time instead of failing the restore.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            Assert.assertTrue("failed to delete data.parquet", new File(partDir, "data.parquet").delete());
+            Assert.assertTrue("_pm must exist for this scenario", new File(partDir, "_pm").exists());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot open parquet file for _pm generation");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
         });
@@ -899,6 +949,8 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot create _pm file");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
         });
@@ -2036,6 +2088,8 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "restored parquet file is shorter than committed size");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
         });
@@ -2087,6 +2141,8 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "restored parquet file is shorter than committed size");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
         });
