@@ -119,7 +119,9 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 perWorkerRecordsB.extendAndSet(i, new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER));
             }
 
-            this.isEncoded = SortKeyEncoder.isSupported(orderByMetadata, orderByFilter);
+            // The parallel buffer holds only fixed-width inline keys; variable-length
+            // keys fall back to the per-worker tree chain.
+            this.isEncoded = SortKeyEncoder.isFixedWidthSupported(orderByMetadata, orderByFilter);
             if (isEncoded) {
                 this.rankMaps = null;
                 this.ownerComparator = null;

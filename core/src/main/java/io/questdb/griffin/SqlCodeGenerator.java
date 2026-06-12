@@ -135,6 +135,7 @@ import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
@@ -2808,6 +2809,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case UUID:
                         assert fromTag == UUID;
                         castFunctions.add(UuidColumn.newInstance(i));
+                        break;
+                    case LONG128:
+                        assert fromTag == LONG128;
+                        castFunctions.add(Long128Column.newInstance(i));
                         break;
                     case TIMESTAMP:
                         switch (fromTag) {
@@ -7465,6 +7470,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function hiFunc = getHiFunction(model, executionContext);
                 final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
                         && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
+                // The limited light cursor inlines fixed-width keys only; a variable-length
+                // key falls back to the RedBlackTree-based limited sort.
+                final boolean isEncodedSortLimitSupported = configuration.isSqlOrderBySortEnabled()
+                        && SortKeyEncoder.isFixedWidthSupported(metadata, listColumnFilterA);
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
@@ -7546,7 +7555,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
-                        if (isEncodedSortSupported) {
+                        if (isEncodedSortLimitSupported) {
                             return new EncodedSortLimitedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,

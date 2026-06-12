@@ -29,6 +29,7 @@ public enum SortKeyType {
     FIXED_16(16),
     FIXED_24(24),
     FIXED_32(32),
+    VARIABLE(32),
     UNSUPPORTED(-1);
 
     public static final int MAX_ENTRY_LONGS = (FIXED_32.entrySize()) / Long.BYTES;
@@ -53,11 +54,15 @@ public enum SortKeyType {
         if (keyLength <= 32) {
             return FIXED_32;
         }
-        return UNSUPPORTED;
+        return VARIABLE;
     }
 
     public int entrySize() {
         return keyLength + 8;
+    }
+
+    public boolean isVariable() {
+        return this == VARIABLE;
     }
 
     public int keyLength() {

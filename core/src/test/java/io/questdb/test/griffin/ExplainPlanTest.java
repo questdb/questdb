@@ -1750,7 +1750,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: a
                                 Hash
                                     SelectedRecord
-                                        Sort light
+                                        Encode sort light
                                           keys: [s]
                                             PageFrame
                                                 Row forward scan
