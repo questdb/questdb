@@ -2148,18 +2148,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Decode a single key's values from a dense generation. Used by the
-     * per-key streaming compaction path. {@code stride} is the stride
-     * index in this gen; {@code j} is the key offset within the stride.
-     * Returns the number of values decoded into {@code dstAddr} (0 if the
-     * stride is empty in this gen, or the key has no values).
-     * <p>
-     * Per-key analogue of {@link #decodeDenseGenStride}: same on-disk
-     * layout, just isolated to one key. Mode handling is identical
-     * (FLAT and DELTA), since the gen's stride header carries the mode
-     * for the whole stride.
-     */
-    /**
      * Per-key value count in a dense generation, read from the stride header
      * without decoding any values. Count-only analogue of the first half of
      * {@link #decodeDenseGenSingleKey}.
@@ -2209,6 +2197,18 @@ public class PostingIndexWriter implements IndexWriter {
         return 0;
     }
 
+    /**
+     * Decode a single key's values from a dense generation. Used by the
+     * per-key streaming compaction path. {@code stride} is the stride
+     * index in this gen; {@code j} is the key offset within the stride.
+     * Returns the number of values decoded into {@code dstAddr} (0 if the
+     * stride is empty in this gen, or the key has no values).
+     * <p>
+     * Per-key analogue of {@link #decodeDenseGenStride}: same on-disk
+     * layout, just isolated to one key. Mode handling is identical
+     * (FLAT and DELTA), since the gen's stride header carries the mode
+     * for the whole stride.
+     */
     private int decodeDenseGenSingleKey(
             long genBase, int genKeyCount, int stride, int j, long dstAddr
     ) {
@@ -3963,6 +3963,12 @@ public class PostingIndexWriter implements IndexWriter {
     private void publishToChain(int newGenCount, int overrideGenIndex,
                                 long overrideFileOffset, long overrideSize,
                                 int overrideKeyCount, int overrideMinKey, int overrideMaxKey) {
+        // Structural backstop for the poison invariant: every chain mutation
+        // funnels through here, so a poisoned writer can never append or extend a
+        // chain entry at the staged sealTxn (which would let the deferred purge
+        // delete a now-live .pv) -- including via the flush paths the entry-point
+        // guards don't cover (add()'s spill flush, sync(), commitDense()).
+        checkNotPoisoned();
         // The writer's sealTxn always points at the .pv file currently
         // mapped through valueMem. When chain.getHeadSealTxn() == sealTxn
         // (head matches the same .pv file) we extend the head entry. When

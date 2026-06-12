@@ -4544,6 +4544,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     } catch (CairoException poisoned) {
                         TestUtils.assertContains(poisoned.getFlyweightMessage(), "poisoned");
                     }
+                    // A poisoned writer must also reject commit -- it would otherwise
+                    // flush + publishToChain at the staged sealTxn.
+                    try {
+                        writer.commit();
+                        Assert.fail("poisoned writer must reject commit");
+                    } catch (CairoException poisoned) {
+                        TestUtils.assertContains(poisoned.getFlyweightMessage(), "poisoned");
+                    }
                 }
             }
         });
