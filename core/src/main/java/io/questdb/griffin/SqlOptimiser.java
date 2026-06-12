@@ -356,7 +356,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
-        clearForUnionModelInJoin();
+        clearConstNameMaps();
         contextPool.clear();
         intHashSetPool.clear();
         joinClausesSwap1.clear();
@@ -390,7 +390,7 @@ public class SqlOptimiser implements Mutable {
         lateralJoinRewriter.clear();
     }
 
-    public void clearForUnionModelInJoin() {
+    public void clearConstNameMaps() {
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
@@ -2962,13 +2962,11 @@ public class SqlOptimiser implements Mutable {
             return;
         }
 
-        // optimiseJoins has already run, so the const maps hold its stale entries; reset them to
-        // hold only this predicate before deriving. No clean-up clear is needed afterwards: the next
-        // invocation resets here again, optimiseJoins (the only other reader) ran in an earlier pass,
-        // and clear() resets the maps before the next query.
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
+        // the enclosing model's join pass may have left const-map entries behind; reset the maps
+        // so addTransitiveFilters sees exactly this pushed predicate. No clean-up clear is needed
+        // afterwards: every reader resets the maps before use (this method here, optimiseJoins at
+        // the top of its join-processing block).
+        clearConstNameMaps();
         constNameToIndex.put(name, index);
         constNameToNode.put(name, constNode);
         constNameToToken.put(name, node.token);
@@ -5778,6 +5776,13 @@ public class SqlOptimiser implements Mutable {
 
         int n = joinModels.size();
         if (n > 1) {
+            // the const maps are scratch state scoped to this block: processJoinConditions
+            // (via analyseEquals/analyseRegex) populates them and addTransitiveFilters reads
+            // them. Clear entries left behind by a previously optimised model - e.g. an
+            // IN (SELECT ...) sub-query optimised by optimiseExpressionModels before this
+            // model's pass - so a stale constant cannot be misattributed to a column of this
+            // model's join clauses that happens to share name and join-model index.
+            clearConstNameMaps();
             emittedJoinClauses = joinClausesSwap1;
             emittedJoinClauses.clear();
 
@@ -5818,7 +5823,6 @@ public class SqlOptimiser implements Mutable {
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
-                clearForUnionModelInJoin();
                 optimiseJoins(m);
             }
         }
