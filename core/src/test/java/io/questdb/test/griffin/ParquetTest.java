@@ -2617,14 +2617,6 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetDecodeHintTwoEnumValues() {
-        ParquetDecodeHint[] values = ParquetDecodeHint.values();
-        Assert.assertEquals(2, values.length);
-        Assert.assertEquals(ParquetDecodeHint.MONOTONIC, values[0]);
-        Assert.assertEquals(ParquetDecodeHint.SCATTERED, values[1]);
-    }
-
-    @Test
     public void testProjectionDropAggregateOverParquet() throws Exception {
         // Projection pruning leaves a column in the underlying scan after the WHERE
         // that referenced it has been constant-folded away. The projected metadata

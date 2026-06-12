@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
@@ -236,8 +237,18 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+            base.setParentUsedColumns(columnIndexes);
+        }
+
+        @Override
         public void setParquetDecodeHint(ParquetDecodeHint hint) {
             base.setParquetDecodeHint(hint);
+        }
+
+        @Override
+        public void setRecordAtRows(@Nullable RowIdSource source) {
+            base.setRecordAtRows(source);
         }
 
         @Override

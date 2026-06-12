@@ -167,6 +167,73 @@ fn checked_len(value: i64) -> ParquetResult<i32> {
     Ok(len)
 }
 
+/// Collects up to `limit` delta-encoded lengths into a `Vec<i32>`, reserving the
+/// buffer fallibly so an oversized or amplified foreign page surfaces a
+/// recoverable `OutOfMemory` error instead of aborting the JVM.
+///
+/// The DELTA length/prefix/suffix streams decode up front into a `Vec`. `limit`
+/// is the slicer's row count -- `row_hi`, the read range's upper bound, clamped to
+/// the page's row count and so bounded by the page header's `num_values` (an
+/// attacker-controlled field up to `i32::MAX`). A bit-width-0 delta miniblock expands to
+/// `values_per_mini_block` entries while consuming no buffer bytes, so a tiny
+/// page can declare billions of values; `take(limit)` caps the iteration at the
+/// page's row count and `try_reserve_exact(limit)` makes the up-front sizing
+/// fallible. A plain `collect` reserves the same capacity infallibly and aborts
+/// the process when the allocator refuses the resulting multi-gigabyte request.
+/// `checked_len` validates each value's range, not the count, so this reservation
+/// is the only guard against the allocation. Classified `OutOfMemory` (not
+/// `Layout`) so a parquet merge under `ApplyWal2TableJob` backs off and retries
+/// on transient memory pressure rather than suspending the table.
+fn collect_checked_lengths<E>(
+    iter: impl Iterator<Item = Result<i64, E>>,
+    limit: usize,
+    what: &'static str,
+) -> ParquetResult<Vec<i32>> {
+    let mut lengths: Vec<i32> = Vec::new();
+    lengths.try_reserve_exact(limit).map_err(|_| {
+        fmt_err!(
+            OutOfMemory(None),
+            "cannot allocate {limit} delta {what} values"
+        )
+    })?;
+    for value in iter.take(limit) {
+        let value = value.map_err(|_| fmt_err!(Layout, "not enough {what} values to iterate"))?;
+        lengths.push(checked_len(value)?);
+    }
+    Ok(lengths)
+}
+
+/// Returns the byte length of a DELTA_BINARY_PACKED length stream, i.e. the
+/// offset at which the concatenated value bytes that follow it begin.
+///
+/// The slicers must skip the WHOLE length stream to reach the data region.
+/// Deriving the offset from `delta_bitpacked::Decoder::consumed_bytes()` after a
+/// `take(row_count)` is wrong for a partial range read (`row_count` below the
+/// page's value count): `take` stops before entering the later delta blocks, so
+/// `consumed_bytes()` omits their bytes and the data slice starts inside the
+/// length stream, shifting every value (silent corruption) or tripping a
+/// "length exceeds values buffer" error on a valid page.
+///
+/// `MiniblockIterator::get_end_pointer` instead steps over the whole block/
+/// miniblock structure, so the result does not depend on how many values a
+/// caller later reads. The walk is bounded by the buffer size -- every block
+/// consumes at least its header bytes -- not by the attacker-controlled declared
+/// value count, so it cannot be amplified into an unbounded loop by a foreign
+/// page. This is the same primitive the VarcharSlice decoder uses to locate its
+/// data region.
+///
+/// `MiniblockIterator` enforces the parquet spec's stricter miniblock granularity
+/// (a multiple of 32, the pack width QuestDB's value decoder needs) than the
+/// parquet2 length decoder that produced the values (a multiple of 8). A foreign
+/// page whose miniblock size is a non-spec multiple of 8 but not 32 therefore
+/// decodes on a full read (the `consumed_bytes()` path, no `MiniblockIterator`)
+/// yet is cleanly rejected here on a partial read -- an error, never corruption.
+fn delta_stream_byte_len(data: &[u8]) -> ParquetResult<usize> {
+    let (iter, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(data)?;
+    let end = iter.get_end_pointer()?;
+    Ok(end as usize - data.as_ptr() as usize)
+}
+
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
     sliced_row_count: usize,
@@ -270,22 +337,21 @@ impl<'a> DeltaLengthArraySlicer<'a> {
             });
         }
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
-        let lengths: Vec<i32> = decoder
-            .by_ref()
-            .take(row_count)
-            .map(|r| {
-                let v = r.map_err(|_| fmt_err!(Layout, "not enough length values to iterate"))?;
-                checked_len(v)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let lengths = collect_checked_lengths(decoder.by_ref(), row_count, "length")?;
 
-        // The concatenated values start after the FULL lengths block. A partial
-        // decode (row_count < page rows) leaves the parquet2 decoder mid-block, so
-        // locate the data start from the per-miniblock bitwidth headers instead --
-        // O(page_rows / miniblock_size) byte arithmetic with no value unpacking,
-        // versus draining every remaining length. Mirrors DeltaLAVarcharSliceDecoder.
-        let (iterator, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(data)?;
-        let data_offset = iterator.get_end_pointer()? as usize - data.as_ptr() as usize;
+        // Locate the value bytes that follow the entire length stream. On a full
+        // read the decoder consumed every block, so its own byte count is exact
+        // and O(1) -- the same decoder that produced the lengths also reports
+        // where they end, with no separate structural walk. Only a partial range
+        // read needs delta_stream_byte_len: take(row_count) stopped before the
+        // later blocks, so consumed_bytes() would under-count the un-entered
+        // blocks and start the data slice inside the length stream. A 0 lower
+        // size_hint means the take exhausted the decoder (a full read).
+        let data_offset = if decoder.size_hint().0 == 0 {
+            decoder.consumed_bytes()
+        } else {
+            delta_stream_byte_len(data)?
+        };
         Ok(Self {
             data: &data[data_offset..],
             sliced_row_count,
@@ -396,33 +462,33 @@ impl<'a> DeltaBytesArraySlicer<'a> {
             });
         }
         let values = data;
-        let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
-        let prefix: Vec<i32> = (&mut decoder)
-            .take(row_count)
-            .map(|r| {
-                let v = r.map_err(|_| fmt_err!(Layout, "not enough prefix values to iterate"))?;
-                checked_len(v)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
 
-        // The suffix-lengths block starts after the FULL prefix-lengths block, and
-        // the concatenated values after the FULL suffix block. Locate each block end
-        // from the per-miniblock bitwidth headers (O(page_rows / miniblock_size) byte
-        // arithmetic, no value unpacking) instead of draining every length value.
-        let (prefix_iter, _): (MiniblockIterator<i32>, _) = MiniblockIterator::try_new(values)?;
-        let mut data_offset = prefix_iter.get_end_pointer()? as usize - values.as_ptr() as usize;
-        let suffix_values = &values[data_offset..];
-        let mut decoder = delta_bitpacked::Decoder::try_new(suffix_values)?;
-        let suffix: Vec<i32> = (&mut decoder)
-            .take(row_count)
-            .map(|r| {
-                let v = r.map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))?;
-                checked_len(v)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let (suffix_iter, _): (MiniblockIterator<i32>, _) =
-            MiniblockIterator::try_new(suffix_values)?;
-        data_offset += suffix_iter.get_end_pointer()? as usize - suffix_values.as_ptr() as usize;
+        // A DELTA_BYTE_ARRAY page lays out [prefix lengths][suffix lengths][bytes].
+        // Decode each length stream and locate where it ends from the same
+        // decoder: collect_checked_lengths materializes only the first row_count
+        // values (bounding the allocation -- the suffix previously collected its
+        // whole attacker-controlled total_count), then the stream's byte length
+        // comes from consumed_bytes() when the decoder was exhausted (a full read,
+        // O(1)) or from the structural walk when take(row_count) stopped early (a
+        // partial range read, where consumed_bytes() would under-count the
+        // un-entered blocks and shift both the suffix start and the value bytes).
+        let mut prefix_decoder = delta_bitpacked::Decoder::try_new(values)?;
+        let prefix = collect_checked_lengths(prefix_decoder.by_ref(), row_count, "prefix")?;
+        let prefix_len = if prefix_decoder.size_hint().0 == 0 {
+            prefix_decoder.consumed_bytes()
+        } else {
+            delta_stream_byte_len(values)?
+        };
+
+        let suffix_buf = &values[prefix_len..];
+        let mut suffix_decoder = delta_bitpacked::Decoder::try_new(suffix_buf)?;
+        let suffix = collect_checked_lengths(suffix_decoder.by_ref(), row_count, "suffix")?;
+        let suffix_len = if suffix_decoder.size_hint().0 == 0 {
+            suffix_decoder.consumed_bytes()
+        } else {
+            delta_stream_byte_len(suffix_buf)?
+        };
+        let data_offset = prefix_len + suffix_len;
 
         Ok(Self {
             prefix: prefix.into_iter(),

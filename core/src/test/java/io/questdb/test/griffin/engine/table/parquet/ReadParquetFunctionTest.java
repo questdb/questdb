@@ -479,6 +479,56 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDictionaryNumValuesOverBuffer() throws Exception {
+        // A foreign parquet whose dictionary page header declares more values than its
+        // buffer can hold (each var-width value needs at least a 4-byte length prefix)
+        // must surface a clean SQL error, not abort the JVM. Before the guard,
+        // BaseVarDictDecoder reserved a Vec sized by the attacker-controlled num_values
+        // (up to ~2.1 billion entries), and the allocator refusing that multi-gigabyte
+        // request aborts the process over JNI. The committed fixture is a valid
+        // dictionary-encoded VARCHAR column ("v") with only the dict header's
+        // num_values patched over the buffer size; the
+        // generate_dict_num_values_over_buffer_fixture Rust test (core/rust/qdbr)
+        // builds and verifies it. Draining the cursor forces the dictionary decode
+        // that trips the guard. This is a distinct crash class and decode path from
+        // testRleDictionaryIndexBitWidthOver32 (the bit-width unreachable!()), so it
+        // pins JNI propagation for the dictionary-construction guard too.
+        assertMemoryLeak(() -> {
+            final String fixture = "dict_num_values_over_buffer.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/broken/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            sink.clear();
+            sink.put("SELECT v FROM read_parquet('").put(fixture).put("')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain to force the dictionary decode
+                        }
+                        Assert.fail("expected a decode error for an oversized dictionary num_values");
+                    }
+                } catch (CairoException e) {
+                    // Reaching a clean CairoException here -- rather than a JVM abort
+                    // when the allocator refuses the oversized reservation -- is the
+                    // contract. Both readers must surface the guard's specific "too
+                    // short to hold" message: the parallel reader reports it directly,
+                    // and the non-parallel ReadParquetRecordCursor now appends the
+                    // underlying cause to its "likely corrupted" wrapper instead of
+                    // discarding it (without that, this assertion fails for parallel=false).
+                    TestUtils.assertContains(e.getMessage(), "too short to hold");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFileDeleted() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10;
@@ -1233,6 +1283,52 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
                 assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testRleDictionaryIndexBitWidthOver32() throws Exception {
+        // A foreign parquet whose RLE_DICTIONARY data page declares a dictionary
+        // index bit width > 32 must surface a clean SQL error, not abort the JVM
+        // via an unreachable!() in the bitpacked decoder. The committed fixture is
+        // a valid dictionary-encoded INT32 column ("v") with only that single page
+        // byte patched to 40; the generate_rle_dict_index_bitwidth_fixture Rust
+        // test (core/rust/qdbr) builds and verifies it. Draining the cursor forces
+        // the page decode that trips the guard.
+        assertMemoryLeak(() -> {
+            final String fixture = "rle_dict_index_bitwidth_over_32.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/broken/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            sink.clear();
+            sink.put("SELECT v FROM read_parquet('").put(fixture).put("')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain to force page decode
+                        }
+                        Assert.fail("expected a decode error for an oversized dictionary index bit width");
+                    }
+                } catch (CairoException e) {
+                    // Reaching a clean CairoException here -- rather than a JVM abort
+                    // via the bitpacked decoder's unreachable!() -- is the contract.
+                    // Both readers must surface the guard's specific "exceeds" detail:
+                    // the parallel reader reports it directly, and the non-parallel
+                    // ReadParquetRecordCursor now appends the underlying cause to its
+                    // "likely corrupted" wrapper instead of discarding it, so a
+                    // regression in either reader's path can no longer hide behind the
+                    // other's wording. The Rust generate_rle_dict_index_bitwidth_fixture
+                    // test pins the exact guard message.
+                    TestUtils.assertContains(e.getMessage(), "exceeds");
+                }
             }
         });
     }
