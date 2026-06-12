@@ -215,16 +215,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     }
 
     protected static CharSequence outerJoinTypeToString(int joinType) {
-        switch (joinType) {
-            case IQueryModel.JOIN_LEFT_OUTER:
-                return "Left";
-            case IQueryModel.JOIN_RIGHT_OUTER:
-                return "Right";
-            case IQueryModel.JOIN_FULL_OUTER:
-                return "Full";
-            default:
-                return "Unknown";
-        }
+        return switch (joinType) {
+            case IQueryModel.JOIN_LEFT_OUTER -> "Left";
+            case IQueryModel.JOIN_RIGHT_OUTER -> "Right";
+            case IQueryModel.JOIN_FULL_OUTER -> "Full";
+            default -> "Unknown";
+        };
     }
 
     @Override

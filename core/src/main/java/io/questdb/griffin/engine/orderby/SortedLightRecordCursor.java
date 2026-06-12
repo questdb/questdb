@@ -89,6 +89,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
             isChainBuilt = true;
         }
         if (chainCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }

@@ -98,6 +98,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
