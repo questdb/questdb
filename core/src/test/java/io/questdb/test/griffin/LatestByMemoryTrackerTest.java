@@ -108,12 +108,15 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 'b', 4)"
             );
             drainWalQueue();
-            // returnsOnce() not returns(): this class's tight 128 KiB per-query limit cannot fit
-            // returns()'s extra re-execution passes (the ORDER BY sort reopens a 128 KiB key buffer
-            // that alone sits at the limit). The result is deterministic, so no coverage is lost.
+            // Raise the per-query limit for this success case so returns()'s extra cursor passes
+            // (a second read, calculateSize(), the variable-column and factory-property checks) fit
+            // alongside the ORDER BY sort's key buffer. The breach tests keep the tight 128 KiB
+            // limit from setUpSortPageSize(); the LATEST BY structures here stay well under 1 MiB.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
             assertQuery("SELECT sym, v FROM tab_idx_small LATEST ON ts PARTITION BY sym ORDER BY sym")
                     .noLeakCheck()
-                    .returnsOnce("sym\tv\n" +
+                    .expectSize()
+                    .returns("sym\tv\n" +
                             "a\t3\n" +
                             "b\t4\n");
         });
@@ -147,11 +150,13 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 2, 40)"
             );
             drainWalQueue();
-            // returnsOnce() not returns(): see testLatestByIndexedSucceedsOnLowCardinality. The tight
-            // 128 KiB limit cannot fit returns()'s extra re-execution passes; the result is deterministic.
+            // Raise the per-query limit for this success case so returns()'s extra cursor passes fit
+            // alongside the ORDER BY sort's key buffer; see testLatestByIndexedSucceedsOnLowCardinality.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
             assertQuery("SELECT k, v FROM tab_noidx_small LATEST ON ts PARTITION BY k ORDER BY k")
                     .noLeakCheck()
-                    .returnsOnce("k\tv\n" +
+                    .expectSize()
+                    .returns("k\tv\n" +
                             "1\t30\n" +
                             "2\t40\n");
         });
@@ -190,12 +195,14 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                             "  ('2024-01-01T00:00:03.000000Z', 2, 40)"
             );
             drainWalQueue();
-            // returnsOnce() not returns(): see testLatestByIndexedSucceedsOnLowCardinality. The tight
-            // 128 KiB limit cannot fit returns()'s extra re-execution passes; the result is deterministic.
+            // Raise the per-query limit for this success case so returns()'s extra cursor passes fit
+            // alongside the ORDER BY sort's key buffer; see testLatestByIndexedSucceedsOnLowCardinality.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
             assertQuery("WITH yy AS (SELECT ts, k, max(v) v FROM tab_sub_small SAMPLE BY 1s ALIGN TO FIRST OBSERVATION) " +
                     "SELECT k, v FROM yy LATEST ON ts PARTITION BY k ORDER BY k")
                     .noLeakCheck()
-                    .returnsOnce("k\tv\n" +
+                    .expectSize()
+                    .returns("k\tv\n" +
                             "1\t30\n" +
                             "2\t40\n");
         });

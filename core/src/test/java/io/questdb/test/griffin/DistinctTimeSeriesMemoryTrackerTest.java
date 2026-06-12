@@ -32,27 +32,42 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
  * Exercises the per-query memory limit through {@link DistinctTimeSeriesRecordCursorFactory}'s
- * {@code dataMap}. The factory is only reachable with the distinct-to-GROUP BY rewrite disabled
- * ({@code cairo.sql.distinct.group.by.rewrite.enabled=false}); plain SELECT DISTINCT otherwise
+ * {@code dataMap}. The factory is only reachable with the distinct-to-GROUP BY rewrite disabled,
+ * which has no production property and is overridden to false on the {@link CairoTestConfiguration}
+ * for this test in {@link #setUpStatic()}; plain SELECT DISTINCT otherwise
  * rewrites to (Async) GROUP BY. With the rewrite off, SELECT DISTINCT over a random-access,
  * designated-timestamp base routes here. The dataMap clears on every designated-timestamp change,
  * so it only grows under duplicated timestamps; a constant-timestamp table makes it grow unbounded.
  */
 public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // Force DistinctTimeSeriesRecordCursorFactory: otherwise rewriteDistinct turns
+        // SELECT DISTINCT into (Async) GROUP BY and this factory never runs. The flag has
+        // no production property, so override it directly on the CairoConfiguration.
+        configurationFactory = (root, telemetry, overrides) ->
+                new CairoTestConfiguration(root, telemetry, overrides) {
+                    @Override
+                    public boolean isSqlDistinctGroupByRewriteEnabled() {
+                        return false;
+                    }
+                };
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Before
     public void setUpLimit() {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
-        // Force DistinctTimeSeriesRecordCursorFactory: otherwise rewriteDistinct turns
-        // SELECT DISTINCT into (Async) GROUP BY and this factory never runs.
-        setProperty(PropertyKey.CAIRO_SQL_DISTINCT_GROUP_BY_REWRITE_ENABLED, "false");
     }
 
     @Test

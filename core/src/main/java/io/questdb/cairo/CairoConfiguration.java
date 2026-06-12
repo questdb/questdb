@@ -1031,8 +1031,10 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
-    // Test hook to reach DistinctTimeSeriesRecordCursorFactory: when false the optimiser keeps
-    // SELECT DISTINCT as a Distinct factory, de-optimising every DISTINCT query, instead of GROUP BY.
+    // Test-only seam, with no backing production property: always true in a running server, so
+    // the optimiser always rewrites SELECT DISTINCT to GROUP BY. Tests override it to false in a
+    // CairoConfiguration subclass to keep DISTINCT as a Distinct factory and reach
+    // DistinctTimeSeriesRecordCursorFactory.
     boolean isSqlDistinctGroupByRewriteEnabled();
 
     boolean isSqlJitDebugEnabled();

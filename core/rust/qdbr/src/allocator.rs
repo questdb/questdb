@@ -388,7 +388,7 @@ impl QdbAllocator {
         self.tagged_used().fetch_sub(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(delta, COUNTER_ORDERING);
         if let Some(tracker_used) = self.tracker_used() {
-            let prev = tracker_used.fetch_sub(delta, COUNTER_ORDERING);
+            let prev = Self::saturating_decrement(tracker_used, delta);
             debug_assert!(
                 prev >= delta,
                 "per-query memory underflow on shrink: used={prev}, delta={delta}"
@@ -401,13 +401,28 @@ impl QdbAllocator {
         self.tagged_used().fetch_sub(freed_size, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(freed_size, COUNTER_ORDERING);
         if let Some(tracker_used) = self.tracker_used() {
-            let prev = tracker_used.fetch_sub(freed_size, COUNTER_ORDERING);
+            let prev = Self::saturating_decrement(tracker_used, freed_size);
             debug_assert!(
                 prev >= freed_size,
                 "per-query memory underflow on deallocate: used={prev}, delta={freed_size}"
             );
         }
         self.free_count().fetch_add(1, COUNTER_ORDERING);
+    }
+
+    /// Decrements the per-query counter, clamping at zero, and returns the
+    /// previous value. Perfect malloc/free symmetry keeps the counter non-
+    /// negative, which the debug_assert at each call site enforces under `-ea`.
+    /// In release builds a latent asymmetry must not wrap the unsigned counter
+    /// to ~2^64: a wrapped `tracker_used` makes every later check_alloc_limit
+    /// read it as over the limit and spuriously fail the whole workload. The
+    /// saturating clamp degrades gracefully to an under-count instead.
+    fn saturating_decrement(counter: &AtomicUsize, delta: usize) -> usize {
+        counter
+            .fetch_update(COUNTER_ORDERING, Ordering::Acquire, |used| {
+                Some(used.saturating_sub(delta))
+            })
+            .unwrap_or_else(|prev| prev)
     }
 }
 
@@ -1116,5 +1131,22 @@ mod tests {
         assert_eq!(tas.malloc_count(), total_allocs);
         assert_eq!(tas.realloc_count(), total_reallocs);
         assert_eq!(tas.free_count(), total_allocs);
+    }
+
+    #[test]
+    fn test_saturating_decrement_clamps_at_zero() {
+        use crate::allocator::QdbAllocator;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let counter = AtomicUsize::new(8);
+        // A normal decrement returns the previous value and subtracts the delta.
+        assert_eq!(QdbAllocator::saturating_decrement(&counter, 5), 8);
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+
+        // An oversized decrement (the asymmetry a release build must survive) clamps the
+        // counter at zero rather than wrapping the unsigned value to ~usize::MAX, which would
+        // make every later check_alloc_limit read it as over the limit.
+        assert_eq!(QdbAllocator::saturating_decrement(&counter, 10), 3);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 }

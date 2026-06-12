@@ -184,7 +184,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_COUNT_DISTINCT_CAPACITY("cairo.sql.count.distinct.capacity"),
     CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR("cairo.sql.count.distinct.load.factor"),
     CAIRO_DATE_LOCALE("cairo.date.locale"),
-    CAIRO_SQL_DISTINCT_GROUP_BY_REWRITE_ENABLED("cairo.sql.distinct.group.by.rewrite.enabled"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY("cairo.sql.distinct.timestamp.key.capacity"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR("cairo.sql.distinct.timestamp.load.factor"),
     CAIRO_SQL_PAGE_FRAME_MIN_ROWS("cairo.sql.page.frame.min.rows"),
