@@ -4619,6 +4619,88 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * C2: a covered rollback stages fresh .pc sidecar targets via openSidecarFiles
+     * BEFORE reencodeWithPerKeyStreaming switches the value file. If that open
+     * itself throws (ENOSPC/EMFILE), isReencodeStarted is already set -- it is
+     * hoisted ahead of the staging -- so the catch's not-switched branch runs:
+     * restore keyCount/valueMemSize, drop the staged files, queue no purge (nothing
+     * switched or published). The writer is not poisoned, so a retried rollback
+     * succeeds. Without the hoist the catch is skipped and the writer is left with a
+     * shrunken keyCount against an unchanged chain. The existing pre-switch test
+     * faults the .pv sync on a NON-covered rollback, which never reaches
+     * openSidecarFiles; this covers the .pc open fault specifically.
+     */
+    @Test
+    public void testRollbackCoveredSidecarOpenFailureCleansUpAndKeepsWriterUsable() throws Exception {
+        final PcOpenFailingFacade pcOpen = new PcOpenFailingFacade();
+        ff = pcOpen;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_sidecar_open_fail";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 96; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    // A trailing high key (id 7) whose rows all sit above the rollback
+                    // cutoff (49): the rollback drops it, so filterCountsForRollback
+                    // SHRINKS keyCount to 4. The catch's keyCount restore is then
+                    // observable -- without the isReencodeStarted hoist, the failed
+                    // rollback leaves keyCount at the shrunken 4 against an 8-key chain.
+                    writer.add(7, 96);
+                    writer.add(7, 97);
+                    writer.add(7, 98);
+                    writer.add(7, 99);
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    final int keyCountBefore = writer.getKeyCount();
+
+                    pcOpen.arm();
+                    try {
+                        writer.rollbackValues(49);
+                        Assert.fail("expected the covered rollback's .pc open to fail");
+                    } catch (CairoException expected) {
+                        // openSidecarFiles' mem.of() throws on the injected -1 fd
+                    } finally {
+                        pcOpen.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one .pc0 open", 1, pcOpen.failureCount());
+
+                    // The open failed BEFORE the value-file switch, so the catch's
+                    // not-switched branch queued no purge and restored the writer.
+                    Assert.assertEquals("a pre-switch open failure must NOT queue an orphan purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+                    Assert.assertEquals("keyCount must be restored after the failed rollback",
+                            keyCountBefore, writer.getKeyCount());
+                    Assert.assertEquals("maxValue must be unchanged after the failed rollback",
+                            99L, writer.getMaxValue());
+
+                    // Not poisoned (nothing switched): the retried rollback succeeds.
+                    writer.rollbackValues(49);
+                    Assert.assertEquals("retried rollback must succeed", 49L, writer.getMaxValue());
+                }
+            }
+        });
+    }
+
+    /**
      * A post-publish failure inside rebuildSidecarsByCopy: the chain entry is
      * already published (the new sealTxn is the live head and the writer is
      * fully consistent -- chain head, valueMem and sealTxn all at newSealTxn),
@@ -9208,6 +9290,34 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         int getFailureCount() {
             return failureCount;
+        }
+    }
+
+    private static class PcOpenFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (armed.get() && name != null && Utf8s.containsAscii(name, ".pc0")) {
+                armed.set(false);
+                failures.incrementAndGet();
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        int failureCount() {
+            return failures.get();
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
         }
     }
 
