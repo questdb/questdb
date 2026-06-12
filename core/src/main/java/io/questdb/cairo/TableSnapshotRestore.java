@@ -547,18 +547,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             );
             int partitionDirLen = tablePath.size();
 
-            tablePath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            if (ff.exists(tablePath.$())) {
-                tablePath.trimTo(plen);
-                continue;
-            }
-
             // Use the committed parquet file size from _txn, not the on-disk size.
             // A snapshot may capture data.parquet mid-append; bytes past the committed
             // size are not part of the MVCC-visible state and must not be published.
             long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
 
-            // Open data.parquet to generate _pm from it.
+            // Open data.parquet to validate it against _txn and, when the _pm
+            // sidecar is missing, generate _pm from it.
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             long parquetFd = ff.openRO(tablePath.$());
             if (parquetFd < 0) {
@@ -567,6 +562,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                 throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
             }
             long onDiskSize = ff.length(parquetFd);
+            // This must run even when _pm was restored alongside the partition:
+            // an undersized data.parquet means the snapshot paired _txn with a
+            // stale or truncated parquet file, and reading the partition at the
+            // committed size would produce garbage.
             if (onDiskSize < parquetFileSize) {
                 ff.close(parquetFd);
                 tablePath.trimTo(plen);
@@ -578,6 +577,12 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (ff.exists(tablePath.$())) {
+                ff.close(parquetFd);
+                tablePath.trimTo(plen);
+                continue;
+            }
+
             long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
             if (parquetMetaFd < 0) {
                 int errno = ff.errno();
