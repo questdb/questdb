@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
@@ -44,6 +45,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+
+import java.util.concurrent.locks.ReentrantLock;
 
 public class InsertAsSelectOperationImpl implements InsertOperation {
     private static final Log LOG = LogFactory.getLog(InsertAsSelectOperationImpl.class);
@@ -137,7 +140,34 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
 
         @Override
         public void commit() {
-            writer.commit();
+            // Demote write-fence, mirrored from the ILP twin TableUpdateDetails.commit and the
+            // pg-wire PGPipelineEntry.commit. The HTTP /exec path checks ReadOnlyStatementGate
+            // before compiling, but that gate read is check-then-act: the writer is acquired while
+            // the node is still PRIMARY, and the SELECT pump (which can run arbitrarily long) appends
+            // every row into the writer's in-memory buffer; only this commit() externalizes them.
+            // A PRIMARY->REPLICA flip anywhere across that whole pump window would otherwise append a
+            // local txn on the already-demoting node and acknowledge an HTTP 200 for a write no
+            // uploader will ever replicate. Because the pump only buffers and commit() is the sole
+            // externalization point, the in-lock re-check here closes the entire SELECT-pump window;
+            // no writer-generation barrier is needed.
+            if (engine.isReadOnlyMode()) {
+                writer.rollback();
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            final ReentrantLock lock = engine.getRoleSwitchLock();
+            lock.lock();
+            try {
+                // Authoritative in-lock re-check against the role flip, which holds the same lock
+                // around the REPLICA flag publish. Either the flip ran first (we see REPLICA and
+                // refuse without committing) or we run first (we commit as PRIMARY and the flip waits).
+                if (engine.isReadOnlyMode()) {
+                    writer.rollback();
+                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                }
+                writer.commit();
+            } finally {
+                lock.unlock();
+            }
         }
 
         @Override

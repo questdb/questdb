@@ -712,25 +712,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     rollback(pendingWriters);
                     return IMPLICIT_TRANSACTION;
                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                    engine.getMetrics().pgWireMetrics().markStart();
-                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
-                        fut.await();
-                        sqlAffectedRowCount = fut.getAffectedRowsCount();
-                    } finally {
-                        engine.getMetrics().pgWireMetrics().markComplete();
-                    }
+                    sqlAffectedRowCount = executeDdlFenced(sqlExecutionContext, tempSequence, true);
                     break;
                 case CompiledQuery.CREATE_TABLE:
                     // fall-through
                 case CompiledQuery.CREATE_MAT_VIEW:
                     // fall-through
                 case CompiledQuery.DROP:
-                    engine.getMetrics().pgWireMetrics().markStart();
-                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
-                        fut.await();
-                    } finally {
-                        engine.getMetrics().pgWireMetrics().markComplete();
-                    }
+                    executeDdlFenced(sqlExecutionContext, tempSequence, false);
                     break;
                 default:
                     // execute statements that either have not been parse-executed
@@ -1368,6 +1357,51 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             recordSize += columnValueSize;
         }
         return recordSize;
+    }
+
+    /**
+     * Demote write-fence for the pg-wire CTAS/CREATE/DROP arms. These operations execute outside the
+     * pendingWriters funnel that {@link #commit} fences, so the pre-execution gate in msgExecute is
+     * their only read-only check -- and that gate read is check-then-act: the operation can begin while
+     * the node is still PRIMARY and externalize its effect (a fresh table, a CTAS data commit, a drop)
+     * on a node that flips to REPLICA mid-execute, acknowledging success for a change no uploader will
+     * replicate. Holding the role-switch lock across the in-lock re-check AND the execute serializes the
+     * whole operation against the flip: either the flip ran first (we see REPLICA and refuse without
+     * executing) or the operation runs fully as PRIMARY and the flip's flag publish waits behind it.
+     * <p>
+     * This takes the same exclusive role-switch lock the ILP and pg-wire commit fences take today; the
+     * next wave converts the whole acquirer set to a shared/exclusive discipline so a long DDL no longer
+     * stalls a concurrent commit. The lock is not redesigned here.
+     */
+    private long executeDdlFenced(
+            SqlExecutionContext sqlExecutionContext,
+            SCSequence tempSequence,
+            boolean reportAffectedRows
+    ) throws SqlException {
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
+        long affectedRowCount = 0;
+        engine.getMetrics().pgWireMetrics().markStart();
+        final ReentrantLock lock = engine.getRoleSwitchLock();
+        lock.lock();
+        try {
+            // Authoritative in-lock re-check against the role flip, which holds the same lock around the
+            // REPLICA flag publish. The execute runs inside the lock so the flip cannot interleave.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
+                fut.await();
+                if (reportAffectedRows) {
+                    affectedRowCount = fut.getAffectedRowsCount();
+                }
+            }
+        } finally {
+            lock.unlock();
+            engine.getMetrics().pgWireMetrics().markComplete();
+        }
+        return affectedRowCount;
     }
 
     private short getPgResultSetColumnFormatCode(int columnIndex) {

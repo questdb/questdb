@@ -144,14 +144,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         // The UDP receive loop calls commitAll() on every iteration including idle ones; without
         // this short-circuit each idle tick would contend the engine-wide role-switch lock for no
         // work.
-        if (writer == null && commitList.size() == 0) {
+        if (writer == null && commitList.size() == 0 && writerCache.size() == 0) {
             return;
         }
-        // Cheap early-out: a node already read-only before we try to acquire the lock
-        // has nothing to flush -- skip the lock acquire entirely. This is NOT the
-        // authoritative refusal, the in-lock re-check below is.
+        // Cheap early-out: a node already read-only before we try to acquire the lock has nothing to
+        // flush. It must still release the cached writers (see releaseWriterCache): they hold the
+        // "ilpUdp" writer lock for the receiver's lifetime, and a held writer keeps the demote drain
+        // counting it as busy forever, so the demote can never finish. This is NOT the authoritative
+        // refusal -- the in-lock re-check below is.
         if (engine.isReadOnlyMode()) {
-            commitList.clear();
+            releaseWriterCache();
             return;
         }
         // Hold the role-switch lock across the authoritative re-check and the actual
@@ -164,7 +166,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         lock.lock();
         try {
             if (engine.isReadOnlyMode()) {
-                commitList.clear();
+                releaseWriterCache();
                 return;
             }
             if (writer != null) {
@@ -518,6 +520,42 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void prepareNewColumn(CachedCharSequence token) {
         columnName = token.getCacheAddress();
         columnType = ColumnType.UNDEFINED;
+    }
+
+    /**
+     * Releases every cached writer on the read-only (demoting) branch, mirroring ILP-TCP's
+     * closeNoLock. The parser caches a TableWriter per table under the "ilpUdp" lock for the
+     * receiver's lifetime; that lock is correctly NOT classified as an internal lock reason, so
+     * getBusyWriterCount() counts each cached writer as a busy client. If the read-only branch only
+     * cleared commitList (as it did before), the writers stayed pinned and the demote drain could
+     * never settle -- the demote was refused forever and buffered rows were dropped with the writers
+     * still held. Rolling back and freeing each writer back to the pool clears the busy count so the
+     * demote can complete; clearing writerCache and resetting the active state lets the parser keep
+     * running -- a later tick that arrives while still read-only simply re-runs the read-only branch
+     * with an empty cache (no NPE), and onEvent/switchTable lazily re-cache on the next PRIMARY tick.
+     */
+    private void releaseWriterCache() {
+        for (int i = 0, n = writerCache.size(); i < n; i++) {
+            final TableWriter cachedWriter = writerCache.valueQuick(i).writer;
+            if (cachedWriter != null) {
+                try {
+                    cachedWriter.rollback();
+                } catch (Throwable th) {
+                    // The pool also rolls back on return; log and keep freeing the rest so a single
+                    // distressed writer cannot leave the others pinned.
+                    LOG.error().$("could not roll back cached udp writer, releasing anyway [table=")
+                            .$(cachedWriter.getTableToken()).$(", ex=").$(th).I$();
+                }
+                Misc.free(cachedWriter);
+            }
+        }
+        LOG.info().$("released cached udp writers on read-only branch [count=").$(writerCache.size()).I$();
+        writerCache.clear();
+        commitList.clear();
+        writer = null;
+        metadata = null;
+        timestampDriver = null;
+        cacheEntryIndex = Integer.MIN_VALUE;
     }
 
     private void switchModeToAppend() {
