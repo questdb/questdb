@@ -137,6 +137,9 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
      */
     public void mergeFrom(EncodedTopKBuffer other) {
         for (long addr = other.entryMem.getAddress(), hi = addr + other.count * entrySize; addr < hi; addr += entrySize) {
+            if (fastRejectsKey(Unsafe.getLong(addr))) {
+                continue;
+            }
             Vect.memcpy(beginAppend(), addr, entrySize);
             endAppend();
         }

@@ -135,7 +135,7 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
      */
     @Test
     public void testParallelTopKEncodedTypes() throws Exception {
-        Assume.assumeTrue(enableParallelTopK);
+        // assertTopKMatch sets the parallel flag per side, so the run is independent of enableParallelTopK.
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -148,19 +148,29 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                         final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
 
                         for (String col : FIXED8_COLUMNS) {
-                            final String desc = rnd.nextBoolean() ? " DESC" : "";
-                            final int k = 1 + rnd.nextInt(200);
-                            assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            for (int d = 0; d < 2; d++) {
+                                final String desc = d == 1 ? " DESC" : "";
+                                final int k = 1 + rnd.nextInt(200);
+                                assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            }
                         }
                         for (String col : WIDE_COLUMNS) {
-                            final String desc = rnd.nextBoolean() ? " DESC" : "";
-                            final int k = 1 + rnd.nextInt(200);
-                            assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            for (int d = 0; d < 2; d++) {
+                                final String desc = d == 1 ? " DESC" : "";
+                                final int k = 1 + rnd.nextInt(200);
+                                assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            }
                         }
 
                         // Unique keys make the full emitted rows deterministic.
                         assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id LIMIT " + (1 + rnd.nextInt(200)));
                         assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id DESC LIMIT " + (1 + rnd.nextInt(200)));
+
+                        // LIMIT past the row count clamps the emit window to the row count.
+                        assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id LIMIT " + (rowCount + 1_000));
+
+                        // A filter that rejects every row leaves an empty emit window.
+                        assertTopKMatch(engine, ctx, "SELECT col_long FROM tab WHERE col_long > 1_000_000 ORDER BY col_long LIMIT 10");
 
                         // The filter reducer feeds the batch encoder its filtered row list.
                         assertTopKMatch(

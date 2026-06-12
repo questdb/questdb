@@ -203,6 +203,7 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
             }
             atom.freePerWorkerChainsAndPools();
             ownerTopK.sort();
+            frameSequence.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
             final SortKeyType keyType = atom.getKeyType();
             entrySize = keyType.entrySize();
             final long emitCount = Math.min(ownerTopK.getCount(), atom.getLo());

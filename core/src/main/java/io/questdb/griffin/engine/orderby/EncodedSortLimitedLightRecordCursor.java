@@ -82,8 +82,18 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             IntList sortColumnFilter,
             int timestampIndex
     ) {
-        this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
-        this.entries = new EncodedTopKBuffer(configuration);
+        SortKeyEncoder encoderInit = null;
+        EncodedTopKBuffer entriesInit = null;
+        try {
+            encoderInit = new SortKeyEncoder(metadata, sortColumnFilter);
+            entriesInit = new EncodedTopKBuffer(configuration);
+        } catch (Throwable th) {
+            Misc.free(encoderInit);
+            Misc.free(entriesInit);
+            throw th;
+        }
+        this.encoder = encoderInit;
+        this.entries = entriesInit;
         this.timestampIndex = timestampIndex;
         this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
         this.isOpen = true;
