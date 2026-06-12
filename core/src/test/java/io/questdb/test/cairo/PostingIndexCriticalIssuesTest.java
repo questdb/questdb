@@ -4685,6 +4685,86 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The seal path must be poison-symmetric with rollback / rebuildSidecarsByCopy.
+     * A post-switch (sealTxn advanced to newSealTxn) but pre-publish (.pc sync)
+     * failure leaves valueMem at newSealTxn while the chain head still references
+     * oldSealTxn, so the writer is inconsistent. seal() must poison it and
+     * orphan-purge the staged newSealTxn files -- and must NOT queue a purge for
+     * the still-live oldSealTxn chain head (the isSealed gate). Without the fix the
+     * writer stays usable and seal()'s finally records a purge for the live file.
+     */
+    @Test
+    public void testSealPostSwitchSidecarSyncFailurePoisonsWriterAndOrphanPurgesStagedFiles() throws Exception {
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "seal_post_switch_pc_fail";
+            final long fakeColBytes = 32L << 3; // 32 rows * 8 bytes (LONG cover)
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Two sparse gens so seal() runs sealFull -- a single dense gen 0
+                    // would early-return as already-sealed and never switch.
+                    for (int v = 0; v < 16; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(15);
+                    writer.commit();
+                    for (int v = 16; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.commit();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcSync.arm();
+                    try {
+                        writer.seal();
+                        Assert.fail("expected post-switch .pc sync failure during seal");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+
+                    // The staged newSealTxn files are orphaned and queued for purge;
+                    // the still-live oldSealTxn chain head is NOT (the isSealed gate).
+                    Assert.assertEquals("staged newSealTxn must be orphan-purged, live oldSealTxn must not",
+                            1, writer.getPendingPurgesSizeForTesting());
+                    // The orphan purge covers the full [0, MAX) txn window -- the staged
+                    // files are unconditionally dead. A chain-derived recordPostingSealPurge
+                    // for the live oldSealTxn (the unfixed behaviour) records a bounded
+                    // window instead, so MAX_VALUE here proves it is the orphan purge.
+                    Assert.assertEquals("orphan purge must span the full txn window",
+                            Long.MAX_VALUE, writer.getPendingPurgeToTxnForTesting(0));
+
+                    // Every mutating entry point now rejects the poisoned writer
+                    // (checkNotPoisoned runs before commitDense's covers assert).
+                    assertPoisonedRejects("add", () -> writer.add(0, 100));
+                    assertPoisonedRejects("commit", writer::commit);
+                    assertPoisonedRejects("commitDense", writer::commitDense);
+                    assertPoisonedRejects("rebuildSidecars", writer::rebuildSidecars);
+                    assertPoisonedRejects("rollbackValues", () -> writer.rollbackValues(0));
+                    assertPoisonedRejects("seal", writer::seal);
+                    assertPoisonedRejects("setMaxValue", () -> writer.setMaxValue(100));
+                    assertPoisonedRejects("sync", () -> writer.sync(false));
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
      * Locks in the multi-gen short-circuit semantics: when a CLEAN gen
      * processed first contributes to {@code total} and a later gen turns out
      * to be MIXED, the running sum is discarded and {@code size()} returns
@@ -8705,6 +8785,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             long size = ff.length(keyFile);
             Assert.assertTrue(".pk must exist, path=" + keyFile, size > 0);
             return size;
+        }
+    }
+
+    private static void assertPoisonedRejects(String op, Runnable action) {
+        try {
+            action.run();
+            Assert.fail(op + ": expected the poisoned writer to reject the operation");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "poisoned");
         }
     }
 

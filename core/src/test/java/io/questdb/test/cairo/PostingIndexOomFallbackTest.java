@@ -275,6 +275,47 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
     }
 
     /**
+     * M1 rollback pre-flight: a single hot key with many values gives a
+     * streaming-rollback peak (~17 * rowCount) far above a tight RSS headroom.
+     * The pre-flight must reject the rollback cleanly -- before any malloc or
+     * value-file switch -- so the writer stays fully usable rather than OOMing
+     * mid-rollback. Complements testStreamingRollbackUnderRssPressure, which
+     * verifies the rollback that DOES fit still streams.
+     */
+    @Test
+    public void testRollbackRejectsWhenStreamingPeakExceedsRssHeadroom() throws Exception {
+        final int rowCount = 200_000;
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "rollback_rss_reject";
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(rowCount - 1);
+                    writer.commit();
+
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 256L * 1024L);
+                    try {
+                        writer.rollbackValues(rowCount / 2);
+                        Assert.fail("expected the rollback pre-flight to reject under the tight RSS limit");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "posting index rollback needs");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "split the partition into smaller commits");
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+
+                    // The pre-flight threw before any malloc or value-file switch, so the
+                    // writer is intact -- the same rollback now succeeds with headroom.
+                    writer.rollbackValues(rowCount / 2);
+                }
+            }
+        });
+    }
+
+    /**
      * Regression for the production OOM in the WAL fast-lag commit path
      * ("posting-index fast-lag commit failed ... global RSS memory limit
      * exceeded ... memoryTag=62"). The fast-lag path appends one sparse gen

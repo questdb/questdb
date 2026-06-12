@@ -289,6 +289,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void add(int key, long value) {
+        checkNotPoisoned();
         if (key < 0) {
             throw CairoException.critical(0).put("index key cannot be negative [key=").put(key).put(']');
         }
@@ -494,6 +495,7 @@ public class PostingIndexWriter implements IndexWriter {
     // get overwritten by rebuildSidecars at a different sealTxn, leaving stale
     // bytes on disk in non-assert builds.
     public void commitDense() {
+        checkNotPoisoned();
         assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
         if (genCount > 0) {
             // flushAllPendingDense assumes it writes the first and only gen at
@@ -1208,6 +1210,7 @@ public class PostingIndexWriter implements IndexWriter {
      * write sidecar files (the O3 pool writer has no covering configuration).
      */
     public void rebuildSidecars() {
+        checkNotPoisoned();
         if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
             return;
         }
@@ -1380,6 +1383,7 @@ public class PostingIndexWriter implements IndexWriter {
             haveSavedSidecars = true;
         }
 
+        boolean isSealed = false;
         try {
             // Sidecar snapshot lives inside this try so a malloc OOM mid-loop
             // gets cleaned up by the finally instead of leaking partial bufs.
@@ -1473,6 +1477,21 @@ public class PostingIndexWriter implements IndexWriter {
             } else {
                 sealFull(newSealTxn);
             }
+            isSealed = true;
+        } catch (Throwable th) {
+            // Post-switch but pre-publish failure: the value file was switched
+            // (sealTxn advanced to newSealTxn) but the chain head was not
+            // published, so valueMem is at newSealTxn while the chain still
+            // references oldSealTxn. Poison the writer -- a later op would publish
+            // at newSealTxn and let the deferred purge delete a live file -- and
+            // orphan-purge the staged files. A post-publish failure (chain head
+            // already at newSealTxn) leaves the live files and the consistent
+            // writer alone. Mirrors the rollback / rebuildSidecarsByCopy catches.
+            if (sealTxn == newSealTxn && chain.getHeadSealTxn() != newSealTxn) {
+                scheduleOrphanPurge(newSealTxn);
+                isPoisoned = true;
+            }
+            throw th;
         } finally {
             if (haveSavedSidecars) {
                 for (int c = 0; c < coverCount; c++) {
@@ -1483,7 +1502,11 @@ public class PostingIndexWriter implements IndexWriter {
                     }
                 }
             }
-            if (sealTxn != oldSealTxn) {
+            // Only record the superseded oldSealTxn for purge when the seal
+            // actually published. On a failed seal the chain head is still
+            // oldSealTxn (the live file), so recording its purge would lean
+            // entirely on the liveness guard to avoid deleting it.
+            if (isSealed && sealTxn != oldSealTxn) {
                 recordPostingSealPurge(oldSealTxn);
             }
         }
@@ -1527,6 +1550,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void setMaxValue(long maxValue) {
+        checkNotPoisoned();
         this.maxValue = maxValue;
         if (pendingDiscardOldSealTxn >= 0) {
             // discardForRebuild preserved the OLD chain head on disk for
@@ -1584,6 +1608,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void sync(boolean async) {
+        checkNotPoisoned();
         // .pv before .pk: a torn write must never leave the chain head (keyMem)
         // pointing at unsynced gen bytes in valueMem.
         flushAllPending();
