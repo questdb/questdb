@@ -39,7 +39,7 @@ public class PGFunctionsTest extends BasePGTest {
     @Test
     public void testListTablesDoesntLeakMetaFds() throws Exception {
         maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (CallableStatement st1 = connection.prepareCall("create table a (i int)")) {
                 st1.execute();
             }
@@ -48,8 +48,10 @@ public class PGFunctionsTest extends BasePGTest {
             try (PreparedStatement ps = connection.prepareStatement("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")) {
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
-                            "id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT]\n" +
-                                    "2,a,null,NONE,1000,300000000\n",
+                            """
+                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT]
+                                    2,a,null,NONE,1000,300000000
+                                    """,
                             sink,
                             rs
                     );
