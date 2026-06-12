@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -109,6 +110,13 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
             }
         } else {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        if (baseCursor != null) {
+            baseCursor.setParquetDecodeHint(hint);
         }
     }
 
