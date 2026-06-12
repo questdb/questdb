@@ -45,17 +45,17 @@ public class ParquetLimitProbeTest extends AbstractCairoTest {
                 // full re-decode of the same buffer.
                 cursor.recordAt(recordB, rowIdA0 + 40);
                 Assert.assertEquals(41, recordB.getInt(0));
-                Assert.assertEquals("v41", recordB.getStrA(1).toString());
+                Assert.assertEquals("v41", recordB.getVarcharA(1).toString());
                 Assert.assertEquals("s41", recordB.getStrA(2).toString());
 
                 // recordA must still read row 1 correctly after the in-place re-decode
                 Assert.assertEquals(2, recordA.getInt(0));
-                Assert.assertEquals("v2", recordA.getStrA(1).toString());
+                Assert.assertEquals("v2", recordA.getVarcharA(1).toString());
                 Assert.assertEquals("s2", recordA.getStrA(2).toString());
 
                 Assert.assertTrue(cursor.hasNext());          // row 2
                 Assert.assertEquals(3, recordA.getInt(0));
-                Assert.assertEquals("v3", recordA.getStrA(1).toString());
+                Assert.assertEquals("v3", recordA.getVarcharA(1).toString());
 
                 // clamp stops the scan after 3 rows
                 Assert.assertFalse(cursor.hasNext());
