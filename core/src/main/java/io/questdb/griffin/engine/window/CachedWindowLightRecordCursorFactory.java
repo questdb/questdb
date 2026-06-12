@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -542,6 +543,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
+            baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             isWindowComputed = false;
             currentRowIndex = 0;
             size = 0;
