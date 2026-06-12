@@ -139,7 +139,14 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     @Override
     public void close() {
         super.close();
-        clear();
+        // Reset state inline instead of routing through clear(): a malloc fault in the constructor
+        // calls close() with freeList/chainFreeList still null, which clear() would dereference.
+        // Misc.free() is null-safe.
+        comparatorLeftSideValidForFrame = -1;
+        minMaxRowId = -1;
+        minMaxNode = -1;
+        currentValues = 0;
+        cursor.clear();
         Misc.free(freeList);
         Misc.free(chainFreeList);
         if (valueHeapStart != 0) {

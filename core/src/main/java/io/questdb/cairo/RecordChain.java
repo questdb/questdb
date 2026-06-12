@@ -42,6 +42,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -141,7 +142,8 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     public void clear() {
         // memory will self-extend on write
         // reads are prevented by setting nextRecordOffset to -1
-        mem.close();
+        // Misc.free is null-safe: the ctor calls close() on its error path, where mem may be null.
+        Misc.free(mem);
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
     }
