@@ -279,9 +279,9 @@ public final class QueryRunner {
         try {
             return runQuery(query);
         } catch (CursorCheckException e) {
-            // A re-pass that surfaced an allowlisted per-row user error the first
-            // pass did not is accepted parallel-filter non-determinism, not a
-            // cursor-reuse defect; report it as a skip. See CursorCheckException.
+            // A re-pass that surfaced a per-row cast/overflow the first pass did
+            // not is accepted parallel-filter non-determinism, not a cursor-reuse
+            // defect; report it as a skip. See CursorCheckException.
             if (e.tolerated) {
                 return Result.skipped(e.getMessage());
             }
@@ -524,6 +524,30 @@ public final class QueryRunner {
         }
         return erroring.failure instanceof NumericException
                 || erroring.failure instanceof ImplicitCastException;
+    }
+
+    /**
+     * The per-row runtime errors a filter expression can raise mid-scan: an
+     * out-of-range cast ({@link ImplicitCastException}) or an arithmetic /
+     * scale-alignment overflow ({@link NumericException}). Whether one fires
+     * depends on which rows reach the expression, so under the parallel filter --
+     * which reduces whole page frames eagerly on worker threads -- a LIMIT query
+     * can surface such an error from a frame past the cutoff on one cursor pass
+     * but not another. That is the same access-path-dependent non-determinism the
+     * differential oracle already tolerates (see {@link #isIndexFilteredAsymmetry}
+     * / {@link #isParquetFilteredAsymmetry}, which key on this exact pair), so the
+     * cursor self-checks treat this pair, and only this pair, as a tolerated
+     * re-pass throw after a clean first pass.
+     * <p>
+     * Deliberately narrower than {@link #isAcceptedSkip}: a {@link SqlException}
+     * is raised at compile time and cannot fire mid-iteration, and a
+     * decimal-aggregation overflow rides the aggregate accumulator rather than the
+     * filter, where a divergence between cursor passes is a real defect -- it is
+     * how the sliding-frame decimal {@code sum} bug was caught -- not
+     * reduction-order noise.
+     */
+    private static boolean isPerRowRuntimeError(Throwable t) {
+        return t instanceof ImplicitCastException || t instanceof NumericException;
     }
 
     /**
@@ -955,13 +979,13 @@ public final class QueryRunner {
             calculated = counter.get();
         } catch (Exception e) {
             // The first pass materialized cleanly, so a throw out of toTop() /
-            // calculateSize() is normally a defect. When it is an allowlisted
-            // per-row user error (cast/overflow), it is the same parallel-filter
-            // LIMIT non-determinism checkToTop tolerates: the eager frame reduce
-            // surfaces an error from a frame past the LIMIT cutoff on this
-            // recompute but not on the first pass. Report it as a tolerated skip.
-            // Errors (OOME, etc.) still propagate as in runOnce.
-            if (isAcceptedSkip(e)) {
+            // calculateSize() is normally a defect. A per-row cast/overflow error
+            // is the same parallel-filter LIMIT non-determinism checkToTop
+            // tolerates: the eager frame reduce surfaces an error from a frame past
+            // the LIMIT cutoff on this recompute but not on the first pass. Report
+            // it as a tolerated skip (see isPerRowRuntimeError). Any other throw is
+            // a real defect; Errors (OOME, etc.) still propagate as in runOnce.
+            if (isPerRowRuntimeError(e)) {
                 throw new CursorCheckException("calculateSize() surfaced " + e.getClass().getSimpleName()
                         + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
             }
@@ -1008,14 +1032,15 @@ public final class QueryRunner {
         } catch (Exception e) {
             // The first pass materialized cleanly, so a throw while rewinding and
             // re-reading is normally a defect (e.g. a cursor that cannot
-            // re-iterate). When it is an allowlisted per-row user error
-            // (cast/overflow), it is instead accepted parallel-filter
-            // non-determinism: the filter reduces whole page frames eagerly, so
-            // under a LIMIT such an error in a frame past the cutoff can surface on
-            // this pass but not on the first, depending on which frames the reducer
-            // evaluated before the LIMIT cancelled the sequence. Report it as a
-            // tolerated skip. Errors (OOME, etc.) still propagate.
-            if (isAcceptedSkip(e)) {
+            // re-iterate). The one exception is a per-row cast/overflow error: the
+            // parallel filter reduces whole page frames eagerly, so under a LIMIT
+            // such an error in a frame past the cutoff can surface on this pass but
+            // not on the first, depending on which frames the reducer evaluated
+            // before the LIMIT cancelled the sequence. Report it as a tolerated
+            // skip (see isPerRowRuntimeError for why only this pair). Any other
+            // throw is a real re-iteration defect; Errors (OOME, etc.) still
+            // propagate.
+            if (isPerRowRuntimeError(e)) {
                 throw new CursorCheckException("toTop re-iteration surfaced " + e.getClass().getSimpleName()
                         + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
             }
@@ -1527,8 +1552,8 @@ public final class QueryRunner {
 
     private static final class CursorCheckException extends RuntimeException {
         // True when a cursor re-pass (toTop re-iteration / calculateSize recompute)
-        // surfaced an allowlisted per-row user error (cast/overflow) that the clean
-        // first pass did not. The parallel filter reduces whole page frames eagerly,
+        // surfaced a per-row cast or numeric overflow (see isPerRowRuntimeError)
+        // that the clean first pass did not. The parallel filter reduces whole page frames eagerly,
         // so under a LIMIT such an error in a frame past the cutoff surfaces on one
         // cursor pass but not another, depending on which frames the reducer
         // evaluated before the LIMIT cancelled the sequence. That is accepted
