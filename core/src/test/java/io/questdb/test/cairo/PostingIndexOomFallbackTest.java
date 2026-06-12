@@ -694,8 +694,9 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      * + streaming FSST), but the FSST compressor holds a ~1 MiB batch floor. A
      * headroom too tight for even that floor lands on the pre-flight's hard
      * limit -- "would exceed RSS limit even with streaming compaction" -- rather
-     * than OOMing mid-encode. (A separate fuzz covers the streaming-succeeds
-     * case with adequate headroom.)
+     * than OOMing mid-encode.
+     * ({@link #testSealVarIncludeReachesStreamingSuccessPathUnderTightHeadroom}
+     * covers the streaming-succeeds case with adequate headroom.)
      */
     @Test
     public void testSealStreamingVarIncludeHardLimitWhenFsstDoesNotFit() throws Exception {
@@ -1423,6 +1424,113 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                                         Assert.assertEquals(
                                                 "BINARY byte mismatch [key=" + k + ", rowId=" + rowId + ", b=" + b + "]",
                                                 expected, bin.byteAt(b));
+                                    }
+                                    seen++;
+                                }
+                                Assert.assertEquals("row count for key=" + k, rowsPerKey, seen);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(binAuxAddr, binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(binDataAddr, binDataSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * Drives the streaming-seal var-cover SUCCESS path
+     * ({@code reencodeWithPerKeyStreaming -> writeSidecarVarStreamingForColumn}),
+     * which no other test reaches: the 8 MiB sibling fits the fast path, and the
+     * tight tests assert failure. For a var cover the fast-path estimate holds
+     * the whole stride's decode buffers (strideVals + packedResiduals + packedBuf,
+     * ~24 bytes/value); with 64K values in one stride that is a measured ~3.0 MiB,
+     * while the streaming estimate is bounded by the worst single KEY plus the
+     * ~1 MiB FSST batch floor (measured ~1.1 MiB). A 2 MiB headroom rejects the
+     * fast path and fits streaming, so a SUCCESSFUL seal under it proves the
+     * streaming path ran -- the fast path could not have. Every BINARY value
+     * reading back unchanged validates the streaming var writer's on-disk offsets
+     * and FSST blocks end to end.
+     */
+    @Test
+    public void testSealVarIncludeReachesStreamingSuccessPathUnderTightHeadroom() throws Exception {
+        final int keys = 250;          // < DENSE_STRIDE (256): all keys in one stride
+        final int rowsPerKey = 256;
+        final int totalRows = keys * rowsPerKey;
+        final int payloadBytes = 32;
+        final int binStride = Long.BYTES + payloadBytes;
+        final long binDataSize = (long) totalRows * binStride;
+        final long binAuxSize = (long) (totalRows + 1) * Long.BYTES;
+        final byte[] phrase = "the_quick_brown_fox_jumps_over_lazy_dog_".getBytes();
+
+        assertMemoryLeak(() -> {
+            long binDataAddr = Unsafe.malloc(binDataSize, MemoryTag.NATIVE_DEFAULT);
+            long binAuxAddr = Unsafe.malloc(binAuxSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long off = 0;
+                for (int i = 0; i < totalRows; i++) {
+                    Unsafe.putLong(binAuxAddr + (long) i * Long.BYTES, off);
+                    Unsafe.putLong(binDataAddr + off, payloadBytes);
+                    for (int b = 0; b < payloadBytes; b++) {
+                        Unsafe.putByte(binDataAddr + off + Long.BYTES + b, phrase[b % phrase.length]);
+                    }
+                    off += binStride;
+                }
+                Unsafe.putLong(binAuxAddr + (long) totalRows * Long.BYTES, off);
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    final String name = "var_cover_streaming_success";
+                    final long savedLimit = Unsafe.getRssMemLimit();
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{binDataAddr}, new long[]{binAuxAddr}, new long[]{0L},
+                                new int[]{-1}, new int[]{2}, new int[]{ColumnType.BINARY}, 1, -1);
+                        long row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+
+                        // Measured peaks for this 64K-value var cover: fast-path
+                        // ~3.0 MiB (the whole stride's decode buffers -- strideVals +
+                        // packedResiduals + packedBuf, ~24 B/value), streaming ~1.1 MiB
+                        // (worst single key + the ~1 MiB FSST batch floor). A 2 MiB
+                        // headroom rejects the fast path and fits streaming.
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 2L * 1024L * 1024L);
+                        try {
+                            writer.seal();
+                        } finally {
+                            Unsafe.setRssMemLimit(savedLimit);
+                        }
+                    }
+
+                    // Every BINARY value reads back unchanged through the covering
+                    // cursor -- validates writeSidecarVarStreamingForColumn's offsets
+                    // and FSST blocks.
+                    RecordMetadata meta = coveringBinaryMetadata();
+                    try (ColumnVersionReader emptyCvr = new ColumnVersionReader();
+                         PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                 configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                                 meta, emptyCvr, 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            try (RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE, new int[]{0})) {
+                                Assert.assertTrue("expected CoveringRowCursor for key=" + k, c instanceof CoveringRowCursor);
+                                CoveringRowCursor cc = (CoveringRowCursor) c;
+                                int seen = 0;
+                                while (cc.hasNext()) {
+                                    long rowId = cc.next();
+                                    Assert.assertEquals("BINARY length [key=" + k + ", rowId=" + rowId + "]",
+                                            payloadBytes, cc.getCoveredBinLen(0));
+                                    BinarySequence bin = cc.getCoveredBin(0);
+                                    Assert.assertNotNull("cover BINARY null [key=" + k + ", rowId=" + rowId + "]", bin);
+                                    for (int b = 0; b < payloadBytes; b++) {
+                                        Assert.assertEquals("BINARY byte [key=" + k + ", rowId=" + rowId + ", b=" + b + "]",
+                                                phrase[b % phrase.length], bin.byteAt(b));
                                     }
                                     seen++;
                                 }

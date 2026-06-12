@@ -765,16 +765,21 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         tag VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
-            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256)
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256).
+            // Each row's covered tag is DISTINCT ('tag_' || x), so a scrambled
+            // per-key var-size offset surfaces as a wrong/duplicate value rather
+            // than hiding behind an all-identical payload.
             execute("""
                     INSERT INTO t_rb_evict_var
-                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), 'tag' || (x % 300)
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), 'tag_' || x
                     FROM long_sequence(3_000)
                     """);
-            // O3 merge commit seals the posting index in the rewritten partition
+            // O3 merge commit seals the posting index in the rewritten partition.
+            // Distinct namespace ('tag2_') so the merged rows never collide with
+            // the base insert's tags.
             execute("""
                     INSERT INTO t_rb_evict_var
-                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 'tag' || (x % 300)
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 'tag2_' || x
                     FROM long_sequence(100)
                     """);
             engine.releaseAllWriters();
@@ -805,13 +810,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 // Opening the writer ran rollbackConditionally(3_100): the real
                 // discard streamed the var-size covered sidecar rebuild for the
                 // survivors. Covered reads must still serve the committed tags.
-                assertQuery("SELECT count() c, count(tag) ct, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
+                assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd FROM t_rb_evict_var WHERE sym = 'k0'")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
+                        .withPlanContaining("CoveringIndex on: sym")
                         .returns("""
-                                c\tct\tmn\tmx
-                                10\t10\ttag0\ttag0
+                                c\tct\tcd
+                                10\t10\t10
                                 """);
 
                 // O3 append touching only key 'k0': one stride dirty, the
@@ -821,29 +827,34 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 for (int i = 0; i < 50; i++) {
                     TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
                     r.putSym(1, "k0");
-                    r.putVarchar(2, new Utf8String("tag0"));
+                    // Distinct per-row tag so the incremental seal's rebuilt var
+                    // sidecar must preserve each offset, not just a shared payload.
+                    r.putVarchar(2, new Utf8String("tagO3_" + i));
                     r.append();
                 }
                 writer.commit();
             }
 
-            assertQuery("SELECT count() c, count(tag) ct, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
+            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd FROM t_rb_evict_var WHERE sym = 'k0'")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
                     .returns("""
-                            c\tct\tmn\tmx
-                            60\t60\ttag0\ttag0
+                            c\tct\tcd
+                            60\t60\t60
                             """);
             // 'k1' lives in the stride the post-rollback commit left clean; its
             // covered var-size values come from the sidecar the rollback rebuilt.
-            assertQuery("SELECT count() c, count(tag) ct, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k1'")
+            // 11 rows, each with a distinct tag -> count_distinct must be 11.
+            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd FROM t_rb_evict_var WHERE sym = 'k1'")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
                     .returns("""
-                            c\tct\tmn\tmx
-                            11\t11\ttag1\ttag1
+                            c\tct\tcd
+                            11\t11\t11
                             """);
         });
     }
