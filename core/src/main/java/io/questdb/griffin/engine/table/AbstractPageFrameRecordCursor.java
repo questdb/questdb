@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
     protected final PageFrameAddressCache frameAddressCache;
@@ -70,6 +71,11 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         Misc.free(recordB);
         Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
+    }
+
+    @TestOnly
+    public PageFrameMemoryPool getFrameMemoryPool() {
+        return frameMemoryPool;
     }
 
     @Override

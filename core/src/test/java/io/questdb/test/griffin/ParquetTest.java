@@ -1992,6 +1992,46 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetAsyncLateMaterializationAcrossFramesStaysCorrect() throws Exception {
+        // The async filtered path decodes only the filter columns per frame, applies the filter,
+        // then late-materializes the remaining columns for the surviving rows via
+        // populateRemainingColumns -> decodeRemainingColumns -> accountDecode. That late-mat decode
+        // runs on the per-worker reduce slot's zero-budget pool, so every frame accounts its
+        // remaining-column bytes, trims, and releases the buffer before the next frame. Existing
+        // late-mat tests use a single small partition, so the per-frame account/trim/release/reuse
+        // cycle never repeats. This spreads the scan across many parquet partitions (one page frame
+        // each), filters on one column and late-materializes the others (a varchar group key plus an
+        // int aggregate), and compares against a native oracle to catch corruption from the
+        // cross-frame buffer reuse on the late-mat route.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        rnd_varchar(8, 48, 5) AS v,
+                        (x % 100)::double AS d,
+                        timestamp_sequence('2024-01-01', 100_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE nat AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Filter on d; k (group key) and v (varchar, via max) are late-materialized for the
+            // survivors. d cycles 0..99 per partition, so 'd < 10' keeps ~10% of every frame:
+            // selectivity stays under the late-mat threshold yet every frame has survivors, so
+            // decodeRemainingColumns runs on each one. A monotonic 'd > N' would instead give
+            // zero-survivor then high-selectivity frames and exercise barely one or two.
+            // ORDER BY k makes the output deterministic.
+            assertSqlCursors(
+                    "SELECT k, count(), max(v) FROM nat WHERE d < 10 ORDER BY k",
+                    "SELECT k, count(), max(v) FROM src WHERE d < 10 ORDER BY k"
+            );
+        });
+    }
+
+    @Test
     public void testParquetCacheEvictionMonotonicAsOfStaysCorrect() throws Exception {
         // The ASOF join's slave cursor declares MONOTONIC, so its effective budget is a
         // quarter of the configured value. Small row groups plus a tiny budget force the

@@ -39,9 +39,9 @@ public enum ParquetDecodeHint {
      */
     MONOTONIC(2, 4),
     /**
-     * Revisiting walk (sort emit, hash/asof probes): the full configured
-     * budget; 256 buffers cap the entry count so tiny row groups cannot grow
-     * the LRU without bound before the byte budget binds. An active row-id
+     * Revisiting walk (sort emit, hash probes): the full configured budget;
+     * 256 buffers cap the entry count so tiny row groups cannot grow the LRU
+     * without bound before the byte budget binds. An active row-id
      * declaration raises the cap to the declared frame count, since
      * row-filtered entries retain only the declared rows.
      */

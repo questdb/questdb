@@ -74,16 +74,23 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long rowsRemaining;
 
     public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
+        // close() only frees these once isOpen (set in of()), so a ctor failure must free the
+        // already-allocated natives here; build them into locals so the catch can release them.
+        PageFrameMemoryRecord record = null;
+        PageFrameMemoryPool frameMemoryPool = null;
         try {
-            this.filter = filter;
-            this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-            this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
-            this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
+            record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
         } catch (Throwable th) {
-            close();
+            Misc.free(record);
+            Misc.free(frameMemoryPool);
             throw th;
         }
+        this.filter = filter;
+        this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+        this.record = record;
+        this.frameMemoryPool = frameMemoryPool;
+        this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
     }
 
     @Override
