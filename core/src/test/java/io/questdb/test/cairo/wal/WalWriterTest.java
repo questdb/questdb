@@ -4833,7 +4833,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
             execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
-            assertSql("count\n1\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
 
             // A suspended table denies WAL writes, like a dropped table but with a distinct error.
             execute("alter table t suspend wal");
@@ -4850,7 +4850,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("alter table t resume wal");
             execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
             drainWalQueue();
-            assertSql("count\n2\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
@@ -4866,14 +4866,14 @@ public class WalWriterTest extends AbstractCairoTest {
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 walApplyJob.drain(0);
             }
-            assertSql("count\n0\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
 
             // RESUME lets the pending transaction apply.
             execute("alter table t resume wal");
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 walApplyJob.drain(0);
             }
-            assertSql("count\n1\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
         });
     }
 
@@ -4888,7 +4888,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     " ('2024-01-02T00:00:00.000000Z', 2)," +
                     " ('2024-01-03T00:00:00.000000Z', 3)");
             drainWalQueue();
-            assertSql("count\n3\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
 
             final TableToken oldToken = engine.verifyTableName("t");
             final int oldTableId = oldToken.getTableId();
@@ -4905,18 +4905,18 @@ public class WalWriterTest extends AbstractCairoTest {
             Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
 
             // Applied data is preserved (hard-linked), counter is reset to a fresh sequencer.
-            assertSql("count\n3\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
             Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(newToken).getSeqTxn() <= 2);
 
             // The rebased table is live and writable.
             execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
             drainWalQueue();
-            assertSql("count\n4\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
         });
     }
 
     @Test
-    public void ebtestRebaseWalComplexTablePreservesDataAndIndexes() throws Exception {
+    public void testRebaseWalComplexTablePreservesDataAndIndexes() throws Exception {
         // REBASE clones the applied table via hard-links. This exercises the clone over a table with
         // column tops, several column-version ALTERs, multiple partitions (mixed native + parquet),
         // symbol columns and all symbol index types, then verifies the rebased table returns the
@@ -4967,7 +4967,7 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             // The conversion really happened: day1/day2 are parquet, day3/day4 are still native.
-            assertSql("count\n2\n", "select count() from table_partitions('t') where isParquet = true");
+            assertQuery("select count() from table_partitions('t') where isParquet = true").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
 
             // Capture the full dataset and the indexed-query results to diff against the rebased table.
             final StringSink fullExpected = new StringSink();
@@ -4993,11 +4993,11 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Identical full dataset: all columns, all rows, the column-top NULLs (day1/day2 topcol),
             // and both parquet partitions reproduced exactly.
-            assertSql(fullExpected, "select * from t order by ts");
+            assertQuery("select * from t order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(fullExpected);
 
             // Indexed queries return the same rows AND still use an index scan after the rebase.
-            assertSql(defExpected, "select ts, sym_def from t where sym_def = 'A' order by ts");
-            assertSql(postExpected, "select ts, sym_post from t where sym_post = 'A' order by ts");
+            assertQuery("select ts, sym_def from t where sym_def = 'A' order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(defExpected);
+            assertQuery("select ts, sym_post from t where sym_post = 'A' order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(postExpected);
             assertIndexScan("select * from t where sym_def = 'A'", "sym_def");
             assertIndexScan("select * from t where sym_bmp = 'C'", "sym_bmp");
             assertIndexScan("select * from t where sym_post = 'A'", "sym_post");
@@ -5005,14 +5005,14 @@ public class WalWriterTest extends AbstractCairoTest {
             assertIndexScan("select * from t where sym_poste = 'A'", "sym_poste");
 
             // The clone preserved the parquet partitions: still 2 parquet after the rebase.
-            assertSql("count\n2\n", "select count() from table_partitions('t') where isParquet = true");
+            assertQuery("select count() from table_partitions('t') where isParquet = true").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
 
             // The rebased table is still writable.
             execute("""
                     insert into t values
                      ('2024-01-05T00:00:00.000000Z','A','C','A','C','A','P', 5, 5.5, 's5', 'v5', true, '2020-01-05T00:00:00.000000Z', '55555555-5555-5555-5555-555555555555', 500)""");
             drainWalQueue();
-            assertSql("count\n5\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n5\n");
         });
     }
 
@@ -5034,8 +5034,8 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the applied row survives; the pending insert AND the structural add-column are discarded.
-            assertSql("count\n1\n", "select count() from t");
-            assertSql("count\n2\n", "select count() from table_columns('t')");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            assertQuery("select count() from table_columns('t')").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
@@ -5147,7 +5147,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, sym symbol index, x int) timestamp(ts) partition by day wal");
             execute("insert into t values ('2024-01-01T00:00:00.000000Z', 'A', 1)");
             drainWalQueue();
-            assertSql("count\n1\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
 
             final TableToken tt = engine.verifyTableName("t");
             try (TableReader reader = engine.getReader(tt)) {
@@ -5180,7 +5180,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
             execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
-            assertSql("count\n1\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
 
             // The reloadable config list suspends the table and denies writes.
             setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, "t");
@@ -5197,7 +5197,7 @@ public class WalWriterTest extends AbstractCairoTest {
             Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("t")));
             execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
             drainWalQueue();
-            assertSql("count\n2\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
@@ -5230,7 +5230,7 @@ public class WalWriterTest extends AbstractCairoTest {
             // Resume and apply: the two accepted rows materialize, the denied one was never written.
             execute("alter table t resume wal");
             drainWalQueue();
-            assertSql("count\n2\n", "select count() from t");
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
@@ -5783,10 +5783,8 @@ public class WalWriterTest extends AbstractCairoTest {
     // Asserts that the EXPLAIN plan for `sql` chooses an index scan on `column`. The "Index forward scan
     // on: <col>" text is the stable contract across both BITMAP and POSTING index types and over both
     // native and parquet partitions; the exact plan also embeds the integer symbol key, which is brittle.
-    private void assertIndexScan(String sql, String column) throws SqlException {
-        StringSink sink = new StringSink();
-        printSql("explain " + sql, sink);
-        TestUtils.assertContains(sink, "Index forward scan on: " + column);
+    private void assertIndexScan(String sql, String column) throws Exception {
+        assertQuery(sql).noLeakCheck().assertsPlanContaining("Index forward scan on: " + column);
     }
 
     private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
