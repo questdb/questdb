@@ -323,7 +323,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             columnVersionReader.readUnsafe();
 
             // Generate _pm sidecar files for parquet partitions restored from
-            // old backups that predate the _pm format. This must run before
+            // old backups that predate the _pm format, and regenerate sidecars
+            // that do not resolve at the committed parquet size (stale, torn,
+            // or partially written captures). This must run before
             // rebuildBitmapIndexes, which mmaps _pm to rebuild bitmap indexes.
             generateMissingParquetMetaFiles(tablePath.trimTo(pathTableLen));
 
@@ -553,7 +555,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
 
             // Open data.parquet to validate it against _txn and, when the _pm
-            // sidecar is missing, generate _pm from it.
+            // sidecar is missing or does not resolve at the committed size,
+            // generate _pm from it.
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             long parquetFd = ff.openRO(tablePath.$());
             if (parquetFd < 0) {
@@ -579,9 +582,24 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(tablePath.$())) {
-                ff.close(parquetFd);
-                tablePath.trimTo(plen);
-                continue;
+                if (isParquetMetaResolvable(tablePath, parquetFileSize)) {
+                    ff.close(parquetFd);
+                    tablePath.trimTo(plen);
+                    continue;
+                }
+                // The sidecar does not resolve a footer at the committed parquet
+                // size: a stale _pm paired with an in-place regenerated
+                // data.parquet, a torn copy, or a partial file left by a crashed
+                // restore. Trusting it would defer the failure to the first read
+                // of the partition, so remove it and regenerate from
+                // data.parquet, which the committed-size check above has already
+                // validated.
+                if (!ff.removeQuiet(tablePath.$())) {
+                    int errno = ff.errno();
+                    ff.close(parquetFd);
+                    throw CairoException.critical(errno).put("cannot remove unresolvable _pm file [path=").put(tablePath).put(']');
+                }
+                LOG.info().$("removed unresolvable _pm of restored parquet partition for regeneration [path=").$(tablePath).I$();
             }
 
             long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
@@ -618,6 +636,34 @@ public class TableSnapshotRestore implements QuietCloseable {
             tablePath.trimTo(plen);
         }
         tablePath.trimTo(plen);
+    }
+
+    /**
+     * Reports whether the {@code _pm} sidecar at {@code parquetMetaPath} resolves a
+     * footer for the committed parquet file size from {@code _txn}. A corrupt file
+     * (bad CRC, partial write, header size exceeding the file length) surfaces as
+     * {@code false} rather than an exception: the caller holds {@code data.parquet}
+     * already validated against the committed size and can regenerate the sidecar.
+     */
+    private boolean isParquetMetaResolvable(Path parquetMetaPath, long parquetFileSize) {
+        final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+        long parquetMetaAddr = 0;
+        long parquetMetaFileSize = 0;
+        try {
+            parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, parquetMetaPath.$(), parquetMetaReader);
+            parquetMetaFileSize = parquetMetaReader.getFileSize();
+            return parquetMetaAddr != 0 && parquetMetaReader.resolveFooter(parquetFileSize);
+        } catch (CairoException e) {
+            LOG.info().$("restored _pm failed validation [path=").$(parquetMetaPath)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return false;
+        } finally {
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
     }
 
     private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {

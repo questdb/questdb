@@ -2042,6 +2042,285 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRegeneratesStalePmSidecar() throws Exception {
+        // A _pm sidecar from a different parquet generation resolves no footer
+        // at the committed size from _txn: in-place parquet regeneration (the
+        // O3 update path) rewrites data.parquet and _pm together, so a copy can
+        // pair _txn and data.parquet from one generation with _pm from another.
+        // The restore must detect the unresolvable sidecar and regenerate it
+        // from data.parquet instead of deferring the failure to the first read
+        // of the partition.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-02T06:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T12:00:00.000000Z'),
+                    (6.0, 'B', '2024-01-02T18:00:00.000000Z'),
+                    (7.0, 'A', '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            sink.clear();
+            printSql("SELECT count() FROM t WHERE sym = 'A'");
+            final String expectedCount = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File part1Dir = findParquetPartitionDir(tableDir, "2024-01-01");
+            File part2Dir = findParquetPartitionDir(tableDir, "2024-01-02");
+
+            engine.clear();
+
+            // The stale-sidecar simulation relies on the partitions having
+            // different committed parquet sizes; with equal sizes the foreign
+            // _pm would resolve and the test would assert nothing.
+            File dataParquet1 = new File(part1Dir, "data.parquet");
+            File dataParquet2 = new File(part2Dir, "data.parquet");
+            Assert.assertNotEquals(
+                    "partitions must differ in parquet size for this scenario",
+                    dataParquet1.length(),
+                    dataParquet2.length()
+            );
+
+            // Replace partition 1's _pm with partition 2's: a structurally
+            // valid sidecar whose footer chain resolves only partition 2's
+            // parquet size.
+            File pm1 = new File(part1Dir, "_pm");
+            File pm2 = new File(part2Dir, "_pm");
+            java.nio.file.Files.copy(pm2.toPath(), pm1.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            long pm2SizeBefore = pm2.length();
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("part1 _pm not regenerated", pm1.exists());
+            Assert.assertTrue("part1 _pm is empty", pm1.length() > 0);
+            Assert.assertEquals("part2 _pm was modified", pm2SizeBefore, pm2.length());
+            // The indexed query reads both parquet partitions through their
+            // _pm sidecars; a surviving stale sidecar would fail to resolve
+            // the footer at query time.
+            assertQuery("SELECT count() FROM t WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedCount);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesStalePmSidecarWithoutIndexRebuild() throws Exception {
+        // Same stale-sidecar scenario, but with rebuildPartitionColumnIndexes
+        // disabled (the checkpoint recovery default). The bitmap index rebuild
+        // pass that would otherwise trip over the bad _pm never runs, so the
+        // generateMissingParquetMetaFiles validation is the only restore-time
+        // protection against deferring the failure to query time.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-02T06:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T12:00:00.000000Z'),
+                    (6.0, 'B', '2024-01-02T18:00:00.000000Z'),
+                    (7.0, 'A', '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            // sum(val) reads column data from every partition, forcing the
+            // reader to open the parquet partitions through their _pm
+            // sidecars; count() would be answered from _txn row counts
+            // without ever touching _pm.
+            sink.clear();
+            printSql("SELECT sum(val) FROM t");
+            final String expectedSum = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File part1Dir = findParquetPartitionDir(tableDir, "2024-01-01");
+            File part2Dir = findParquetPartitionDir(tableDir, "2024-01-02");
+
+            engine.clear();
+
+            File dataParquet1 = new File(part1Dir, "data.parquet");
+            File dataParquet2 = new File(part2Dir, "data.parquet");
+            Assert.assertNotEquals(
+                    "partitions must differ in parquet size for this scenario",
+                    dataParquet1.length(),
+                    dataParquet2.length()
+            );
+
+            File pm1 = new File(part1Dir, "_pm");
+            File pm2 = new File(part2Dir, "_pm");
+            java.nio.file.Files.copy(pm2.toPath(), pm1.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+
+            Assert.assertTrue("part1 _pm not regenerated", pm1.exists());
+            Assert.assertTrue("part1 _pm is empty", pm1.length() > 0);
+            assertQuery("SELECT sum(val) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedSum);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesTruncatedPmSidecar() throws Exception {
+        // A truncated _pm (torn copy: the header still claims the full
+        // committed size, but the file holds fewer bytes) must be regenerated
+        // during restore. Opening it throws rather than returning a resolve
+        // failure, so this pins the exception arm of the validation.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            // sum(val) reads column data from every partition, forcing the
+            // reader to open the parquet partitions through their _pm
+            // sidecars; count() would be answered from _txn row counts
+            // without ever touching _pm.
+            sink.clear();
+            printSql("SELECT sum(val) FROM t");
+            final String expectedSum = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File parquetMetaFile = new File(partDir, "_pm");
+            long pmSizeBefore = parquetMetaFile.length();
+            Assert.assertTrue("_pm too small to truncate", pmSizeBefore > 16);
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(parquetMetaFile, "rw")) {
+                raf.setLength(pmSizeBefore / 2);
+            }
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            Assert.assertTrue("_pm still truncated", parquetMetaFile.length() > pmSizeBefore / 2);
+            assertQuery("SELECT sum(val) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedSum);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesZeroLengthPmSidecar() throws Exception {
+        // A zero-length _pm is exactly what a crashed restore leaves behind:
+        // generateMissingParquetMetaFiles creates the file with openRW before
+        // writing any content, so a crash between creation and fsync orphans
+        // an empty sidecar. The retry must regenerate it instead of trusting
+        // bare existence.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            // sum(val) reads column data from every partition, forcing the
+            // reader to open the parquet partitions through their _pm
+            // sidecars; count() would be answered from _txn row counts
+            // without ever touching _pm.
+            sink.clear();
+            printSql("SELECT sum(val) FROM t");
+            final String expectedSum = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File parquetMetaFile = new File(partDir, "_pm");
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(parquetMetaFile, "rw")) {
+                raf.setLength(0);
+            }
+            Assert.assertEquals("_pm must be empty for this scenario", 0, parquetMetaFile.length());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            Assert.assertTrue("_pm is empty", parquetMetaFile.length() > 0);
+            assertQuery("SELECT sum(val) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedSum);
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRejectsTruncatedParquetFile() throws Exception {
         // If data.parquet on disk is SHORTER than _txn's recorded committed
         // size, the snapshot is truncated and the restore must fail with a
