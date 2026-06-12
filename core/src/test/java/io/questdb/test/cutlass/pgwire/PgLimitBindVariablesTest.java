@@ -350,7 +350,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                     """
                                             QUERY PLAN[VARCHAR]
                                             Limit left: 4 right: -3 skip-rows-max: 4 take-rows: baseRows-7
-                                                Sort light
+                                                Encode sort light
                                                   keys: [col1 desc]
                                                     GroupBy vectorized: false
                                                       keys: [col1]
