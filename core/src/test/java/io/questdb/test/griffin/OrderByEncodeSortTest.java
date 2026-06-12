@@ -841,44 +841,46 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
         // is read cross-thread instead of inline. The selective sym filter (10%) keeps
         // late materialization engaged on every frame. Only the encoded path declares
         // the used columns; the legacy path runs the same query for a correctness check.
-        final WorkerPool pool = new WorkerPool(() -> 4);
-        TestUtils.execute(
-                pool,
-                (engine, _, sqlExecutionContext) -> {
-                    engine.execute(
-                            """
-                                    CREATE TABLE pq AS (
-                                        SELECT
-                                            x v,
-                                            ('r' || x)::varchar note,
-                                            ARRAY[x::double, (x * 2)::double] arr,
-                                            ('s' || (x % 10))::symbol sym,
-                                            timestamp_sequence(0, 172_800_000) ts
-                                        FROM long_sequence(6000)
-                                    ) TIMESTAMP(ts) PARTITION BY DAY""",
-                            sqlExecutionContext
-                    );
-                    engine.execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')", sqlExecutionContext);
-                    engine.execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", sqlExecutionContext);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                """
+                                        CREATE TABLE pq AS (
+                                            SELECT
+                                                x v,
+                                                ('r' || x)::varchar note,
+                                                ARRAY[x::double, (x * 2)::double] arr,
+                                                ('s' || (x % 10))::symbol sym,
+                                                timestamp_sequence(0, 172_800_000) ts
+                                            FROM long_sequence(6000)
+                                        ) TIMESTAMP(ts) PARTITION BY DAY""",
+                                sqlExecutionContext
+                        );
+                        engine.execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')", sqlExecutionContext);
+                        engine.execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", sqlExecutionContext);
 
-                    assertQuery("SELECT note, v, arr, sym FROM pq WHERE sym = 's7' AND length(note) > 1 ORDER BY v DESC LIMIT 0,5")
-                            .withEngine(engine)
-                            .withContext(sqlExecutionContext)
-                            .noLeakCheck()
-                            .expectSize()
-                            .withPlanContaining(limitedSortPlanType(), "Async")
-                            .returns("""
-                                    note\tv\tarr\tsym
-                                    r5997\t5997\t[5997.0,11994.0]\ts7
-                                    r5987\t5987\t[5987.0,11974.0]\ts7
-                                    r5977\t5977\t[5977.0,11954.0]\ts7
-                                    r5967\t5967\t[5967.0,11934.0]\ts7
-                                    r5957\t5957\t[5957.0,11914.0]\ts7
-                                    """);
-                },
-                configuration,
-                LOG
-        );
+                        assertQuery("SELECT note, v, arr, sym FROM pq WHERE sym = 's7' AND length(note) > 1 ORDER BY v DESC LIMIT 0,5")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining(limitedSortPlanType(), "Async")
+                                .returns("""
+                                        note\tv\tarr\tsym
+                                        r5997\t5997\t[5997.0,11994.0]\ts7
+                                        r5987\t5987\t[5987.0,11974.0]\ts7
+                                        r5977\t5977\t[5977.0,11954.0]\ts7
+                                        r5967\t5967\t[5967.0,11934.0]\ts7
+                                        r5957\t5957\t[5957.0,11914.0]\ts7
+                                        """);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -960,6 +962,54 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             13\tr13
                             8\tr8
                             3\tr3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmitMultiRowGroup() throws Exception {
+        // The single-row-group fixtures always declare emit rows in row group 0 from
+        // offset 0, so an off-by-rowGroupLo or wrong-slice-segment bug in the row-filtered
+        // decode passes them silently. Force 10 row groups in one Parquet partition and
+        // land the declarations past group 0 / past offset 0 to catch that.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pqg AS (
+                        SELECT x v, ('r' || x)::varchar note, timestamp_sequence(0, 100) ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pqg VALUES (1_000_000, 'r1000000', '2000-01-01')");
+            execute("ALTER TABLE pqg CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+
+            // One matching row per row group keeps the emit declaration well under the
+            // density gate; LIMIT 3,8 drops the first three matches so the surviving
+            // declarations sit in row groups 3..7, each at offset 136 within its group.
+            assertQuery("SELECT v, note FROM pqg WHERE v % 1000 = 137 ORDER BY v LIMIT 3,8")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            3137\tr3137
+                            4137\tr4137
+                            5137\tr5137
+                            6137\tr6137
+                            7137\tr7137
+                            """);
+
+            // An interval on the designated timestamp starts the scanned Parquet frame
+            // mid-row-group (row 2500 sits at offset 500 in group 2), so the declared top
+            // rows decode through a non-zero rowGroupLo.
+            assertQuery("SELECT v, note FROM pqg WHERE ts >= '1970-01-01T00:00:00.250000Z' ORDER BY v LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            2501\tr2501
+                            2502\tr2502
+                            2503\tr2503
                             """);
         });
     }

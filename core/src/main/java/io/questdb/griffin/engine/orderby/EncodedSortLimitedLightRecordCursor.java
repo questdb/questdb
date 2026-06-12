@@ -235,7 +235,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
 
     @Override
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
-        baseCursor.setParquetDecodeHint(hint);
+        // We emit out of order, so of() pins the base to SCATTERED. An outer MONOTONIC push
+        // (e.g. an ASOF light join slave) must not downgrade it and force base re-decodes.
     }
 
     public void setSelection(boolean isFirstN, long limit, long skipFirst, long skipLast) {
@@ -298,7 +299,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         if (emitStartAddr < emitEndAddr) {
             baseCursor.setRecordAtRows(this);
         }
-        // No finally: a retry after a mid-build throw must not see freed rank maps.
+        // Success-path free of the encoder's rank maps; a mid-build throw leaves them
+        // for close(). The cursor is not retryable: buildAndSort resets state at entry.
         Misc.free(encoder);
     }
 
