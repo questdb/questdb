@@ -31,6 +31,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -136,6 +137,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             // Bind before of(), which reopens rememberedSymbols before adopting the cursors.
             cursor.setMemoryTracker(executionContext.getMemoryTracker());
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
@@ -40,6 +41,16 @@ public abstract class AbstractSetRecordCursor implements RecordCursor {
         this.cursorA = Misc.free(this.cursorA);
         this.cursorB = Misc.free(this.cursorB);
         this.circuitBreaker = null;
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        if (cursorA != null) {
+            cursorA.setParquetDecodeHint(hint);
+        }
+        if (cursorB != null) {
+            cursorB.setParquetDecodeHint(hint);
+        }
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -144,6 +145,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             // reopens its SingleRecordSinks, so the first malloc lands
             // under the bound tracker.
             cursor.setMemoryTracker(executionContext.getMemoryTracker());
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -54,6 +55,7 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
+            baseCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
@@ -147,6 +149,11 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void recordAt(Record record, long atRowId) {
             baseCursor.recordAt(((RecordAsAFieldRecord) record).base, atRowId);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
         }
 
         @Override

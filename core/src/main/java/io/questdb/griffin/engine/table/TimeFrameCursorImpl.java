@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -55,6 +56,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
@@ -107,7 +109,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         try {
             this.metadata = metadata;
             this.frameAddressCache = new PageFrameAddressCache();
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
             this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
@@ -125,6 +127,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         Misc.free(frameRowCounts);
         Misc.free(frameTimestampCache);
         frameCursor = Misc.free(frameCursor);
+    }
+
+    @TestOnly
+    public PageFrameMemoryPool getFrameMemoryPool() {
+        return frameMemoryPool;
     }
 
     @Override
@@ -323,6 +330,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 partitionTimestamps,
                 timeFrame
         );
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
     }
 
     @Override
