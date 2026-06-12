@@ -351,7 +351,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     if (isParquetFrame) {
                         atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                     }
-                    if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                    if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                         record.init(frameMemory);
                     }
                     task.setFilteredRowCount(rows.size());
@@ -389,7 +389,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 if (isParquetFrame) {
                     atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
                 }
-                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }
 

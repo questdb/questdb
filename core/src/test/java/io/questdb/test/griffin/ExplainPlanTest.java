@@ -1300,7 +1300,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct x from di order by 1 limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -1316,7 +1316,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct x from di order by 1 desc limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x desc]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -3783,7 +3783,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x, count(*) from di group by x order by 1 limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -3944,7 +3944,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x, count(*) from di group by x order by 1 desc limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x desc]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -6469,7 +6469,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from (select * from tab order by ts, i desc limit 10) order by ts")
                 .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Sort light lo: 10 partiallySorted: true
+                        Encode sort light lo: 10 partiallySorted: true
                           keys: [ts, i desc]
                             PageFrame
                                 Row forward scan
@@ -6482,7 +6482,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc")
                 .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Sort light lo: 10 partiallySorted: true
+                        Encode sort light lo: 10 partiallySorted: true
                           keys: [ts desc, i]
                             PageFrame
                                 Row backward scan
@@ -9763,7 +9763,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.setStr("s2", "S2");
 
             String expectedPlan = """
-                    Sort light lo: 5
+                    Encode sort light lo: 5
                       keys: [s#ORDER#]
                         FilterOnValues symbolOrder: desc
                             Cursor-order scan
@@ -9782,10 +9782,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            s\tts
-                            S2\t1970-01-01T01:00:00.000003Z
-                            S2\t1970-01-01T00:00:00.000000Z
-                            S1\t1970-01-01T00:00:00.000001Z
+                            s	ts
+                            S2	1970-01-01T00:00:00.000000Z
+                            S2	1970-01-01T01:00:00.000003Z
+                            S1	1970-01-01T00:00:00.000001Z
                             """);
 
             // order by asc
@@ -9797,10 +9797,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            s\tts
-                            S1\t1970-01-01T00:00:00.000001Z
-                            S2\t1970-01-01T01:00:00.000003Z
-                            S2\t1970-01-01T00:00:00.000000Z
+                            s	ts
+                            S1	1970-01-01T00:00:00.000001Z
+                            S2	1970-01-01T00:00:00.000000Z
+                            S2	1970-01-01T01:00:00.000003Z
                             """);
         });
     }
@@ -9846,7 +9846,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [ts desc]
                             Empty table
                         """);
@@ -9857,7 +9857,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [ts desc]
                             FilterOnSubQuery
                                 Union All
@@ -9876,7 +9876,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [ts desc]
                             FilterOnSubQuery
                               filter: length(s)=2
@@ -9909,7 +9909,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s = 'S1' order by s asc limit 10")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [s]
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: s deferred: true
@@ -10511,7 +10511,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a order by i limit 10, 100")
                 .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 10 hi: 100
+                        Encode sort light lo: 10 hi: 100
                           keys: [i]
                             PageFrame
                                 Row forward scan
@@ -10794,35 +10794,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x + 1 as xp from xx where str is not null order by xp desc limit 10")
                 .ddl("create table xx ( x long, str varchar ) ")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [xp desc]
                             VirtualRecord
                               functions: [x+1]
                                 Async JIT Filter workers: 1
                                   filter: str is not null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: xx
-                        """);
-    }
-
-    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
-    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
-        // ORDER BY str references a column absent from the SELECT list, forcing the
-        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
-        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
-        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
-        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
-        // and is not what the gate inspects.
-        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            VirtualRecord
-                              functions: [x+1,x,str]
-                                Async JIT Top K lo: 10 workers: 1
-                                  filter: str is not null
-                                  keys: [str desc]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
@@ -10842,21 +10819,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
-                        """);
-    }
-
-    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
-    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
-        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            Async JIT Top K lo: 10 workers: 1
-                              filter: str is not null
-                              keys: [str desc, x]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: xx
                         """);
     }
 
@@ -10881,6 +10843,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
+        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            Async JIT Top K lo: 10 workers: 1
+                              filter: str is not null
+                              keys: [str desc, x]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: xx
+                        """);
+    }
+
     @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
     public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
         assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10")
@@ -10892,6 +10869,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Async JIT Top K lo: 10 workers: 1
                                   filter: str is not null
                                   keys: [str desc, x]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: xx
+                        """);
+    }
+
+    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
+    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
+        // ORDER BY str references a column absent from the SELECT list, forcing the
+        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
+        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
+        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
+        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
+        // and is not what the gate inspects.
+        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            VirtualRecord
+                              functions: [x+1,x,str]
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: str is not null
+                                  keys: [str desc]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
@@ -11751,7 +11751,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Filter filter: i1*i2!=0
                             SelectedRecord
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11767,7 +11767,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11783,7 +11783,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11799,7 +11799,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts1, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11891,7 +11891,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 10 partiallySorted: true
+                            Encode sort light lo: 10 partiallySorted: true
                               keys: [ts desc, l desc]
                                 PageFrame
                                     Row backward scan
@@ -11910,7 +11910,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Lt Join Fast
-                                    Sort light lo: 10 partiallySorted: true
+                                    Encode sort light lo: 10 partiallySorted: true
                                       keys: [ts, l]
                                         PageFrame
                                             Row forward scan
@@ -13447,7 +13447,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(queryDesc)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Sort light lo: 5
+                        Encode sort light lo: 5
                           keys: [ts desc]
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan
