@@ -431,6 +431,31 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
+     * Releases the handles the restore holds on the current table's files:
+     * the shared metadata, transaction and column-version readers and the
+     * small memory file (last targeted at {@code _todo_} or a txn log).
+     * They normally stay open until the next table reloads them or
+     * {@link #close()} frees them. Callers that quarantine a failed table by
+     * renaming its directory must call this first: Windows refuses to rename
+     * a directory while any file inside it is open or mapped. The released
+     * objects are reopened lazily, so the restore can continue with other
+     * tables.
+     */
+    public void releaseTableHandles() {
+        // Freeing the native-backed readers under a still-running task would
+        // be a use-after-free; every restore path drains its tasks before
+        // surfacing a failure, so this is a backstop, same as in close().
+        abortAndDrainParallelTasks();
+        futures.clear();
+        tableMetadata = Misc.free(tableMetadata);
+        txWriter = Misc.free(txWriter);
+        columnVersionReader = Misc.free(columnVersionReader);
+        // keep the object: resetTodoLog and openSmallFile re-target it via
+        // smallFile/of, which work on a closed instance; do not truncate
+        memFile.close(false);
+    }
+
+    /**
      * Recovers all table files from source (checkpoint/backup) to destination.
      * Combines metadata file copying
      *
