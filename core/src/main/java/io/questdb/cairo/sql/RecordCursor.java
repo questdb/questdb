@@ -405,8 +405,9 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
 
         /**
          * Appends the declared row ids that lie in Parquet frames to the target list,
-         * skipping rows of native frames. The implementation must size the target via
-         * {@link DirectLongList#ensureCapacity(long)} before appending.
+         * skipping rows of native frames. {@link DirectLongList#add(long)} auto-grows,
+         * so pre-sizing the target via {@link DirectLongList#ensureCapacity(long)} is a
+         * performance optimization, not a correctness requirement.
          */
         void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache);
     }

@@ -1500,6 +1500,117 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderBySymbolColumnLimitWithNulls() throws Exception {
+        // The fuzz test appends a unique key to the ORDER BY so the sort is total and
+        // the LIMIT cut never splits a tie group: the encoded top-K and the legacy
+        // tree-chain resolve ties differently, so a symbol-only ORDER BY with the cut
+        // inside a tie diverges between them. This pins the case the fuzzer skips - the
+        // encoded top-K's own NULL-symbol ordering at the LIMIT cut - so it asserts the
+        // encoded path only. The encoded sort appends the rowId as the trailing key
+        // word, so ties break rowId-ascending (here val-ascending) deterministically.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (" +
+                    "SELECT" +
+                    " CAST(CASE" +
+                    "     WHEN x % 4 = 0 THEN NULL" +
+                    "     WHEN x % 4 = 1 THEN 'A'" +
+                    "     WHEN x % 4 = 2 THEN 'B'" +
+                    "     ELSE 'C'" +
+                    " END AS SYMBOL) AS sym," +
+                    " x AS val" +
+                    " FROM long_sequence(12)" +
+                    ")");
+
+            // ASC: NULL sorts first, so a cut inside the NULL group returns the
+            // rowId-smallest NULL rows.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            """);
+
+            // ASC: cut exactly at the NULL/'A' boundary returns the whole NULL group.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            \t12
+                            """);
+
+            // ASC: cut one past the NULL group keeps every NULL plus the first 'A'.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            \t12
+                            A\t1
+                            """);
+
+            // DESC: NULL sorts last, so a small cut must exclude every NULL row.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            """);
+
+            // DESC: cut exactly at the 'A'/NULL boundary keeps everything but the NULLs.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,9")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            B\t2
+                            B\t6
+                            B\t10
+                            A\t1
+                            A\t5
+                            A\t9
+                            """);
+
+            // DESC: cut one past the 'A' group reaches the first (rowId-smallest) NULL.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            B\t2
+                            B\t6
+                            B\t10
+                            A\t1
+                            A\t5
+                            A\t9
+                            \t4
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByTimestampColumnAscMixedValues() throws Exception {
         assertQuery("select * from x order by a asc;")
                 .ddl("create table x as (" +
