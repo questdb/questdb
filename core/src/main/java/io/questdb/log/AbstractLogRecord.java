@@ -594,11 +594,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @NotNull
-    protected LogRecord prepareLogRecord(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
-        return prepareLogRecord(tl.get(), seq, ring, level, cursor);
-    }
-
-    @NotNull
     LogRecord prepareLogRecord(CursorHolder h, Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
         // It's important to keep this before the assignment to the fields of CursorHolder.
         // We need the values before the assignment in order to recover the abandoned log record.

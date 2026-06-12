@@ -246,8 +246,8 @@ public class ServerMain implements Closeable {
             return 0;
         }
         Component webHttpComp = orchestrator.getComponent("web-http");
-        if (webHttpComp instanceof WebHttpEnvelope) {
-            HttpServer s = ((WebHttpEnvelope) webHttpComp).server;
+        if (webHttpComp instanceof WebHttpEnvelope webHttp) {
+            HttpServer s = webHttp.server;
             if (s != null) {
                 return s.getActiveConnectionTracker().get(processorName);
             }
@@ -269,8 +269,8 @@ public class ServerMain implements Closeable {
     public int getHttpServerPort() {
         if (orchestrator != null) {
             Component c = orchestrator.getComponent("web-http");
-            if (c instanceof WebHttpEnvelope) {
-                HttpServer s = ((WebHttpEnvelope) c).server;
+            if (c instanceof WebHttpEnvelope webHttp) {
+                HttpServer s = webHttp.server;
                 if (s != null) {
                     return s.getPort();
                 }
@@ -289,8 +289,8 @@ public class ServerMain implements Closeable {
     public int getMinHttpPort() {
         if (orchestrator != null) {
             Component c = orchestrator.getComponent("min-http");
-            if (c instanceof MinHttpEnvelope) {
-                HttpServer s = ((MinHttpEnvelope) c).server;
+            if (c instanceof MinHttpEnvelope minHttp) {
+                HttpServer s = minHttp.server;
                 if (s != null) {
                     return s.getPort();
                 }
@@ -311,8 +311,8 @@ public class ServerMain implements Closeable {
     public int getPgWireServerPort() {
         if (orchestrator != null) {
             Component c = orchestrator.getComponent("pg-wire");
-            if (c instanceof PgWireEnvelope) {
-                PGServer s = ((PgWireEnvelope) c).server;
+            if (c instanceof PgWireEnvelope pgWire) {
+                PGServer s = pgWire.server;
                 if (s != null) {
                     return s.getPort();
                 }
@@ -340,8 +340,8 @@ public class ServerMain implements Closeable {
     public void resetQueryCache() {
         if (orchestrator != null) {
             Component c = orchestrator.getComponent("pg-wire");
-            if (c instanceof PgWireEnvelope) {
-                PGServer s = ((PgWireEnvelope) c).server;
+            if (c instanceof PgWireEnvelope pgWire) {
+                PGServer s = pgWire.server;
                 if (s != null) {
                     s.resetQueryCache();
                 }

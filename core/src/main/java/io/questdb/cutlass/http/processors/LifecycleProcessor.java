@@ -152,100 +152,6 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         resumeSnapshot(response, state, this::writeHeaderExtraFields);
     }
 
-    private static void resumeSnapshot(
-            HttpChunkedResponse response,
-            LifecycleState state,
-            HeaderExtraWriter headerExtra
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final LifecycleSnapshot snap = state.snapshot;
-        final ObjList<LifecycleSnapshot.ComponentSnapshot> components = snap.components();
-        final int n = components.size();
-
-        // Phase 1: header — the preamble before the components array.
-        if (!state.headerWritten) {
-            while (true) {
-                try {
-                    response.bookmark();
-                    response.putAscii('{')
-                            .putAsciiQuoted("capturedAtMicros").putAscii(':').put(snap.capturedAtMicros()).putAscii(',');
-                    // A subclass may inject extra header fields here (each followed by a trailing
-                    // comma) before the components array. The whole header is one bookmark unit, so
-                    // an overflow rewinds and re-runs the hook -- it must stay side-effect free.
-                    headerExtra.write(response, state.holder);
-                    response.putAsciiQuoted("components").putAscii(':').putAscii('[');
-                    state.headerWritten = true;
-                    break;
-                } catch (NoSpaceLeftInResponseBufferException ignored) {
-                    if (response.resetToBookmark()) {
-                        response.sendChunk(false);
-                        // sendChunk(false) throws PeerIsSlowToReadException if the TCP buffer is full;
-                        // that propagates out and the framework calls resumeSend later. If it returns
-                        // normally, the buffer is clear — retry the header write.
-                    } else {
-                        // Header is larger than the buffer capacity: should not happen for the
-                        // fixed-layout lifecycle JSON, but guard defensively.
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Phase 2: components — one entry per cursor position.
-        while (state.cursor < n) {
-            while (true) {
-                try {
-                    response.bookmark();
-                    if (state.cursor > 0) {
-                        response.putAscii(',');
-                    }
-                    writeComponent(response, components.getQuick(state.cursor));
-                    state.cursor++;
-                    break;
-                } catch (NoSpaceLeftInResponseBufferException ignored) {
-                    if (response.resetToBookmark()) {
-                        response.sendChunk(false);
-                    } else {
-                        // Component exceeds buffer capacity: skip (defensive, should not occur).
-                        state.cursor++;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Phase 3: footer.
-        if (!state.footerWritten) {
-            while (true) {
-                try {
-                    response.bookmark();
-                    response.putAscii(']').putAscii('}');
-                    state.footerWritten = true;
-                    break;
-                } catch (NoSpaceLeftInResponseBufferException ignored) {
-                    if (response.resetToBookmark()) {
-                        response.sendChunk(false);
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-
-        // All phases complete: close the chunked transfer.
-        state.snapshot = null;
-        response.sendChunk(true);
-    }
-
-    // Visible for testing: drives the resumable serialization in a single pass with a fresh cursor,
-    // so a test can exercise the bookmark/overflow/flush loop without a live HTTP server. Exercises
-    // the base header (no extra fields).
-    public static void writeSnapshotResumable(HttpChunkedResponse r, LifecycleSnapshot snap)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final LifecycleState state = new LifecycleState();
-        state.reset(snap, snap);
-        resumeSnapshot(r, state, LifecycleProcessor::writeNoHeaderExtraFields);
-    }
-
     // Visible for testing: allows LifecycleProcessorTest to invoke without a live HTTP server.
     public static void writeSnapshot(HttpChunkedResponse r, LifecycleSnapshot snap) {
         r.putAscii('{')
@@ -259,6 +165,16 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
             writeComponent(r, components.getQuick(i));
         }
         r.putAscii(']').putAscii('}');
+    }
+
+    // Visible for testing: drives the resumable serialization in a single pass with a fresh cursor,
+    // so a test can exercise the bookmark/overflow/flush loop without a live HTTP server. Exercises
+    // the base header (no extra fields).
+    public static void writeSnapshotResumable(HttpChunkedResponse r, LifecycleSnapshot snap)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final LifecycleState state = new LifecycleState();
+        state.reset(snap, snap);
+        resumeSnapshot(r, state, LifecycleProcessor::writeNoHeaderExtraFields);
     }
 
     protected static void encodeProgressEvent(HttpChunkedResponse r, ProgressEvent event) {
@@ -304,6 +220,90 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
                 .putAsciiQuoted("softDependencies").putAscii(':');
         encodeStringList(r, c.softDependencies());
         r.putAscii('}');
+    }
+
+    private static void resumeSnapshot(
+            HttpChunkedResponse response,
+            LifecycleState state,
+            HeaderExtraWriter headerExtra
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final LifecycleSnapshot snap = state.snapshot;
+        final ObjList<LifecycleSnapshot.ComponentSnapshot> components = snap.components();
+        final int n = components.size();
+
+        // Phase 1: header -- the preamble before the components array.
+        if (!state.headerWritten) {
+            while (true) {
+                try {
+                    response.bookmark();
+                    response.putAscii('{')
+                            .putAsciiQuoted("capturedAtMicros").putAscii(':').put(snap.capturedAtMicros()).putAscii(',');
+                    // A subclass may inject extra header fields here (each followed by a trailing
+                    // comma) before the components array. The whole header is one bookmark unit, so
+                    // an overflow rewinds and re-runs the hook -- it must stay side-effect free.
+                    headerExtra.write(response, state.holder);
+                    response.putAsciiQuoted("components").putAscii(':').putAscii('[');
+                    state.headerWritten = true;
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException ignored) {
+                    if (response.resetToBookmark()) {
+                        response.sendChunk(false);
+                        // sendChunk(false) throws PeerIsSlowToReadException if the TCP buffer is full;
+                        // that propagates out and the framework calls resumeSend later. If it returns
+                        // normally, the buffer is clear -- retry the header write.
+                    } else {
+                        // Header is larger than the buffer capacity: should not happen for the
+                        // fixed-layout lifecycle JSON, but guard defensively.
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Phase 2: components -- one entry per cursor position.
+        while (state.cursor < n) {
+            while (true) {
+                try {
+                    response.bookmark();
+                    if (state.cursor > 0) {
+                        response.putAscii(',');
+                    }
+                    writeComponent(response, components.getQuick(state.cursor));
+                    state.cursor++;
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException ignored) {
+                    if (response.resetToBookmark()) {
+                        response.sendChunk(false);
+                    } else {
+                        // Component exceeds buffer capacity: skip (defensive, should not occur).
+                        state.cursor++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Phase 3: footer.
+        if (!state.footerWritten) {
+            while (true) {
+                try {
+                    response.bookmark();
+                    response.putAscii(']').putAscii('}');
+                    state.footerWritten = true;
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException ignored) {
+                    if (response.resetToBookmark()) {
+                        response.sendChunk(false);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // All phases complete: close the chunked transfer.
+        state.snapshot = null;
+        response.sendChunk(true);
     }
 
     private static void writeNoHeaderExtraFields(HttpChunkedResponse response, Object holder) {

@@ -60,6 +60,27 @@ import io.questdb.griffin.engine.ops.Operation;
  */
 public final class ReadOnlyStatementGate {
 
+    // Bit set for every CompiledQuery type the gate refuses on a read-only node. Each type's
+    // numeric value (all <= ALTER_STORAGE_POLICY, comfortably under 64) selects one bit. DROP is
+    // included here but carries the export-temp-table exemption applied in isRefusedOnReadOnly.
+    // The ReadOnlyStatementGateMatrixTest reflection sweep over CompiledQuery is the single source
+    // that proves this mask classifies every declared type the same way the old ||-chain did.
+    private static final long REFUSED_TYPES_MASK =
+            bit(CompiledQuery.INSERT)
+                    | bit(CompiledQuery.INSERT_AS_SELECT)
+                    | bit(CompiledQuery.UPDATE)
+                    | bit(CompiledQuery.ALTER)
+                    | bit(CompiledQuery.TRUNCATE)
+                    | bit(CompiledQuery.RENAME_TABLE)
+                    | bit(CompiledQuery.CREATE_TABLE)
+                    | bit(CompiledQuery.CREATE_TABLE_AS_SELECT)
+                    | bit(CompiledQuery.CREATE_MAT_VIEW)
+                    | bit(CompiledQuery.REFRESH_MAT_VIEW)
+                    | bit(CompiledQuery.CREATE_VIEW)
+                    | bit(CompiledQuery.ALTER_VIEW)
+                    | bit(CompiledQuery.ALTER_STORAGE_POLICY)
+                    | bit(CompiledQuery.DROP);
+
     private ReadOnlyStatementGate() {
     }
 
@@ -78,24 +99,20 @@ public final class ReadOnlyStatementGate {
      * exempt parquet-export temp-table DROP)
      */
     public static boolean isRefusedOnReadOnly(int sqlType, Operation operation, CairoConfiguration configuration) {
-        return sqlType == CompiledQuery.INSERT
-                || sqlType == CompiledQuery.INSERT_AS_SELECT
-                || sqlType == CompiledQuery.UPDATE
-                || sqlType == CompiledQuery.ALTER
-                || sqlType == CompiledQuery.TRUNCATE
-                || sqlType == CompiledQuery.RENAME_TABLE
-                || sqlType == CompiledQuery.CREATE_TABLE
-                || sqlType == CompiledQuery.CREATE_TABLE_AS_SELECT
-                || sqlType == CompiledQuery.CREATE_MAT_VIEW
-                || sqlType == CompiledQuery.REFRESH_MAT_VIEW
-                || sqlType == CompiledQuery.CREATE_VIEW
-                || sqlType == CompiledQuery.ALTER_VIEW
-                || sqlType == CompiledQuery.ALTER_STORAGE_POLICY
-                || (sqlType == CompiledQuery.DROP && !isExportTempTableDrop(operation, configuration));
+        if (sqlType < 0 || sqlType >= Long.SIZE || (REFUSED_TYPES_MASK & (1L << sqlType)) == 0) {
+            return false;
+        }
+        // DROP is the one refused type with an exemption: the HTTP parquet exporter's temp-table
+        // cleanup DROP is allowed on a read-only node. Every other refused type is unconditional.
+        return sqlType != CompiledQuery.DROP || !isExportTempTableDrop(operation, configuration);
+    }
+
+    private static long bit(int sqlType) {
+        return 1L << sqlType;
     }
 
     private static boolean isExportTempTableDrop(Operation operation, CairoConfiguration configuration) {
-        return operation instanceof GenericDropOperation
-                && ((GenericDropOperation) operation).isExportTempTableDrop(configuration.getParquetExportTableNamePrefix());
+        return operation instanceof GenericDropOperation drop
+                && drop.isExportTempTableDrop(configuration.getParquetExportTableNamePrefix());
     }
 }

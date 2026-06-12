@@ -415,6 +415,21 @@ public class LifecycleOrchestrator implements QuietCloseable {
         State prev;
         do {
             prev = ref.get();
+            if (prev == next) {
+                // Idempotent same-state republish. A clean role switch re-fires the
+                // "engine reached READY" dependency callbacks on every network service
+                // (pg-wire, web-http, ilp-tcp), each of which republishes itself READY
+                // while it is already READY; the boot path likewise re-publishes STARTING.
+                // The transition table has no self-loop, so treating these as transitions
+                // routed every clean switch through the error-level invalid-transition log.
+                // A republish to the current state changes nothing: skip it quietly (debug,
+                // not error) without firing the transition log or the state-change dispatch.
+                injectedLog.debug()
+                        .$("ignoring same-state republish component=").$(name)
+                        .$(" state=").$(next)
+                        .I$();
+                return;
+            }
             if (prev == State.FAILED && next != State.FAILED) {
                 // FAILED is a terminal state; ignore any late publish that tries to leave it.
                 injectedLog.error()
@@ -509,9 +524,8 @@ public class LifecycleOrchestrator implements QuietCloseable {
         return true;
     }
 
-    // Scans the entire registry for any component in FAILED state. Despite the
-    // name suggesting reachability, this is a flat scan over all registered
-    // components. Renamed from anyFailedReachable for clarity.
+    // Scans the entire registry for any component in FAILED state -- a flat scan
+    // over all registered components, not a reachability walk.
     private boolean anyFailed() {
         for (int i = 0, n = registry.size(); i < n; i++) {
             if (stateOf(registry.getQuick(i).name()) == State.FAILED) {
