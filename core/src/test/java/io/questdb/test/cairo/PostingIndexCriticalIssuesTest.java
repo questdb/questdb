@@ -4619,6 +4619,72 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * A post-publish failure inside rebuildSidecarsByCopy: the chain entry is
+     * already published (the new sealTxn is the live head and the writer is
+     * fully consistent -- chain head, valueMem and sealTxn all at newSealTxn),
+     * and only the trailing .pk sync fails. The catch must be a no-op -- it must
+     * NOT schedule an orphan purge for the now-live sealTxn or poison the
+     * consistent writer. Guards the isPublished flag that mirrors the rollback
+     * path; without it the post-publish .pk-sync failure queues a purge for the
+     * live file (deleted but for the publishPendingPurges liveness guard) and
+     * wrongly poisons the writer.
+     */
+    @Test
+    public void testRebuildSidecarsPostPublishKeySyncFailureKeepsLiveFilesAndWriterUsable() throws Exception {
+        final PkSyncFailingFacade pkSync = new PkSyncFailingFacade();
+        ff = pkSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rebuild_sidecars_post_publish_pk_fail";
+            final long fakeColBytes = 32L << 3; // 32 rows * 8 bytes (LONG cover)
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Production O3 covering reseal shape: commitDense (dense gen 0,
+                    // no covers) -> configureCovering -> rebuildSidecars (by-copy).
+                    for (int v = 0; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.commitDense();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pkSync.arm();
+                    try {
+                        writer.rebuildSidecars();
+                        Assert.fail("expected post-publish .pk sync failure");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "[test] .pk sync failed");
+                    } finally {
+                        pkSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one post-publish .pk sync", 1, pkSync.failureCount());
+
+                    // The failure is AFTER publishToChain, so newSealTxn is the live
+                    // chain head and the writer is consistent. The catch must not
+                    // queue an orphan purge for the live sealTxn...
+                    Assert.assertEquals("a post-publish failure must NOT queue an orphan purge for the live sealTxn",
+                            0, writer.getPendingPurgesSizeForTesting());
+
+                    // ...nor poison the writer -- a follow-on commit succeeds.
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
      * Locks in the multi-gen short-circuit semantics: when a CLEAN gen
      * processed first contributes to {@code total} and a later gen turns out
      * to be MIXED, the running sum is discarded and {@code size()} returns
@@ -9212,6 +9278,86 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         boolean hasPkMapping() {
             return !pkMappings.isEmpty();
+        }
+    }
+
+    /**
+     * Fails the first .pk (key file) msync that fires while armed, by throwing.
+     * Tracks the .pk file's mappings via openRW/mmap/mremap/munmap so msync can
+     * be attributed to it. Used to fail the post-publish .pk sync inside
+     * rebuildSidecarsByCopy (the sync that runs after publishToChain).
+     */
+    private static class PkSyncFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pkFds = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pkMappings = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            pkFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && pkFds.containsKey(fd)) {
+                pkMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pkMappings.remove(addr) != null && newAddr != -1) {
+                pkMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pkMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armed.set(false);
+                        failures.incrementAndGet();
+                        throw CairoException.critical(0).put("[test] .pk sync failed");
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pkMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pk")) {
+                pkFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        int failureCount() {
+            return failures.get();
         }
     }
 
