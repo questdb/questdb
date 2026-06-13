@@ -387,8 +387,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testConcurrentGetCopyOfRefreshFailureDoesNotHandOutDisposedReader() throws Exception {
         final AtomicReference<TableReader> pooledReader = new AtomicReference<>();
         final AtomicLong disposingThreadId = new AtomicLong(-1);
-        final AtomicBoolean faultSymbol = new AtomicBoolean();
-        final AtomicBoolean gateFired = new AtomicBoolean();
+        final AtomicBoolean isSymbolFaultEnabled = new AtomicBoolean();
+        final AtomicBoolean hasGateFired = new AtomicBoolean();
         final AtomicReference<Throwable> refreshError = new AtomicReference<>();
         final AtomicReference<Throwable> contenderError = new AtomicReference<>();
         final CountDownLatch readerReleased = new CountDownLatch(1);
@@ -406,7 +406,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 if (r != null
                         && Thread.currentThread().threadId() == disposingThreadId.get()
                         && !r.isOpen()
-                        && gateFired.compareAndSet(false, true)) {
+                        && hasGateFired.compareAndSet(false, true)) {
                     readerReleased.countDown();
                     try {
                         contenderDone.await(10, TimeUnit.SECONDS);
@@ -422,7 +422,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 // Fault only the open of the symbol-offset (.o) file on the disposing thread, reached
                 // via init() -> openSymbolMaps() inside goActiveAtTxn()'s downgrade. exists() is left
                 // to pass so only a real file's open fails.
-                if (faultSymbol.get()
+                if (isSymbolFaultEnabled.get()
                         && Thread.currentThread().threadId() == disposingThreadId.get()
                         && Utf8s.endsWithAscii(name, ".o")) {
                     isCalled = true;
@@ -502,7 +502,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         if (!readerReleased.await(10, TimeUnit.SECONDS)) {
                             return;
                         }
-                        final long deadline = configuration.getMillisecondClock().getTicks() + 2000;
+                        final long deadline = configuration.getMillisecondClock().getTicks() + 1000;
                         while (configuration.getMillisecondClock().getTicks() < deadline) {
                             try (TableReader r = pool.get(tableToken)) {
                                 Assert.assertTrue(r.isOpen());
@@ -523,7 +523,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 final TableReader srcRef = src;
                 final Thread disposer = new Thread(() -> {
                     disposingThreadId.set(Thread.currentThread().threadId());
-                    faultSymbol.set(true);
+                    isSymbolFaultEnabled.set(true);
                     // getCopyOf(src) lands on slot 1's R1 (R1.txn T2 > src.txn T1), downgrades via
                     // init() -> openSymbolMaps(), and the faulted .o open throws out of refreshAt().
                     try (TableReader ignore = pool.getCopyOf(srcRef)) {
@@ -531,7 +531,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     } catch (Throwable th) {
                         refreshError.set(th);
                     } finally {
-                        faultSymbol.set(false);
+                        isSymbolFaultEnabled.set(false);
                         Path.clearThreadLocals();
                         // Safety net so the contender never blocks if the disposal misses the gate.
                         readerReleased.countDown();
@@ -543,13 +543,19 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 contender.join();
 
                 Assert.assertTrue("injected symbol fault never fired", ff.wasCalled());
-                Assert.assertTrue("reader disposal never reached the parked munmap", gateFired.get());
+                Assert.assertTrue("reader disposal never reached the parked munmap", hasGateFired.get());
                 Assert.assertNotNull("the getCopyOf refresh should have failed", refreshError.get());
 
                 final Throwable contenderErr = contenderError.get();
                 if (contenderErr != null) {
                     throw new AssertionError(
                             "ReaderPool handed a being-disposed reader to a concurrent get()", contenderErr);
+                }
+
+                // The disposing thread must leave the slot cleanly reclaimable: once it is gone,
+                // a fresh get() returns a usable, open reader rather than a leaked or stuck slot.
+                try (TableReader reclaimed = pool.get(tableToken)) {
+                    Assert.assertTrue("pool slot was not cleanly reclaimed after disposal", reclaimed.isOpen());
                 }
             } finally {
                 // src (slot 0) is held for the whole window; close it only after both threads join.
@@ -576,8 +582,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testConcurrentGetRefreshFailureDoesNotHandOutDisposedReader() throws Exception {
         final AtomicReference<TableReader> pooledReader = new AtomicReference<>();
         final AtomicLong disposingThreadId = new AtomicLong(-1);
-        final AtomicBoolean faultMeta = new AtomicBoolean();
-        final AtomicBoolean gateFired = new AtomicBoolean();
+        final AtomicBoolean isMetaFaultEnabled = new AtomicBoolean();
+        final AtomicBoolean hasGateFired = new AtomicBoolean();
         final AtomicReference<Throwable> refreshError = new AtomicReference<>();
         final AtomicReference<Throwable> contenderError = new AtomicReference<>();
         final CountDownLatch readerReleased = new CountDownLatch(1);
@@ -595,7 +601,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 if (r != null
                         && Thread.currentThread().threadId() == disposingThreadId.get()
                         && !r.isOpen()
-                        && gateFired.compareAndSet(false, true)) {
+                        && hasGateFired.compareAndSet(false, true)) {
                     readerReleased.countDown();
                     try {
                         contenderDone.await(10, TimeUnit.SECONDS);
@@ -608,7 +614,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             @Override
             public long openRO(LPSZ name) {
-                if (faultMeta.get()
+                if (isMetaFaultEnabled.get()
                         && Thread.currentThread().threadId() == disposingThreadId.get()
                         && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     isCalled = true;
@@ -666,7 +672,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         if (!readerReleased.await(10, TimeUnit.SECONDS)) {
                             return;
                         }
-                        final long deadline = configuration.getMillisecondClock().getTicks() + 2000;
+                        final long deadline = configuration.getMillisecondClock().getTicks() + 1000;
                         while (configuration.getMillisecondClock().getTicks() < deadline) {
                             try (TableReader r = pool.get(uTableToken)) {
                                 Assert.assertTrue(r.isOpen());
@@ -686,13 +692,13 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                 final Thread refresher = new Thread(() -> {
                     disposingThreadId.set(Thread.currentThread().threadId());
-                    faultMeta.set(true);
+                    isMetaFaultEnabled.set(true);
                     try (TableReader ignore = pool.get(uTableToken)) {
                         Assert.fail("refresh-get should have failed");
                     } catch (Throwable th) {
                         refreshError.set(th);
                     } finally {
-                        faultMeta.set(false);
+                        isMetaFaultEnabled.set(false);
                         Path.clearThreadLocals();
                         // Safety net so the contender never blocks if the disposal misses the gate.
                         readerReleased.countDown();
@@ -704,13 +710,19 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 contender.join();
 
                 Assert.assertTrue("injected metadata fault never fired", ff.wasCalled());
-                Assert.assertTrue("reader disposal never reached the parked munmap", gateFired.get());
+                Assert.assertTrue("reader disposal never reached the parked munmap", hasGateFired.get());
                 Assert.assertNotNull("the refresh-get should have failed", refreshError.get());
 
                 final Throwable contenderErr = contenderError.get();
                 if (contenderErr != null) {
                     throw new AssertionError(
                             "ReaderPool handed a being-disposed reader to a concurrent get()", contenderErr);
+                }
+
+                // The disposing thread must leave the slot cleanly reclaimable: once it is gone,
+                // a fresh get() returns a usable, open reader rather than a leaked or stuck slot.
+                try (TableReader reclaimed = pool.get(uTableToken)) {
+                    Assert.assertTrue("pool slot was not cleanly reclaimed after disposal", reclaimed.isOpen());
                 }
             } finally {
                 Misc.free(scoreboardHold);
