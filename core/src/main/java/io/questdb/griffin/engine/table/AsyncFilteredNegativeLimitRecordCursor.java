@@ -89,7 +89,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         PageFrameMemoryPool frameMemoryPool = null;
         try {
             record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
+            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
         } catch (Throwable th) {
             Misc.free(record);
             Misc.free(frameMemoryPool);
@@ -293,6 +293,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         this.rows = negativeLimitRows;
         this.rowIndex = negativeLimitRows.getCapacity();
         this.rowCount = 0;
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

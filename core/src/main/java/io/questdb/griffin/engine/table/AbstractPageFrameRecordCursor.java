@@ -35,8 +35,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
@@ -57,7 +57,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
             recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
             frameAddressCache = new PageFrameAddressCache();
-            frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
+            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
         } catch (Throwable th) {
             close();
             throw th;
@@ -105,14 +105,17 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     @Override
     public void recordAt(Record record, long rowId) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
+        frameMemoryPool.recordAt(record, rowId);
     }
 
     @Override
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         frameMemoryPool.setParquetDecodeHint(hint);
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        frameMemoryPool.setRecordAtRows(source);
     }
 
     @Override

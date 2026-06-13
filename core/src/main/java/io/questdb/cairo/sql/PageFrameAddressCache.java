@@ -69,6 +69,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private int columnCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
+    private boolean hasParquetFrames;
 
     public PageFrameAddressCache() {
         this.auxPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
@@ -104,6 +105,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
+            hasParquetFrames = true;
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
@@ -131,6 +133,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         auxPageSizes.clear();
         rowIdOffsets.clear();
         external = false;
+        hasParquetFrames = false;
     }
 
     @Override
@@ -167,6 +170,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public IntList getColumnTypes() {
         return columnTypes;
+    }
+
+    public int getFrameCount() {
+        return frameSizes.size();
     }
 
     public byte getFrameFormat(int frameIndex) {
@@ -211,6 +218,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public long getRowIdOffset(int frameIndex) {
         return rowIdOffsets.getQuick(frameIndex);
+    }
+
+    public boolean hasParquetFrames() {
+        return hasParquetFrames;
     }
 
     public boolean isExternal() {

@@ -25,7 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -53,6 +58,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, sortMode == SortMode.SORT_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, false);
         super.setUp();
     }
 
@@ -200,6 +206,8 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(11)
                             )"""
             );
+            // Signed zeros tie under the canonicalizing encoder, so their order is
+            // the rowId tiebreak: 0.0 (row 4) ahead of -0.0 (row 5).
             assertQuery("SELECT * FROM x ORDER BY d ASC")
                     .noLeakCheck()
                     .expectSize()
@@ -407,6 +415,780 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         null
                         null
                         """);
+    }
+
+    @Test
+    public void testOrderByLimitCompactionBottomK() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            49998
+                            49999
+                            50000
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitCompactionLargeLimitUnderTightMemoryCap() throws Exception {
+        // The caps fit ~32K entries and the limit exceeds half of that, so compaction
+        // must still fire at the budget instead of overflowing.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 262_144);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 262_144);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            // A bind-variable limit keeps the plan off the constant-limit top-K factories.
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 20_000);
+            assertQuery("SELECT count(*) cnt, min(v) mn, max(v) mx FROM (SELECT * FROM x ORDER BY v LIMIT :n)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            cnt\tmn\tmx
+                            20000\t1\t20000
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitCompactionTopKAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            // 50,000 rows exceed the compaction trigger, so the build exercises the
+            // threshold-reject and compact paths; ascending input with ORDER BY v
+            // takes the all-rejected path, DESC the all-accepted path. The bind-variable
+            // limit keeps the plan off the constant-limit top-K factories.
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitCompactionTopKDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT * FROM x ORDER BY v DESC LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            50000
+                            49999
+                            49998
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitCompactionWithRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 2,5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitDegenerateShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 0")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 3,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+            // lo > hi normalizes to rows hi..lo
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT 5,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            4
+                            5
+                            """);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT -3,-3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT -2,-4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitLoPosHiNegBindVariableFirstExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", -1);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            2
+                            3
+                            4
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitLoPosHiNegBindVariableReExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 3);
+            try (RecordCursorFactory factory = select("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("v\n2\n3\n", cursor, factory.getMetadata());
+                }
+
+                // same factory, lo >= 0 / hi < 0: slice off one row at each end
+                bindVariableService.setLong("hi", -1);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("v\n2\n3\n4\n", cursor, factory.getMetadata());
+                }
+
+                // and back to the top-K shape
+                bindVariableService.setLong("hi", 3);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("v\n2\n3\n", cursor, factory.getMetadata());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByLimitLoPosHiNegBindVariableReExecutionDesignatedTimestamp() throws Exception {
+        // Re-execution over a designated-timestamp table whose ORDER BY starts with the
+        // timestamp, so the factory selects the legacy partially-sorted cursor. A non-encodable
+        // varchar sort key keeps the encoded path out, so both flag parameterizations route here.
+        // Execution 1 (lo>=0, hi>=0) picks the partially-sorted cursor; execution 2 re-binds to
+        // (lo>=0, hi<0), installing the unbounded limit sentinel (-1). The early-stop must scan all
+        // timestamp groups for a negative limit, not bail at the first group boundary.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x AS v, ('k' || x)::varchar AS s, (x * 1_000_000)::timestamp AS ts " +
+                            "FROM long_sequence(7)" +
+                            ") TIMESTAMP(ts)"
+            );
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 3);
+            try (RecordCursorFactory factory = select("SELECT * FROM x ORDER BY ts, s LIMIT :lo, :hi")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+
+                // same factory, lo >= 0 / hi < 0: slice off one row at each end of the full set
+                bindVariableService.setLong("hi", -1);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            4\tk4\t1970-01-01T00:00:04.000000Z
+                            5\tk5\t1970-01-01T00:00:05.000000Z
+                            6\tk6\t1970-01-01T00:00:06.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+
+                // and back to the top-K shape
+                bindVariableService.setLong("hi", 3);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByLimitLoPosHiNullBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo, :hi")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitNegatedNaNBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            // NULL doubles are NaN and negating them flips the NaN sign bit; the
+            // encoder canonicalizes NaN so the LIMIT cut selects the same rows as
+            // the legacy comparator on both sides of the boundary.
+            execute("CREATE TABLE nd AS (SELECT CASE WHEN x <= 3 THEN x::double END val FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT val, -val neg FROM nd ORDER BY neg LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            val\tneg
+                            3.0\t-3.0
+                            2.0\t-2.0
+                            1.0\t-1.0
+                            """);
+            assertQuery("SELECT val, -val neg FROM nd ORDER BY neg DESC LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            val\tneg
+                            null\tnull
+                            null\tnull
+                            1.0\t-1.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitNullBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :lo")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitNullBindVariableRanges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            final String query = "SELECT * FROM x ORDER BY v LIMIT :lo, :hi";
+
+            // NULL lo: keep everything up to 2 rows from the end
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", -2);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            """);
+
+            // NULL hi: keep everything up to 3 rows from the end
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", -3);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            """);
+
+            // NULL lo and hi: lo == hi produces an empty result
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", Numbers.LONG_NULL);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            """);
+
+            // NULL lo with a positive hi: rows from the start
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", 2);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitNullLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT null::long")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan((sortMode == SortMode.SORT_ENABLED ? "Encode sort light" : "Sort light") + """
+                             lo: nullL
+                              keys: [v]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """)
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetFilterWideProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pq AS (
+                        SELECT
+                            x v,
+                            ('r' || x)::varchar note,
+                            ARRAY[x::double, (x * 2)::double] arr,
+                            ('s' || (x % 3))::symbol sym,
+                            timestamp_sequence(0, 100) ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')");
+            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+            // Reordered projection routes the sort key through the SelectedRecordCursor
+            // remap; the filter engages worker-side late materialization. The sort key
+            // must stay out of the filter so the build reads it only through the
+            // remapped parent-used-columns decode - a broken remap fails the test.
+            // The two-bound limit keeps the plan off the constant-limit top-K factories.
+            assertQuery("SELECT note, v, sym FROM pq WHERE sym = 's1' AND length(note) > 1 ORDER BY v DESC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType(), "Async")
+                    .returns("""
+                            note\tv\tsym
+                            r10000\t10000\ts1
+                            r9997\t9997\ts1
+                            r9994\t9994\ts1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetFilterWideProjectionMultiWorker() throws Exception {
+        // Same wide-projection encoded top-K over Parquet as
+        // testOrderByLimitParquetFilterWideProjection, but driven through a real
+        // 4-worker pool over many Parquet partitions (one page frame each). The async
+        // filter reduces frames across worker threads, so the encoded sort's
+        // setParentUsedColumns publication of AsyncFilterAtom.lateMatSkipColumnIndexes
+        // is read cross-thread instead of inline. The selective sym filter (10%) keeps
+        // late materialization engaged on every frame. Only the encoded path declares
+        // the used columns; the legacy path runs the same query for a correctness check.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                """
+                                        CREATE TABLE pq AS (
+                                            SELECT
+                                                x v,
+                                                ('r' || x)::varchar note,
+                                                ARRAY[x::double, (x * 2)::double] arr,
+                                                ('s' || (x % 10))::symbol sym,
+                                                timestamp_sequence(0, 172_800_000) ts
+                                            FROM long_sequence(6000)
+                                        ) TIMESTAMP(ts) PARTITION BY DAY""",
+                                sqlExecutionContext
+                        );
+                        engine.execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')", sqlExecutionContext);
+                        engine.execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", sqlExecutionContext);
+
+                        assertQuery("SELECT note, v, arr, sym FROM pq WHERE sym = 's7' AND length(note) > 1 ORDER BY v DESC LIMIT 0,5")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining(limitedSortPlanType(), "Async")
+                                .returns("""
+                                        note\tv\tarr\tsym
+                                        r5997\t5997\t[5997.0,11994.0]\ts7
+                                        r5987\t5987\t[5987.0,11974.0]\ts7
+                                        r5977\t5977\t[5977.0,11954.0]\ts7
+                                        r5967\t5967\t[5967.0,11934.0]\ts7
+                                        r5957\t5957\t[5957.0,11914.0]\ts7
+                                        """);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pq AS (
+                        SELECT
+                            x v,
+                            ('r' || x)::varchar note,
+                            ARRAY[x::double, (x * 2)::double] arr,
+                            ('s' || (x % 3))::symbol sym,
+                            timestamp_sequence(0, 100) ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')");
+            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+
+            // Two-bound limits are not top-K candidates, so the plan stays on the
+            // encoded sort and its emit phase exercises row-filtered Parquet decode.
+            assertQuery("SELECT v, note, arr, sym FROM pq ORDER BY v LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote\tarr\tsym
+                            1\tr1\t[1.0,2.0]\ts1
+                            2\tr2\t[2.0,4.0]\ts2
+                            3\tr3\t[3.0,6.0]\ts0
+                            """);
+
+            // Bottom-K spans the native and the Parquet partition.
+            assertQuery("SELECT v, note, arr, sym FROM pq ORDER BY v DESC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tnote\tarr\tsym
+                            1000000\tr1000000\t[1000000.0,2000000.0]\ts0
+                            10000\tr10000\t[10000.0,20000.0]\ts1
+                            9999\tr9999\t[9999.0,19998.0]\ts0
+                            """);
+
+            assertQuery("SELECT v, note, arr, sym FROM pq ORDER BY v LIMIT 2,5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tnote\tarr\tsym
+                            3\tr3\t[3.0,6.0]\ts0
+                            4\tr4\t[4.0,8.0]\ts1
+                            5\tr5\t[5.0,10.0]\ts2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmitNoLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pqu AS (
+                        SELECT x v, ('r' || x)::varchar note, timestamp_sequence(0, 100) ts
+                        FROM long_sequence(50)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pqu VALUES (1_000_000, 'r1000000', '2000-01-01')");
+            execute("ALTER TABLE pqu CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+            // The filter keeps 10 of the 50 parquet rows, under the 50% density gate,
+            // so the unlimited sort's emit declaration row-filters the parquet decode.
+            assertQuery("SELECT v, note FROM pqu WHERE v % 5 = 3 ORDER BY v DESC")
+                    .noLeakCheck()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            48\tr48
+                            43\tr43
+                            38\tr38
+                            33\tr33
+                            28\tr28
+                            23\tr23
+                            18\tr18
+                            13\tr13
+                            8\tr8
+                            3\tr3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmitMultiRowGroup() throws Exception {
+        // The single-row-group fixtures always declare emit rows in row group 0 from
+        // offset 0, so an off-by-rowGroupLo or wrong-slice-segment bug in the row-filtered
+        // decode passes them silently. Force 10 row groups in one Parquet partition and
+        // land the declarations past group 0 / past offset 0 to catch that.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pqg AS (
+                        SELECT x v, ('r' || x)::varchar note, timestamp_sequence(0, 100) ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pqg VALUES (1_000_000, 'r1000000', '2000-01-01')");
+            execute("ALTER TABLE pqg CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+
+            // One matching row per row group keeps the emit declaration well under the
+            // density gate; LIMIT 3,8 drops the first three matches so the surviving
+            // declarations sit in row groups 3..7, each at offset 136 within its group.
+            assertQuery("SELECT v, note FROM pqg WHERE v % 1000 = 137 ORDER BY v LIMIT 3,8")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            3137\tr3137
+                            4137\tr4137
+                            5137\tr5137
+                            6137\tr6137
+                            7137\tr7137
+                            """);
+
+            // An interval on the designated timestamp starts the scanned Parquet frame
+            // mid-row-group (row 2500 sits at offset 500 in group 2), so the declared top
+            // rows decode through a non-zero rowGroupLo.
+            assertQuery("SELECT v, note FROM pqg WHERE ts >= '1970-01-01T00:00:00.250000Z' ORDER BY v LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            2501\tr2501
+                            2502\tr2502
+                            2503\tr2503
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitSmallLimitUnderTightMemoryCap() throws Exception {
+        // The caps fit ~32K entries; the 50,000-row scan overflows them without
+        // compaction. The tree-chain path holds only `limit` entries, so both
+        // parameterized modes must return the top rows instead of throwing.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 262_144);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 262_144);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 2);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitThresholdTieSelection() throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x % 10 k, x rid FROM long_sequence(50_000))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 9_000);
+            assertQuery("""
+                    SELECT
+                        sum(CASE WHEN k = 1 THEN 1 ELSE 0 END) cnt,
+                        min(CASE WHEN k = 1 THEN rid END) mn,
+                        max(CASE WHEN k = 1 THEN rid END) mx
+                    FROM (SELECT * FROM t ORDER BY k LIMIT :n)""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            cnt\tmn\tmx
+                            4000\t1\t39991
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTimestampEarlyStopDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE esd AS (
+                        SELECT ((x - 1) / 3 * 1_000_000)::timestamp ts, 10 - x v
+                        FROM long_sequence(9)
+                    ) TIMESTAMP(ts)""");
+            assertQuery("SELECT * FROM esd ORDER BY ts DESC, v LIMIT 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampDesc("ts")
+                    .withPlanContaining(limitedSortPlanType(), "partiallySorted: true")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:02.000000Z\t1
+                            1970-01-01T00:00:02.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\t3
+                            1970-01-01T00:00:01.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTimestampEarlyStopGroupSpansCompaction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE esc AS (
+                        SELECT
+                            (CASE WHEN x <= 5_000 THEN 0 ELSE 1_000_000 END)::timestamp ts,
+                            x % 5_000 v
+                        FROM long_sequence(5_005)
+                    ) TIMESTAMP(ts)""");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 3);
+            assertQuery("SELECT * FROM esc ORDER BY ts, v LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t0
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:00.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTimestampEarlyStopGroupStraddle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE es AS (
+                        SELECT
+                            ((x - 1) / 3 * 1_000_000)::timestamp ts,
+                            10 - x v
+                        FROM long_sequence(9)
+                    ) TIMESTAMP(ts)""");
+
+            // The limit lands mid-group: the second group must be scanned in full.
+            assertQuery("SELECT * FROM es ORDER BY ts, v LIMIT 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining(limitedSortPlanType(), "partiallySorted: true")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t7
+                            1970-01-01T00:00:00.000000Z\t8
+                            1970-01-01T00:00:00.000000Z\t9
+                            1970-01-01T00:00:01.000000Z\t4
+                            """);
+
+            // The limit lands one row past a completed group boundary.
+            assertQuery("SELECT * FROM es ORDER BY ts, v LIMIT 7")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t7
+                            1970-01-01T00:00:00.000000Z\t8
+                            1970-01-01T00:00:00.000000Z\t9
+                            1970-01-01T00:00:01.000000Z\t4
+                            1970-01-01T00:00:01.000000Z\t5
+                            1970-01-01T00:00:01.000000Z\t6
+                            1970-01-01T00:00:02.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitTinyMemoryCap() throws Exception {
+        // The caps fit fewer entries than the minimum compaction trigger, so the
+        // trigger must clamp to the budget.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 16_384);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 16_384);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5_000))");
+            bindVariableService.clear();
+            bindVariableService.setLong("n", 10);
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT :n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            8
+                            9
+                            10
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitUnboundedOverflowUnderTightMemoryCap() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 262_144);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 262_144);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(50_000))");
+            assertQuery("SELECT * FROM x ORDER BY v LIMIT null::long")
+                    .noLeakCheck()
+                    .failsWith("memory exceeded");
+        });
     }
 
     @Test
@@ -718,6 +1500,117 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderBySymbolColumnLimitWithNulls() throws Exception {
+        // The fuzz test appends a unique key to the ORDER BY so the sort is total and
+        // the LIMIT cut never splits a tie group: the encoded top-K and the legacy
+        // tree-chain resolve ties differently, so a symbol-only ORDER BY with the cut
+        // inside a tie diverges between them. This pins the case the fuzzer skips - the
+        // encoded top-K's own NULL-symbol ordering at the LIMIT cut - so it asserts the
+        // encoded path only. The encoded sort appends the rowId as the trailing key
+        // word, so ties break rowId-ascending (here val-ascending) deterministically.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (" +
+                    "SELECT" +
+                    " CAST(CASE" +
+                    "     WHEN x % 4 = 0 THEN NULL" +
+                    "     WHEN x % 4 = 1 THEN 'A'" +
+                    "     WHEN x % 4 = 2 THEN 'B'" +
+                    "     ELSE 'C'" +
+                    " END AS SYMBOL) AS sym," +
+                    " x AS val" +
+                    " FROM long_sequence(12)" +
+                    ")");
+
+            // ASC: NULL sorts first, so a cut inside the NULL group returns the
+            // rowId-smallest NULL rows.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            """);
+
+            // ASC: cut exactly at the NULL/'A' boundary returns the whole NULL group.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            \t12
+                            """);
+
+            // ASC: cut one past the NULL group keeps every NULL plus the first 'A'.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            \t12
+                            A\t1
+                            """);
+
+            // DESC: NULL sorts last, so a small cut must exclude every NULL row.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            """);
+
+            // DESC: cut exactly at the 'A'/NULL boundary keeps everything but the NULLs.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,9")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            B\t2
+                            B\t6
+                            B\t10
+                            A\t1
+                            A\t5
+                            A\t9
+                            """);
+
+            // DESC: cut one past the 'A' group reaches the first (rowId-smallest) NULL.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            B\t2
+                            B\t6
+                            B\t10
+                            A\t1
+                            A\t5
+                            A\t9
+                            \t4
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByTimestampColumnAscMixedValues() throws Exception {
         assertQuery("select * from x order by a asc;")
                 .ddl("create table x as (" +
@@ -859,6 +1752,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         8
                         9
                         """);
+    }
+
+    private String limitedSortPlanType() {
+        return sortMode == SortMode.SORT_ENABLED ? "Encode sort light" : "Sort light";
     }
 
     public enum SortMode {
