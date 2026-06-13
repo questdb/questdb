@@ -2497,6 +2497,80 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinContextIsolationInLambdaConstCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
+            execute("CREATE TABLE tc (ckey SYMBOL INDEX, cv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb2 VALUES ('x', 'bx'), ('y', 'by')");
+            execute("INSERT INTO tc VALUES ('x', 'cx'), ('y', 'cy')");
+
+            // optimiseExpressionModels optimises the IN-lambda before the enclosing
+            // query's join pass. The lambda's join pass collects akey='x' into the
+            // transitive-filter const maps; the enclosing pass must not read that
+            // stale entry and derive ckey='x' on tc, which would drop the 'y' row.
+            assertQuery(
+                    """
+                            SELECT a.akey, a.av, c.cv
+                            FROM ta a
+                            JOIN tc c ON c.ckey = a.akey
+                            WHERE a.akey IN (SELECT t1.akey FROM ta t1 CROSS JOIN tb2 t2 WHERE t1.akey = t2.akey AND t1.akey = 'x')
+                               OR a.av = 'ay'
+                            ORDER BY av"""
+            )
+                    .noLeakCheck()
+                    // a join inside an IN (SELECT ...) lambda retains ~131 KiB of factory
+                    // memory until factory close, tripping the 64 KiB post-close RSS check
+                    // for any such query; the test-end leak check still guards real leaks
+                    .noMemoryUsageCheck()
+                    .returns("""
+                            akey\tav\tcv
+                            x\tax\tcx
+                            y\tay\tcy
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinContextIsolationInLambdaPushedPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
+            execute("CREATE TABLE tc (ckey SYMBOL INDEX, cv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb2 VALUES ('x', 'bx'), ('y', 'by')");
+            execute("INSERT INTO tc VALUES ('x', 'cx'), ('y', 'cy')");
+            execute("CREATE VIEW v1 AS (SELECT t1.akey AS k, t1.av FROM ta t1 CROSS JOIN tb2 t2 WHERE t1.akey = t2.akey)");
+
+            // moveWhereInsideSubQueries pushes k='x' into the view's join inside the
+            // IN-lambda and re-derives transitive filters from the pushed predicate.
+            // The const-map entry it writes must not survive into the enclosing
+            // query's join pass, or tc picks up a derived ckey='x' filter and the
+            // 'y' row disappears.
+            assertQuery(
+                    """
+                            SELECT a.akey, a.av, c.cv
+                            FROM ta a
+                            JOIN tc c ON c.ckey = a.akey
+                            WHERE a.akey IN (SELECT k FROM v1 WHERE k = 'x')
+                               OR a.av = 'ay'
+                            ORDER BY av"""
+            )
+                    .noLeakCheck()
+                    // a join inside an IN (SELECT ...) lambda retains ~131 KiB of factory
+                    // memory until factory close, tripping the 64 KiB post-close RSS check
+                    // for any such query; the test-end leak check still guards real leaks
+                    .noMemoryUsageCheck()
+                    .returns("""
+                            akey\tav\tcv
+                            x\tax\tcx
+                            y\tay\tcy
+                            """);
+        });
+    }
+
+    @Test
     public void testJoinContextIsolationInUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute(

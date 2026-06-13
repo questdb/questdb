@@ -1,236 +1,441 @@
 ---
 name: review-pr
-description: Review GitHub pull requests against QuestDB coding standards using gh, rg, local source inspection, optional subagents, review levels 0-3, and verified Critical/Moderate/Minor findings. Use when Codex is asked to review a PR number or URL, inspect a QuestDB PR diff, validate PR metadata, check changed callsites and contracts, or enforce QuestDB correctness, performance, SQL test, resource, Rust safety, and ACL standards.
+description: Review GitHub pull requests against QuestDB coding standards using gh, local source inspection, review levels 0-3, and verified Critical, Moderate, Minor, and Downgraded findings. Use when Codex is asked to review a PR number or URL, run review-pr, inspect a GitHub PR, validate PR metadata, analyze diffs and callsites, or perform a QuestDB blocking code review.
 ---
 
 # QuestDB PR Review
 
-Perform a blocking QuestDB code review. Treat the PR diff as the entry point, not the full scope: changed contracts can break unchanged callsites.
+Review the pull request identifier supplied by the user. Accept a PR number or URL plus optional level tokens such as `--level=2`, `-l2`, or `2`.
 
-## Argument Parsing
+Use Codex tools for shell commands (`gh`, `rg`, `rg --files`, `git`, `sed`, and `nl`), local file reads for source inspection, and subagents when the environment exposes multi-agent tools. If subagents are required by the selected level but unavailable, run the same passes inline and state that limitation in the summary.
 
-Parse the user's request for:
+## Review mindset
 
-- PR identifier: PR number or URL. Require one unless the current branch clearly has an associated PR that the user asked to review.
-- Review level: parse `--level=N`, `-lN`, or a bare single digit `0`-`3`. Default to level 0.
+You are a senior QuestDB engineer performing a blocking code review. QuestDB is mission-critical software deployed on spacecraft — bugs can cause data loss or system failures that cannot be patched after deployment. There is zero tolerance for correctness issues, resource leaks, or undefined behavior. Be critical, thorough, and opinionated. Your job is to catch problems before they ship, not to be nice.
 
-Strip the level token before passing the PR identifier to `gh`. At the start of the review, state one line such as `Reviewing PR #1234 at level 2.` If the level defaulted to 0, mention that level 3 exists for the full pass.
+- **Assume nothing is correct until you've verified it.** Read surrounding code to understand context — don't just look at the diff in isolation.
+- **The diff is a hint, not the boundary of the review.** The highest-value bugs almost always live at callsites outside the diff that depend on contracts the diff quietly changed. Treat the diff as the entry point, not the scope.
+- **Flag every issue you find**, no matter how small. Do not soften language or hedge. Say "this is wrong" not "this might be an issue".
+- **Do not praise the code.** Skip "looks good", "nice work", "clever approach". Focus entirely on problems and risks.
+- **Think adversarially.** For each change, ask: what inputs break this? What happens under concurrent access? What if this runs on a 10-billion-row table? What if the column is NULL? What if the partition is empty?
+- **Demand optimal algorithms.** QuestDB is a performance-first database. "Works correctly" is necessary but not
+  sufficient — the implementation must use the best known algorithm and data structure for the job. If a hash lookup
+  gives O(1) but the code does a linear scan, that is a finding. If two passes over the data can be collapsed into one,
+  that is a finding. If a value is recomputed on every call but could be cached, that is a finding. Do not accept "good
+  enough" — ask "is there a faster way?" for every loop, every traversal, every data structure choice.
+- **Check what's missing**, not just what's there. Missing tests, missing error handling, missing edge cases, missing documentation for non-obvious behavior.
+- **Verify every claim.** If the PR title says "fix", verify the bug actually existed and the fix is correct. If it
+  says "improve performance", look for benchmarks or reason about the algorithmic change — does it actually improve
+  things, or could it regress in other cases? Even if the PR doesn't claim to be about performance, evaluate whether the
+  chosen algorithms and data structures are optimal — sub-optimal code that "works" is still a finding. If it says "
+  simplify", verify the new code is actually simpler and doesn't drop behavior. Treat the PR description as an
+  unverified hypothesis, not a statement of fact.
+- **Read the full context of changed files** when the diff alone is ambiguous. Use local file reads and repository search (`rg` / `rg --files`) to inspect the surrounding code, callers, and related tests.
+- **Assess reachability before reporting.** For every potential bug, trace the actual callers and inputs. If a problem
+  requires physically impossible conditions (billions of columns, corrupted JNI inputs, values that no caller can
+  produce), it is not a real finding — drop it. Focus on bugs that real workloads can trigger, not theoretical edge
+  cases that exist only in the type system.
+- **QuestDB runs with Java assertions enabled (`-ea`).** Assertions are a valid guard for invariants that indicate
+  corruption or internal bugs. Do NOT flag `assert` as insufficient — it is the preferred mechanism for conditions
+  that should never occur in a non-corrupt database. Only flag an `assert` if the condition can plausibly be triggered
+  by normal (non-corrupt) user operations.
 
-## Mindset
+## Review level
 
-- Be critical and verification-driven. QuestDB is mission-critical database software; correctness, resource handling, and deterministic performance matter.
-- Do not praise the code. Lead with defects, risks, regressions, and missing tests.
-- Verify claims against source. Do not report a finding until the reachable code path is confirmed.
-- Read surrounding code, callers, tests, and contracts when the diff alone is ambiguous.
-- Assess reachability before reporting. Drop issues that require impossible inputs, corrupted state, or values no caller can produce.
-- Remember that QuestDB runs Java assertions enabled with `-ea`. Assertions are valid for internal invariants; flag `assert` only when normal user operations can trigger it.
-- Demand optimal algorithms. Working code is not enough when a better data structure, one-pass algorithm, direct index, cache, or vectorized path is available.
+Parse the user's request for a level token: `--level=N`, `-lN`, or a bare single digit `0`-`3`. **If no level is given, default to 0.** Strip the level token before feeding the remainder (PR number or URL) to `gh` commands.
 
-## Review Levels
+The level controls how much of the review below actually runs. Lower levels keep the same review *spirit* — adversarial, blocking, no praise — but cut the breadth of the analysis. Higher levels have significantly higher token cost; reserve level 3 for high-stakes PRs (replication, JNI boundary changes, on-disk format, public API, security/ACL).
 
-| Level | Scope |
-| --- | --- |
-| 0 | Default. Gather context, review PR metadata, inspect the diff inline, use `rg` on demand, verify findings inline, and cover correctness, NULL handling, algorithmic optimality, tests, and QuestDB standards. |
-| 1 | Add semantic delta mapping. Use available subagents for correctness, performance, tests, and code quality; otherwise run those passes inline. |
-| 2 | Full change surface map for public and protected symbols. Use subagents for correctness, concurrency, performance, resources, tests, code quality, metadata, Rust safety when needed, and adversarial performance. Batch-verify findings. |
-| 3 | Full mission-critical pass. Map all changed symbols, run every review pass including cross-context and fresh-context adversarial review, then verify each finding independently. |
+| Level           | What runs                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **0 (default)** | Steps 1, 2, 4. Skip Step 2.5. Skip Step 3 — no agent spawn; review the diff inline in the main loop, using local file reads and `rg` on demand to resolve ambiguities. Skip Step 3b — verify each finding inline as you write it. Single-pass review covering correctness, NULL handling, **algorithmic optimality**, tests, and QuestDB standards on the diff itself. The performance checklist (including algorithm optimality) is mandatory at every level. |
+| **1**           | Adds Step 2.5a (semantic delta only — skip 2.5b/2.5c/2.5d). In Step 3, launch only Agent 1 (correctness), **Agent 3 (performance)**, Agent 5 (tests), and Agent 6 (code quality) in parallel. Skip all other agents. Skip Step 3b — verify findings inline as you draft the report.                                                                                                                                                            |
+| **2**           | Full Step 2.5, but in 2.5b restrict the callsite inventory to `public`/`protected` symbols (skip package-private and `pub(crate)`). In Step 3, launch Agents 1-8 (Agent 8 only if `.rs` files are present), plus **Agent 11 (adversarial performance)**. Skip Agent 9 (cross-context) and Agent 10 (adversarial fresh-context). Step 3b uses a single batched verification agent for all findings instead of one per finding.                  |
+| **3**           | Every step below as written, all 11 agents, per-finding verification. The full mission-critical pass.                                                                                                                                                                                                                                                                                                                                          |
 
-The performance checklist is mandatory at every level.
+State the chosen level in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2"). If the level was defaulted, mention that level 3 exists for full review.
 
-## Step 1: Gather PR Context
+## Step 1: Gather PR context
 
-Use `gh` to fetch the PR metadata, diff, comments, and commits:
+Capture the PR identifier in `$PR` (the part of the user's request left after stripping the level token), then fetch metadata, diff, and review comments in a single bash call so `$PR` is in scope for all three `gh` invocations:
 
 ```bash
-gh pr view "<PR>" --json number,title,body,labels,state,headRefName
-gh pr diff "<PR>"
-gh pr view "<PR>" --comments
-gh pr view "<PR>" --json commits
+PR='<PR number or URL from the user request, with any --level=N / -lN / bare-digit level token removed>'
+gh pr view "$PR" --json number,title,body,labels,state
+gh pr diff "$PR"
+gh pr view "$PR" --comments
 ```
 
-Also inspect the local repository state and relevant changed files. Prefer `rg`, `rg --files`, `git diff`, `git show`, `sed`, and `nl` for local exploration. Use `multi_tool_use.parallel` for independent file reads and searches when available.
+## Step 2: PR title and description
 
-## Step 2: Check PR Metadata
+Check against CLAUDE.md conventions:
+- Title follows Conventional Commits: `type(scope): description`
+- Description repeats the verb (e.g., `fix(sql): fix ...` not `fix(sql): DECIMAL ...`)
+- Description speaks to end-user impact, not implementation internals
+- If fixing an issue, `Fixes #NNN` is at the top of the body
+- Tone is level-headed and analytical, no superlatives or bold emphasis on numbers
+- Labels match the PR scope (SQL, Performance, Core, etc.)
 
-Check QuestDB PR conventions:
+## Step 2.5: Map the change surface
 
-- Title follows Conventional Commits: `type(scope): description`.
-- Description repeats the verb, e.g. `fix(sql): fix ...`.
-- Description explains user impact, not only implementation internals.
-- Fixing an issue has `Fixes #NNN` at the top of the body.
-- Tone is analytical; avoid superlatives and bold emphasis on numbers.
-- Labels match the scope.
-- Commit titles are plain English, no Conventional Commits prefix, under 50 characters, with long-form body lines wrapped at 72 characters.
+Before launching review agents, produce a structured change surface map. This step is mandatory and must use repository search (`rg` / `rg --files`) — do not reason about callsites from memory. The output of this step is required input for every agent in Step 3.
 
-## Step 2.5: Map the Change Surface
+### 2.5a Semantic delta per changed symbol
 
-Run this step according to the selected level. Use `rg` and local source reads; do not infer callsites from memory.
+For every modified or added function, method, trait, struct field, SQL operator/function, or public constant, write:
 
-### Semantic Delta
+- **Symbol:** fully-qualified name
+- **Before:** signature, return type, error/exception behavior, panic behavior, mutation (`&self` vs `&mut self`, `final` vs not), ordering/idempotency guarantees, allocation behavior, thread-safety
+- **After:** same fields
+- **Delta:** one line stating what semantically changed
 
-For each modified or added function, method, trait, struct field, SQL operator/function, public constant, or exported Rust item, record:
+"Refactored", "cleaned up", "improved", "simplified" are not acceptable deltas. State the actual behavioral difference. If nothing semantically changed, write "no behavioral change" — but only after checking, not as a default.
 
-- Symbol: fully-qualified name.
-- Before: signature, return type, throws/errors/panics, mutation, ordering, idempotency, allocation behavior, thread-safety.
-- After: the same fields.
-- Delta: the actual behavior change. If none, write `no behavioral change` only after checking.
+### 2.5b Callsite inventory
 
-### Callsite Inventory
+For every changed symbol that is `public`, `protected`, package-private, or exported (`pub` / `pub(crate)` in Rust), run repository search across the entire repository to find every callsite, implementation, override, or reference outside the diff.
 
-For each changed symbol in scope for the level, search every callsite, override, implementation, and reference outside the diff. A changed public, protected, package-private, `pub`, or `pub(crate)` symbol with no recorded search is a review failure.
-
-For Java, also search:
-
-- subclasses and interface declarations
-- `getMethod`, `getDeclaredField`, `Class.forName`
-- `FunctionFactory`, `OperatorRegistry`, and SQL registrations
+Produce a list grouped by file. For Java, also search for:
+- subclasses that override the method
+- interfaces that declare it
+- reflection-based callers (`getMethod`, `getDeclaredField`, `Class.forName`)
+- SQL function/operator registrations (`FunctionFactory`, `OperatorRegistry`)
 - service loader entries
 
-For Rust, also search:
-
+For Rust, also search for:
 - trait impls
-- macro uses
-- JNI exports and Java callers
+- macro expansions
+- JNI exports and their Java callers
 - `extern "C"` boundaries
 
-### Implicit Contracts
+A changed `pub`/`protected`/package-private symbol with zero recorded search commands in the trace is a skill violation. The model is not allowed to assert "this is only used here" without showing the search.
 
-For changed symbols, compare before and after:
+### 2.5c Implicit contract list
 
-- thrown exceptions, returned errors, panics
-- iteration order, sort stability, NULL ordering
-- idempotency and re-entrancy
-- lock acquisition order and locks held on return
-- hot-path vs compile-time allocation
-- `Send`/`Sync`, thread affinity, JFR/JNI thread attachment
-- Java `null` vs sentinel NULL such as `Numbers.LONG_NULL` and `Numbers.INT_NULL`
-- Rust drop behavior and Java `finally`/`close`
-- SQL clause exposure: WHERE, GROUP BY, JOIN ON, ORDER BY, window frames, partition predicates, materialized views
+For each changed symbol, walk this checklist and write one line per item, stating before vs after:
 
-### Cross-Context Exposure
+- Panics or throws on which inputs
+- Error variants returned and which `?`/`throws` chains propagate them
+- Iteration order, sort stability, NULL ordering
+- Idempotency and re-entrancy
+- Lock acquisition order and which locks are held on return
+- Allocation on hot vs compile-time path
+- `Send`/`Sync`, thread-affinity, JFR/JNI thread attachment requirements
+- Whether `null` and sentinel-NULL (`Numbers.LONG_NULL`, `Numbers.INT_NULL`, etc.) are still distinguished
+- Cancellation/drop behavior (Rust) and finally/close behavior (Java)
+- SQL: does the symbol now appear in new clauses (WHERE, GROUP BY, JOIN ON, ORDER BY, window frames, partition predicates, materialized view definitions) where it didn't before? List which.
 
-List places where the changed behavior is visible but the diff does not touch: hot data paths, SQL compilation, async runtime, JNI, replication, materialized views, parallel workers, error paths, and lock-held contexts.
+### 2.5d Cross-context exposure list
 
-## Step 3: Review Passes
+End this step with an explicit list of "places this change is visible from but the diff does not touch". This is the highest-priority input for the bug-hunting agents in Step 3.
 
-Use subagents for levels that require them when the Codex environment exposes multi-agent tools. Discover them with `tool_search` if needed. If subagents are unavailable, run the required passes inline and state that limitation in the summary.
+The list groups the callsites from 2.5b by execution context: hot data paths, SQL compilation, async runtime, JNI boundary, replication, materialized views, parallel execution workers, etc. Every entry on this list must be reviewed in Step 3.
 
-Every structured pass except fresh-context adversarial review receives the diff and the change surface map.
+## Step 3: Parallel review
 
-### Correctness
+Every agent receives:
+1. The PR diff
+2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list)
 
-Check NULL handling, edge cases, off-by-one errors, operator precedence, error paths, SqlException positions, changed SQL clause reachability, and caller expectations.
+### Anti-anchoring directive (applies to all agents)
 
-### Concurrency
+- **Bugs at callsites outside the diff outrank bugs inside the diff.** A confirmed bug in a file the PR did not touch but that calls a changed symbol is a P0 finding.
+- **"Looks correct in isolation" is not a valid conclusion.** Before clearing a changed symbol, the agent must walk the callsite inventory from 2.5b and explicitly state, per callsite, whether the new behavior is still correct there.
+- **The diff is the entry point, not the scope.** If the change surface map shows the symbol is reachable from N other files, the review covers N+1 files.
+- A single finding of the form "in `FooReader.java` the new behavior of `Bar.x()` causes Y" is worth more than five findings inside the diff.
 
-Check races, unsafe publication, missing volatile, shared mutable state, lock ordering, thread-affinity, and whether new callsites violate old concurrency assumptions.
+### Agents
 
-### Performance and Algorithmic Optimality
+Launch the following agents in parallel.
+
+**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite.
+
+**Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
+
+**Agent 3 — Performance & algorithmic optimality:** This agent enforces the principle that QuestDB code must use the
+best known algorithm for each task — not merely "avoid quadratic."
 
 For every new or changed loop, traversal, data structure, or computation:
 
-- State complexity and ask whether a better known algorithm exists.
-- Flag O(n) where O(1) direct indexing or hash lookup is available.
-- Flag O(n log n) where O(n) is available and O(n^2) where a better bound is practical.
-- Collapse multiple passes unless each pass depends structurally on the previous pass.
-- Flag redundant computation, repeated lookups, reparsing, and retraversal.
-- Check collection choice against access pattern.
-- Avoid copies and representation conversions when references can be reused.
-- Enforce zero-GC on data paths: avoid `java.util.*`, string creation, concatenation, capturing lambdas, and autoboxing.
-- Consider SIMD or native/vectorized alternatives for column and array processing.
-- Treat SQL compilation as allocation-tolerant but not algorithmically lax.
+1. **Algorithm optimality:** State the time complexity. Then ask: does a better algorithm exist? O(n) where O(1) is
+   achievable (hash lookup vs linear scan, direct indexing vs search) is a finding. O(n log n) where O(n) suffices is a
+   finding. The bar is not "avoid quadratic" — the bar is "use the best known approach."
+2. **Multi-pass vs single-pass:** If the code makes multiple passes over the same data (parsing, validation,
+   transformation), determine whether they can be fused into a single pass. Multiple passes over the same input is a
+   finding unless each pass has a structural dependency on the output of the previous one.
+3. **Redundant computation:** Flag values that are recomputed on every call but could be computed once and cached. Flag
+   repeated lookups of the same key. Flag re-parsing of already-parsed data.
+4. **Data structure choice:** For each collection or map, ask whether the chosen data structure is optimal. Linear
+   search through a list where a hash set gives O(1) membership test. Sorted array where a heap gives better
+   insert/extract-min. ArrayList where a direct-indexed array suffices.
+5. **Unnecessary copies and conversions:** Copying data that could be referenced in place. Converting between
+   representations (String ↔ CharSequence, byte[] ↔ DirectByteCharSequence) when the original form would work.
+6. **Zero-GC violations:** `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths,
+   capturing lambdas, autoboxing. Even a single GC allocation on a per-row data path is a finding.
+7. **SIMD and vectorization:** Where the code processes arrays or columns element-by-element, check whether a
+   SIMD/vectorized alternative exists in QuestDB's native layer or could be added.
+8. **Compile-time vs data-path:** GC allocations during SQL compilation are acceptable. But algorithmic inefficiency
+   during compilation is NOT acceptable — slow compilation means slow query latency. A multi-pass parse or O(n^2) plan
+   enumeration in the compiler is still a finding.
 
-Do not downgrade a technically correct algorithmic finding merely because current data sizes are small. Downgrade only when the analysis is wrong or the bound is genuinely constant.
+For changed symbols now reachable from new contexts (per 2.5d), check whether any of those new contexts is a hot path
+that amplifies an otherwise-acceptable cost.
 
-### Resource Management
+**Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths.
 
-Trace allocation, ownership transfer, close/free/clear, native memory, pools, `try-with-resources`, error paths, and polymorphic cleanup methods.
+**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. Missing tests for cross-context callsites is a high-priority finding. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `assertSql(...)`/`assertPlanNoLeakCheck(...)`/`getPlan(...)`/`TestUtils.assertSql(...)` is Critical; any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.**
 
-### Tests
+**Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies.
 
-Verify coverage for every changed behavior, regression, error path, NULL case, boundary condition, concurrency path, resource leak path, and cross-context exposure. Use `assertMemoryLeak()` for native-memory tests.
+**Agent 7 — PR metadata & conventions:** Title format, description quality, commit messages, labels, SQL style in tests.
 
-### Code Quality and Standards
+**Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`,
+`expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release
+mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI
+will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper
+error propagation. Flag every potential panic site.
 
-Check member ordering, naming, dead code, complexity, modern Java use, third-party dependencies on data paths, and SQL test style:
+**Agent 9 — Cross-context caller impact:** Walk the callsite inventory from 2.5b. For every callsite, fetch the surrounding code (the calling function plus its callers up two levels) and answer:
 
-- SQL keywords in uppercase.
-- Prefer `expr::TYPE` casts.
-- Use underscores in numbers with at least five digits.
-- Use multiline strings for complex queries.
-- Avoid DELETE in tests unless the behavior specifically requires it.
-- Use single INSERT for multiple rows.
+- Does this caller pass inputs the new behavior handles incorrectly?
+- Does this caller depend on a contract from the implicit contract list (2.5c) that the change broke?
+- Is this caller in a context (WHERE clause, async runtime, JNI thread, holding lock X, error path, hot loop, parallel worker, replication path, materialized view refresh) where the new behavior misbehaves even if the inputs are valid?
+- For SQL functions/operators: is the symbol now resolvable in clauses where it didn't compile before (WHERE on indexed column, JOIN ON, GROUP BY key, ORDER BY, window frame, materialized view definition), and does it actually work there end to end?
+- For changed Java methods overridden by subclasses: do all overrides still satisfy the new contract?
+- For changed Rust types with trait impls: do all impls still satisfy the new invariants?
+- For changed JNI signatures: do all Java callers pass the right types and lifetimes?
 
-### SQL Test Assertions
+This agent's output is structured per callsite, not per failure mode. Each callsite gets a verdict: SAFE / BROKEN / NEEDS VERIFICATION. Every BROKEN entry is a P0 finding regardless of whether the file is in the diff.
 
-QuestDB SQL test assertions should use the fluent `AbstractCairoTest.assertQuery(query)` builder.
+This agent is not optional even when the diff is small. Small diffs to widely-used symbols have the largest blast radius.
 
-- Treat new or changed query-result `assertSql(...)` or `TestUtils.assertSql(...)` as Critical; require `assertQuery(sql).returns(expected)` or plan builder assertions instead.
-- Treat new or changed `assertPlanNoLeakCheck(...)`, `getPlan(...)`, and `assertPlanDoesNotContain(...)` as Critical when they are used instead of the builder plan assertions.
-- Do not flag live-server wrappers such as `TestServerMain.assertSql(...)`, `serverMain.assertSql(...)`, or `EntGriffinServerMain.assertSql(...)`.
-- Treat `.returnsOnce(...)` on deterministic queries as Critical. It is only justified for genuinely unstable output such as unseeded `rnd_*`, `now()`, `sysdate()`, `systimestamp()`, or non-deterministic row order.
-- Flag a lone `assertQuery(...)` chain wrapped in `assertMemoryLeak(...)`; the builder performs its own leak check unless a broader multi-statement leak scope is genuinely needed.
+**Agent 10 — Fresh-context adversarial:** Dispatched separately from agents 1-9 to escape checklist anchoring. This agent operates under different rules from the rest:
 
-### Logging
+- It receives ONLY the PR diff and the names of the changed files. It does NOT receive the change surface map from Step 2.5, the implicit contract list, the cross-context exposure list, or any of the review checklists below.
+- Its sole instruction: "find ways this code is wrong". No category list, no failure-mode taxonomy, no QuestDB-specific style guide.
+- It is free to use local file reads and repository search to explore the repository however it wants.
+- Findings are not pre-classified by category. Each finding states: what's wrong, why it's wrong, and the code path that demonstrates it.
 
-QuestDB logging uses a builder chain. Every `LOG` chain must end with `.$()` or `.I$()`. Missing closure holds a ring buffer slot and can stall producers and the `logging_0` consumer. Watch for `.put()` where `.$()` was intended, because `.put()` returns `Utf16Sink` and breaks the chain.
+The point of this agent is to surface bugs the structured agents cannot see because they are reasoning inside the same frame. A finding here that none of agents 1-9 produced is high signal — it means the structured review missed it. A finding here that overlaps with agents 1-9 is corroboration.
 
-### Rust Safety
+Run this agent in parallel with agents 1-9. It is mandatory regardless of diff size.
 
-When `.rs` files change, check every reachable panic site: `unwrap`, `expect`, indexing, `panic!`, `unreachable!`, `todo!`, release-mode integer overflow, and unsafe slice construction. Rust panics across JNI/FFI can abort the JVM, so fallible operations should use `Result` or `Option` with propagation. Drop panic claims that callers make unreachable.
+**Agent 11 — Adversarial performance:** Dispatched separately from Agent 3 to escape checklist anchoring. This agent
+operates under different rules:
 
-### Enterprise Permissions and ACL
+- It receives the PR diff plus the full source files that the diff touches (not just the changed lines). It does NOT
+  receive the performance checklist, the change surface map, or Agent 3's findings.
+- For every function or method the diff adds or modifies, read the full implementation and ask one question: **"What is
+  the theoretically fastest way to implement this, and does the code match it?"**
+- Work bottom-up from the code, not top-down from a checklist. Trace data flow through each function: what is read, how
+  many times, in what order. Look for:
+    - Passes over data that could be eliminated or fused
+    - Lookups that could be O(1) but aren't
+    - Allocations that could be avoided by reusing buffers
+    - Branching that could be replaced with branchless arithmetic
+    - Scalar loops over column data that could be vectorized
+    - Sorting or searching where the input has structure (sorted, partitioned, bounded) that the code ignores
+    - Work done unconditionally that is only needed conditionally
+    - Intermediate collections built and then iterated once (build + iterate = two passes; a single streaming pass may
+      suffice)
+- Use local file reads and repository search freely. Read callers to understand actual input sizes and access patterns — an O(n) scan that
+  runs once at startup is different from one that runs per row.
+- Each finding states: what the code does now (with complexity), what the optimal approach is (with complexity), and why
+  it matters (call frequency, data scale, or hot-path placement).
+- Do not duplicate zero-GC or style findings — focus purely on algorithmic and computational efficiency.
 
-If the PR introduces SQL statements, ALTER operations, or state mutation:
+Run this agent in parallel with agents 1-10. It is mandatory regardless of diff size.
 
-- Verify a corresponding `SecurityContext.authorize*()` call exists.
-- Check enterprise implementations when available: `EntSecurityContextBase`, `AdminSecurityContext`, `AbstractReplicaSecurityContext`, and test mocks.
-- Verify `Permission.java` constants, name maps, and `TABLE_PERMISSIONS` or `ALL_PERMISSIONS`.
-- Verify `PermissionParser` can parse GRANT and REVOKE for the new permission name.
-- Ensure replica security contexts deny new writes.
+Combine all agent findings into a single deduplicated **draft** report. Do NOT present this draft to the user yet — it goes straight into verification.
 
-### TODOs and FIXMEs
+## Step 3b: Verify every finding against source code
 
-Scan the diff for `TODO`, `FIXME`, `HACK`, `XXX`, and `WORKAROUND`. Determine whether each is pre-existing or newly introduced. Flag newly introduced deferred bugs or incomplete implementation. Verify referenced ticket numbers exist when practical.
+The parallel review agents work from the diff plus the change surface map and frequently produce false positives — especially around memory ownership, polymorphic dispatch, Rust control-flow guarantees, and JNI lifecycle conventions. Every finding MUST be verified before it is reported.
 
-### Fresh-Context and Adversarial Passes
+For each finding in the draft report:
 
-At level 3, run a fresh-context pass that receives only the diff and changed file names with the instruction to find ways the code is wrong. Run a separate adversarial performance pass that receives the diff plus full touched files and asks for the theoretically fastest implementation of each changed method.
+1. **Read the actual source code** at the exact lines cited. Do not rely on the agent's description alone.
+2. **Trace the full code path**: follow callers, inheritance hierarchies, and runtime types. A method called on a base-class reference may dispatch to a subclass override (e.g., `PartitionDescriptor.clear()` vs `OwnedMemoryPartitionDescriptor.clear()`).
+3. **Check both sides of JNI/FFI boundaries**: if a finding involves Java↔Rust interaction, read both the Java caller and the Rust JNI function. Verify ownership transfer, error propagation, and cleanup on both sides.
+4. **For resource leak claims**: trace every allocation to its corresponding free/close on ALL code paths (happy path,
+   error path, finally blocks). Check for polymorphic `close()`/`clear()` overrides. Before claiming a leak between
+   allocation and cleanup registration, verify that the intervening code can actually throw.
+5. **For Rust panic claims**: verify whether the panic site is actually reachable. Trace control flow backwards — a
+   preceding guard or early return may make it unreachable.
+6. **For Rust panic claims via JNI**: trace the Java caller to check whether it can actually pass parameters that
+   trigger the panic. If every caller validates inputs before the JNI call, the panic is unreachable — drop it.
+7. **For Rust numeric overflow claims**: check whether the overflow is reachable at realistic scale. QuestDB handles
+   billions to a few trillion rows, thousands of tables, and thousands of columns — not billions of columns or
+   quintillions of rows. If overflow requires values beyond that scale, drop it.
+8. **For performance claims**: verify the finding is technically accurate (correct complexity analysis, correct
+   identification of the hot/cold path). Do NOT downgrade a finding just because the current data size is small
+   or the saving seems negligible — algorithmic inefficiency compounds at scale and under concurrent load.
+   Sub-optimal algorithm choice (O(n) vs O(1), multi-pass vs single-pass, redundant traversals) is always
+   a valid finding regardless of measured cost. The only valid reason to downgrade is if the analysis is
+   technically wrong (e.g., the "linear scan" is actually bounded by a small constant like column count).
+9. **For cross-context findings (Agent 9)**: re-read the callsite in full, including its callers up two levels, and confirm the broken behavior is reachable from production code paths. Cross-context findings are high-value but also the easiest to overstate — verify carefully.
+10. **Classify each finding** as:
+    - **CONFIRMED in-diff** — the bug is real and inside the diff
+    - **CONFIRMED at out-of-diff callsite** — the bug is in an unchanged file because the changed symbol is used there in a way that's now broken (cite the file and the contract from 2.5c that was violated)
+    - **FALSE POSITIVE** — the code is actually correct (explain why)
+    - **CONFIRMED with nuance** — the issue exists but is less severe than stated (explain)
 
-## Step 3b: Verify Findings
+**Move false positives to a separate "Downgraded" section** at the end of the report. For each, give a one-line explanation of why it was dismissed. This lets the PR author verify the reasoning and catch verification mistakes.
 
-Do not present draft findings. Verify each one first:
+Launch verification agents in parallel where findings are independent. Each verification agent should read surrounding source files, not just the diff.
 
-- Read exact source lines and surrounding code.
-- Trace callers, subclasses, overrides, runtime dispatch, and callers up two levels for cross-context issues.
-- For JNI/FFI, read both Java and Rust sides.
-- For leaks, trace allocation to cleanup on happy and error paths; check whether code between allocation and cleanup registration can throw.
-- For Rust panics and overflows, prove reachability from realistic QuestDB scale and callers.
-- For performance, verify the complexity and hot/cold path.
-- Classify internally as confirmed in-diff, confirmed out-of-diff callsite, confirmed with nuance, or false positive.
+## Review checklists
 
-Report only confirmed findings. Include a `Downgraded` section only when useful to explain dismissed draft findings.
+Review the diff for:
+
+### Correctness & bugs
+- NULL handling: distinguish sentinel NULL vs actual NULL
+- Edge cases and error paths
+- SqlException positions point at the offending character, not the expression start
+- Logic errors, off-by-one, incorrect bounds, wrong operator precedence
+- **Reachability expansion:** for each changed symbol, list the SQL clauses, async contexts, error paths, parallel workers, and lock-held states it can now appear in but didn't before. Verify it works in each.
+
+### Concurrency
+- Race conditions: unsynchronized shared mutable state, missing volatile, unsafe publication
+- Lock ordering issues that could cause deadlocks
+- Thread-safety of data structures used across threads
+- For every changed symbol, check whether it is now called from a thread or context (per 2.5d) where the previous concurrency assumptions don't hold
+
+### Performance & algorithmic optimality
+
+QuestDB is a performance-first database. The standard is not "avoid regressions" — it is "use the best known algorithm."
+Every new loop, traversal, data structure choice, and computation must be justified as optimal or near-optimal.
+
+#### Algorithm optimality (highest priority)
+
+- For every new or changed loop/traversal, state the time complexity. Then ask: does a better algorithm exist? Flag:
+    - O(n) linear scan where O(1) hash lookup or direct indexing is possible
+    - O(n log n) sort where O(n) alternative exists
+    - O(n^2) nested iteration where O(n) or O(n log n) would work
+    - Any sub-optimal complexity where a better algorithm is known, at any scale
+- Multi-pass vs single-pass: if the code traverses the same data multiple times (parsing, validating, transforming,
+  collecting then iterating), determine whether the passes can be fused into one. Multiple passes is a finding unless
+  each pass structurally depends on the completed output of the previous one.
+- Redundant computation: values recomputed on every call that could be computed once and cached. Repeated map/list
+  lookups for the same key. Re-parsing of already-parsed data. Re-traversal of an already-visited structure.
+- Data structure fitness: is the chosen data structure optimal for the access pattern? Linear search in a list where a
+  hash set gives O(1). Sorted array where a heap gives better insert/extract-min. Linked traversal where an indexed
+  array gives O(1) random access. ArrayList where a pre-sized array suffices.
+- Unnecessary copies and conversions: copying data that could be referenced in place. String ↔ CharSequence, byte[] ↔
+  DirectByteCharSequence conversions when the original form works.
+
+#### Zero-GC and allocation discipline
+
+- Unnecessary allocations on data paths (zero-GC requirement) — even a single GC allocation on a per-row path is a
+  finding
+- Use of `java.util.*` collections (HashMap, ArrayList, etc.) instead of QuestDB's own zero-GC collections in `io.questdb.std`
+- String creation or concatenation on hot paths (use CharSink, StringSink, or direct char[] instead)
+- Capturing lambdas on hot paths — lambdas that capture local variables or instance fields allocate a new object on every invocation. Non-capturing lambdas (static method refs, no closed-over state) are safe as the JVM caches them. Flag any capturing lambda on a data path.
+- Autoboxing on hot paths — primitive-to-wrapper conversions (`int` → `Integer`, `long` → `Long`, etc.) allocate silently. Watch for primitives passed to generic methods, stored in `java.util.*` collections, or returned from methods with wrapper return types.
+
+#### Vectorization and native acceleration
+
+- Missing SIMD or vectorization opportunities where QuestDB's native layer could process column data in bulk
+- Inefficient algorithms where QuestDB already provides optimized alternatives
+
+#### Compile-time paths
+
+- GC allocations during SQL compilation are acceptable
+- Algorithmic inefficiency during compilation is NOT acceptable — slow compilation means slow first-query latency. A
+  multi-pass parse, O(n^2) plan enumeration, or redundant AST traversals in the compiler are findings just as they would
+  be on a data path.
+
+### Code quality
+- Code smell: overly complex methods, deep nesting, unclear intent, dead code
+- No third-party Java dependencies on data paths
+
+### QuestDB coding standards
+- Class members grouped by kind (static vs instance) and visibility, sorted alphabetically
+- Boolean names use `is...` / `has...` prefix
+- Modern Java features: enhanced switch, multiline strings, pattern variables in instanceof
+
+### Resource management
+- Resources properly closed in all code paths (especially error paths)
+- try-with-resources used where applicable
+- Native memory freed correctly
+
+### SQL conventions (if tests or SQL involved)
+- Keywords in UPPERCASE
+- `expr::TYPE` cast syntax preferred over CAST()
+- Underscores in numbers >= 5 digits (e.g., 1_000_000)
+- Multiline strings for complex queries
+- No DELETE statements (suggest DROP PARTITION or soft delete)
+- Tests use the `assertQuery(...)` builder for SQL assertions (see "SQL test assertions" below) and `execute()` for DDL
+- Single INSERT for multiple rows
+
+### SQL test assertions (builder API — strict, blocking)
+
+QuestDB has migrated SQL test assertions to the fluent `AbstractCairoTest.assertQuery(query)` builder. These rules are blocking — treat violations as **Critical** findings, not style nits. Apply them to every test line the diff **adds or modifies** (a residual pattern that the PR merely moves or reindents is not a finding; a newly written or edited one is).
+
+- **`assertSql(...)` has been REMOVED — there is no query-result `assertSql(...)`/`TestUtils.assertSql(...)` to fall back to.** Any new or changed test code that asserts query results with `assertSql(...)` / `TestUtils.assertSql(...)` is a Critical finding (it will not even compile against the current base class); the author must use the builder instead:
+    - data: `assertQuery(sql).returns(expected)` — chain `.timestamp(...)`, `.expectSize()`, `.noRandomAccess()`, `.sizeMayVary()`, `.ddl(...)`, `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)` as needed.
+    - plans: `assertQuery(sql).assertsPlan(plan)` / `.assertsPlanContaining(...)` / `.assertsPlanNotContaining(...)`, or fold the plan into a data assertion via `.withPlan(...)` / `.withPlanContaining(...)` / `.withPlanNotContaining(...)`.
+  Do **not** accept "the surrounding file already uses `assertSql`" — there is no such helper anymore, so the diff's lines must use the new API. Flag `assertPlanNoLeakCheck(...)`, `getPlan(...)`, `assertPlanDoesNotContain(...)`, and direct `TestUtils.assertSql(...)` in new/changed test code for the same reason. The one `assertSql` that legitimately survives is the live-`ServerMain` wrapper `TestServerMain.assertSql(sql, expected)` (and the enterprise `EntGriffinServerMain.assertSql(...)`): it is a convenience for the running-server context, internally drives the builder via `returnsOnce()` (single pass, because a live server's state mutates between reads), and is NOT the banned query-result helper — do not flag it.
+
+- **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` runs the query through a SINGLE cursor pass and deliberately SKIPS the second read, the `calculateSize()` pass, the variable-column check, and the factory-property assertions (`supportsRandomAccess`, `expectSize`) that `.returns(...)` performs. Those skipped checks catch real bugs: cursors that don't reset correctly on `toTop()`, `size()` that disagrees between passes, random-access records that return wrong values via `recordAt()`. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — e.g. an unseeded `rnd_*` in the projection, `now()`/`sysdate()`/`systimestamp()`-style time-varying output, or inherently non-deterministic row order. For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
+
+- **Anti-pattern: a lone `assertQuery(...)` wrapped in `assertMemoryLeak(() -> { ... })`.** The builder runs its OWN memory-leak check by default (it wraps internally unless `.noLeakCheck()` is set). When an `assertMemoryLeak(...)` lambda's only meaningful statement is a single `assertQuery(...)` chain, the outer wrapper is redundant and almost always forces a `.noLeakCheck()` on the builder — which disables the builder's leak check and replaces it with a hand-rolled one, defeating the point. Flag it: drop the `assertMemoryLeak` wrapper and the `.noLeakCheck()`, letting the builder leak-check itself. The wrapper is only legitimate when the lambda genuinely holds multiple statements (DDL + inserts + several assertions) that must share one leak-check scope; a single builder call does not.
+
+### Enterprise permissions & ACL (if PR introduces new SQL statements or ALTER operations)
+- New ALTER TABLE operations almost always require a new enterprise permission. If the PR adds a new ALTER statement (or any new SQL statement that modifies state), flag it if there is no corresponding `SecurityContext.authorize*()` call in the execution path.
+- New features in OSS should have an enterprise counterpart that wires up ACL. Check whether the PR introduces `authorize*` methods in `SecurityContext` and whether all enterprise `SecurityContext` implementations (`EntSecurityContextBase`, `AdminSecurityContext`, `AbstractReplicaSecurityContext`, and test mocks) are updated.
+- New permissions must be registered in `Permission.java` (constant, name maps, and included in `TABLE_PERMISSIONS`/`ALL_PERMISSIONS` as appropriate).
+- The `PermissionParser` must be able to parse GRANT/REVOKE for the new permission name — especially if the name contains SQL keywords like `ON`, `TO`, or `FROM` that could conflict with parser grammar.
+- Replica security contexts must deny new write operations (`deniedOnReplica()`).
+
+### Test review
+- **Coverage gaps:** For every new or changed code path, verify a corresponding test exists. If not, flag it explicitly as "missing test for X".
+- **Cross-context coverage:** For every entry in the cross-context exposure list (2.5d), verify a test exercises the changed symbol from that context. Missing cross-context tests are high-priority findings.
+- **Error path coverage:** Are failure cases, exceptions, and edge conditions tested — not just the happy path?
+- **NULL tests:** Are NULL inputs, NULL columns, and NULL expression results tested?
+- **Boundary conditions:** Empty tables, empty partitions, single-row tables, max-value inputs, zero-length strings.
+- **Concurrency tests:** If the code touches shared state, are there tests that exercise concurrent access?
+- **Resource leak tests:** Tests must use `assertMemoryLeak()` for anything that allocates native memory.
+- **Test quality:** Are tests actually asserting the right thing? Watch for tests that pass trivially, assert on wrong values, or test implementation details instead of behavior.
+- **Regression tests:** If this PR fixes a bug, is there a test that reproduces the original bug and would fail without the fix?
+- Use repository search to find existing test files for the changed classes and verify they cover the new behavior.
+
+### Unresolved TODOs and FIXMEs
+- Scan the diff for `TODO`, `FIXME`, `HACK`, `XXX`, and `WORKAROUND` comments. For each one found:
+  - Is it a pre-existing comment that was just moved/reformatted, or newly introduced in this PR?
+  - If newly introduced: does it represent unfinished work that should block the merge, or a known limitation that is acceptable to ship? Flag any that look like deferred bugs or incomplete implementations.
+  - If the TODO references a ticket/issue number, verify the reference exists.
+
+### Commit messages
+- Plain English titles (no Conventional Commits prefix), under 50 chars
+- Full long-form body description, line breaks at 72 chars
+- Active voice, naming the acting subject
 
 ## Step 4: Output
 
-Use code-review format with findings first. Do not include praise.
+Present ONLY verified findings (false positives are excluded). Structure as:
 
 ### Critical
-
-Blocking issues. Include exact file path and line number, in-diff or out-of-diff classification, code path trace, violated contract for out-of-diff findings, and suggested fix.
+Issues that must be fixed before merge. Each must include:
+- Exact file path and line numbers (including out-of-diff files)
+- Whether the finding is **in-diff** or **out-of-diff**
+- Code path trace showing why the bug is real
+- For out-of-diff findings: the contract from 2.5c that was violated and the callsite that triggers it
+- Suggested fix
 
 ### Moderate
-
-Issues worth addressing but not necessarily blocking.
+Issues worth addressing but not blocking.
 
 ### Minor
+Style nits and suggestions.
 
-Style nits and small suggestions.
-
-### Downgraded
-
-False positives dismissed during verification. For each, state the original claim and the source fact that disproves it.
+### Downgraded (false positives)
+Findings from the initial review that were dismissed after source code verification. For each, state:
+- The original claim (one line)
+- Why it was dismissed (one line, citing the specific code that disproves it)
 
 ### Summary
-
-Include one-line verdict: approve, request changes, or needs discussion. State how many draft findings were verified vs dropped and the in-diff vs out-of-diff split. If a non-trivial diff has zero out-of-diff findings, widen the cross-context search before finalizing.
+- One-line verdict: approve, request changes, or needs discussion
+- Highlight any regressions or tradeoffs
+- State how many draft findings were verified vs dropped as false positives (e.g., "8 findings verified, 4 false positives removed")
+- State the in-diff vs out-of-diff split (e.g., "5 findings in-diff, 3 findings out-of-diff"). If the diff is non-trivial and out-of-diff is zero, the cross-context pass likely underran — re-invoke Agent 9 with a wider grep before finalizing.

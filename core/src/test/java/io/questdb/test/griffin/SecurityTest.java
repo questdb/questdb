@@ -81,7 +81,7 @@ public class SecurityTest extends AbstractCairoTest {
 
             @Override
             public long getSqlSortKeyMaxBytes() {
-                return 128;
+                return 120;
             }
 
             @Override
@@ -91,7 +91,7 @@ public class SecurityTest extends AbstractCairoTest {
 
             @Override
             public long getSqlSortLightValueMaxBytes() {
-                return 32;
+                return 80;
             }
 
             @Override
