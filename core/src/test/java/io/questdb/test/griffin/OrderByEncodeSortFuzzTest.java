@@ -188,6 +188,54 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFuzzEncodedSortParquetMultiRowGroup() throws Exception {
+        // The default fuzz Parquet table is a single row group, so the row-filtered
+        // emit always decodes from offset 0 of row group 0 and never reaches the
+        // FILL_NULLS gap-fill path with a non-zero rowGroupLo. Force several row groups
+        // per partition and start the scanned frame mid-row-group with a designated-
+        // timestamp interval, so the emit declares rows past group 0 / past offset 0.
+        // A unique ts in the ORDER BY keeps the sort total, so the LIMIT cut never
+        // splits a tie group and the encoded and legacy results stay comparable.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 256);
+        assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            // Enough rows to span many row groups per hourly partition (256 rows each).
+            int rowCount = 2_000 + rnd.nextInt(3_001);
+            createFuzzTable("fuzz_sort_rg", rowCount, true);
+
+            int[] targetMaxBytes = {8, 16, 24};
+            for (int targetMax : targetMaxBytes) {
+                for (int attempt = 0; attempt < 3; attempt++) {
+                    ObjList<Column> selected = selectColumns(rnd, COLUMNS, targetMax);
+                    if (selected.size() == 0) {
+                        continue;
+                    }
+                    long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                    node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
+                    StringSink orderByClause = buildOrderByClause(rnd, selected);
+                    boolean hasTs = false;
+                    for (int i = 0, n = selected.size(); i < n; i++) {
+                        hasTs |= "ts".equals(selected.getQuick(i).name());
+                    }
+                    StringSink query = new StringSink();
+                    query.put("SELECT * FROM fuzz_sort_rg");
+                    // ts = rowIndex * 1_000_000 micros, so an interval at a non-edge row
+                    // starts the first scanned Parquet frame partway into a row group.
+                    long startRow = 1 + rnd.nextInt(rowCount - 1);
+                    query.put(" WHERE ts >= ").put(startRow * 1_000_000L).put("::timestamp");
+                    query.put(" ORDER BY ").put(orderByClause);
+                    if (!hasTs) {
+                        query.put(", ts");
+                    }
+                    query.put(' ');
+                    appendLimitClause(rnd, query, rowCount);
+                    assertQueryMatch(query, "parquet multi-row-group limit");
+                }
+            }
+        });
+    }
+
     private static void appendLimitClause(Rnd rnd, StringSink query, int rowCount) {
         final int bound = rowCount + 10;
         switch (rnd.nextInt(6)) {

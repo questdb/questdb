@@ -250,7 +250,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
         baseCursor.setRecordAtRows(this);
-        // No finally: a retry after a mid-build throw must not see freed rank maps.
+        // Success-path free of the encoder's rank maps; a mid-build throw leaves them
+        // for close(). The cursor is not retryable: buildAndSort resets state at entry.
         Misc.free(encoder);
     }
 

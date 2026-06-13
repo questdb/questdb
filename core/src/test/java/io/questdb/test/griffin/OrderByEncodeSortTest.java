@@ -596,6 +596,59 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByLimitLoPosHiNegBindVariableReExecutionDesignatedTimestamp() throws Exception {
+        // Re-execution over a designated-timestamp table whose ORDER BY starts with the
+        // timestamp, so the factory selects the legacy partially-sorted cursor. A non-encodable
+        // varchar sort key keeps the encoded path out, so both flag parameterizations route here.
+        // Execution 1 (lo>=0, hi>=0) picks the partially-sorted cursor; execution 2 re-binds to
+        // (lo>=0, hi<0), installing the unbounded limit sentinel (-1). The early-stop must scan all
+        // timestamp groups for a negative limit, not bail at the first group boundary.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x AS v, ('k' || x)::varchar AS s, (x * 1_000_000)::timestamp AS ts " +
+                            "FROM long_sequence(7)" +
+                            ") TIMESTAMP(ts)"
+            );
+            bindVariableService.clear();
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 3);
+            try (RecordCursorFactory factory = select("SELECT * FROM x ORDER BY ts, s LIMIT :lo, :hi")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+
+                // same factory, lo >= 0 / hi < 0: slice off one row at each end of the full set
+                bindVariableService.setLong("hi", -1);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            4\tk4\t1970-01-01T00:00:04.000000Z
+                            5\tk5\t1970-01-01T00:00:05.000000Z
+                            6\tk6\t1970-01-01T00:00:06.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+
+                // and back to the top-K shape
+                bindVariableService.setLong("hi", 3);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("""
+                            v\ts\tts
+                            2\tk2\t1970-01-01T00:00:02.000000Z
+                            3\tk3\t1970-01-01T00:00:03.000000Z
+                            """, cursor, factory.getMetadata());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOrderByLimitLoPosHiNullBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT x AS v FROM long_sequence(5))");
@@ -788,44 +841,46 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
         // is read cross-thread instead of inline. The selective sym filter (10%) keeps
         // late materialization engaged on every frame. Only the encoded path declares
         // the used columns; the legacy path runs the same query for a correctness check.
-        final WorkerPool pool = new WorkerPool(() -> 4);
-        TestUtils.execute(
-                pool,
-                (engine, _, sqlExecutionContext) -> {
-                    engine.execute(
-                            """
-                                    CREATE TABLE pq AS (
-                                        SELECT
-                                            x v,
-                                            ('r' || x)::varchar note,
-                                            ARRAY[x::double, (x * 2)::double] arr,
-                                            ('s' || (x % 10))::symbol sym,
-                                            timestamp_sequence(0, 172_800_000) ts
-                                        FROM long_sequence(6000)
-                                    ) TIMESTAMP(ts) PARTITION BY DAY""",
-                            sqlExecutionContext
-                    );
-                    engine.execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')", sqlExecutionContext);
-                    engine.execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", sqlExecutionContext);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                """
+                                        CREATE TABLE pq AS (
+                                            SELECT
+                                                x v,
+                                                ('r' || x)::varchar note,
+                                                ARRAY[x::double, (x * 2)::double] arr,
+                                                ('s' || (x % 10))::symbol sym,
+                                                timestamp_sequence(0, 172_800_000) ts
+                                            FROM long_sequence(6000)
+                                        ) TIMESTAMP(ts) PARTITION BY DAY""",
+                                sqlExecutionContext
+                        );
+                        engine.execute("INSERT INTO pq VALUES (1_000_000, 'r1000000', ARRAY[1000000.0, 2000000.0], 's0', '2000-01-01')", sqlExecutionContext);
+                        engine.execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", sqlExecutionContext);
 
-                    assertQuery("SELECT note, v, arr, sym FROM pq WHERE sym = 's7' AND length(note) > 1 ORDER BY v DESC LIMIT 0,5")
-                            .withEngine(engine)
-                            .withContext(sqlExecutionContext)
-                            .noLeakCheck()
-                            .expectSize()
-                            .withPlanContaining(limitedSortPlanType(), "Async")
-                            .returns("""
-                                    note\tv\tarr\tsym
-                                    r5997\t5997\t[5997.0,11994.0]\ts7
-                                    r5987\t5987\t[5987.0,11974.0]\ts7
-                                    r5977\t5977\t[5977.0,11954.0]\ts7
-                                    r5967\t5967\t[5967.0,11934.0]\ts7
-                                    r5957\t5957\t[5957.0,11914.0]\ts7
-                                    """);
-                },
-                configuration,
-                LOG
-        );
+                        assertQuery("SELECT note, v, arr, sym FROM pq WHERE sym = 's7' AND length(note) > 1 ORDER BY v DESC LIMIT 0,5")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining(limitedSortPlanType(), "Async")
+                                .returns("""
+                                        note\tv\tarr\tsym
+                                        r5997\t5997\t[5997.0,11994.0]\ts7
+                                        r5987\t5987\t[5987.0,11974.0]\ts7
+                                        r5977\t5977\t[5977.0,11954.0]\ts7
+                                        r5967\t5967\t[5967.0,11934.0]\ts7
+                                        r5957\t5957\t[5957.0,11914.0]\ts7
+                                        """);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -907,6 +962,54 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             13\tr13
                             8\tr8
                             3\tr3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmitMultiRowGroup() throws Exception {
+        // The single-row-group fixtures always declare emit rows in row group 0 from
+        // offset 0, so an off-by-rowGroupLo or wrong-slice-segment bug in the row-filtered
+        // decode passes them silently. Force 10 row groups in one Parquet partition and
+        // land the declarations past group 0 / past offset 0 to catch that.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pqg AS (
+                        SELECT x v, ('r' || x)::varchar note, timestamp_sequence(0, 100) ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pqg VALUES (1_000_000, 'r1000000', '2000-01-01')");
+            execute("ALTER TABLE pqg CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+
+            // One matching row per row group keeps the emit declaration well under the
+            // density gate; LIMIT 3,8 drops the first three matches so the surviving
+            // declarations sit in row groups 3..7, each at offset 136 within its group.
+            assertQuery("SELECT v, note FROM pqg WHERE v % 1000 = 137 ORDER BY v LIMIT 3,8")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            3137\tr3137
+                            4137\tr4137
+                            5137\tr5137
+                            6137\tr6137
+                            7137\tr7137
+                            """);
+
+            // An interval on the designated timestamp starts the scanned Parquet frame
+            // mid-row-group (row 2500 sits at offset 500 in group 2), so the declared top
+            // rows decode through a non-zero rowGroupLo.
+            assertQuery("SELECT v, note FROM pqg WHERE ts >= '1970-01-01T00:00:00.250000Z' ORDER BY v LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            2501\tr2501
+                            2502\tr2502
+                            2503\tr2503
                             """);
         });
     }
@@ -1394,6 +1497,117 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         \t8
                         \t12
                         """);
+    }
+
+    @Test
+    public void testOrderBySymbolColumnLimitWithNulls() throws Exception {
+        // The fuzz test appends a unique key to the ORDER BY so the sort is total and
+        // the LIMIT cut never splits a tie group: the encoded top-K and the legacy
+        // tree-chain resolve ties differently, so a symbol-only ORDER BY with the cut
+        // inside a tie diverges between them. This pins the case the fuzzer skips - the
+        // encoded top-K's own NULL-symbol ordering at the LIMIT cut - so it asserts the
+        // encoded path only. The encoded sort appends the rowId as the trailing key
+        // word, so ties break rowId-ascending (here val-ascending) deterministically.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (" +
+                    "SELECT" +
+                    " CAST(CASE" +
+                    "     WHEN x % 4 = 0 THEN NULL" +
+                    "     WHEN x % 4 = 1 THEN 'A'" +
+                    "     WHEN x % 4 = 2 THEN 'B'" +
+                    "     ELSE 'C'" +
+                    " END AS SYMBOL) AS sym," +
+                    " x AS val" +
+                    " FROM long_sequence(12)" +
+                    ")");
+
+            // ASC: NULL sorts first, so a cut inside the NULL group returns the
+            // rowId-smallest NULL rows.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            """);
+
+            // ASC: cut exactly at the NULL/'A' boundary returns the whole NULL group.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            \t12
+                            """);
+
+            // ASC: cut one past the NULL group keeps every NULL plus the first 'A'.
+            assertQuery("SELECT * FROM x ORDER BY sym ASC LIMIT 0,4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            \t4
+                            \t8
+                            \t12
+                            A\t1
+                            """);
+
+            // DESC: NULL sorts last, so a small cut must exclude every NULL row.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            """);
+
+            // DESC: cut exactly at the 'A'/NULL boundary keeps everything but the NULLs.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,9")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            B\t2
+                            B\t6
+                            B\t10
+                            A\t1
+                            A\t5
+                            A\t9
+                            """);
+
+            // DESC: cut one past the 'A' group reaches the first (rowId-smallest) NULL.
+            assertQuery("SELECT * FROM x ORDER BY sym DESC LIMIT 0,10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            sym\tval
+                            C\t3
+                            C\t7
+                            C\t11
+                            B\t2
+                            B\t6
+                            B\t10
+                            A\t1
+                            A\t5
+                            A\t9
+                            \t4
+                            """);
+        });
     }
 
     @Test
