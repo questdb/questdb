@@ -86,9 +86,6 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
-    // Serial-path reuse only (isParquetMetaResolvable); parallel rebuild
-    // tasks create their own instances.
-    private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
@@ -142,7 +139,6 @@ public class TableSnapshotRestore implements QuietCloseable {
         abortAndDrainParallelTasks();
         futures.clear();
         executor.shutdownNow();
-        parquetMetaReader.clear();
         tableMetadata = Misc.free(tableMetadata);
         txWriter = Misc.free(txWriter);
         columnVersionReader = Misc.free(columnVersionReader);
@@ -376,18 +372,24 @@ public class TableSnapshotRestore implements QuietCloseable {
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
 
-            // Generate _pm sidecar files for parquet partitions restored from
-            // old backups that predate the _pm format, and regenerate sidecars
-            // that do not resolve at the committed parquet size (stale, torn,
-            // or partially written captures). This must run before
-            // rebuildBitmapIndexes, which mmaps _pm to rebuild bitmap indexes.
-            generateMissingParquetMetaFiles(tablePath.trimTo(pathTableLen));
+            // Validate restored parquet partitions and ensure each has a _pm
+            // sidecar that resolves a footer at the committed parquet size:
+            // generate one for old backups that predate the _pm format, and
+            // regenerate stale, torn or partially written captures. The cheap
+            // committed-size truncation check runs serially (fail-fast); the
+            // map+CRC validation, regeneration and -- when requested -- the
+            // parquet bitmap-index rebuild run as one parallel task per parquet
+            // partition, mapping _pm exactly once. Passing the rebuild flag here
+            // fuses validation with the index rebuild so the sidecar is not
+            // mapped and CRC-verified twice on the enterprise-restore path.
+            prepareParquetPartitions(tablePath.trimTo(pathTableLen), pathTableLen, rebuildPartitionColumnIndexes);
 
             // Symbols are not append-only data structures, they can be corrupt
             // when symbol files are copied while written to. We need to rebuild them.
             rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
 
-            // Recreate the bitmap indexes for each indexed column in each partition
+            // Recreate the bitmap indexes for each indexed native partition;
+            // parquet partitions were already handled by prepareParquetPartitions.
             if (rebuildPartitionColumnIndexes) {
                 rebuildBitmapIndexes(tablePath, pathTableLen);
             }
@@ -646,7 +648,23 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    private void generateMissingParquetMetaFiles(Path tablePath) {
+    /**
+     * Validates restored parquet partitions and schedules, per parquet partition,
+     * a single parallel task that maps {@code _pm} exactly once to validate it
+     * (footer resolve + full-file CRC) against the committed parquet size,
+     * regenerates it from {@code data.parquet} when missing, stale, torn or
+     * zero-length, and -- when {@code rebuildIndexes} is set and the partition
+     * holds rows -- reuses that same resolved mapping to rebuild the partition's
+     * bitmap indexes (see {@link #processParquetPartition}). The cheap
+     * committed-size truncation check stays on this serial thread so a truncated
+     * capture fails fast with a path-bearing diagnostic.
+     * <p>
+     * Replaces the former serial map+CRC validation: that pass mapped and
+     * CRC-verified every {@code _pm} on the calling thread and the rebuild then
+     * mapped and CRC-verified it again, so large (~100k) partition tables paid a
+     * redundant serial map/CRC/unmap per parquet partition at startup.
+     */
+    private void prepareParquetPartitions(Path tablePath, int pathTableLen, boolean rebuildIndexes) {
         int partitionBy = tableMetadata.getPartitionBy();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return;
@@ -654,6 +672,9 @@ public class TableSnapshotRestore implements QuietCloseable {
         int timestampType = tableMetadata.getTimestampType();
         int plen = tablePath.size();
         int partitionCount = txWriter.getPartitionCount();
+        // Snapshot the table root: the submitted tasks build their own Path from
+        // this string and never touch the shared tablePath this loop mutates.
+        final String tablePathStr = tablePath.toString();
 
         for (int i = 0; i < partitionCount; i++) {
             if (!txWriter.isPartitionParquet(i)) {
@@ -661,6 +682,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
             long partitionTs = txWriter.getPartitionTimestampByIndex(i);
             long nameTxn = txWriter.getPartitionNameTxn(i);
+            long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTs);
 
             TableUtils.setPathForNativePartition(
                     tablePath.trimTo(plen), timestampType, partitionBy, partitionTs, nameTxn
@@ -674,8 +696,8 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             // Validate data.parquet against _txn by its size alone. This serial
             // loop visits every parquet partition of every restored table, so it
-            // reads the size by path instead of opening an fd; only the
-            // regeneration branch below opens the file.
+            // reads the size by path instead of opening an fd; the task opens the
+            // file only when it has to regenerate or rebuild.
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             long onDiskSize = ff.length(tablePath.$());
             if (onDiskSize < 0) {
@@ -696,94 +718,150 @@ public class TableSnapshotRestore implements QuietCloseable {
                         .put(", onDisk=").put(onDiskSize)
                         .put(']');
             }
-
-            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            if (ff.exists(tablePath.$())) {
-                if (isParquetMetaResolvable(tablePath, parquetFileSize)) {
-                    tablePath.trimTo(plen);
-                    continue;
-                }
-                // The sidecar does not resolve a footer at the committed parquet
-                // size: a stale _pm paired with an in-place regenerated
-                // data.parquet, a torn copy, or a partial file left by a crashed
-                // restore. Trusting it would defer the failure to the first read
-                // of the partition, so remove it and regenerate from
-                // data.parquet, which the committed-size check above has already
-                // validated.
-                if (!ff.removeQuiet(tablePath.$())) {
-                    throw CairoException.critical(ff.errno()).put("cannot remove unresolvable _pm file [path=").put(tablePath).put(']');
-                }
-                LOG.info().$("removed unresolvable _pm of restored parquet partition for regeneration [path=").$(tablePath).I$();
-            }
-
-            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            long parquetFd = ff.openRO(tablePath.$());
-            if (parquetFd < 0) {
-                throw CairoException.critical(ff.errno()).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
-            }
-
-            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
-            if (parquetMetaFd < 0) {
-                int errno = ff.errno();
-                ff.close(parquetFd);
-                throw CairoException.critical(errno).put("cannot create _pm file [path=").put(tablePath).put(']');
-            }
-
-            try {
-                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
-                long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
-                // Persist the brand-new _pm before snapshot restore returns. Otherwise
-                // a power loss after restore but before the engine syncs would leave
-                // the partition referenced by _txn but with no usable _pm sidecar.
-                ff.fsync(parquetMetaFd);
-                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
-            } catch (Throwable t) {
-                // Remove partially written _pm file so a retry regenerates it.
-                tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                ff.remove(tablePath.$());
-                throw t;
-            } finally {
-                ff.close(parquetFd);
-                ff.close(parquetMetaFd);
-                if (!Os.isWindows()) {
-                    tablePath.trimTo(partitionDirLen).$();
-                    final long dirFd = TableUtils.openRONoCache(ff, tablePath.$(), LOG);
-                    if (dirFd != -1) {
-                        ff.fsyncAndClose(dirFd);
-                    }
-                }
-            }
             tablePath.trimTo(plen);
+
+            // A parquet partition with no rows still needs a valid _pm, but no
+            // index rebuild: rebuildBitmapIndexes skips rowCount<=0 too.
+            final boolean doRebuild = rebuildIndexes && partitionRowCount > 0;
+            futures.add(submitParallelTask(() -> processParquetPartition(
+                    tablePathStr,
+                    pathTableLen,
+                    partitionTs,
+                    partitionRowCount,
+                    nameTxn,
+                    parquetFileSize,
+                    partitionBy,
+                    timestampType,
+                    doRebuild
+            )));
         }
         tablePath.trimTo(plen);
     }
 
     /**
-     * Reports whether the {@code _pm} sidecar at {@code parquetMetaPath} resolves a
-     * footer for the committed parquet file size from {@code _txn}. A corrupt file
-     * (bad CRC, partial write, header size exceeding the file length) surfaces as
-     * {@code false} rather than an exception: the caller has already validated
-     * {@code data.parquet} against the committed size and can regenerate the sidecar.
+     * Regenerates the {@code _pm} sidecar from {@code data.parquet} using the
+     * committed {@code parquetFileSize} (never {@code ff.length()}: bytes past the
+     * committed boundary are uncommitted MVCC state). Creates, writes and fsyncs
+     * the file, then fsyncs the partition directory on non-Windows so the new
+     * sidecar survives a post-restore power loss, and removes a partially written
+     * {@code _pm} on failure so a retry regenerates cleanly. {@code path} must
+     * sit inside the partition directory; it is left trimmed to
+     * {@code partitionDirLen} on return. Runs on parallel executor threads, so it
+     * takes a per-task {@code path} and touches no shared mutable state.
      */
-    private boolean isParquetMetaResolvable(Path parquetMetaPath, long parquetFileSize) {
-        long parquetMetaAddr = 0;
-        long parquetMetaFileSize = 0;
+    private void regenerateParquetMetaFile(Path path, int partitionDirLen, long parquetFileSize) {
+        path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+        long parquetFd = ff.openRO(path.$());
+        if (parquetFd < 0) {
+            throw CairoException.critical(ff.errno()).put("cannot open parquet file for _pm generation [path=").put(path).put(']');
+        }
+
+        path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+        long parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+        if (parquetMetaFd < 0) {
+            int errno = ff.errno();
+            ff.close(parquetFd);
+            throw CairoException.critical(errno).put("cannot create _pm file [path=").put(path).put(']');
+        }
+
         try {
-            parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, parquetMetaPath.$(), parquetMetaReader);
-            parquetMetaFileSize = parquetMetaReader.getFileSize();
-            return parquetMetaAddr != 0 && parquetMetaReader.resolveFooter(parquetFileSize);
-        } catch (CairoException e) {
-            LOG.info().$("restored _pm failed validation [path=").$(parquetMetaPath)
-                    .$(", msg=").$safe(e.getFlyweightMessage())
-                    .I$();
-            return false;
+            long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
+            long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+            // Persist the brand-new _pm before snapshot restore returns. Otherwise
+            // a power loss after restore but before the engine syncs would leave
+            // the partition referenced by _txn but with no usable _pm sidecar.
+            ff.fsync(parquetMetaFd);
+            LOG.info().$("generated _pm for restored parquet partition [path=").$(path).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
+        } catch (Throwable t) {
+            // Remove partially written _pm file so a retry regenerates it.
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            ff.remove(path.$());
+            throw t;
         } finally {
-            parquetMetaReader.clear();
-            if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            ff.close(parquetFd);
+            ff.close(parquetMetaFd);
+            if (!Os.isWindows()) {
+                path.trimTo(partitionDirLen).$();
+                final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
             }
         }
+        path.trimTo(partitionDirLen);
+    }
+
+    /**
+     * Ensures the {@code _pm} sidecar in the partition directory resolves a footer
+     * at the committed {@code parquetFileSize}, regenerating it from
+     * {@code data.parquet} when missing, stale, torn or zero-length. The footer is
+     * resolved -- which runs the full-file CRC -- exactly once on the returned
+     * live mapping: on success {@code taskReader} is bound and resolved over it,
+     * and the caller owns the mapping and must {@code munmap} it (capture
+     * {@code taskReader.getFileSize()} before {@link ParquetMetaFileReader#clear()}
+     * resets it). The committed-size truncation check on {@code data.parquet} must
+     * already have passed. Per-task {@code path}/{@code taskReader} instances are
+     * required: this runs on parallel executor threads.
+     */
+    private long mapResolvableParquetMeta(Path path, int partitionDirLen, long parquetFileSize, ParquetMetaFileReader taskReader) {
+        path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+        boolean regenerate = !ff.exists(path.$());
+        if (!regenerate) {
+            long addr = 0;
+            long size = 0;
+            boolean resolved = false;
+            try {
+                addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), taskReader);
+                if (addr != 0) {
+                    size = taskReader.getFileSize();
+                    resolved = taskReader.resolveFooter(parquetFileSize);
+                }
+            } catch (CairoException e) {
+                // A torn copy whose header over-claims the file length throws
+                // rather than returning a resolve failure; treat both alike.
+                LOG.info().$("restored _pm failed validation [path=").$(path)
+                        .$(", msg=").$safe(e.getFlyweightMessage())
+                        .I$();
+                resolved = false;
+            }
+            if (resolved) {
+                return addr;
+            }
+            // Drop the stale/torn mapping before regenerating in place.
+            taskReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            // The sidecar does not resolve a footer at the committed parquet
+            // size: a stale _pm paired with an in-place regenerated data.parquet,
+            // a torn copy, or a partial file left by a crashed restore. Trusting
+            // it would defer the failure to the first read of the partition, so
+            // remove it and regenerate from data.parquet, which the committed-size
+            // check has already validated.
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (!ff.removeQuiet(path.$())) {
+                throw CairoException.critical(ff.errno()).put("cannot remove unresolvable _pm file [path=").put(path).put(']');
+            }
+            LOG.info().$("removed unresolvable _pm of restored parquet partition for regeneration [path=").$(path).I$();
+        }
+
+        regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
+
+        path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+        long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), taskReader);
+        try {
+            if (addr == 0 || !taskReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0).put("regenerated _pm does not resolve at committed parquet size [path=").put(path).put(']');
+            }
+        } catch (Throwable t) {
+            long size = taskReader.getFileSize();
+            taskReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            throw t;
+        }
+        return addr;
     }
 
     private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
@@ -911,7 +989,18 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    private void rebuildBitmapIndexForParquetPartition(
+    /**
+     * Single parallel task per parquet partition: maps {@code _pm} once, validates
+     * it (footer resolve + full-file CRC) against the committed parquet size and
+     * regenerates it from {@code data.parquet} when missing/stale/torn, then --
+     * when {@code rebuildIndexes} is set -- reuses that same resolved mapping to
+     * rebuild the partition's bitmap indexes. Reusing the resolved reader feeds
+     * the decoder via {@link ParquetPartitionDecoder#of(ParquetMetaFileReader, long, long, int)},
+     * which shallow-copies the resolved+verified state, so the {@code _pm} footer
+     * is resolved and CRC-verified exactly once on this path instead of three
+     * times (serial validation, per-task validation, decoder re-resolve).
+     */
+    private void processParquetPartition(
             String tablePathStr,
             int pathTableLen,
             long partitionTimestamp,
@@ -919,7 +1008,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             long partitionNameTxn,
             long parquetFileSize,
             int partitionBy,
-            int timestampType
+            int timestampType,
+            boolean rebuildIndexes
     ) {
         if (abortParallelTasks.get()) {
             return;
@@ -928,40 +1018,34 @@ public class TableSnapshotRestore implements QuietCloseable {
         // POSTING seal() uses Path.getThreadLocal() internally; mirror the
         // native partition rebuild path and clear thread-locals so this
         // executor thread does not retain native paths across tasks.
-        try (
-                Path path = new Path().put(tablePathStr);
-                RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)
-        ) {
-            ObjList<IndexWriter> indexWriters = new ObjList<>();
+        try (Path path = new Path().put(tablePathStr)) {
             path.trimTo(pathTableLen);
 
             // Set path to partition dir
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             int partitionDirLen = path.size();
 
-            // mmap _pm metadata to read parquet file size and provide metadata to the decoder.
-            path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            // Per-task instance: this method runs on parallel executor threads,
+            // so it owns its reader and never shares a field across threads.
+            final ParquetMetaFileReader taskParquetMetaReader = new ParquetMetaFileReader();
             long parquetMetaAddr = 0;
             long parquetMetaFileSize = 0;
             try {
-                final long parquetSize;
-                // Per-task instance: this method runs on parallel executor
-                // threads, so it must not share the serial-path
-                // parquetMetaReader field.
-                final ParquetMetaFileReader taskParquetMetaReader = new ParquetMetaFileReader();
-                parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), taskParquetMetaReader);
+                // Validate + (if needed) regenerate the sidecar, leaving it mapped
+                // and its footer resolved. This is the only _pm map+CRC for the
+                // partition on this path.
+                parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, taskParquetMetaReader);
                 parquetMetaFileSize = taskParquetMetaReader.getFileSize();
-                try {
-                    if (parquetMetaAddr == 0 || !taskParquetMetaReader.resolveFooter(parquetFileSize)) {
-                        throw CairoException.critical(0).put("missing or invalid _pm [path=").put(path).put(']');
-                    }
-                    parquetSize = taskParquetMetaReader.getParquetFileSize();
-                } finally {
-                    taskParquetMetaReader.clear();
+
+                if (!rebuildIndexes) {
+                    // Checkpoint-recovery default: validation/regeneration only.
+                    return;
                 }
 
-                // mmap data.parquet
+                final long parquetSize = taskParquetMetaReader.getParquetFileSize();
+
+                // mmap data.parquet (existence + committed size already validated
+                // serially in prepareParquetPartitions).
                 path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
                 if (!ff.exists(path.$())) {
                     LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
@@ -969,35 +1053,41 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
 
                 long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                try {
-                    // Decoder lives strictly inside the parquet/_pm mmaps. Closing it
-                    // before either munmap honors the documented clear-then-munmap
-                    // contract of ParquetPartitionDecoder.
-                    try (ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder()) {
-                        partitionDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                try (
+                        RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
+                        // Decoder lives strictly inside the parquet/_pm mmaps. Closing it
+                        // before either munmap honors the documented clear-then-munmap
+                        // contract of ParquetPartitionDecoder.
+                        ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder()
+                ) {
+                    ObjList<IndexWriter> indexWriters = new ObjList<>();
+                    // Reuse the already-resolved+CRC-verified reader: of(reader)
+                    // shallow-copies its footer state, so the decoder skips a
+                    // redundant resolveFooter + full-file CRC over the same mapping.
+                    partitionDecoder.of(taskParquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-                        // Set path to native partition directory (where index files go)
-                        path.trimTo(pathTableLen);
-                        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-                        int partitionPathLen = path.size();
+                    // Set path to native partition directory (where index files go)
+                    path.trimTo(pathTableLen);
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                    int partitionPathLen = path.size();
 
-                        rebuildParquetPartitionIndexes(
-                                ff,
-                                configuration,
-                                path,
-                                partitionPathLen,
-                                partitionDecoder,
-                                rowGroupBuffers,
-                                parquetColumns,
-                                indexWriters,
-                                tableMetadata,
-                                columnVersionReader,
-                                partitionTimestamp,
-                                partitionNameTxn,
-                                partitionRowCount,
-                                txWriter.getTxn()
-                        );
-                    }
+                    rebuildParquetPartitionIndexes(
+                            ff,
+                            configuration,
+                            path,
+                            partitionPathLen,
+                            partitionDecoder,
+                            rowGroupBuffers,
+                            parquetColumns,
+                            indexWriters,
+                            tableMetadata,
+                            columnVersionReader,
+                            partitionTimestamp,
+                            partitionNameTxn,
+                            partitionRowCount,
+                            txWriter.getTxn()
+                    );
                 } catch (CairoException e) {
                     LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
                             .$(", errno=").$(e.getErrno())
@@ -1008,6 +1098,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 }
             } finally {
+                taskParquetMetaReader.clear();
                 if (parquetMetaAddr != 0) {
                     ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 }
@@ -1049,21 +1140,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
-
-                futures.add(submitParallelTask(() -> rebuildBitmapIndexForParquetPartition(
-                        tablePathStr,
-                        pathTableLen,
-                        partitionTimestamp,
-                        partitionRowCount,
-                        partitionNameTxn,
-                        parquetFileSize,
-                        partitionBy,
-                        timestampType
-                )));
-            } else {
-                rebuildBitmapIndexForNativePartition(pathTableLen, columnCount, partitionTimestamp, partitionRowCount, partitionNameTxn, tablePathStr, partitionBy, timestampType);
+                // Parquet partitions are validated, regenerated and index-rebuilt
+                // by prepareParquetPartitions in a single _pm-mapping task.
+                continue;
             }
+            rebuildBitmapIndexForNativePartition(pathTableLen, columnCount, partitionTimestamp, partitionRowCount, partitionNameTxn, tablePathStr, partitionBy, timestampType);
         }
     }
 
