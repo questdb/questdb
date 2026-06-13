@@ -368,6 +368,197 @@ public class ReaderPoolTest extends AbstractCairoTest {
         });
     }
 
+    // Covers the refreshAt()/getCopyOf() half of the same fix as
+    // testConcurrentGetRefreshFailureDoesNotHandOutDisposedReader. PR #7251 removed the failure-path
+    // close() from BOTH R.refresh() and R.refreshAt(); this exercises the refreshAt() branch.
+    //
+    // getCopyOf(src) requires src to be a pooled R holding its own slot, and get0()'s copyOf branch
+    // only calls tenant.refreshAt(supervisor, copyOfTenant) when the CAS-acquired slot already holds a
+    // returned tenant. So this uses a 2-slot pool: src holds slot 0 (kept checked out for the whole
+    // test) while a second reader R1 - opened at a newer txn and returned to the pool - holds slot 1.
+    // getCopyOf(src) lands on slot 1, sees R1.txn > src.txn, takes goActiveAtTxn()'s downgrade branch
+    // (init() -> openSymbolMaps()), and the injected fault makes the symbol-offset (.o) open throw. If
+    // refreshAt() were to close() on that failure it would returnToPool() the half-dead reader before
+    // get0() disposes it, letting a concurrent get() acquire a reader whose _txn mapping is already
+    // gone and dereference it - the "roTxMemBase is null" NPE. A correct pool keeps the slot owned by
+    // the disposing thread until it is fully gone, so the contender only ever sees
+    // EntryUnavailableException and never an NPE.
+    @Test
+    public void testConcurrentGetCopyOfRefreshFailureDoesNotHandOutDisposedReader() throws Exception {
+        final AtomicReference<TableReader> pooledReader = new AtomicReference<>();
+        final AtomicLong disposingThreadId = new AtomicLong(-1);
+        final AtomicBoolean faultSymbol = new AtomicBoolean();
+        final AtomicBoolean gateFired = new AtomicBoolean();
+        final AtomicReference<Throwable> refreshError = new AtomicReference<>();
+        final AtomicReference<Throwable> contenderError = new AtomicReference<>();
+        final CountDownLatch readerReleased = new CountDownLatch(1);
+        final CountDownLatch contenderDone = new CountDownLatch(1);
+
+        final TestFilesFacade ff = new TestFilesFacade() {
+            boolean isCalled = false;
+
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                final TableReader r = pooledReader.get();
+                // The disposing thread frees _txn (nulling roTxMemBase) before it stops being open.
+                // The first munmap once isOpen() is false (the _cv unmap) is past that point: park
+                // here so the contender grabs a reader whose _txn mapping is already gone.
+                if (r != null
+                        && Thread.currentThread().threadId() == disposingThreadId.get()
+                        && !r.isOpen()
+                        && gateFired.compareAndSet(false, true)) {
+                    readerReleased.countDown();
+                    try {
+                        contenderDone.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                super.munmap(address, size, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                // Fault only the open of the symbol-offset (.o) file on the disposing thread, reached
+                // via init() -> openSymbolMaps() inside goActiveAtTxn()'s downgrade. exists() is left
+                // to pass so only a real file's open fails.
+                if (faultSymbol.get()
+                        && Thread.currentThread().threadId() == disposingThreadId.get()
+                        && Utf8s.endsWithAscii(name, ".o")) {
+                    isCalled = true;
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return isCalled;
+            }
+        };
+
+        final CairoConfiguration poolConfig = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public int getPoolSegmentSize() {
+                return 2;
+            }
+
+            @Override
+            public int getReaderPoolMaxSegments() {
+                return 1;
+            }
+
+            @Override
+            public long getSpinLockTimeout() {
+                return 250;
+            }
+        };
+
+        assertWithPool(pool -> {
+            final String tableName = "copyOfRefreshFailure";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            // Keep the table's scoreboard memory alive across the disposal so the contender's
+            // acquireTxn() reads a live scoreboard and fails on the null _txn, not a freed scoreboard.
+            final TxnScoreboard scoreboardHold = engine.getTxnScoreboardPool().getTxnScoreboard(tableToken);
+            TableReader src = null;
+            try {
+                // T1: one row in the first partition.
+                try (TableWriter w = newOffPoolWriter(configuration, tableName)) {
+                    TableWriter.Row r = w.newRow(1);
+                    r.putSym(0, "foo");
+                    r.append();
+                    w.commit();
+                }
+
+                // src opens at T1 and takes slot 0; keep it checked out for the whole test so the
+                // contender is forced onto slot 1 and never onto slot 0.
+                src = pool.get(tableToken);
+
+                // T2: a second row in a NEW partition, so a copyOf onto a T2 reader must downgrade.
+                try (TableWriter w = newOffPoolWriter(configuration, tableName)) {
+                    TableWriter.Row r = w.newRow(Micros.DAY_MICROS + 1);
+                    r.putSym(0, "bar");
+                    r.append();
+                    w.commit();
+                }
+
+                // R1 opens at T2 and takes slot 1, then returns to the pool (stays open, R1.txn == T2).
+                final TableReader r1 = pool.get(tableToken);
+                pooledReader.set(r1);
+                r1.close();
+
+                final Thread contender = new Thread(() -> {
+                    try {
+                        if (!readerReleased.await(10, TimeUnit.SECONDS)) {
+                            return;
+                        }
+                        final long deadline = configuration.getMillisecondClock().getTicks() + 2000;
+                        while (configuration.getMillisecondClock().getTicks() < deadline) {
+                            try (TableReader r = pool.get(tableToken)) {
+                                Assert.assertTrue(r.isOpen());
+                                break;
+                            } catch (EntryUnavailableException retry) {
+                                Os.pause();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        contenderError.set(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                        contenderDone.countDown();
+                    }
+                });
+                contender.start();
+
+                final TableReader srcRef = src;
+                final Thread disposer = new Thread(() -> {
+                    disposingThreadId.set(Thread.currentThread().threadId());
+                    faultSymbol.set(true);
+                    // getCopyOf(src) lands on slot 1's R1 (R1.txn T2 > src.txn T1), downgrades via
+                    // init() -> openSymbolMaps(), and the faulted .o open throws out of refreshAt().
+                    try (TableReader ignore = pool.getCopyOf(srcRef)) {
+                        Assert.fail("getCopyOf refresh should have failed");
+                    } catch (Throwable th) {
+                        refreshError.set(th);
+                    } finally {
+                        faultSymbol.set(false);
+                        Path.clearThreadLocals();
+                        // Safety net so the contender never blocks if the disposal misses the gate.
+                        readerReleased.countDown();
+                    }
+                });
+                disposer.start();
+
+                disposer.join();
+                contender.join();
+
+                Assert.assertTrue("injected symbol fault never fired", ff.wasCalled());
+                Assert.assertTrue("reader disposal never reached the parked munmap", gateFired.get());
+                Assert.assertNotNull("the getCopyOf refresh should have failed", refreshError.get());
+
+                final Throwable contenderErr = contenderError.get();
+                if (contenderErr != null) {
+                    throw new AssertionError(
+                            "ReaderPool handed a being-disposed reader to a concurrent get()", contenderErr);
+                }
+            } finally {
+                // src (slot 0) is held for the whole window; close it only after both threads join.
+                Misc.free(src);
+                Misc.free(scoreboardHold);
+            }
+        }, poolConfig);
+    }
+
     // When goActive()/reload() throws while a pooled reader is being refreshed, ReaderPool.R.refresh()
     // catches it and calls close(), which returnToPool()'s the reader: its slot is released while the
     // reader is still assigned and still open. get0()'s own catch then disposes the same reader via
@@ -393,7 +584,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final CountDownLatch contenderDone = new CountDownLatch(1);
 
         final TestFilesFacade ff = new TestFilesFacade() {
-            boolean called = false;
+            boolean isCalled = false;
 
             @Override
             public void munmap(long address, long size, int memoryTag) {
@@ -420,7 +611,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 if (faultMeta.get()
                         && Thread.currentThread().threadId() == disposingThreadId.get()
                         && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
-                    called = true;
+                    isCalled = true;
                     return -1;
                 }
                 return super.openRO(name);
@@ -428,7 +619,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             @Override
             public boolean wasCalled() {
-                return called;
+                return isCalled;
             }
         };
 
