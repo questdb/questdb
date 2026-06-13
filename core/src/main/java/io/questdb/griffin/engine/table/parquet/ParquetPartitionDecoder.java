@@ -160,6 +160,22 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int rowHi,
             DirectLongList filteredRows
     ) {
+        decodeRowGroupWithRowFilterFillNulls(
+                rowGroupBuffers, columnOffset, columns, rowGroupIndex, rowLo, rowHi,
+                filteredRows.getAddress(), filteredRows.size()
+        );
+    }
+
+    public void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns,
+            int rowGroupIndex,
+            int rowLo,
+            int rowHi,
+            long filteredRowsAddr,
+            long filteredRowsCount
+    ) {
         if (decodeContextPtr == 0) {
             decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
         }
@@ -168,7 +184,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
                 parquetMetaReader.getOrCreateNativeReaderPtr(), rowGroupBuffers.ptr(), columnOffset,
                 columns.getAddress(), (int) (columns.size() >>> 1),
                 rowGroupIndex, rowLo, rowHi,
-                filteredRows.getAddress(), filteredRows.size()
+                filteredRowsAddr, filteredRowsCount
         );
     }
 

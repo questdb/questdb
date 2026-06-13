@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntHashSet;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -293,6 +296,55 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     long preComputedStateSize();
 
     /**
+     * Declares which projected column indexes the parent cursor will read during forward
+     * iteration (via {@link #getRecord()}); columns accessed only via
+     * {@link #recordAt(Record, long)} may be omitted. Null restores the default of
+     * materializing every projected column.
+     * <p>
+     * Wrappers that hold a delegate cursor must forward the call, translating column
+     * indexes when the wrapper remaps them. Wrappers whose own code reads further base
+     * columns during iteration (e.g. a filter or virtual functions) must NOT forward,
+     * because the parent's set cannot account for those reads.
+     *
+     * @param columnIndexes the columns the parent reads while iterating, or null
+     */
+    default void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+    }
+
+    /**
+     * Declares the access pattern the enclosing factory will use when calling
+     * {@link #recordAt(Record, long)} on this cursor. The Parquet decode-buffer
+     * pool scales its byte budget by the hint: monotonic walks get a smaller
+     * effective ceiling, scattered walks get the full configured budget.
+     * Wrappers that hold a delegate cursor must forward the call. Factories
+     * that copy delegate records into a heap-allocated chain or map before
+     * iteration (e.g. non-light sorts and hash/asof joins) intentionally skip
+     * this hint because the underlying cursor is exhausted once and never
+     * random-accessed.
+     *
+     * @param hint the access pattern of upcoming {@code recordAt} calls
+     */
+    default void setParquetDecodeHint(ParquetDecodeHint hint) {
+    }
+
+    /**
+     * Declares the complete set of row ids the caller will pass to subsequent
+     * {@link #recordAt(Record, long)} calls. Parquet-backed cursors pull the row ids from
+     * the source and then decode only the declared rows of a row group instead of the
+     * whole row group; cursors that cannot benefit never pull, so the caller pays nothing.
+     * Null restores full-frame decoding. Wrappers that forward {@code recordAt} to a
+     * delegate with unchanged row ids must forward the call; wrappers that resolve
+     * {@code recordAt} from their own storage (e.g. a record chain) must not.
+     * <p>
+     * Until the declaration is cleared with null, reading a row id outside the declared
+     * set is undefined: on a row-filtered Parquet frame such rows materialize as NULLs.
+     *
+     * @param source the supplier of the declared row ids, or null
+     */
+    default void setRecordAtRows(@Nullable RowIdSource source) {
+    }
+
+    /**
      * Returns the total number of records available in this cursor.
      * <p>
      * Not all record cursor implementations can determine their size efficiently.
@@ -348,6 +400,17 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @see #preComputedStateSize()
      */
     void toTop();
+
+    interface RowIdSource {
+
+        /**
+         * Appends the declared row ids that lie in Parquet frames to the target list,
+         * skipping rows of native frames. {@link DirectLongList#add(long)} auto-grows,
+         * so pre-sizing the target via {@link DirectLongList#ensureCapacity(long)} is a
+         * performance optimization, not a correctness requirement.
+         */
+        void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache);
+    }
 
     /**
      * A simple counter utility class for tracking numeric values in RecordCursor operations.

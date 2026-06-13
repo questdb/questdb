@@ -247,7 +247,14 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         try {
             return switchToNextRowGroup();
         } catch (CairoException ex) {
-            throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
+            // Preserve the underlying decode error (e.g. the native parquet guard message)
+            // instead of discarding it. ex shares the thread-local CairoException flyweight
+            // that nonCritical() resets, so copy its message to a String first, then append
+            // it to the friendly wrapper.
+            final String cause = ex.getFlyweightMessage().toString();
+            throw CairoException.nonCritical()
+                    .put("Error reading. Parquet file is likely corrupted: ")
+                    .put(cause);
         }
     }
 
@@ -307,7 +314,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                         return;
                     }
                 } catch (CairoException ex) {
-                    throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
+                    // Preserve the underlying decode error instead of discarding it (see hasNext).
+                    final String cause = ex.getFlyweightMessage().toString();
+                    throw CairoException.nonCritical()
+                            .put("Error reading. Parquet file is likely corrupted: ")
+                            .put(cause);
                 }
                 toSkip--;
                 rowCount.dec();

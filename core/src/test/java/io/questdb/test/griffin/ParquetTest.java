@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -255,7 +256,7 @@ public class ParquetTest extends AbstractCairoTest {
                     """
                             create table x as (
                               select array[42] arr, timestamp_sequence(0,1000000) as ts
-                              from long_sequence(10000)
+                              from long_sequence(10_000)
                             ) timestamp(ts) partition by day;"""
             );
             // create new active partition
@@ -1991,6 +1992,163 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetAsyncLateMaterializationAcrossFramesStaysCorrect() throws Exception {
+        // The async filtered path decodes only the filter columns per frame, applies the filter,
+        // then late-materializes the remaining columns for the surviving rows via
+        // populateRemainingColumns -> decodeRemainingColumns -> accountDecode. That late-mat decode
+        // runs on the per-worker reduce slot's zero-budget pool, so every frame accounts its
+        // remaining-column bytes, trims, and releases the buffer before the next frame. Existing
+        // late-mat tests use a single small partition, so the per-frame account/trim/release/reuse
+        // cycle never repeats. This spreads the scan across many parquet partitions (one page frame
+        // each), filters on one column and late-materializes the others (a varchar group key plus an
+        // int aggregate), and compares against a native oracle to catch corruption from the
+        // cross-frame buffer reuse on the late-mat route.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        rnd_varchar(8, 48, 5) AS v,
+                        (x % 100)::double AS d,
+                        timestamp_sequence('2024-01-01', 100_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE nat AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Filter on d; k (group key) and v (varchar, via max) are late-materialized for the
+            // survivors. d cycles 0..99 per partition, so 'd < 10' keeps ~10% of every frame:
+            // selectivity stays under the late-mat threshold yet every frame has survivors, so
+            // decodeRemainingColumns runs on each one. A monotonic 'd > N' would instead give
+            // zero-survivor then high-selectivity frames and exercise barely one or two.
+            // ORDER BY k makes the output deterministic.
+            assertSqlCursors(
+                    "SELECT k, count(), max(v) FROM nat WHERE d < 10 ORDER BY k",
+                    "SELECT k, count(), max(v) FROM src WHERE d < 10 ORDER BY k"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheEvictionMonotonicAsOfStaysCorrect() throws Exception {
+        // The ASOF join's slave cursor declares MONOTONIC, so its effective budget is a
+        // quarter of the configured value. Small row groups plus a tiny budget force the
+        // slave's backward scan to evict and re-decode parquet frames; the native slave
+        // copy is the oracle. Guards the MONOTONIC tryHit/eviction path end to end.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE slave AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        rnd_varchar(6, 30, 5) AS v,
+                        x::double AS d,
+                        timestamp_sequence('2024-01-01', 60_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE slave CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE slave_nat AS (SELECT * FROM slave) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    CREATE TABLE master AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        timestamp_sequence('2024-01-01T00:00:30', 120_000_000) AS ts
+                      FROM long_sequence(8_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            assertSqlCursors(
+                    "SELECT m.ts, m.k, s.v, s.d FROM master m ASOF JOIN slave_nat s ON (k)",
+                    "SELECT m.ts, m.k, s.v, s.d FROM master m ASOF JOIN slave s ON (k)"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheEvictionScatteredSortStaysCorrect() throws Exception {
+        // Small row groups make a partition span many page frames; a tiny byte budget
+        // forces the SCATTERED sort to evict and reuse decoded buffers in place across
+        // the LRU walk. Comparing against a native copy catches corruption from in-place
+        // victim reuse and from the VARCHAR_SLICE page-buffer re-decode path.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                      SELECT
+                        (x % 23)::int AS k,
+                        rnd_varchar(8, 48, 5) AS v1,
+                        rnd_varchar(1, 4, 5) AS v2,
+                        x::double AS d,
+                        timestamp_sequence('2024-01-01', 60_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE nat AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // ORDER BY a non-timestamp column routes through a SCATTERED sort that
+            // random-accesses frames out of order. ts and d break ties so order is stable.
+            assertSqlCursors(
+                    "SELECT k, v1, v2, d, ts FROM nat ORDER BY v1, ts",
+                    "SELECT k, v1, v2, d, ts FROM src ORDER BY v1, ts"
+            );
+            assertSqlCursors(
+                    "SELECT k, v1, v2, d, ts FROM nat ORDER BY k, d DESC",
+                    "SELECT k, v1, v2, d, ts FROM src ORDER BY k, d DESC"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheZeroBudgetSinglePartitionStillCorrect() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table src (k int, v double, ts timestamp)
+                    timestamp(ts) partition by day wal""");
+            execute("""
+                    insert into src
+                    select (x % 17)::int, x::double, timestamp_sequence('2024-01-01', 60_000_000)
+                    from long_sequence(1_500)""");
+            drainWalQueue();
+            execute("alter table src convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("""
+                    create table src_native as (select * from src)
+                    timestamp(ts) partition by day wal""");
+            drainWalQueue();
+            assertSqlCursors(
+                    "select k, sum(v) from src_native order by k",
+                    "select k, sum(v) from src order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetDecodeHintApplyToBoundaries() {
+        Assert.assertEquals(Long.MAX_VALUE >>> 2, ParquetDecodeHint.MONOTONIC.applyTo(Long.MAX_VALUE));
+        Assert.assertEquals(Long.MAX_VALUE, ParquetDecodeHint.SCATTERED.applyTo(Long.MAX_VALUE));
+        Assert.assertEquals(0, ParquetDecodeHint.MONOTONIC.applyTo(1L));
+        Assert.assertEquals(1L, ParquetDecodeHint.SCATTERED.applyTo(1L));
+    }
+
+    @Test
+    public void testParquetDecodeHintMonotonicScalesToOneQuarter() {
+        Assert.assertEquals(64L * 1024 * 1024, ParquetDecodeHint.MONOTONIC.applyTo(256L * 1024 * 1024));
+        Assert.assertEquals(0, ParquetDecodeHint.MONOTONIC.applyTo(0));
+    }
+
+    @Test
+    public void testParquetDecodeHintScatteredKeepsFullBudget() {
+        Assert.assertEquals(256L * 1024 * 1024, ParquetDecodeHint.SCATTERED.applyTo(256L * 1024 * 1024));
+        Assert.assertEquals(0, ParquetDecodeHint.SCATTERED.applyTo(0));
+    }
+
+    @Test
     public void testProjectionDropAggregateOverParquet() throws Exception {
         // Projection pruning leaves a column in the underlying scan after the WHERE
         // that referenced it has been constant-folded away. The projected metadata
@@ -2612,61 +2770,44 @@ public class ParquetTest extends AbstractCairoTest {
     // partition cannot be converted to parquet. The trailing native partition keeps
     // it non-active so the conversion is allowed.
     //
-    // The buffer-reuse trigger depends on exactly cacheCap column-present frames
-    // ahead of the absent frame, so pin getSqlParquetFrameCacheCapacity() instead
-    // of relying on the production default - and tie the partition count to the
-    // same constant. Otherwise a change to the default would silently break the
-    // reuse, the stale read would vanish, and the test would pass even on broken
-    // code.
+    // Force buffer reuse: a 1-byte memory budget makes cachedBytes >= budget true
+    // on every miss after the first, so the column-absent decode must evict and
+    // reuse an earlier buffer. Without this the default 256 MiB budget swallows
+    // all tiny partitions, no eviction happens, and the stale-pointer bug never
+    // fires - broken code would silently pass.
     private void testSelectOnlyAddedColumnAbsentFromParquetPartition(String columnType) throws Exception {
-        final int cacheCap = 8;
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, cacheCap);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1);
         assertMemoryLeak(() -> {
             execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
-
-            // Day cacheCap+1 is converted to parquet BEFORE 's' is added, so its
-            // parquet file does not contain 's'. The native day cacheCap+2 (active)
-            // keeps the absent partition non-active so the conversion is allowed.
-            final String absentDay = String.format("2024-06-%02d", cacheCap + 1);
-            final String nativeDay = String.format("2024-06-%02d", cacheCap + 2);
             execute("insert into x(a, ts) values " +
-                    "(" + (cacheCap + 1) + ", '" + absentDay + "T00:00:00.000000Z'), " +
-                    "(" + (cacheCap + 2) + ", '" + nativeDay + "T00:00:00.000000Z');");
-            execute("alter table x convert partition to parquet where ts in '" + absentDay + "';");
+                    "(2, '2024-06-02T00:00:00.000000Z'), " +
+                    "(3, '2024-06-03T00:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts in '2024-06-02';");
 
             execute("alter table x add column s " + columnType + ";");
 
-            // cacheCap older single-row parquet partitions with non-null 's'. The
-            // pinned parquet frame cache holds cacheCap buffers, so scanning these
-            // (frames 0..cacheCap-1) drains the free list; the next parquet frame
-            // (the absent partition) is then forced to reuse one of these buffers.
-            StringBuilder insert = new StringBuilder("insert into x(a, ts, s) values ");
-            for (int day = 1; day <= cacheCap; day++) {
-                if (day > 1) {
-                    insert.append(", ");
-                }
-                insert.append(String.format("(%d, '2024-06-%02dT00:00:00.000000Z', 'AA')", day, day));
-            }
-            insert.append(';');
-            execute(insert.toString());
-            execute("alter table x convert partition to parquet where ts < '" + absentDay + "';");
+            // One older single-row parquet partition with non-null 's'. The tight
+            // byte budget forces the next parquet decode (the absent partition)
+            // to reuse this partition's buffer.
+            execute("insert into x(a, ts, s) values (1, '2024-06-01T00:00:00.000000Z', 'AA');");
+            execute("alter table x convert partition to parquet where ts < '2024-06-02';");
 
             // Project ONLY 's' so the absent-column frame decodes zero parquet
             // columns. The constant '1 one' keeps the base scan reading just 's'
-            // while rendering the NULL rows as a non-blank '\t1'. The first cacheCap
-            // rows are 'AA'; the next '\t1' is the absent parquet partition (the bug
-            // returns 'AA' / a stale aux read there); the last '\t1' is the native
-            // trailing partition.
-            StringBuilder expected = new StringBuilder("s\tone\n");
-            expected.repeat("AA\t1\n", cacheCap);
-            expected.append("\t1\n"); // absent parquet partition -> NULL
-            expected.append("\t1\n"); // native trailing partition -> NULL
+            // while rendering the NULL rows as a non-blank '\t1'. Row 1 is 'AA';
+            // row 2 is the absent parquet partition (the bug returns 'AA' / a
+            // stale aux read there); row 3 is the native trailing partition.
             // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
             // so it also exercises parquet decode re-entry (assertSql reads once).
             assertQuery("select s, 1 one from x")
                     .noLeakCheck()
                     .expectSize()
-                    .returns(expected.toString());
+                    .returns("""
+                            s\tone
+                            AA\t1
+                            \t1
+                            \t1
+                            """);
         });
     }
 

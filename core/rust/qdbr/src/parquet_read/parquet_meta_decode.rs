@@ -6,7 +6,7 @@ use crate::parquet_read::decode_column::{
     decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
     reconstruct_descriptor,
 };
-use crate::parquet_read::{DecodeContext, RowGroupBuffers};
+use crate::parquet_read::{DecodeContext, RowGroupBuffers, VarcharSliceBufGuard};
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
@@ -31,6 +31,11 @@ pub fn decode_row_group(
     row_group_lo: usize,
     row_group_hi: usize,
 ) -> ParquetResult<usize> {
+    // Release the varchar-slice reuse pool and scratch vecs on every exit
+    // path, including the error returns below: buffers stranded in the
+    // context after a failed decode are invisible to the Java cache budget.
+    let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+    let ctx = ctx_guard.ctx();
     let rg_count = parquet_meta_reader.row_group_count();
     if row_group_index >= rg_count as usize {
         return Err(fmt_err!(
@@ -311,6 +316,11 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
     row_group_hi: usize,
     filtered_rows: &[i64],
 ) -> ParquetResult<usize> {
+    // Release the varchar-slice reuse pool and scratch vecs on every exit
+    // path, including the error returns below: buffers stranded in the
+    // context after a failed decode are invisible to the Java cache budget.
+    let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+    let ctx = ctx_guard.ctx();
     let rg_block = parquet_meta_reader.row_group(row_group_index)?;
     let col_count = parquet_meta_reader.column_count();
 
@@ -835,6 +845,98 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("column index 99 out of range"));
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_error_releases_varchar_slice_bufs() -> ParquetResult<()> {
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(10)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut bufs = RowGroupBuffers::new(allocator);
+
+        // Simulate buffers parked or staged by an in-flight decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
+        ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
+
+        // Column 99 doesn't exist, so the decode fails.
+        let col_pairs = [(99i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        let res = decode_row_group(
+            &mut ctx,
+            &mut bufs,
+            &parquet_data,
+            &reader,
+            &col_pairs,
+            0,
+            0,
+            10,
+        );
+        assert!(res.is_err());
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "a failed row-group decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "a failed row-group decode must release the page-buffer scratch"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "a failed row-group decode must release the dict-buffer scratch"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_filtered_error_releases_varchar_slice_bufs() -> ParquetResult<()> {
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(10)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut bufs = RowGroupBuffers::new(allocator);
+
+        // Simulate buffers parked or staged by an in-flight decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
+        ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
+
+        // Column 99 doesn't exist, so the decode fails.
+        let col_pairs = [(99i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        let res = decode_row_group_filtered::<false>(
+            &mut ctx,
+            &mut bufs,
+            &parquet_data,
+            &reader,
+            0,
+            &col_pairs,
+            0,
+            0,
+            10,
+            &[0, 1],
+        );
+        assert!(res.is_err());
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "a failed filtered decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "a failed filtered decode must release the page-buffer scratch"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "a failed filtered decode must release the dict-buffer scratch"
+        );
         Ok(())
     }
 

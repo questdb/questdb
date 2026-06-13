@@ -4,7 +4,7 @@
 //! lookup traits consumed by `RleDictionaryDecoder`.
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_read::decoders::Converter;
+use crate::parquet_read::decoders::{try_reserve_dict_values, Converter};
 use crate::parquet_read::page::DictPage;
 use std::mem::size_of;
 
@@ -45,9 +45,31 @@ impl VarDictDecoder for BaseVarDictDecoder<'_> {
 
 impl<'a> BaseVarDictDecoder<'a> {
     pub fn try_new(dict_page: &'a DictPage<'a>) -> ParquetResult<Self> {
-        let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
-        let mut offset = 0usize;
         let dict_data = &dict_page.buffer;
+
+        // num_values comes from the dictionary page's Thrift header and is
+        // attacker-controlled: slice_reader bounds the *compressed* page against
+        // max_page_size and rejects a negative count, but never bounds num_values
+        // itself (up to i32::MAX). For a compressed page the buffer here is the
+        // *decompressed* one, sized only by uncompressed_page_size -- also up to
+        // i32::MAX and NOT bounded by max_page_size. Each value needs at least a
+        // 4-byte length prefix, so a page holding N values needs >= N * 4 bytes;
+        // reject a header claiming more, up front, with a cheap precise error.
+        if dict_page.num_values > dict_data.len() / size_of::<u32>() {
+            return Err(fmt_err!(
+                Layout,
+                "dictionary data page is too short to hold {} values",
+                dict_page.num_values
+            ));
+        }
+
+        // The guard above still admits num_values up to buffer.len()/4, so on a
+        // genuinely large (multi-GiB) decompressed dict page the reservation
+        // below is ~4x the buffer (16 bytes per &[u8]); reserve fallibly so that
+        // surfaces a recoverable OutOfMemory error instead of aborting the JVM.
+        let mut dict_values: Vec<&[u8]> =
+            try_reserve_dict_values(dict_page.num_values, "dictionary value slices")?;
+        let mut offset = 0usize;
 
         let mut total_key_len = 0;
         for i in 0..dict_page.num_values {
@@ -257,5 +279,60 @@ impl<'a, U, T, V> ConvertablePrimitiveDictDecoder<'a, U, T, V> {
             converter,
             _phantom: std::marker::PhantomData,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BaseVarDictDecoder;
+    use crate::parquet_read::page::DictPage;
+
+    #[test]
+    fn try_new_rejects_num_values_exceeding_buffer() {
+        // A foreign dictionary page header can claim a huge num_values (up to
+        // i32::MAX) while carrying a tiny buffer. Each value needs at least a
+        // 4-byte length prefix, so try_new must reject the header up front with
+        // its own "too short to hold" error -- distinct from the per-element
+        // loop's "too short to read" -- before it reaches the dictionary-value
+        // reservation (try_reserve_dict_values), whose tens-of-gigabytes request
+        // would otherwise abort the process when the allocator refuses it. The
+        // reservation allocates eagerly, but whether such a request actually
+        // aborts is allocator/overcommit dependent, so this test pins the guard's
+        // rejection and its distinct message, not the abort itself.
+        let buffer = [0u8; 8]; // room for at most 2 zero-length values
+        let dict_page = DictPage {
+            buffer: &buffer,
+            num_values: i32::MAX as usize,
+            is_sorted: false,
+        };
+        let err = BaseVarDictDecoder::try_new(&dict_page)
+            .err()
+            .expect("oversized num_values must error, not abort");
+        assert!(format!("{err}").contains("too short to hold"), "got: {err}");
+    }
+
+    #[test]
+    fn try_new_accepts_values_filling_buffer() {
+        // Boundary: num_values == buffer.len() / 4 (all zero-length values) is a
+        // well-formed page and must pass the guard unchanged.
+        let buffer = [0u8; 8]; // two consecutive zero-length prefixes
+        let dict_page = DictPage { buffer: &buffer, num_values: 2, is_sorted: false };
+        let dict = BaseVarDictDecoder::try_new(&dict_page).unwrap();
+        assert_eq!(dict.dict_values.len(), 2);
+        assert!(dict.dict_values.iter().all(|v| v.is_empty()));
+    }
+
+    #[test]
+    fn try_new_rejects_num_values_one_over_buffer() {
+        // Tight boundary: one more than the buffer can hold (len/4 + 1) must be
+        // rejected. Sits right next to try_new_accepts_values_filling_buffer
+        // (which accepts exactly len/4) to pin the comparison and catch a
+        // `>`-to-`>=` or off-by-one regression in the bound.
+        let buffer = [0u8; 8]; // holds at most 2 zero-length values (len/4 == 2)
+        let dict_page = DictPage { buffer: &buffer, num_values: 3, is_sorted: false };
+        let err = BaseVarDictDecoder::try_new(&dict_page)
+            .err()
+            .expect("num_values one over capacity must error");
+        assert!(format!("{err}").contains("too short to hold"), "got: {err}");
     }
 }
