@@ -37,6 +37,18 @@ import org.jetbrains.annotations.NotNull;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FailureFileFacade implements FilesFacade {
+    // When non-null, the fault counts down and fires only on file ops issued by
+    // this thread; when null, any thread's op counts and fires (the default,
+    // used by the WAL/recovery fuzz harness whose failures legitimately land on
+    // background apply/purge threads). The query fuzzer arms it through
+    // setToFailAfterOnCurrentThread so a concurrent engine background job
+    // (posting-seal/column purge, etc.) sharing this facade cannot trip the
+    // fault: that would both leak the job's distressed-writer memory into the
+    // per-query leak oracle and make the "fail after N ops" trigger point depend
+    // on background-thread timing, breaking seeded replay. Fault queries run with
+    // parallel SQL execution disabled, so the query under test issues all its own
+    // file ops on the arming thread.
+    private volatile Thread armedThread;
     private final AtomicInteger failureGenerated = new AtomicInteger();
     private final FilesFacade ff;
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
@@ -69,6 +81,7 @@ public class FailureFileFacade implements FilesFacade {
     public void clearFailures() {
         osCallsCount.set(0);
         failureGenerated.set(0);
+        armedThread = null;
     }
 
     @Override
@@ -487,14 +500,29 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     public void setToFailAfter(int ioFailureCallCount) {
+        // Default (unscoped): any thread's op counts and fires. Arm only when not
+        // already armed so a pending fault is not reset by a concurrent caller.
+        armedThread = null;
         int osCalls;
-
         while (true) {
             osCalls = osCallsCount.get();
             if (osCalls > 0 || osCallsCount.compareAndSet(osCalls, ioFailureCallCount)) {
                 return;
             }
         }
+    }
+
+    /**
+     * Arms the fault scoped to the calling thread: only file ops issued by this
+     * thread count down and fire. See {@link #armedThread} for why the query
+     * fuzzer needs this over the unscoped {@link #setToFailAfter(int)}.
+     */
+    public void setToFailAfterOnCurrentThread(int ioFailureCallCount) {
+        // Only the arming thread counts down and fires (see checkForFailure), so
+        // the same thread both writes and reads osCallsCount and no CAS guard is
+        // needed against concurrent decrements.
+        osCallsCount.set(ioFailureCallCount);
+        armedThread = Thread.currentThread();
     }
 
     @Override
@@ -566,6 +594,13 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     private boolean checkForFailure() {
+        // When scoped to a thread, ignore ops on every other thread so the fault
+        // stays on the query under test and off engine background jobs. When
+        // unscoped (armedThread == null) any thread counts down and fires.
+        final Thread armed = armedThread;
+        if (armed != null && Thread.currentThread() != armed) {
+            return false;
+        }
         boolean fail = osCallsCount.decrementAndGet() == 0;
         if (fail) {
             failureGenerated.incrementAndGet();

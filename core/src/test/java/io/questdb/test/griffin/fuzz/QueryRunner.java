@@ -324,7 +324,7 @@ public final class QueryRunner {
         // FUNCTION arming draws and keeping the seeded stream replay-stable.
         long mallocSlack = 0;
         switch (type) {
-            case FILE -> failureFf.setToFailAfter(1 + rnd.nextInt(FAULT_MAX_FILE_OPS));
+            case FILE -> failureFf.setToFailAfterOnCurrentThread(1 + rnd.nextInt(FAULT_MAX_FILE_OPS));
             case MALLOC -> mallocSlack = FAULT_MALLOC_SLACK_MIN + rnd.nextInt(FAULT_MALLOC_SLACK_RANGE);
             case FUNCTION -> TestFaultFunctionFactory.armToFailAfter(rnd.nextInt(FAULT_MAX_FN_CALLS));
         }
