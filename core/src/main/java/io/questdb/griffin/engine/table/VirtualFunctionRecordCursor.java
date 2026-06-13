@@ -41,6 +41,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
@@ -176,6 +177,13 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         if (baseCursor != null) {
             baseCursor.setParquetDecodeHint(hint);
+        }
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        if (baseCursor != null) {
+            baseCursor.setRecordAtRows(source);
         }
     }
 

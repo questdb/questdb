@@ -309,7 +309,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 if (isParquetFrame) {
                     atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                 }
-                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }
                 task.setFilteredRowCount(rows.size());
