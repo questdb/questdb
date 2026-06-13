@@ -194,9 +194,9 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         assert baseCursor != null;
-        baseCursor.skipRows(rowCount);
+        baseCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override

@@ -116,7 +116,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         if (!isTreeMapBuilt) {
             buildTreeMap();
             rowIndex = rows.size() - 1;
