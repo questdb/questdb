@@ -186,6 +186,9 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
         entries.of(keyType, isFirstN, limit);
+        if (keyType.isVariable()) {
+            encoder.setKeyHeap(entries.getKeyHeap());
+        }
         circuitBreaker = executionContext.getCircuitBreaker();
         isBuilt = false;
         currentAddr = 0;

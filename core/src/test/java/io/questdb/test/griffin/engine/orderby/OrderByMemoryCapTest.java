@@ -77,10 +77,9 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelTopKTreeChainPerWorkerCapFires() throws Exception {
-        // A VARCHAR sort key is not encodable, so AsyncTopK falls back to the per-worker
-        // LimitedSizeLongTreeChain; a 64-byte sort.key cap fires per worker with the
-        // RedBlackTree (raise ...) hint.
+    public void testParallelTopKVarcharPerWorkerCapFires() throws Exception {
+        // A VARCHAR sort key takes the variable-length encoded per-worker buffers;
+        // a 64-byte sort.key cap fires per worker with the EncodedSort (raise ...) hint.
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
@@ -109,7 +108,7 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
                     Assert.fail("expected LimitOverflowException from constrained sort.key budget");
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "memory exceeded in RedBlackTree (raise cairo.sql.sort.key.max.bytes)");
+                            "memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes or cairo.sql.sort.light.value.max.bytes)");
                 }
             }, configuration, LOG);
         });

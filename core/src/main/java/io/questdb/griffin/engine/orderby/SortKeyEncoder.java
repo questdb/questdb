@@ -76,6 +76,7 @@ public class SortKeyEncoder implements QuietCloseable {
     private final boolean hasBorrowedRankMaps;
     private final boolean[] isDesc;
     private final boolean isSingleColumnFixed8;
+    private final boolean isSingleColumnVarchar;
     private final boolean[] isStaticSymbol;
     private final int[] offsets;
     private final int[] rankMapSizes;
@@ -131,6 +132,7 @@ public class SortKeyEncoder implements QuietCloseable {
             }
         }
         this.isSingleColumnFixed8 = n == 1 && columnByteWidths[0] >= 0 && columnByteWidths[0] <= 8;
+        this.isSingleColumnVarchar = n == 1 && columnTypes[0] == ColumnType.VARCHAR;
         this.decimal128Sink = hasDecimal128 ? new Decimal128() : null;
         this.decimal256Sink = hasDecimal256 ? new Decimal256() : null;
     }
@@ -301,6 +303,11 @@ public class SortKeyEncoder implements QuietCloseable {
             encodeFixed8(record, destAddr, rowId);
             return;
         }
+        if (isSingleColumnVarchar) {
+            final Utf8Sequence value = record.getVarcharA(columnIndices[0]);
+            encodeVarchar(value, varcharK1(value, isDesc[0]), destAddr, rowId);
+            return;
+        }
         if (keyType.isVariable()) {
             encodeVariable(record, destAddr, rowId);
             return;
@@ -326,6 +333,26 @@ public class SortKeyEncoder implements QuietCloseable {
      */
     public boolean encodeFixed8Frame(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, EncodedTopKBuffer topK) {
         return encodeFixed8Batch(frameMemory, frameIndex, rows, rows.size(), topK);
+    }
+
+    /**
+     * Per-row top-K encode. For a single VARCHAR key the leading prefix word is
+     * computed from the value alone, so a row the threshold excludes is dropped
+     * with one compare, before any entry or heap write.
+     */
+    public void encodeTopK(Record record, long rowId, EncodedTopKBuffer topK) {
+        if (isSingleColumnVarchar) {
+            final Utf8Sequence value = record.getVarcharA(columnIndices[0]);
+            final long k1 = varcharK1(value, isDesc[0]);
+            if (topK.fastRejectsKey(k1)) {
+                return;
+            }
+            encodeVarchar(value, k1, topK.beginAppend(), rowId);
+            topK.endAppend();
+            return;
+        }
+        encode(record, topK.beginAppend(), rowId);
+        topK.endAppend();
     }
 
     public SortKeyType init(SymbolTableSource symbolTableSource) {
@@ -684,6 +711,50 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
+    /**
+     * The first prefix word of a single-VARCHAR key, bit-identical to reading
+     * back the first 8 bytes {@link #appendVarchar(Utf8Sequence, boolean)}
+     * writes: marker, up to 7 transformed value bytes, then terminator and
+     * zero padding for values shorter than 7 bytes. Exact only for a
+     * single-column key, where zero padding follows the terminator.
+     */
+    private static long varcharK1(Utf8Sequence value, boolean desc) {
+        final long byteMask = desc ? 0xFFL : 0L;
+        if (value == null) {
+            return byteMask << 56;
+        }
+        final int size = value.size();
+        if (size >= 8) {
+            final long t = (value.longAt(0) + 0x0101010101010101L) ^ (desc ? -1L : 0L);
+            return ((1L ^ byteMask) << 56) | (Long.reverseBytes(t) >>> 8);
+        }
+        long k1 = (1L ^ byteMask) << 56;
+        int shift = 48;
+        for (int i = 0; i < size; i++, shift -= 8) {
+            k1 |= (((value.byteAt(i) + 1) & 0xFFL) ^ byteMask) << shift;
+        }
+        if (size < 7) {
+            k1 |= byteMask << shift;
+        }
+        return k1;
+    }
+
+    // Second prefix word for keys that fit the prefix (size <= 14): value
+    // bytes 7+, terminator, zero padding.
+    private static long varcharShortK2(Utf8Sequence value, int size, boolean desc) {
+        if (size < 7) {
+            // The terminator already sits in the first word.
+            return 0;
+        }
+        final long byteMask = desc ? 0xFFL : 0L;
+        long k2 = 0;
+        int shift = 56;
+        for (int i = 7; i < size; i++, shift -= 8) {
+            k2 |= (((value.byteAt(i) + 1) & 0xFFL) ^ byteMask) << shift;
+        }
+        return k2 | byteMask << shift;
+    }
+
     private void batchSymbol(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
         final DirectIntList rankMap = rankMaps.getQuick(0);
         final int rankMapSize = rankMapSizes[0];
@@ -914,6 +985,35 @@ public class SortKeyEncoder implements QuietCloseable {
         }
         long val = Unsafe.getLong(destAddr + lastWord);
         Unsafe.putLong(destAddr + lastWord, Long.reverseBytes(val & padMask));
+    }
+
+    /**
+     * Single-VARCHAR-column encode: the prefix words come straight from the
+     * value, so keys within the prefix never touch the heap, and longer keys
+     * avoid the read-back of just-written heap bytes.
+     */
+    private void encodeVarchar(Utf8Sequence value, long k1, long destAddr, long rowId) {
+        final long heapOffset = keyHeap.getAppendOffset();
+        final long len;
+        long k2 = 0;
+        if (value == null) {
+            len = 1;
+        } else {
+            final int size = value.size();
+            len = size + 2L;
+            final boolean desc = isDesc[0];
+            if (len <= KEY_PREFIX_BYTES) {
+                k2 = varcharShortK2(value, size, desc);
+            } else {
+                k2 = Long.reverseBytes((value.longAt(7) + 0x0101010101010101L) ^ (desc ? -1L : 0L));
+                appendVarchar(value, desc);
+            }
+        }
+        Unsafe.putLong(destAddr, k1);
+        Unsafe.putLong(destAddr + 8, k2);
+        Unsafe.putLong(destAddr + 16, len);
+        Unsafe.putLong(destAddr + 24, heapOffset);
+        Unsafe.putLong(destAddr + 32, rowId);
     }
 
     private void encodeVariable(Record record, long destAddr, long rowId) {

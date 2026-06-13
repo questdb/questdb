@@ -119,9 +119,9 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 perWorkerRecordsB.extendAndSet(i, new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER));
             }
 
-            // The parallel buffer holds only fixed-width inline keys; variable-length
-            // keys fall back to the per-worker tree chain.
-            this.isEncoded = SortKeyEncoder.isFixedWidthSupported(orderByMetadata, orderByFilter);
+            // Fixed-width keys encode inline; variable-length keys spill into a
+            // per-worker key heap. Both take the encoded buffer path.
+            this.isEncoded = SortKeyEncoder.isSupported(orderByMetadata, orderByFilter);
             if (isEncoded) {
                 this.rankMaps = null;
                 this.ownerComparator = null;
@@ -303,12 +303,21 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         if (isEncoded) {
             keyType = ownerEncoder.init(symbolTableSource);
             assert keyType != SortKeyType.UNSUPPORTED;
+            final boolean isVariable = keyType.isVariable();
             ownerTopK.of(keyType, true, lo);
+            if (isVariable) {
+                ownerEncoder.setKeyHeap(ownerTopK.getKeyHeap());
+            }
             for (int i = 0; i < workerCount; i++) {
                 // Rank map building sorts the whole symbol dictionary; workers
                 // borrow the owner's maps instead of rebuilding identical ones.
-                perWorkerEncoders.getQuick(i).initFrom(ownerEncoder);
-                perWorkerTopK.getQuick(i).of(keyType, true, lo);
+                final SortKeyEncoder workerEncoder = perWorkerEncoders.getQuick(i);
+                final EncodedTopKBuffer workerTopK = perWorkerTopK.getQuick(i);
+                workerEncoder.initFrom(ownerEncoder);
+                workerTopK.of(keyType, true, lo);
+                if (isVariable) {
+                    workerEncoder.setKeyHeap(workerTopK.getKeyHeap());
+                }
             }
         } else {
             buildRankMaps(symbolTableSource);

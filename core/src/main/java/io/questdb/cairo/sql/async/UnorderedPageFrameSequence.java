@@ -71,6 +71,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private final T atom;
     private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
+    private final int circuitBreakerThrottle;
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final StringSink errorMsg = new StringSink();
@@ -114,6 +115,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
             this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.circuitBreakerThrottle = configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle();
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
             this.reduceQueue = messageBus.getUnorderedPageFrameReduceQueue();
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
@@ -224,11 +226,16 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
 
         // Phase 2: Wait for all queued frames to complete.
+        // Throttle the breaker check with a local counter: an unthrottled check
+        // pays a connection-probe syscall per spin, and the breaker's own
+        // throttle counter is useless here as the per-spin init() resets it.
+        int spins = 0;
         while (!doneLatch.done(queued)) {
             if (!isActive()) {
                 break;
             }
-            if (!isUninterruptible) {
+            if (!isUninterruptible && ++spins >= circuitBreakerThrottle) {
+                spins = 0;
                 workStealCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             }
             stealWork();

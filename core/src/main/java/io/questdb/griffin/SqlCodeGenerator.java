@@ -7470,10 +7470,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function hiFunc = getHiFunction(model, executionContext);
                 final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
                         && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
-                // The limited light cursor inlines fixed-width keys only; a variable-length
-                // key falls back to the RedBlackTree-based limited sort.
-                final boolean isEncodedSortLimitSupported = configuration.isSqlOrderBySortEnabled()
-                        && SortKeyEncoder.isFixedWidthSupported(metadata, listColumnFilterA);
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
@@ -7555,7 +7551,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
-                        if (isEncodedSortLimitSupported) {
+                        if (isEncodedSortSupported) {
                             return new EncodedSortLimitedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
