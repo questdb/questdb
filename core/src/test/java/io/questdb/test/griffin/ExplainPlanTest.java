@@ -600,6 +600,46 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinFilterPushedThroughView() throws Exception {
+        // Regression lock-in: a subquery wraps an ASOF join and the consumer filters by the master
+        // (trades) key. The master is index 0 (inner), so the guard in
+        // deriveTransitiveFiltersFromPushedPredicate passes and the constant propagates across the
+        // equi-join key onto the ASOF slave (quotes), exactly as it does for the inline query. The
+        // equi-join key q.sym = t.sym forces any matched quote to share the filtered symbol, so
+        // pre-filtering the slave cannot change which row ASOF picks. This guards that behaviour and
+        // its result.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (sym SYMBOL INDEX, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                      ('AA', 10.0, '2024-01-01T00:01:00.000000Z'),
+                      ('BB', 20.0, '2024-01-01T00:02:00.000000Z'),
+                      ('AA', 11.0, '2024-01-01T00:04:00.000000Z')""");
+            execute("""
+                    INSERT INTO quotes VALUES
+                      ('AA', 1.0, '2024-01-01T00:00:00.000000Z'),
+                      ('BB', 2.0, '2024-01-01T00:00:00.000000Z'),
+                      ('AA', 1.5, '2024-01-01T00:03:00.000000Z')""");
+            // trades AA @00:01 -> latest AA quote at or before 00:01 is bid 1.0 @00:00
+            // trades AA @00:04 -> latest AA quote at or before 00:04 is bid 1.5 @00:03
+            // the BB trade is excluded by the filter
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT t.sym AS k, t.px, q.bid
+                      FROM trades t ASOF JOIN quotes q ON q.sym = t.sym
+                    ) WHERE k = 'AA'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tpx\tbid
+                            AA\t10.0\t1.0
+                            AA\t11.0\t1.5
+                            """);
+        });
+    }
+
+    @Test
     public void testAsOfJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -1260,7 +1300,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct x from di order by 1 limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -1276,7 +1316,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct x from di order by 1 desc limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x desc]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -3743,7 +3783,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x, count(*) from di group by x order by 1 limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -3904,7 +3944,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x, count(*) from di group by x order by 1 desc limit 10")
                 .ddl("create table di (x int, y long)")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [x desc]
                             GroupBy vectorized: true workers: 1
                               keys: [x]
@@ -4178,6 +4218,93 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: a
                         """);
+    }
+
+    @Test
+    public void testInnerJoinFilterOnSecondTablePushedThroughView() throws Exception {
+        // A subquery wraps an INNER join. The WHERE filters by the SECOND (slave) table's join key.
+        // The predicate reaches the slave scan (tb: index scan, filter bkey='x'), but the first table
+        // stays a full scan - a constant pinned to the slave side is not propagated back to the
+        // master. This matches the plan of the equivalent inline query: the optimiser behaves the
+        // same with or without the enclosing view.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS ka, b.bkey AS kb, b.bv
+                  FROM ta a JOIN tb b ON b.bkey = a.akey
+                ) WHERE kb = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testInnerJoinFilterPushedThroughView() throws Exception {
+        // Same fix as the LEFT-join case, for an INNER join wrapped in a subquery. The WHERE filters
+        // by the FIRST (master) table's key (aliased as k). The optimiser pushes it into the master
+        // scan (ta) and derives the transitive filter for the second table (tb), so both sides become
+        // keyed lookups instead of full scans.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS k, a.av, b.bv
+                  FROM ta a JOIN tb b ON b.bkey = a.akey
+                ) WHERE k = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: akey deferred: true
+                                      filter: akey='x'
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testInnerJoinFilterPushedThroughViewReturnsCorrectRows() throws Exception {
+        // Row-level guard for testInnerJoinFilterPushedThroughView with distinct master/slave tables.
+        // withPlanContaining is what proves the optimisation: a plan that forgot to derive the slave
+        // filter would still return the right rows (the post-join WHERE k='x' filters correctly either
+        // way), so the bkey fragment guards the transitive push, while .returns confirms exactly the
+        // surviving master row is kept and the 'y' row excluded. With data present, 'x' resolves to
+        // symbol key 1, so both filters render by resolved key (akey=1/bkey=1) rather than the
+        // deferred ='x' form the no-data plan-only sibling shows - exercising the resolved-key path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a JOIN tb b ON b.bkey = a.akey
+                    ) WHERE k = 'x'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: akey=1", "filter: bkey=1")
+                    .returns("""
+                            k\tav\tbv
+                            x\tax\tbx
+                            """);
+        });
     }
 
     @Test
@@ -4875,6 +5002,399 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               symbolFilter: s=1
                                 Frame backward scan on: a
                             """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterByAliasPushedThroughView() throws Exception {
+        // Exercises alias rewriting on both sides: the join condition uses table aliases (a, b) and
+        // the WHERE filters by a column alias (k), which the subquery projects from a.akey. The
+        // optimiser resolves k back to a.akey, pushes it into the master scan (ta) and derives the
+        // transitive filter on the slave (tb), so both sides become keyed lookups.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS k, a.av, b.bv
+                  FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                ) WHERE k = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Left Outer Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: akey deferred: true
+                                      filter: akey='x'
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testLeftJoinFilterByBindVariablePushedThroughView() throws Exception {
+        // The pushed-down predicate is a bind variable, not a literal constant. It must propagate the
+        // same way: into the master scan (ta) and transitively onto the slave (tb), both rendered as
+        // "filter: <key>=:kp::string". This confirms bind parameters reach the slave scans too.
+        bindVariableService.clear();
+        bindVariableService.setStr("kp", "x");
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS k, a.av, b.bv
+                  FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                ) WHERE k = :kp""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Left Outer Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: akey deferred: true
+                                      filter: akey=:kp::string
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey=:kp::string
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testLeftJoinFilterByBindVariablePushedThroughViewReturnsCorrectRows() throws Exception {
+        // Executes the bind-variable pushdown (the plan-only sibling is
+        // testLeftJoinFilterByBindVariablePushedThroughView). The derived slave filter shares the bind
+        // ExpressionNode by reference with the master predicate - one node feeds both scans - so this
+        // proves both scans actually read the bound value at execution. The re-bind to 'y' then proves
+        // the shared node re-reads rather than freezing on the first bound value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            String query = """
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                    ) WHERE k = :kp""";
+            bindVariableService.clear();
+            bindVariableService.setStr("kp", "x");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: akey=:kp::string", "filter: bkey=:kp::string")
+                    .returns("""
+                            k\tav\tbv
+                            x\tax\tbx
+                            """);
+            // re-bind: the shared const node must re-read, not return the stale 'x' row
+            bindVariableService.setStr("kp", "y");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tav\tbv
+                            y\tay\tby
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterOnSecondTableStaysPostJoinThroughView() throws Exception {
+        // A subquery wraps a LEFT join. The WHERE filters by the SECOND (slave) table's join key.
+        // Unlike the INNER case, a WHERE predicate on a left-joined slave column must run AFTER the
+        // join (it rejects the NULL-extended rows), so it stays a post-join "Filter" over the whole
+        // join and is not pushed into either scan. This matches the equivalent inline query and is
+        // intentionally left unchanged by the master-side pushdown.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS ka, b.bkey AS kb, b.bv
+                  FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                ) WHERE kb = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Filter filter: b.bkey='x'
+                                Hash Left Outer Join Light
+                                  condition: b.bkey=a.akey
+                                  symbolKeyJoin: true
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: ta
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testLeftJoinFilterPushedThroughView() throws Exception {
+        // A view encapsulates two LEFT JOINs onto 'events'. A consumer filters the view by the
+        // master-table key (entity_id, which maps to entity_terminal.id). The filter reaches the
+        // master scan (entity_terminal: Index forward scan, filter: id='x') AND is propagated across
+        // the equi-join keys (events.entity_id = e.id) into both left-joined 'events' scans as index
+        // lookups ("Index forward scan on: entity_id ... filter: entity_id='x'"), so the query does a
+        // keyed lookup instead of reading every event row.
+        // The resulting plan is identical to testLeftJoinFilterPushedWhenInlined, where the same
+        // predicate is written directly in the join's query model rather than through a view.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE entity_terminal (
+                      id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      status SYMBOL,
+                      last_event_id LONG
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE TABLE events (
+                      entity_id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      event_type SYMBOL,
+                      id LONG,
+                      payload STRING
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE VIEW entity_stats AS (
+                      SELECT
+                        e.id AS entity_id,
+                        e.created_at,
+                        e.status,
+                        related_event.created_at AS terminal_at,
+                        decision_event.payload AS decision_payload
+                      FROM entity_terminal e
+                      LEFT JOIN events decision_event
+                        ON decision_event.entity_id = e.id
+                        AND decision_event.created_at = e.created_at
+                        AND decision_event.event_type = 'decision'
+                      LEFT JOIN events related_event
+                        ON related_event.entity_id = e.id
+                        AND related_event.id = e.last_event_id
+                        AND related_event.event_type = 'terminal'
+                    )""");
+
+            assertQuery("SELECT * FROM entity_stats WHERE entity_id = 'x'")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: related_event.id=e.last_event_id and related_event.entity_id=e.id
+                                  symbolKeyJoin: true
+                                  filter: related_event.event_type='terminal'
+                                    Hash Left Outer Join Light
+                                      condition: decision_event.created_at=e.created_at and decision_event.entity_id=e.id
+                                      symbolKeyJoin: true
+                                      filter: decision_event.event_type='decision'
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: id deferred: true
+                                              filter: id='x'
+                                            Frame forward scan on: entity_terminal
+                                        Hash
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index forward scan on: entity_id deferred: true
+                                                  filter: entity_id='x'
+                                                Frame forward scan on: events
+                                    Hash
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: entity_id deferred: true
+                                              filter: entity_id='x'
+                                            Frame forward scan on: events
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterPushedThroughViewReturnsCorrectRows() throws Exception {
+        // Guards that pushing the filter into the left-joined 'events' scans (see
+        // testLeftJoinFilterPushedThroughView) preserves LEFT JOIN semantics: every master row that
+        // matches the filter survives, matched slave rows attach, and unmatched slaves stay NULL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE entity_terminal (
+                      id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      status SYMBOL,
+                      last_event_id LONG
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE TABLE events (
+                      entity_id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      event_type SYMBOL,
+                      id LONG,
+                      payload STRING
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE VIEW entity_stats AS (
+                      SELECT
+                        e.id AS entity_id,
+                        e.created_at,
+                        e.status,
+                        related_event.created_at AS terminal_at,
+                        decision_event.payload AS decision_payload
+                      FROM entity_terminal e
+                      LEFT JOIN events decision_event
+                        ON decision_event.entity_id = e.id
+                        AND decision_event.created_at = e.created_at
+                        AND decision_event.event_type = 'decision'
+                      LEFT JOIN events related_event
+                        ON related_event.entity_id = e.id
+                        AND related_event.id = e.last_event_id
+                        AND related_event.event_type = 'terminal'
+                    )""");
+            drainWalAndViewQueues();
+            // two 'x' master rows (one fully matched, one with no matching terminal) plus a 'y' row
+            // that the filter must exclude
+            execute("""
+                    INSERT INTO entity_terminal VALUES
+                      ('x', '2024-01-01T00:00:00.000000Z', 'open', 100),
+                      ('x', '2024-01-05T00:00:00.000000Z', 'reopened', 555),
+                      ('y', '2024-01-02T00:00:00.000000Z', 'closed', 200)""");
+            execute("""
+                    INSERT INTO events VALUES
+                      ('x', '2024-01-01T00:00:00.000000Z', 'decision', 1, 'dpx'),
+                      ('x', '2024-01-03T00:00:00.000000Z', 'terminal', 100, 'tp'),
+                      ('x', '2024-01-05T00:00:00.000000Z', 'decision', 7, 'dp5'),
+                      ('x', '2024-01-09T00:00:00.000000Z', 'terminal', 999, 'tpw'),
+                      ('y', '2024-01-02T00:00:00.000000Z', 'decision', 5, 'dpy')""");
+            drainWalQueue();
+
+            // row 1: decision matches (created_at=t1) and terminal matches (id=100 -> terminal_at=t3)
+            // row 2: decision matches (created_at=t5) but no terminal with id=555 -> terminal_at NULL
+            assertQuery("SELECT * FROM entity_stats WHERE entity_id = 'x' ORDER BY created_at")
+                    .noLeakCheck()
+                    .timestamp("created_at")
+                    .noRandomAccess()
+                    .returns("""
+                            entity_id\tcreated_at\tstatus\tterminal_at\tdecision_payload
+                            x\t2024-01-01T00:00:00.000000Z\topen\t2024-01-03T00:00:00.000000Z\tdpx
+                            x\t2024-01-05T00:00:00.000000Z\treopened\t\tdp5
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterPushedWhenInlined() throws Exception {
+        // Contrast to testLeftJoinFilterPushedThroughView. With the same joins written inline -
+        // so the WHERE filter lives in the same query model as the joins - the optimiser derives
+        // events.entity_id='x' transitively from e.id='x' and the equi-join keys, and pushes it
+        // into both left-joined 'events' scans as an index lookup
+        // ("Index forward scan on: entity_id ... filter: entity_id='x'").
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE entity_terminal (
+                      id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      status SYMBOL,
+                      last_event_id LONG
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+            execute("""
+                    CREATE TABLE events (
+                      entity_id SYMBOL INDEX,
+                      created_at TIMESTAMP,
+                      event_type SYMBOL,
+                      id LONG,
+                      payload STRING
+                    ) TIMESTAMP(created_at) PARTITION BY DAY""");
+
+            assertQuery("""
+                    SELECT
+                      e.id AS entity_id,
+                      e.created_at,
+                      e.status,
+                      related_event.created_at AS terminal_at,
+                      decision_event.payload AS decision_payload
+                    FROM entity_terminal e
+                    LEFT JOIN events decision_event
+                      ON decision_event.entity_id = e.id
+                      AND decision_event.created_at = e.created_at
+                      AND decision_event.event_type = 'decision'
+                    LEFT JOIN events related_event
+                      ON related_event.entity_id = e.id
+                      AND related_event.id = e.last_event_id
+                      AND related_event.event_type = 'terminal'
+                    WHERE e.id = 'x'""")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: related_event.id=e.last_event_id and related_event.entity_id=e.id
+                                  symbolKeyJoin: true
+                                  filter: related_event.event_type='terminal'
+                                    Hash Left Outer Join Light
+                                      condition: decision_event.created_at=e.created_at and decision_event.entity_id=e.id
+                                      symbolKeyJoin: true
+                                      filter: decision_event.event_type='decision'
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: id deferred: true
+                                              filter: id='x'
+                                            Frame forward scan on: entity_terminal
+                                        Hash
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index forward scan on: entity_id deferred: true
+                                                  filter: entity_id='x'
+                                                Frame forward scan on: events
+                                    Hash
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: entity_id deferred: true
+                                              filter: entity_id='x'
+                                            Frame forward scan on: events
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterStacksWithSubQueryInternalWhere() throws Exception {
+        // The subquery already carries its own internal WHERE (a.av='keep'), processed during
+        // optimiseJoins. The consumer then adds WHERE k='x', which moveWhereInsideSubQueries pushes
+        // into the same nested model. The pushed predicate must AND with the pre-existing internal
+        // filter (concatFilters), not clobber it, while still deriving bkey='x' on the slave. Only the
+        // ('x','keep') master row survives both filters, and it attaches the matching tb row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'keep'), ('x', 'drop'), ('y', 'keep')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                      WHERE a.av = 'keep'
+                    ) WHERE k = 'x'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tav\tbv
+                            x\tkeep\tbx
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinFilterWithNullConstantThroughView() throws Exception {
+        // A NULL constant filter on the master key returns no rows ("col = NULL" is never true). The
+        // subquery-wrapped form behaves exactly like the inline query: "k = NULL" is folded to a
+        // deferred symbol filter (rendered as "=0") and pushed across the equi-join key onto the slave
+        // scan just as it is inline, and both produce an empty result. Even with a NULL-extended slave,
+        // the join condition (slave.key = master.key) cannot match when the master key is NULL, so the
+        // pushdown is lossless. Guards the NULL-constant pushdown path against regressions.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a LEFT JOIN tb b ON b.bkey = a.akey
+                    ) WHERE k = NULL""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tav\tbv\n");
         });
     }
 
@@ -5963,7 +6483,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from (select * from tab order by ts, i desc limit 10) order by ts")
                 .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Sort light lo: 10 partiallySorted: true
+                        Encode sort light lo: 10 partiallySorted: true
                           keys: [ts, i desc]
                             PageFrame
                                 Row forward scan
@@ -5976,7 +6496,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc")
                 .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Sort light lo: 10 partiallySorted: true
+                        Encode sort light lo: 10 partiallySorted: true
                           keys: [ts desc, i]
                             PageFrame
                                 Row backward scan
@@ -9257,7 +9777,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.setStr("s2", "S2");
 
             String expectedPlan = """
-                    Sort light lo: 5
+                    Encode sort light lo: 5
                       keys: [s#ORDER#]
                         FilterOnValues symbolOrder: desc
                             Cursor-order scan
@@ -9276,10 +9796,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            s\tts
-                            S2\t1970-01-01T01:00:00.000003Z
-                            S2\t1970-01-01T00:00:00.000000Z
-                            S1\t1970-01-01T00:00:00.000001Z
+                            s	ts
+                            S2	1970-01-01T00:00:00.000000Z
+                            S2	1970-01-01T01:00:00.000003Z
+                            S1	1970-01-01T00:00:00.000001Z
                             """);
 
             // order by asc
@@ -9291,10 +9811,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            s\tts
-                            S1\t1970-01-01T00:00:00.000001Z
-                            S2\t1970-01-01T01:00:00.000003Z
-                            S2\t1970-01-01T00:00:00.000000Z
+                            s	ts
+                            S1	1970-01-01T00:00:00.000001Z
+                            S2	1970-01-01T00:00:00.000000Z
+                            S2	1970-01-01T01:00:00.000003Z
                             """);
         });
     }
@@ -9340,7 +9860,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [ts desc]
                             Empty table
                         """);
@@ -9351,7 +9871,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [ts desc]
                             FilterOnSubQuery
                                 Union All
@@ -9370,7 +9890,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [ts desc]
                             FilterOnSubQuery
                               filter: length(s)=2
@@ -9403,7 +9923,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where s = 'S1' order by s asc limit 10")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [s]
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: s deferred: true
@@ -10005,7 +10525,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a order by i limit 10, 100")
                 .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
-                        Sort light lo: 10 hi: 100
+                        Encode sort light lo: 10 hi: 100
                           keys: [i]
                             PageFrame
                                 Row forward scan
@@ -10288,35 +10808,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x + 1 as xp from xx where str is not null order by xp desc limit 10")
                 .ddl("create table xx ( x long, str varchar ) ")
                 .assertsPlan("""
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [xp desc]
                             VirtualRecord
                               functions: [x+1]
                                 Async JIT Filter workers: 1
                                   filter: str is not null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: xx
-                        """);
-    }
-
-    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
-    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
-        // ORDER BY str references a column absent from the SELECT list, forcing the
-        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
-        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
-        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
-        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
-        // and is not what the gate inspects.
-        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            VirtualRecord
-                              functions: [x+1,x,str]
-                                Async JIT Top K lo: 10 workers: 1
-                                  filter: str is not null
-                                  keys: [str desc]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
@@ -10336,21 +10833,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
-                        """);
-    }
-
-    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
-    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
-        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
-                .ddl("create table xx ( x long, str varchar ) ")
-                .assertsPlan("""
-                        SelectedRecord
-                            Async JIT Top K lo: 10 workers: 1
-                              filter: str is not null
-                              keys: [str desc, x]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: xx
                         """);
     }
 
@@ -10375,6 +10857,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
+        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            Async JIT Top K lo: 10 workers: 1
+                              filter: str is not null
+                              keys: [str desc, x]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: xx
+                        """);
+    }
+
     @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
     public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
         assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10")
@@ -10386,6 +10883,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Async JIT Top K lo: 10 workers: 1
                                   filter: str is not null
                                   keys: [str desc, x]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: xx
+                        """);
+    }
+
+    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
+    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
+        // ORDER BY str references a column absent from the SELECT list, forcing the
+        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
+        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
+        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
+        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
+        // and is not what the gate inspects.
+        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
+                        SelectedRecord
+                            VirtualRecord
+                              functions: [x+1,x,str]
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: str is not null
+                                  keys: [str desc]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: xx
@@ -11245,7 +11765,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Filter filter: i1*i2!=0
                             SelectedRecord
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11261,7 +11781,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11277,7 +11797,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11293,7 +11813,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
+                                Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts1, l1]
                                     SelectedRecord
                                         PageFrame
@@ -11336,6 +11856,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoinFilterPushedThroughView() throws Exception {
+        // Regression lock-in for a self-join wrapped in a subquery: both join instances reference the
+        // same table and the same column name 'k'. The constant pinned to the master instance
+        // (a.k='x') must propagate to the slave instance (b.k) without conflating the two
+        // identically-named columns - addTransitiveFilters matches on both name AND join-model index,
+        // so only the slave's own key is filtered. ORDER BY makes the hash-join output deterministic.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL INDEX, v STRING)");
+            execute("INSERT INTO t VALUES ('x', 'x1'), ('x', 'x2'), ('y', 'y1')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.k AS ka, a.v AS av, b.v AS bv
+                      FROM t a JOIN t b ON b.k = a.k
+                    ) WHERE ka = 'x' ORDER BY av, bv""")
+                    .noLeakCheck()
+                    .returns("""
+                            ka\tav\tbv
+                            x\tx1\tx1
+                            x\tx1\tx2
+                            x\tx2\tx1
+                            x\tx2\tx2
+                            """);
+        });
+    }
+
+    @Test
     public void testSortAscLimitAndSortAgain1a() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
@@ -11359,7 +11905,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 10 partiallySorted: true
+                            Encode sort light lo: 10 partiallySorted: true
                               keys: [ts desc, l desc]
                                 PageFrame
                                     Row backward scan
@@ -11378,7 +11924,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Lt Join Fast
-                                    Sort light lo: 10 partiallySorted: true
+                                    Encode sort light lo: 10 partiallySorted: true
                                       keys: [ts, l]
                                         PageFrame
                                             Row forward scan
@@ -12915,7 +13461,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(queryDesc)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Sort light lo: 5
+                        Encode sort light lo: 5
                           keys: [ts desc]
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan

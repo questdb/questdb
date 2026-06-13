@@ -2603,7 +2603,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: -10
+                            Encode sort light lo: -10
                               keys: [s, ts]
                                 PageFrame
                                     Row forward scan
@@ -2630,7 +2630,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: -10 partiallySorted: true
+                            Encode sort light lo: -10 partiallySorted: true
                               keys: [ts, s]
                                 PageFrame
                                     Row forward scan
@@ -2772,7 +2772,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "order by pickup_datetime desc, cab_type desc limit 100;")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 100 partiallySorted: true
+                            Encode sort light lo: 100 partiallySorted: true
                               keys: [pickup_datetime desc, cab_type desc]
                                 PageFrame
                                     Row backward scan
@@ -2790,7 +2790,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "order by pickup_datetime desc, cab_type desc limit 100, 110;")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 100 hi: 110
+                            Encode sort light lo: 100 hi: 110
                               keys: [pickup_datetime desc, cab_type desc]
                                 PageFrame
                                     Row forward scan
@@ -3649,7 +3649,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Encode sort light
                               keys: [timestamp, side desc]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side]
                                     PageFrame
                                         Row backward scan
@@ -3691,7 +3691,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Encode sort light
                               keys: [timestamp, side]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side desc]
                                     PageFrame
                                         Row backward scan
@@ -3716,7 +3716,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [timestamp, side desc]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side]
                                     PageFrame
                                         Row backward scan
@@ -3781,7 +3781,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .withPlan("""
                             Encode sort light
                               keys: [timestamp, side desc, symbol]
-                                Sort light lo: 3 partiallySorted: true
+                                Encode sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side, symbol desc]
                                     PageFrame
                                         Row backward scan
@@ -3804,7 +3804,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -1, -3;")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: -1 hi: -3 partiallySorted: true
+                            Encode sort light lo: -1 hi: -3 partiallySorted: true
                               keys: [timestamp, side desc]
                                 PageFrame
                                     Row forward scan

@@ -371,7 +371,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     public void clear() {
-        clearConstNameToMaps();
+        clearConstNameMaps();
         contextPool.clear();
         intHashSetPool.clear();
         joinClausesSwap1.clear();
@@ -408,6 +408,12 @@ public class SqlOptimiser implements Mutable {
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
         lateralJoinRewriter.clear();
+    }
+
+    public void clearConstNameMaps() {
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -2272,12 +2278,6 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
-    private void clearConstNameToMaps() {
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
-    }
-
     /**
      * Clears the window function hash map and resets the column list pool.
      */
@@ -3098,6 +3098,67 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Re-derives transitive equality filters after a {@code column = constant} predicate has been
+     * pushed down into a nested join sub-query (for example, a view that encapsulates the joins).
+     * <p>
+     * {@link #addTransitiveFilters(IQueryModel)} normally runs during {@link #optimiseJoins}, but at
+     * that point the predicate still sits on the outer model and the nested join's WHERE clause is
+     * empty, so the slave-side filter is never derived. When the same predicate is written directly
+     * on the join model (no enclosing view), the derivation happens and the slave scan becomes a
+     * keyed lookup; this method restores that behavior for the pushed-down case.
+     * <p>
+     * Only a constant pinned to the parent side of an equi-join propagates to the slave (mirroring
+     * {@link #addTransitiveFilters}), so this is safe for outer joins - it never removes unmatched
+     * master rows.
+     */
+    private void deriveTransitiveFiltersFromPushedPredicate(IQueryModel nested, ExpressionNode node) throws SqlException {
+        // transitivity of equals applies only to a single "column = constant" equality, and only a
+        // join sub-query has equi-join keys to propagate the constant across
+        if (nested.getJoinModels().size() < 2 || joinOps.get(node.token) != JOIN_OP_EQUAL) {
+            return;
+        }
+        traverseNamesAndIndices(nested, node);
+        if (literalCollector.functionCount > 0 || literalCollector.nullCount > 0) {
+            return;
+        }
+
+        final int aSize = literalCollectorAIndexes.size();
+        final int bSize = literalCollectorBIndexes.size();
+        final CharSequence name;
+        final int index;
+        final ExpressionNode constNode;
+        if (aSize == 1 && bSize == 0) {
+            // column = constant
+            name = literalCollectorANames.getQuick(0);
+            index = literalCollectorAIndexes.get(0);
+            constNode = node.rhs;
+        } else if (aSize == 0 && bSize == 1) {
+            // constant = column
+            name = literalCollectorBNames.getQuick(0);
+            index = literalCollectorBIndexes.get(0);
+            constNode = node.lhs;
+        } else {
+            return;
+        }
+
+        // the table pinned by the constant must not itself be outer/asof joined, mirroring the guard
+        // in analyseEquals()
+        if (joinBarriers.contains(nested.getJoinModels().getQuick(index).getJoinType())) {
+            return;
+        }
+
+        // the enclosing model's join pass may have left const-map entries behind; reset the maps
+        // so addTransitiveFilters sees exactly this pushed predicate. No clean-up clear is needed
+        // afterwards: every reader resets the maps before use (this method here, optimiseJoins at
+        // the top of its join-processing block).
+        clearConstNameMaps();
+        constNameToIndex.put(name, index);
+        constNameToNode.put(name, constNode);
+        constNameToToken.put(name, node.token);
+        addTransitiveFilters(nested);
     }
 
     /**
@@ -5627,6 +5688,10 @@ public class SqlOptimiser implements Mutable {
                             // whenever nested model has explicitly defined columns it must also
                             // have its own nested model, where we assign new "where" clauses
                             addWhereNode(nested, node);
+                            // the predicate just landed on a nested join sub-query whose join
+                            // optimisation already ran, so re-derive transitive constant filters to
+                            // let the constant reach the slave scans (e.g. a view wrapping LEFT JOINs)
+                            deriveTransitiveFiltersFromPushedPredicate(nested, node);
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {
@@ -5983,6 +6048,13 @@ public class SqlOptimiser implements Mutable {
 
         int n = joinModels.size();
         if (n > 1) {
+            // the const maps are scratch state scoped to this block: processJoinConditions
+            // (via analyseEquals/analyseRegex) populates them and addTransitiveFilters reads
+            // them. Clear entries left behind by a previously optimised model - e.g. an
+            // IN (SELECT ...) sub-query optimised by optimiseExpressionModels before this
+            // model's pass - so a stale constant cannot be misattributed to a column of this
+            // model's join clauses that happens to share name and join-model index.
+            clearConstNameMaps();
             emittedJoinClauses = joinClausesSwap1;
             emittedJoinClauses.clear();
 
@@ -6029,13 +6101,13 @@ public class SqlOptimiser implements Mutable {
                 // addTransitiveFilters above. Clear them before recursing so a constant this model
                 // registered (or, after the master-nulling guard, declined to register) does not
                 // leak into a nested model that happens to reuse the same column name and index.
-                clearConstNameToMaps();
+                clearConstNameMaps();
                 optimiseJoins(m);
             }
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
-                clearConstNameToMaps();
+                clearConstNameMaps();
                 optimiseJoins(m);
             }
         }
