@@ -399,6 +399,34 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testLongNestedLimit() throws Exception {
+        assertQuery("SELECT * FROM (SELECT * FROM generate_series(1, 100, 1) LIMIT 5, 55) LIMIT 3")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        6
+                        7
+                        8
+                        """);
+        assertQuery("SELECT * FROM (SELECT * FROM generate_series(1, 100, 1) LIMIT 5, 55) LIMIT 2, 5")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        8
+                        9
+                        10
+                        """);
+        assertQuery("SELECT * FROM (SELECT * FROM generate_series(100, 1, -1) LIMIT 5, 55) LIMIT 3")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        95
+                        94
+                        93
+                        """);
+    }
+
+    @Test
     public void testLongNoRange() throws Exception {
         assertQuery("generate_series(2, 2, 3);")
                 .expectSize()
@@ -704,6 +732,19 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testTimestampLongNestedLimit() throws Exception {
+        assertQuery("SELECT * FROM (SELECT * FROM generate_series(1::timestamp, 100::timestamp, 1) LIMIT 5, 55) LIMIT 3")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        1970-01-01T00:00:00.000006Z
+                        1970-01-01T00:00:00.000007Z
+                        1970-01-01T00:00:00.000008Z
+                        """);
+    }
+
+    @Test
     public void testTimestampLongNoRange() throws Exception {
         assertQuery("generate_series(2::timestamp, 2::timestamp, 3::timestamp);")
                 .timestamp("generate_series")
@@ -986,6 +1027,19 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         1970-01-01T00:00:00.000002000Z
                         1969-12-31T23:59:59.999999000Z
                         1969-12-31T23:59:59.999996000Z
+                        """);
+    }
+
+    @Test
+    public void testTimestampStringNestedLimit() throws Exception {
+        assertQuery("SELECT * FROM (SELECT * FROM generate_series(1::timestamp, 100::timestamp, '1U') LIMIT 5, 55) LIMIT 3")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series
+                        1970-01-01T00:00:00.000006Z
+                        1970-01-01T00:00:00.000007Z
+                        1970-01-01T00:00:00.000008Z
                         """);
     }
 

@@ -114,6 +114,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntLongHashMap recordAtSlices = new IntLongHashMap();
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
+    // Bumped whenever the pool closes buffers that bound records may still alias
+    // (failed decode, bulk release). Records capture it on bind; a mismatch fails
+    // the navigateTo() fast path and forces a safe rebind.
+    private long bindGeneration;
     // Tracks which cached buffer currently holds each usage bit. Used to clear
     // the previous pin in O(1) without scanning every cached entry.
     private ParquetBuffers boundForFrameMemory;
@@ -128,6 +132,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private boolean hasFullProjectionMap;
     private ParquetBuffers lruHead;
     private ParquetBuffers lruTail;
+    // Lazily created list of zero entries published as column addresses/sizes for
+    // an empty decode window; a zero address reads as a column top (NULL).
+    private DirectLongList nullColumnAddresses;
     private DirectLongList recordAtRows;
 
     public PageFrameMemoryPool(long maxCacheBytes) {
@@ -156,6 +163,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.free(legacyDecoder);
         activeDecoder = null;
         Misc.free(parquetColumns);
+        nullColumnAddresses = Misc.free(nullColumnAddresses);
         recordAtRows = Misc.free(recordAtRows);
         recordAtSlices.clear();
         releaseParquetBuffers();
@@ -167,11 +175,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.free(legacyDecoder);
         activeDecoder = null;
         Misc.free(parquetColumns);
+        nullColumnAddresses = Misc.free(nullColumnAddresses);
         recordAtRows = Misc.free(recordAtRows);
         recordAtSlices.clear();
         releaseParquetBuffers();
         Misc.freeObjListAndClear(freeParquetBufferShells);
         addressCache = null;
+    }
+
+    public long getBindGeneration() {
+        return bindGeneration;
     }
 
     @TestOnly
@@ -228,8 +241,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // would dereference freed memory. The boundPool identity check distinguishes "still
             // ours and live" from "bound elsewhere and possibly freed", so it restores the cheap
             // per-row repeat visit for sequential scans (PageFrameRecordCursorImpl.hasNext())
-            // without reopening the parquet use-after-free on the random-access path.
-            if (record.getFrameIndex() == frameIndex && record.getBoundPool() == this) {
+            // without reopening the parquet use-after-free on the random-access path. The
+            // generation check rejects records bound before a failed decode closed buffers
+            // they may still alias.
+            if (record.getFrameIndex() == frameIndex && record.getBoundPool() == this && record.getBoundGeneration() == bindGeneration) {
                 return;
             }
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
@@ -274,7 +289,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.auxPageSizes,
                     0
             );
-            record.setBoundPool(this);
+            record.setBoundPool(this, bindGeneration);
         }
     }
 
@@ -300,11 +315,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
-     * Navigates to the given frame with an advisory window of frame rows the caller
+     * Navigates to the given frame with a window of frame rows the caller
      * intends to access. For Parquet partitions, only rows in
      * {@code [inFrameRowLo, inFrameRowHi)} of the frame are decoded; for native
-     * partitions the window is ignored. The caller must not access rows outside
-     * the window via the returned memory.
+     * partitions the window is ignored. The window is a hard contract on the
+     * caller: rows outside it are undecoded memory and must not be accessed
+     * via the returned memory.
      * <p>
      * Decoded buffers stay frame-origin-addressable: published column addresses are
      * shifted back by {@code inFrameRowLo} rows, so records and row cursors keep
@@ -322,6 +338,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * record ever needs widening; a new finite-window caller must uphold this.
      */
     public PageFrameMemory navigateTo(int frameIndex, int inFrameRowLo, int inFrameRowHi) {
+        if (frameMemory.frameIndex == frameIndex && isFrameMemoryCovering(frameIndex, inFrameRowLo, inFrameRowHi)) {
+            return frameMemory;
+        }
+
         final byte format = addressCache.getFrameFormat(frameIndex);
         if (format == PartitionFormat.NATIVE) {
             unbind(FRAME_MEMORY_MASK);
@@ -337,6 +357,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int decodeLo = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowLo);
             final int decodeHi = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowHi);
             final int frameRowLo = decodeLo - rowGroupLo;
+            if (decodeLo == decodeHi) {
+                // Nothing will be read from this frame (e.g. skipRows with a zero
+                // post-skip cap); publish NULL addresses instead of decoding.
+                unbind(FRAME_MEMORY_MASK);
+                final DirectLongList zeroes = getNullColumnAddresses();
+                frameMemory.currentRowGroupBuffer = null;
+                frameMemory.pageAddresses = zeroes;
+                frameMemory.auxPageAddresses = zeroes;
+                frameMemory.pageSizes = zeroes;
+                frameMemory.auxPageSizes = zeroes;
+                frameMemory.columnOffset = 0;
+                frameMemory.frameIndex = frameIndex;
+                frameMemory.frameFormat = format;
+                return frameMemory;
+            }
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
             if (parquetBuffers != null && parquetBuffers.isRowFiltered) {
                 // A row-filtered buffer holds NULLs for undeclared rows and must not
@@ -379,6 +414,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public PageFrameMemory navigateTo(int frameIndex, IntHashSet columnIndexes) {
+        // No window-coverage check: only the async reduce pools call this overload,
+        // and they never issue windowed decodes, so a matching frame index implies
+        // a full-frame decode. A pool mixing this overload with the windowed one
+        // must go through the coverage check instead.
         if (frameMemory.frameIndex == frameIndex) {
             return frameMemory;
         }
@@ -481,6 +520,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         boundForRecordA = null;
         boundForRecordB = null;
         boundForFrameMemory = null;
+        bindGeneration++;
         cachedBytes = 0;
         if (frameMemory != null) {
             frameMemory.clear();
@@ -660,17 +700,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         decodeWindowAndAccount(frameIndex, parquetBuffers, rowGroupLo, rowGroupHi, 0);
     }
 
-    private void decodeWindowAndAccount(int frameIndex, ParquetBuffers parquetBuffers, int decodeLo, int decodeHi, int frameRowLo) {
-        final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-        try {
-            parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, decodeLo, decodeHi, frameRowLo);
-        } catch (Throwable th) {
-            evictHalfInitialized(parquetBuffers);
-            throw th;
-        }
-        accountDecode(parquetBuffers);
-    }
-
     private void decodeRowFilteredAndAccount(int frameIndex, ParquetBuffers parquetBuffers, long slice) {
         final int sliceLo = Numbers.decodeLowInt(slice);
         final int sliceHi = Numbers.decodeHighInt(slice);
@@ -694,6 +723,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         accountDecode(parquetBuffers);
     }
 
+    private void decodeWindowAndAccount(int frameIndex, ParquetBuffers parquetBuffers, int decodeLo, int decodeHi, int frameRowLo) {
+        final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+        try {
+            parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, decodeLo, decodeHi, frameRowLo);
+        } catch (Throwable th) {
+            evictHalfInitialized(parquetBuffers);
+            throw th;
+        }
+        accountDecode(parquetBuffers);
+    }
+
     private void evictAndClose(ParquetBuffers buffers) {
         cachedBytes -= buffers.retainedBytes;
         if (buffers.frameIndex >= 0) {
@@ -707,6 +747,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void evictHalfInitialized(ParquetBuffers buffers) {
+        // The buffer may be aliased by records bound before the failed decode;
+        // bumping the generation fails their fast-path check so they rebind
+        // instead of reading the freed memory.
+        bindGeneration++;
         if (boundForRecordA == buffers) {
             boundForRecordA = null;
         }
@@ -715,6 +759,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         if (boundForFrameMemory == buffers) {
             boundForFrameMemory = null;
+            frameMemory.clear();
         }
         evictAndClose(buffers);
     }
@@ -755,10 +800,42 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         };
     }
 
+    private DirectLongList getNullColumnAddresses() {
+        final int columnCount = addressCache.getColumnCount();
+        if (nullColumnAddresses == null) {
+            nullColumnAddresses = new DirectLongList(Math.max(columnCount, 16), MemoryTag.NATIVE_DEFAULT);
+        }
+        if (nullColumnAddresses.size() < columnCount) {
+            nullColumnAddresses.setCapacity(columnCount);
+            nullColumnAddresses.zero();
+            nullColumnAddresses.setPos(columnCount);
+        }
+        return nullColumnAddresses;
+    }
+
     // Zero-budget pools (per-worker parallel reduce slots, new PageFrameMemoryPool(0L)) never
     // cache, so they skip the per-decode byte sum: cachedBytes is unused for them.
     private boolean isAccountingEnabled() {
         return effectiveBudgetBytes != 0;
+    }
+
+    // Fast path for repeat visits: a native binding covers any window; a parquet
+    // binding covers the request only when the buffer still belongs to the frame
+    // and its decoded window spans the requested rows. An empty-window binding
+    // (currentRowGroupBuffer == null) never covers a non-empty request.
+    private boolean isFrameMemoryCovering(int frameIndex, int inFrameRowLo, int inFrameRowHi) {
+        if (frameMemory.frameFormat == PartitionFormat.NATIVE) {
+            return true;
+        }
+        final ParquetBuffers buffers = frameMemory.currentRowGroupBuffer;
+        if (buffers == null || buffers.frameIndex != frameIndex || buffers.isRowFiltered) {
+            return false;
+        }
+        final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+        final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+        final int decodeLo = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowLo);
+        final int decodeHi = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowHi);
+        return buffers.decodedRowLo <= decodeLo && buffers.decodedRowHi >= decodeHi;
     }
 
     private boolean isRowFilterEligible(int frameIndex, long declaredRowCount) {

@@ -456,6 +456,50 @@ fn test_delta_bytes_array_slicer_partial_truncated_tail_block_errors() {
 }
 
 #[test]
+fn test_delta_bytes_array_slicer_partial_truncated_prefix_block_errors() {
+    // DELTA_BYTE_ARRAY variant: a truncation inside the prefix-lengths block. With
+    // a partial row_count the prefix take() stops early, so locating the suffix
+    // block falls back to delta_stream_byte_len's structural walk of the prefix
+    // stream, which must error on the truncated block rather than panic or parse
+    // the suffix from inside the prefix.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let prefix_end = decoder.consumed_bytes();
+    encoded.truncate(prefix_end - 10);
+
+    assert!(DeltaBytesArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_slicers_zero_row_count_construct_and_count() {
+    // The empty decode window [x, x) (LimitRecordCursor's sizing pass, LIMIT 0)
+    // reaches the slicers with row_count == 0 over a valid, non-empty values
+    // buffer. Both slicers must construct cleanly and report a zero count without
+    // decoding or panicking.
+    let length_strings = ["alpha", "beta", "gamma"];
+    let mut length_encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        length_strings.iter().map(|s| s.as_bytes()),
+        &mut length_encoded,
+    );
+    let length_slicer = DeltaLengthArraySlicer::try_new(&length_encoded, 0, 0).unwrap();
+    assert_eq!(length_slicer.count(), 0);
+
+    let bytes_strings: Vec<&[u8]> = vec![b"alpha", b"alpine", b"beta"];
+    let mut bytes_encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(bytes_strings.into_iter(), &mut bytes_encoded);
+    let bytes_slicer = DeltaBytesArraySlicer::try_new(&bytes_encoded, 0, 0).unwrap();
+    assert_eq!(bytes_slicer.count(), 0);
+}
+
+#[test]
 fn test_delta_bytes_array_slicer_partial_row_count() {
     // Partial-decode variant for DELTA_BYTE_ARRAY: the suffix-lengths block
     // starts after the FULL prefix-lengths block, and the suffix bytes after

@@ -126,7 +126,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 frameAddressCache.add(frameCount, frame);
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
-                final int inFrameHi = (int) Math.min(frameSize, remaining);
+                final int inFrameHi = (int) Math.min(Math.min(frameSize, remaining), Integer.MAX_VALUE);
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
@@ -163,6 +163,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);
+        maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
         // prepare for page frame iteration
         super.init();
     }
@@ -178,15 +180,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+    public void skipRows(Counter rowCount, long requestedMaxRowsAfterSkip) {
         prepareRowCursorFactory();
 
         // The clamp decodes only the leading [0, n) rows of a parquet frame, so it is
         // sound only for a scan that yields the frame's rows 1:1 in ascending order.
         // isEntity() is that guarantee; a scattered/index row cursor reports false.
         final boolean canClamp = filter == null && rowCursorFactory.isEntity() && rowCursorFactory.isForwardScan();
-        this.maxRowsAfterSkip = canClamp ? maxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
-        this.rowsProducedSinceSkip = 0;
+        maxRowsAfterSkip = canClamp ? requestedMaxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
 
         // Use slow path when:
         // - filter is present (need to evaluate each row)
@@ -195,7 +197,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
-            this.rowsProducedSinceSkip = 0;
+            rowsProducedSinceSkip = 0;
             return;
         }
 
@@ -231,12 +233,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (pageFrame != null) {
             final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             final long roomInFrame = frameSize - skipTarget;
-            final long takeFromFrame = Math.min(roomInFrame, this.maxRowsAfterSkip);
+            final long takeFromFrame = Math.min(roomInFrame, maxRowsAfterSkip);
             // The skipped frame prefix is never read, so the decode window starts at
             // the skip landing row; the pool rebases published addresses to keep
             // frame-relative row indexes valid. Only a forward 1:1 scan may do this.
-            final int inFrameLo = canClamp ? (int) skipTarget : 0;
-            final int inFrameHi = (int) (skipTarget + takeFromFrame);
+            final int inFrameLo = canClamp ? (int) Math.min(skipTarget, Integer.MAX_VALUE) : 0;
+            final int inFrameHi = (int) Math.min(skipTarget + takeFromFrame, Integer.MAX_VALUE);
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameLo, inFrameHi);
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);

@@ -1202,13 +1202,13 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                         for (int f = 0; f < frameCount; f++) {
                             cursor.recordAt(record, f, 0);
                             record.getTimestamp(tsIndex);
-                            assertScatteredCacheInvariants(pool, frameCount);
+                            assertScatteredCacheInvariants(pool, budget, frameCount);
                         }
                         // Re-touch the first few frames repeatedly: SCATTERED promotes each hit.
                         for (int r = 0; r < 4 * frameCount; r++) {
                             cursor.recordAt(record, r % 4, 0);
                             record.getTimestamp(tsIndex);
-                            assertScatteredCacheInvariants(pool, frameCount);
+                            assertScatteredCacheInvariants(pool, budget, frameCount);
                         }
                     }
                     Assert.assertTrue(pool.getCachedBytes() > 0);
@@ -1874,11 +1874,11 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertScatteredCacheInvariants(PageFrameMemoryPool pool, int frameCount) {
+    private static void assertScatteredCacheInvariants(PageFrameMemoryPool pool, long budget, int frameCount) {
         long bytes = pool.getCachedBytes();
         Assert.assertTrue("cachedBytes must never be negative, got " + bytes, bytes >= 0);
         // A single just-decoded frame can briefly push the total over the budget, so allow slack.
-        Assert.assertTrue("cachedBytes should stay near the budget, got " + bytes, bytes <= 2 * 131072L);
+        Assert.assertTrue("cachedBytes should stay near the budget, got " + bytes, bytes <= 2 * budget);
         int frames = pool.getCachedFrameCount();
         Assert.assertTrue("cachedFrameCount must never be negative", frames >= 0);
         Assert.assertTrue("cachedFrameCount must not exceed the total frame count, got " + frames, frames <= frameCount);

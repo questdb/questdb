@@ -101,9 +101,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private long fileSize = 0;
     private long filterBufEnd;
     private boolean isFilterListPrepared;
-    // true while inside skipRows(): defeats the post-skip clamp so the
-    // skip loop's switchToNextRowGroup decodes full row groups, since
-    // skipping inside a row group relies on rowGroupRowCount == full size.
+    // true while inside skipRows(): defeats the post-skip clamp so the skip
+    // loop's switchToNextRowGroup decodes full row groups -- the skip can land
+    // anywhere inside the group, and a [0, remaining) clamp would cut off the
+    // rows at and after the landing position.
     private boolean isInSkipRows;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
     private int rowGroupIndex;
@@ -247,6 +248,12 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // decodeRowGroup() returns the full row group size even for a clamped decode,
+        // so rowGroupRowCount alone cannot bound reads: rows at and past the cap are
+        // undecoded memory and the cursor must hard-stop before serving them.
+        if (rowsProducedSinceSkip >= maxRowsAfterSkip) {
+            return false;
+        }
         if (++currentRowInRowGroup < rowGroupRowCount) {
             rowsProducedSinceSkip++;
             return true;

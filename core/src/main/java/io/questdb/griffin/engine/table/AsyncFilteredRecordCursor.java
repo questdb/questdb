@@ -280,8 +280,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         // hint is dropped here: filter discards rows, so the consumer's "max
         // output rows" cannot translate to a per-frame decode clamp without
-        // knowing the filter selectivity. A separate PR can teach the dispatch
-        // layer to stop fetching frames after enough output rows accumulate.
+        // knowing the filter selectivity.
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, false);
         }

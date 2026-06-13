@@ -42,7 +42,7 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        if (baseOrder == PartitionFrameCursorFactory.ORDER_ASC || baseOrder == PartitionFrameCursorFactory.ORDER_ANY) {
+        if (isForwardScan()) {
             if (fwdCursor == null) {
                 fwdCursor = new PageFrameFwdRowCursor();
             }

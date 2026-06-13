@@ -379,17 +379,20 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * capabilities, such as tables ordered by a designated timestamp. For cursors that
      * don't support efficient skipping, this method falls back to iterative advancement.
      * <p>
-     * The {@code maxRowsAfterSkip} parameter is an <em>advisory</em> upper bound on
-     * the number of rows the consumer plans to read after the skip completes.
-     * Implementations may use it to reduce work (e.g., clamp the decode window of
-     * underlying page frames). Iteration MUST remain correct if it is ignored.
-     * Callers without a known upper bound pass {@link #UNBOUNDED_ROW_COUNT}.
+     * The {@code maxRowsAfterSkip} parameter is an upper bound on the number of rows
+     * the consumer plans to read after the skip completes. It is advisory for
+     * implementations: they may use it to reduce work (e.g., clamp the decode window
+     * of underlying page frames) or ignore it, and iteration MUST remain correct
+     * either way. It is binding for callers: an implementation that honours a finite
+     * bound may stop producing rows once the bound is reached, so a caller that reads
+     * past its own stated bound gets silent truncation, not an error. Callers without
+     * a known upper bound pass {@link #UNBOUNDED_ROW_COUNT}.
      *
      * @param rowCount         a counter containing the number of rows to skip; this
      *                         value is decremented by the number of rows actually
      *                         skipped
-     * @param maxRowsAfterSkip advisory upper bound on the number of rows the consumer
-     *                         intends to read after the skip; {@link #UNBOUNDED_ROW_COUNT}
+     * @param maxRowsAfterSkip upper bound on the number of rows the consumer intends
+     *                         to read after the skip; {@link #UNBOUNDED_ROW_COUNT}
      *                         when unknown
      * @see #skipRows(RecordCursor, Counter)
      */

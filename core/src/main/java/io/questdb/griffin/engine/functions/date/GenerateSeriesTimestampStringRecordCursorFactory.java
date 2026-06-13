@@ -202,13 +202,11 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (supportsRandomAccess()) {
-                long currentRowId = recordA.getRowId()
-                        - 1 // one-indexed
-                        - 1 // we increment at the start of hasNext()
-                        ;
-                long rowsToSkip = Math.min(rowCount.get(), size() - currentRowId);
-                long newRowId = currentRowId + rowsToSkip;
-                recordAt(recordA, newRowId);
+                // curr is always on-grid at start + stride * (rowId - 1), so the signed offset
+                // maps the top sentinel to rowId 0 and makes skip-of-0 a positional no-op.
+                long currentRowId = (recordA.curr - start) / adjustStride() + 1;
+                long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size() - currentRowId));
+                recordAt(recordA, currentRowId + rowsToSkip);
                 rowCount.dec(rowsToSkip);
             } else {
                 super.skipRows(rowCount, maxRowsAfterSkip);
