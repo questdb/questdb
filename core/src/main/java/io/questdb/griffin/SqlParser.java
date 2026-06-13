@@ -3514,22 +3514,32 @@ public class SqlParser {
                         case 1:
                             expr = expressionTreeBuilder.poll();
                             assert expr != null;
+                            // Expand declared variables (and other known rewrites) up front, before the
+                            // literal/criteria dispatch. A variable bound to a bare column then behaves
+                            // exactly like an inline shorthand join column; one bound to a sub-query or
+                            // expression flows into the criteria branch below, where the sub-query reject
+                            // fires. So the declared form matches its inline expansion in every ON-clause
+                            // position -- shorthand column and criteria alike -- not just operator forms.
+                            expr = rewriteKnownStatements(expr, decls, null);
                             if (expr.type == ExpressionNode.LITERAL) {
                                 do {
                                     joinModel.addJoinColumn(expr);
                                 } while ((expr = expressionTreeBuilder.poll()) != null);
                             } else {
-                                final ExpressionNode criteria = rewriteKnownStatements(expr, decls, null);
-                                // A declared variable bound to a sub-query expands here, after the
-                                // parse-time ON-clause sub-query block; reject it so the declared form
-                                // errors like the literal one instead of compiling to a cross join.
-                                traversalAlgo.traverse(criteria, rejectJoinSubQueryRef);
-                                joinModel.setJoinCriteria(criteria);
+                                traversalAlgo.traverse(expr, rejectJoinSubQueryRef);
+                                joinModel.setJoinCriteria(expr);
                             }
                             break;
                         default:
-                            // this code handles "join on (a,b,c)", e.g. list of columns
+                            // "join on (a,b,c)", a list of shorthand join columns. Declared variables
+                            // expand here too: one bound to a column joins like the inline column, while
+                            // one bound to a sub-query is rejected (sub-queries are unsupported in ON
+                            // clauses), matching the inline forms instead of leaking a raw "@q" literal.
                             while ((expr = expressionTreeBuilder.poll()) != null) {
+                                expr = rewriteKnownStatements(expr, decls, null);
+                                if (expr.type == ExpressionNode.QUERY) {
+                                    throw SqlException.$(expr.position, "query is not allowed here");
+                                }
                                 if (expr.type != ExpressionNode.LITERAL) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "Column name expected");
                                 }
@@ -4691,8 +4701,11 @@ public class SqlParser {
     // declared variables are literals at parse time and only expand to their definition later, in
     // rewriteKnownStatements. A variable bound to a sub-query (e.g. "@q := (SELECT ...)" used as
     // "ON x IN @q") would therefore slip past the parse-time block and compile to surprising
-    // cross-join semantics. Walk the rewritten criteria and reject any sub-query node, so the
-    // declared form errors the same as the literal one at every nesting depth.
+    // cross-join semantics. parseJoin now expands declared variables before dispatching the ON
+    // clause, then uses this visitor to walk the rewritten criteria and reject any sub-query node;
+    // the shorthand column branches reject expanded QUERY nodes directly. So a declared sub-query
+    // errors the same as the literal one at every nesting depth and in every ON-clause position --
+    // criteria, single-column shorthand, and multi-column lists alike.
     private void rejectJoinSubQuery(ExpressionNode node) throws SqlException {
         if (node.type == ExpressionNode.QUERY) {
             throw SqlException.$(node.position, "query is not allowed here");

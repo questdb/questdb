@@ -2290,7 +2290,9 @@ public class JoinTest extends AbstractCairoTest {
         // rewriteKnownStatements, so a variable bound to a sub-query (e.g. "@q := (SELECT ...)" used
         // as "ON x IN @q") used to slip past the parse-time block and compile to surprising cross-join
         // semantics -- the very footgun the literal rejection prevents. The declared form must now
-        // reject with "query is not allowed here", just like the literal one, at every nesting depth.
+        // reject with "query is not allowed here", just like the literal one, at every nesting depth
+        // and in every ON-clause position: operator forms, single-column shorthand "ON (@q)", and
+        // multi-column shorthand "ON (@q, ts)" alike.
         assertMemoryLeak(() -> {
             execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
             execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
@@ -2320,6 +2322,40 @@ public class JoinTest extends AbstractCairoTest {
                     "declare @q := (select max(symbol) from trades) " +
                             "select s.symbol from src s join ref r on s.symbol = @q",
                     15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand "ON (@q)" -- declared var expands to a sub-query and is
+            // rejected, instead of leaking a raw "@q" literal as "Invalid column: s.@q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand without parentheses "ON @q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // multi-column shorthand "ON (@q, ts)" -- the column-list branch rejects the sub-query too
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q, ts)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // single-column shorthand nested in an IN sub-query, to prove the reject holds at depth
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q))",
+                    53,
                     "query is not allowed here",
                     sqlExecutionContext
             );
@@ -2357,6 +2393,44 @@ public class JoinTest extends AbstractCairoTest {
                                 "B\n"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseDeclaredColumnShorthand() throws Exception {
+        // A declared variable bound to a bare column may be used as a shorthand join column, exactly
+        // like the inline column it expands to. "ON (@c)" with "@c := symbol" behaves like
+        // "ON (symbol)" -> "src.symbol = ref.symbol"; the variable is expanded before the join-column
+        // dispatch instead of leaking a raw "@c" literal as "Invalid column: s.@c".
+        assertMemoryLeak(() -> {
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\n" +
+                    "A\n" +
+                    "B\n";
+
+            // single-column shorthand with parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // single-column shorthand without parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on @c order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // multi-column shorthand mixing a declared column var with a plain column
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c, ts) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // baseline: the equivalent inline shorthand must produce the same result
+            assertQuery(
+                    "select s.symbol from src s join ref r on (symbol) order by s.symbol"
+            ).noLeakCheck().returns(expected);
         });
     }
 
