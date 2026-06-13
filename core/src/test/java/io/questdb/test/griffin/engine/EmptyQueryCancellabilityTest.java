@@ -52,8 +52,6 @@ import org.junit.Test;
  */
 public class EmptyQueryCancellabilityTest extends AbstractCairoTest {
 
-    private NetworkSqlExecutionCircuitBreaker circuitBreaker;
-
     @Before
     public void setUp() {
         // Production throttle: throttle=0 would mask the defect this test guards.

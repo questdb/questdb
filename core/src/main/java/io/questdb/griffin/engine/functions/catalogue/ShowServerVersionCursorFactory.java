@@ -47,6 +47,7 @@ public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
         return cursor;
     }
 

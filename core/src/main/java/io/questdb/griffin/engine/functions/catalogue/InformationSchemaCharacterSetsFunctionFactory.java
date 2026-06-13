@@ -76,6 +76,7 @@ public class InformationSchemaCharacterSetsFunctionFactory implements FunctionFa
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
             cursor.toTop();
             return cursor;
         }

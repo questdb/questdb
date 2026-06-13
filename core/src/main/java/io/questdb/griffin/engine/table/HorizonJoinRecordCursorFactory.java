@@ -407,6 +407,9 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private void buildMap() {
+            // Consult the breaker before iterating, so an empty master (whose loop below never runs)
+            // still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
             slaveTimeFrameHelper.toTop();
@@ -418,8 +421,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             while (horizonIterator.next()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();

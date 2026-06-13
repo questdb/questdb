@@ -122,7 +122,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -164,6 +164,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private Map currentJoinKeyMap;
         private boolean danglingSlaveRecord = false;
         private boolean isOpen;
@@ -220,6 +221,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
@@ -337,7 +339,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             record.hasSlave(hasSlave);
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMapA.reopen();
@@ -346,6 +348,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     joinKeyMapB.reopen();
                 }
             }
+            this.circuitBreaker = circuitBreaker;
             currentJoinKeyMap = joinKeyMapA;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
