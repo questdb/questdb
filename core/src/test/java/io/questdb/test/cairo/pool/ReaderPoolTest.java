@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -71,7 +72,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.fail;
@@ -363,6 +366,165 @@ public class ReaderPoolTest extends AbstractCairoTest {
             Assert.assertEquals(0, halt.getCount());
             Assert.assertEquals(0, errors.get());
         });
+    }
+
+    // When goActive()/reload() throws while a pooled reader is being refreshed, ReaderPool.R.refresh()
+    // catches it and calls close(), which returnToPool()'s the reader: its slot is released while the
+    // reader is still assigned and still open. get0()'s own catch then disposes the same reader via
+    // goodbye()+close(). Between the release and the dispose a concurrent get() can acquire the
+    // half-dead reader and dereference its already-freed _txn mapping, producing the
+    // "roTxMemBase is null" NPE. This drives that exact interleaving deterministically.
+    //
+    // A single-slot pool forces both threads onto the same reader. The injected fault makes the
+    // refreshing thread's metadata reload throw; the FilesFacade then parks that thread inside its
+    // disposal - at the first munmap after the reader stops reporting open, i.e. after _txn was
+    // freed - and releases the second thread to contend for the just-released slot. A correct pool
+    // keeps the slot owned by the disposing thread until it is fully gone, so the second thread only
+    // ever sees EntryUnavailableException and never an NPE.
+    @Test
+    public void testConcurrentGetRefreshFailureDoesNotHandOutDisposedReader() throws Exception {
+        final AtomicReference<TableReader> pooledReader = new AtomicReference<>();
+        final AtomicLong disposingThreadId = new AtomicLong(-1);
+        final AtomicBoolean faultMeta = new AtomicBoolean();
+        final AtomicBoolean gateFired = new AtomicBoolean();
+        final AtomicReference<Throwable> refreshError = new AtomicReference<>();
+        final AtomicReference<Throwable> contenderError = new AtomicReference<>();
+        final CountDownLatch readerReleased = new CountDownLatch(1);
+        final CountDownLatch contenderDone = new CountDownLatch(1);
+
+        final TestFilesFacade ff = new TestFilesFacade() {
+            boolean called = false;
+
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                final TableReader r = pooledReader.get();
+                // The disposing thread frees _txn (nulling roTxMemBase) before it stops being open.
+                // The first munmap once isOpen() is false (the _cv unmap) is past that point: park
+                // here so the contender grabs a reader whose _txn mapping is already gone.
+                if (r != null
+                        && Thread.currentThread().threadId() == disposingThreadId.get()
+                        && !r.isOpen()
+                        && gateFired.compareAndSet(false, true)) {
+                    readerReleased.countDown();
+                    try {
+                        contenderDone.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                super.munmap(address, size, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (faultMeta.get()
+                        && Thread.currentThread().threadId() == disposingThreadId.get()
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    called = true;
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return called;
+            }
+        };
+
+        final CairoConfiguration poolConfig = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public int getPoolSegmentSize() {
+                return 1;
+            }
+
+            @Override
+            public int getReaderPoolMaxSegments() {
+                return 1;
+            }
+
+            @Override
+            public long getSpinLockTimeout() {
+                return 250;
+            }
+        };
+
+        assertWithPool(pool -> {
+            // Keep the table's scoreboard memory alive across the disposal so the contender's
+            // acquireTxn() reads a live scoreboard and fails on the null _txn, not a freed scoreboard.
+            final TxnScoreboard scoreboardHold = engine.getTxnScoreboardPool().getTxnScoreboard(uTableToken);
+            try {
+                // Prime the single slot: open a reader and return it; it stays open in the pool.
+                final TableReader primed = pool.get(uTableToken);
+                pooledReader.set(primed);
+                primed.close();
+
+                // Bump the metadata version so the refresh takes the slow metadata-reload path, where
+                // the injected _meta fault makes goActive() throw. Written via the unfaulted config.
+                try (TableWriter w = newOffPoolWriter(configuration, "u")) {
+                    w.addColumn("x", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                }
+
+                final Thread contender = new Thread(() -> {
+                    try {
+                        if (!readerReleased.await(10, TimeUnit.SECONDS)) {
+                            return;
+                        }
+                        final long deadline = configuration.getMillisecondClock().getTicks() + 2000;
+                        while (configuration.getMillisecondClock().getTicks() < deadline) {
+                            try (TableReader r = pool.get(uTableToken)) {
+                                Assert.assertTrue(r.isOpen());
+                                break;
+                            } catch (EntryUnavailableException retry) {
+                                Os.pause();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        contenderError.set(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                        contenderDone.countDown();
+                    }
+                });
+                contender.start();
+
+                final Thread refresher = new Thread(() -> {
+                    disposingThreadId.set(Thread.currentThread().threadId());
+                    faultMeta.set(true);
+                    try (TableReader ignore = pool.get(uTableToken)) {
+                        Assert.fail("refresh-get should have failed");
+                    } catch (Throwable th) {
+                        refreshError.set(th);
+                    } finally {
+                        faultMeta.set(false);
+                        Path.clearThreadLocals();
+                        // Safety net so the contender never blocks if the disposal misses the gate.
+                        readerReleased.countDown();
+                    }
+                });
+                refresher.start();
+
+                refresher.join();
+                contender.join();
+
+                Assert.assertTrue("injected metadata fault never fired", ff.wasCalled());
+                Assert.assertTrue("reader disposal never reached the parked munmap", gateFired.get());
+                Assert.assertNotNull("the refresh-get should have failed", refreshError.get());
+
+                final Throwable contenderErr = contenderError.get();
+                if (contenderErr != null) {
+                    throw new AssertionError(
+                            "ReaderPool handed a being-disposed reader to a concurrent get()", contenderErr);
+                }
+            } finally {
+                Misc.free(scoreboardHold);
+            }
+        }, poolConfig);
     }
 
     @Test
