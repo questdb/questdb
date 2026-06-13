@@ -421,6 +421,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             while (horizonIterator.next()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();

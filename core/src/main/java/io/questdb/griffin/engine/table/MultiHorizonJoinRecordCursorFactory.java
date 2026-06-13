@@ -426,6 +426,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             dataMap.clear();
 
             while (horizonIterator.next()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();
