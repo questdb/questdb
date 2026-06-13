@@ -187,6 +187,44 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                                 engine, ctx,
                                 "SELECT * FROM tab ORDER BY col_int, col_sym, col_id LIMIT " + (1 + rnd.nextInt(200))
                         );
+
+                        // A single matched row exercises the count<=1 no-sort branch and single-entry emit.
+                        assertTopKMatch(engine, ctx, "SELECT col_int FROM tab WHERE col_id = 1 ORDER BY col_int LIMIT 1");
+
+                        // LIMIT 1 and LIMIT past the row count on a duplicate-key fixed-8 column.
+                        assertTopKMatch(engine, ctx, "SELECT col_int FROM tab ORDER BY col_int LIMIT 1");
+                        assertTopKMatch(engine, ctx, "SELECT col_int FROM tab ORDER BY col_int DESC LIMIT " + (rowCount + 1_000));
+
+                        // A sort key carrying a column top: the original rows are NULL for col_top so
+                        // their frames take the colAddr==0 per-row fallback, while the rows inserted
+                        // after ADD COLUMN populate fresh frames that take the batch encoder. A native
+                        // table keeps the column top guaranteed regardless of the parquet parameter.
+                        engine.execute(
+                                "CREATE TABLE tab_top AS (SELECT x col_id, (x * 1_000_000L)::timestamp ts" +
+                                        " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+                        engine.execute("ALTER TABLE tab_top ADD COLUMN col_top DOUBLE", ctx);
+                        engine.execute(
+                                "INSERT INTO tab_top(ts, col_top, col_id) SELECT" +
+                                        " ((1_000_000L + x) * 1_000_000L)::timestamp, rnd_double(2), " + rowCount + "L + x" +
+                                        " FROM long_sequence(5_000)",
+                                ctx
+                        );
+                        assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top DESC LIMIT " + (1 + rnd.nextInt(200)));
+
+                        // A volume large enough that each of the 4 workers crosses the 4096-entry
+                        // compaction trigger, so per-worker sort-and-truncate plus threshold rejection
+                        // fire before the owner merge - the distributed top-K discard path that the
+                        // small matrix table never reaches. A unique key keeps the full rows deterministic.
+                        engine.execute(
+                                "CREATE TABLE big AS (SELECT x id, (x * 1_000_000L)::timestamp ts" +
+                                        " FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+                        assertTopKMatch(engine, ctx, "SELECT * FROM big ORDER BY id LIMIT 50");
+                        assertTopKMatch(engine, ctx, "SELECT * FROM big ORDER BY id DESC LIMIT 50");
                     },
                     configuration,
                     LOG

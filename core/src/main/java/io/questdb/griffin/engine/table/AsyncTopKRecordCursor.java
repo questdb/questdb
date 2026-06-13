@@ -183,8 +183,8 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), ParquetDecodeHint.SCATTERED);
         frameSequence.dispatchAndAwait();
 
-        // merge everything into owner chain
-        mergeChains();
+        // merge the per-worker results into the owner buffer (encoded) or chain (tree)
+        mergeResults();
     }
 
     private void ensureChainBuilt() {
@@ -194,16 +194,18 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
         }
     }
 
-    private void mergeChains() {
+    private void mergeResults() {
         final AsyncTopKAtom atom = frameSequence.getAtom();
         if (atom.isEncoded()) {
+            final SqlExecutionCircuitBreaker circuitBreaker = frameSequence.getCircuitBreaker();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             final EncodedTopKBuffer ownerTopK = atom.getTopK(-1);
             for (int i = 0, n = atom.getWorkerCount(); i < n; i++) {
                 ownerTopK.mergeFrom(atom.getTopK(i));
             }
             atom.freePerWorkerChainsAndPools();
             ownerTopK.sort();
-            frameSequence.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             final SortKeyType keyType = atom.getKeyType();
             entrySize = keyType.entrySize();
             final long emitCount = Math.min(ownerTopK.getCount(), atom.getLo());

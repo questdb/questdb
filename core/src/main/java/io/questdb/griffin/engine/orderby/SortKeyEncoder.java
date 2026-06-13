@@ -673,6 +673,8 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.SYMBOL -> batchSymbol(topK, colAddr, rowIdBase, rows, rowCount, desc);
             case ColumnType.FLOAT -> batchFloat(topK, colAddr, rowIdBase, rows, rowCount, desc);
             case ColumnType.DOUBLE -> batchDouble(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            // BOOLEAN is stored as exactly 0 or 1 (putBool), so xor-ing the raw byte reproduces the
+            // per-row getBool() normalization in encodeFixed8.
             case ColumnType.BOOLEAN -> batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFL : 0L);
             case ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                     batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0x7FL : 0x80L);
