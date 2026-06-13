@@ -32,6 +32,7 @@ public enum SortKeyType {
     UNSUPPORTED(-1);
 
     public static final long MAX_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
+    public static final int MAX_ENTRY_LONGS = (FIXED_32.entrySize()) / Long.BYTES;
 
     private final int keyLength;
 

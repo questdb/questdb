@@ -211,10 +211,11 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
+            table.setTableFormat(TableUtils.getTableFormat(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
-            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
+            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG);
             boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
@@ -682,6 +683,7 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
+            table.setTableFormat(tableMetadata.getTableFormat());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
