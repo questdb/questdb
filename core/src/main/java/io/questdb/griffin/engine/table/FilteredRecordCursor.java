@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;
@@ -90,6 +91,11 @@ class FilteredRecordCursor implements RecordCursor {
     @Override
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         base.setParquetDecodeHint(hint);
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        base.setRecordAtRows(source);
     }
 
     @Override

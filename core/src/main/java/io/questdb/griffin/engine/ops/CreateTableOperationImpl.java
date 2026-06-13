@@ -96,6 +96,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
     private int selectSqlScanDirection;
     private int selectTextPosition;
+    private int tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private String tableName;
     private int tableNamePosition;
@@ -175,6 +176,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
+            int tableFormat,
             boolean walEnabled,
             boolean autoIncludeTimestamp
     ) throws SqlException {
@@ -187,6 +189,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
         this.partitionByPosition = partitionByPosition;
+        this.tableFormat = tableFormat;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
@@ -268,6 +271,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
+            int tableFormat,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -293,6 +297,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.tableFormat = tableFormat;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -449,6 +454,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getTableFormat() {
+        return tableFormat;
+    }
+
+    @Override
     public int getTableKind() {
         return tableKind;
     }
@@ -602,6 +612,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
+        this.tableFormat = likeTableMetadata.getTableFormat();
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();

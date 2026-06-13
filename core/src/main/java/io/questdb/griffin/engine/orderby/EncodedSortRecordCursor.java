@@ -46,7 +46,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 class EncodedSortRecordCursor implements DelegatingRecordCursor {
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
@@ -76,7 +75,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
             this.maxEntryMemBytes = Math.min(
                     configuration.getSqlSortKeyMaxBytes(),
-                    MAX_HEAP_SIZE_LIMIT
+                    SortKeyEncoder.MAX_ENTRY_HEAP_BYTES
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             final long valuePageSize = configuration.getSqlSortValuePageSize();
@@ -183,45 +182,44 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildAndSort() {
-        try {
-            long estimatedSize = baseCursor.size();
-            long maxEntries = maxEntryMemBytes / entrySize;
-            if (estimatedSize > 0) {
-                if (estimatedSize > maxEntries) {
+        long estimatedSize = baseCursor.size();
+        long maxEntries = maxEntryMemBytes / entrySize;
+        if (estimatedSize > 0) {
+            if (estimatedSize > maxEntries) {
+                throwLimitOverflow();
+            }
+            entryMem.setCapacity(estimatedSize * longsPerEntry);
+        }
+
+        entryMem.clear();
+        count = 0;
+        Record record = baseCursor.getRecord();
+        if (estimatedSize > 0) {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                long chainOffset = recordChain.put(record, -1L);
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(record, addr, chainOffset);
+                entryMem.skip(longsPerEntry);
+                count++;
+            }
+        } else {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                if (count >= maxEntries) {
                     throwLimitOverflow();
                 }
-                entryMem.setCapacity(estimatedSize * longsPerEntry);
+                long chainOffset = recordChain.put(record, -1L);
+                entryMem.ensureCapacity(longsPerEntry);
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(record, addr, chainOffset);
+                entryMem.skip(longsPerEntry);
+                count++;
             }
-
-            entryMem.clear();
-            count = 0;
-            Record record = baseCursor.getRecord();
-            if (estimatedSize > 0) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    long chainOffset = recordChain.put(record, -1L);
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(record, addr, chainOffset);
-                    entryMem.skip(longsPerEntry);
-                    count++;
-                }
-            } else {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    if (count >= maxEntries) {
-                        throwLimitOverflow();
-                    }
-                    long chainOffset = recordChain.put(record, -1L);
-                    entryMem.ensureCapacity(longsPerEntry);
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(record, addr, chainOffset);
-                    entryMem.skip(longsPerEntry);
-                    count++;
-                }
-            }
-        } finally {
-            Misc.free(encoder);
         }
+        // Success-path free of the encoder's rank maps; a mid-build throw leaves them
+        // for close(). The cursor is not retryable: buildAndSort resets state at entry.
+        Misc.free(encoder);
 
         if (count <= 1) {
             startAddr = entryMem.getAddress() + rowIdOffset;

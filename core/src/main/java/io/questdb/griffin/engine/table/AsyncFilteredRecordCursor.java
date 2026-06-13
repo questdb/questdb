@@ -41,11 +41,12 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
@@ -79,7 +80,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         PageFrameMemoryPool frameMemoryPool = null;
         try {
             record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
+            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
         } catch (Throwable th) {
             Misc.free(record);
             Misc.free(frameMemoryPool);
@@ -252,9 +253,12 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+        frameMemoryPool.recordAt(record, atRowId);
+    }
+
+    @Override
+    public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(columnIndexes);
     }
 
     @Override
@@ -263,12 +267,20 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        frameMemoryPool.setRecordAtRows(source);
+    }
+
+    @Override
     public long size() {
         return -1;
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        // hint is dropped here: filter discards rows, so the consumer's "max
+        // output rows" cannot translate to a per-frame decode clamp without
+        // knowing the filter selectivity.
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, false);
         }
@@ -440,6 +452,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameRowCount = -1;
         this.allFramesActive = true;
         frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

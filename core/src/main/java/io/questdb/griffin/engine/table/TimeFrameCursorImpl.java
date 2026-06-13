@@ -109,7 +109,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         try {
             this.metadata = metadata;
             this.frameAddressCache = new PageFrameAddressCache();
-            this.frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
             this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);

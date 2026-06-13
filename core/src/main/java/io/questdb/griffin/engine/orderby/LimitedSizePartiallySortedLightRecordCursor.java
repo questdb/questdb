@@ -111,6 +111,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
@@ -209,7 +210,9 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                     rowsInGroup++;
                 } else {
                     rowsSoFar += rowsInGroup;
-                    if (rowsSoFar > limit) {
+                    // A negative limit (e.g. lo >= 0, hi < 0 re-bound on a cached plan) disables the
+                    // early stop: every timestamp group must be scanned so toTop() can apply the skips.
+                    if (limit >= 0 && rowsSoFar > limit) {
                         break;
                     }
 

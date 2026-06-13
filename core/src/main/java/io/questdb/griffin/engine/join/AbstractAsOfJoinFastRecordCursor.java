@@ -199,8 +199,9 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return masterCursor.size();
     }
 
-    public void skipRows(Counter rowCount) {
-        masterCursor.skipRows(rowCount);
+    @Override
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        masterCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override

@@ -84,7 +84,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     ) {
         try {
             this.timestampIndex = metadata.getTimestampIndex();
-            this.frameMemoryPool = PageFrameMemoryPool.forConfiguration(configuration);
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
