@@ -46,6 +46,7 @@ public class CairoTable implements Sinkable {
     private long o3MaxLag;
     private int partitionBy;
     private boolean softLink;
+    private int tableFormat;
     private int timestampIndex;
     private int timestampType;
     private TableToken token;
@@ -73,6 +74,7 @@ public class CairoTable implements Sinkable {
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
+        tableFormat = fromTab.getTableFormat();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
         hasParquetPartitions = fromTab.hasParquetPartitions();
@@ -145,6 +147,10 @@ public class CairoTable implements Sinkable {
 
     public @NotNull String getPartitionByName() {
         return PartitionBy.toString(partitionBy);
+    }
+
+    public int getTableFormat() {
+        return tableFormat;
     }
 
     public @NotNull String getTableName() {
@@ -223,6 +229,10 @@ public class CairoTable implements Sinkable {
 
     public void setSoftLinkFlag(boolean softLink) {
         this.softLink = softLink;
+    }
+
+    public void setTableFormat(int tableFormat) {
+        this.tableFormat = tableFormat;
     }
 
     public void setTableToken(TableToken token) {
