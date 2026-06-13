@@ -114,7 +114,8 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
             bindVariableService.setLong(0, 42);
             assertQuery("select wait_wal_table('notwal', $1) waited")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             waited
                             true
                             """);

@@ -90,7 +90,6 @@ public class SeqTxnTracker {
         return waiterRegistrationCount;
     }
 
-    @TestOnly
     public long getWriterTxn() {
         return writerTxn;
     }
