@@ -812,7 +812,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
                 RecordCursor.Counter counter = new RecordCursor.Counter();
                 counter.set(11);
 
-                cursor.skipRows(counter);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
 
                 Assert.assertTrue(counter.get() > 0);
                 Assert.assertFalse(cursor.hasNext());
@@ -841,7 +841,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
                 ) {
                     RecordCursor.Counter counter = new RecordCursor.Counter();
                     counter.set(1);
-                    cursor.skipRows(counter);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
 
                     Assert.assertEquals(1, counter.get());
                     Assert.assertFalse(cursor.hasNext());
@@ -865,7 +865,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
             ) {
                 RecordCursor.Counter counter = new RecordCursor.Counter();
                 counter.set(1);
-                cursor.skipRows(counter);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
 
                 Assert.assertEquals(1, counter.get());
                 Assert.assertFalse(cursor.hasNext());

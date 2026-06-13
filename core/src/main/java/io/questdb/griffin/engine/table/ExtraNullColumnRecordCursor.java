@@ -115,8 +115,8 @@ class ExtraNullColumnRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
-        baseCursor.skipRows(rowCount);
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        baseCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override

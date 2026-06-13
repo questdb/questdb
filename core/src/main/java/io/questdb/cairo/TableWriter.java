@@ -332,6 +332,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    // Mirrors the hasParquetPartitions flag last published to the metadata cache, so
+    // commit00() only takes the global metadata-cache write lock when the flag flips.
+    private boolean hasNotifiedParquetPartitions;
     private boolean hasPostingIndexers;
     private int indexCount;
     private boolean isInCtorRecovery;
@@ -2255,6 +2258,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public int getMetaTableFormat() {
+        return metadata.getTableFormat();
+    }
+
+    @Override
     public TableMetadata getMetadata() {
         return metadata;
     }
@@ -3150,6 +3158,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMetaO3MaxLag(long o3MaxLagUs) {
         commit();
         metadata.setO3MaxLag(o3MaxLagUs);
+        writeMetadataToDisk();
+    }
+
+    @Override
+    public void setMetaTableFormat(int tableFormat) {
+        if (tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
+            if (!metadata.isWalEnabled()) {
+                throw CairoException.nonCritical().put("FORMAT PARQUET is only supported on WAL tables");
+            }
+            if (tableToken.isMatView()) {
+                throw CairoException.nonCritical().put("FORMAT PARQUET is not supported on materialized views");
+            }
+        }
+        commit();
+        metadata.setTableFormat(tableFormat);
         writeMetadataToDisk();
     }
 
@@ -4791,6 +4814,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriterAndPublishPendingPostingSealPurges();
+        // A data commit on a FORMAT PARQUET table creates parquet partitions through
+        // the O3 path, but unlike CONVERT/ATTACH it does not otherwise refresh the
+        // metadata cache. Left stale, MetadataCache.hasParquetPartitions stays false
+        // and SqlCodeGenerator never enables parquet row-group pruning (bloom and
+        // min/max stats) for the table. Publish only when the flag actually flips:
+        // the metadata-cache write lock is global, so taking it on every commit would
+        // serialize with the metadata reads that every query performs.
+        final boolean hasParquetPartitions = txWriter.hasParquetPartitions();
+        if (hasParquetPartitions != hasNotifiedParquetPartitions) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, hasParquetPartitions);
+            }
+            hasNotifiedParquetPartitions = hasParquetPartitions;
+        }
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
     }
@@ -7998,7 +8035,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
-                boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
+                // Existing partitions inherit their own format. Brand-new
+                // partitions on a FORMAT PARQUET table are born parquet.
+                boolean isParquet = partitionIndexRaw > -1
+                        ? txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
+                        : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
 
                 final long newPartitionTimestamp = partitionTimestamp;
                 final int newPartitionIndex = partitionIndexRaw;
@@ -8165,7 +8206,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 } else {
                     final long parquetFileSize = Unsafe.getLong(blockAddress + 7 * Long.BYTES);
-                    if (isParquet && parquetFileSize > -1) {
+                    if (isParquet && parquetFileSize > -1 && partitionIndexRaw < 0) {
+                        // Brand-new parquet partition emitted by writeFreshParquetFromO3
+                        // for a FORMAT PARQUET table. Insert it into the attached
+                        // partitions list and mark it as parquet from inception.
+                        final long partitionNameTxn = txWriter.getTxn() - 1;
+                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, partitionNameTxn);
+                        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                        // writeFreshParquetFromO3 emits every column from row 0, so no
+                        // column has a top here.
+                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                        txWriter.bumpPartitionTableVersion();
+                    } else if (isParquet && parquetFileSize > -1) {
                         // Parquet rewrite: new file is in a txn-named directory.
                         // Bump the partition name txn and queue old dir for removal.
                         final long srcNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
@@ -9198,7 +9250,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // check partition read-only state
                     final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
-                    final boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
+                    // Existing partitions inherit their own format. Brand-new
+                    // partitions on a FORMAT PARQUET table are born parquet.
+                    final boolean isParquet = partitionIndexRaw > -1
+                            ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
+                            : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
 
                     // We're appending onto the last (active) partition.
                     // Cannot append to parquet partitions — they must go through the O3 merge path.
@@ -9604,9 +9660,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
                 boolean lastPartitionIsParquet = isLastPartitionParquet();
+                // On a FORMAT PARQUET table with no committed rows yet, the only
+                // partition is the native placeholder that openPartition above
+                // creates for empty tables. processWalCommitFinishApply deletes
+                // it on full commit and writeFreshParquetFromO3 rebuilds the
+                // partition as parquet. Stashing data into its LAG would write
+                // into native files that get rmdir'd before the data is flushed.
+                // FORMAT PARQUET tables with existing native partitions are
+                // unaffected: those partitions accept LAG normally.
+                boolean isParquetTableEmptyPlaceholder = txWriter.getRowCount() == 0
+                        && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
+                boolean noLag = lastPartitionIsParquet || isParquetTableEmptyPlaceholder;
                 boolean needFullCommit = forceFullCommit
-                        // Last partition is parquet, cannot store LAG in native column files
-                        || lastPartitionIsParquet
+                        // No LAG available (parquet partition or parquet table)
+                        || noLag
                         // Too many rows in LAG
                         || totalUncommitted > maxLagRows
                         // Can commit without O3 and LAG has just enough rows
@@ -9617,9 +9684,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // this is to bring the latency of data visibility inline with user expectations
                         || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
-                boolean canFastCommit = !lastPartitionIsParquet && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
+                boolean canFastCommit = !noLag && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
-                boolean canFastCommitNew = !lastPartitionIsParquet && applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
+                boolean canFastCommitNew = !noLag && applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
 
                 // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
                 // Also fast LAG commit will not cause O3 with the current transaction.
@@ -12260,6 +12327,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
+            ddlMem.putInt(metadata.getTableFormat());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
@@ -13862,7 +13930,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
-                if (zeroAllColumns ? (colTop != 0) : (colTop > 0 && colTop < partitionRowCount)) {
+                boolean midColTop = colTop > 0 && colTop < partitionRowCount;
+                if (colTop != 0 && (zeroAllColumns || midColTop)) {
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
                 }
             }
