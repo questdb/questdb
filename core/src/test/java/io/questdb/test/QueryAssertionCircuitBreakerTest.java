@@ -37,21 +37,24 @@ import org.junit.Test;
  */
 public class QueryAssertionCircuitBreakerTest extends AbstractCairoTest {
 
+    // A genuinely non-checking cursor: pg_get_keywords() is an immutable constant list whose cursor
+    // performs no per-row breaker checks (PgGetKeywordsFunctionFactoryTest opts it out via
+    // noCircuitBreakerCheck()). Unlike "SELECT 1" - which runs through long_sequence(1) and now DOES
+    // consult the breaker - this fixture keeps the consultation count at zero, so the default
+    // expectation actually fires.
+    private static final String NON_CHECKING_QUERY = "pg_get_keywords;";
+
     @Test
     public void testDefaultFailsWhenCursorNeverChecksCircuitBreaker() throws Exception {
-        // A constant projection over long_sequence never consults the circuit breaker, so the
-        // default expectation must fail even though the result itself matches.
-        try {
-            assertQuery("SELECT 1")
-                    .expectSize()
-                    .returns("""
-                            1
-                            1
-                            """);
-            Assert.fail("expected the circuit breaker expectation to fail for a non-checking cursor");
-        } catch (AssertionError e) {
-            TestUtils.assertContains(e.getMessage(), "circuit breaker");
-        }
+        final String expected = captureOutput(NON_CHECKING_QUERY);
+        // The result itself matches, so the cursor battery passes; only the breaker consultation is
+        // missing. Capture the AssertionError with assertThrows (NOT a try/catch that would also catch
+        // the test's own Assert.fail) and assert the UNIQUE enforcement sentence - not a generic
+        // "circuit breaker" substring that the harness could emit for any reason. That is what proves
+        // the enforcement actually fired.
+        final AssertionError e = Assert.assertThrows(AssertionError.class, () ->
+                assertQuery(NON_CHECKING_QUERY).noRandomAccess().expectSize().returns(expected));
+        TestUtils.assertContains(e.getMessage(), "but it never did, so the query is not cancellable");
     }
 
     @Test
@@ -70,13 +73,16 @@ public class QueryAssertionCircuitBreakerTest extends AbstractCairoTest {
 
     @Test
     public void testNoCircuitBreakerCheckAllowsNonCheckingCursor() throws Exception {
-        assertQuery("SELECT 1")
+        // The SAME fixture that fails by default (see testDefaultFailsWhenCursorNeverChecksCircuitBreaker)
+        // must pass once the check is opted out. Pairing both assertions on one genuine non-checker is
+        // what makes this opt-out test non-vacuous: if noCircuitBreakerCheck() silently did nothing, the
+        // default expectation would fire here too.
+        final String expected = captureOutput(NON_CHECKING_QUERY);
+        assertQuery(NON_CHECKING_QUERY)
+                .noRandomAccess()
                 .noCircuitBreakerCheck()
                 .expectSize()
-                .returns("""
-                        1
-                        1
-                        """);
+                .returns(expected);
     }
 
     @Test
@@ -99,12 +105,17 @@ public class QueryAssertionCircuitBreakerTest extends AbstractCairoTest {
 
     @Test
     public void testReturnsOnceSkipsCircuitBreakerCheck() throws Exception {
-        // returnsOnce() performs a single print pass, not the full battery, so the default
-        // expectation does not apply even though the cursor never checks the breaker.
-        assertQuery("SELECT 1")
-                .returnsOnce("""
-                        1
-                        1
-                        """);
+        // returnsOnce() runs a single print pass, not the full battery, so enforcement does not apply -
+        // even for the genuine non-checker that the full returns() battery rejects in
+        // testDefaultFailsWhenCursorNeverChecksCircuitBreaker. That contrast is what makes this test
+        // meaningful: it passes precisely because returnsOnce() skips the check.
+        final String expected = captureOutput(NON_CHECKING_QUERY);
+        assertQuery(NON_CHECKING_QUERY).returnsOnce(expected);
+    }
+
+    private static String captureOutput(CharSequence sql) throws Exception {
+        sink.clear();
+        printSql(sql);
+        return sink.toString();
     }
 }

@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -103,7 +104,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
-            cursor.toTop();
+            cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         }
 
@@ -121,6 +122,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private final ColumnsRecord record = new ColumnsRecord();
             private final CharSequenceObjMap<CairoTable> tableCache;
             private final IntFunction<String> typeToName;
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int columnIdx;
             private int iteratorIdx;
             private CairoTable table;
@@ -128,6 +130,11 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private ColumnRecordCursor(CharSequenceObjMap<CairoTable> tableCache, IntFunction<String> typeToName) {
                 this.tableCache = tableCache;
                 this.typeToName = typeToName;
+            }
+
+            public void of(SqlExecutionCircuitBreaker circuitBreaker) {
+                this.circuitBreaker = circuitBreaker;
+                toTop();
             }
 
             @Override
@@ -143,6 +150,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 do {
                     if (table == null && !nextTable()) {
                         return false;

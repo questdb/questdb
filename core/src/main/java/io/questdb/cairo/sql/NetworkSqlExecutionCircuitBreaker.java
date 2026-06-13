@@ -183,6 +183,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void resetTimer() {
         powerUpTime = clock.getTicks();
+        // Start a fresh throttle window for the new query, so the next breaker consultation performs a
+        // real check. Without this, a single-shot check (open/build/pre-dispatch over an empty base)
+        // could fall in the middle of a throttle window and never test cancellation/timeout.
+        testCount = 0;
     }
 
     @Override
@@ -206,21 +210,24 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void statefulThrowExceptionIfTimeout() {
         // Same as statefulThrowExceptionIfTripped but does not check the connection state.
         // Useful to check timeout before trying to send something on the connection.
-        if (testCount < throttle) {
-            testCount++;
-        } else {
+        // Test on the first call after a reset (testCount == 0) and then once per throttle window.
+        if (testCount == 0 || testCount >= throttle) {
             testCount = 0;
             testTimeout();
         }
+        testCount++;
     }
 
     @Override
     public void statefulThrowExceptionIfTripped() {
-        if (testCount < throttle) {
-            testCount++;
-        } else {
-            statefulThrowExceptionIfTrippedNoThrottle();
+        // Always perform a real check on the first call after a reset (testCount == 0), so empty/instant
+        // queries that consult the breaker only a handful of times (single-shot open/build/pre-dispatch
+        // checks over an empty base) still observe a tripped breaker. Otherwise test once per throttle
+        // window to keep hot per-row/per-frame loops cheap.
+        if (testCount == 0 || testCount >= throttle) {
+            statefulThrowExceptionIfTrippedNoThrottle(); // performs the real test and resets testCount to 0
         }
+        testCount++;
     }
 
     @Override

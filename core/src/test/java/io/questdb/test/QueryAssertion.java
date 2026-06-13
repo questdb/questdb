@@ -707,9 +707,24 @@ public class QueryAssertion {
         return this;
     }
 
+    /**
+     * The .returns() battery installs a {@link CountingSqlExecutionCircuitBreaker} as the context
+     * breaker to verify that the cursor under test consults it on its own initiative (in
+     * {@code hasNext()} / {@code getCursor()} / build), i.e. that the query is cancellable. The
+     * harness's own auxiliary {@code calculateSize()} probes must NOT feed that counter: the default
+     * (iterating) {@link RecordCursor#calculateSize} checks the breaker it is HANDED once per row, so
+     * passing it the counting wrapper would satisfy the expectation for any non-empty cursor whether
+     * or not the cursor itself ever checks. Hand calculateSize the underlying delegate instead; the
+     * cursor's own field breaker (still the counting wrapper, installed during getCursor) keeps
+     * registering genuine checks.
+     */
+    private static SqlExecutionCircuitBreaker uncounted(SqlExecutionCircuitBreaker breaker) {
+        return breaker instanceof CountingSqlExecutionCircuitBreaker counting ? counting.getDelegate() : breaker;
+    }
+
     private static void assertCalculateSize(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
         long size;
-        SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        SqlExecutionCircuitBreaker circuitBreaker = uncounted(sqlExecutionContext.getCircuitBreaker());
         RecordCursor.Counter counter = new RecordCursor.Counter();
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1120,7 +1135,7 @@ public class QueryAssertion {
                 counter.inc();
             }
             SqlExecutionCircuitBreaker breaker =
-                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
+                    sqlExecutionContext != null ? uncounted(sqlExecutionContext.getCircuitBreaker()) : null;
             cursor.calculateSize(breaker, counter);
             Assert.assertEquals(
                     String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
