@@ -83,6 +83,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
             cursor.toTop(executionContext.getCairoEngine());
             return cursor;
         }

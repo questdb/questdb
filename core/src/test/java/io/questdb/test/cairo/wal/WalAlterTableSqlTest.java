@@ -339,10 +339,6 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             assertQuery("select table_name from tables() where table_name = '" + tableName + "'")
                     .noLeakCheck()
                     .noRandomAccess()
-                    // tables() is a metadata/admin function that must always complete (it is exempt from
-                    // query cancellation, see PGFunctionsTest.testListTablesDoesntLeakMetaFds), so its
-                    // cursor legitimately never consults the circuit breaker.
-                    .noCircuitBreakerCheck()
                     .returns("table_name\n");
         });
     }
