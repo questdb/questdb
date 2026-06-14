@@ -61,7 +61,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
         readerPoolCursor.of(cairoEngine.getReaderPoolEntries(), cairoEngine.getConfiguration().getPoolSegmentSize());
         return readerPoolCursor;

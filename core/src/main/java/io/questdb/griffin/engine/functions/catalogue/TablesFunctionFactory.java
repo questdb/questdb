@@ -177,7 +177,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             final CairoEngine engine = executionContext.getCairoEngine();
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);

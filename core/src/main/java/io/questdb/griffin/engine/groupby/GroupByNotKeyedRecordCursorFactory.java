@@ -362,7 +362,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             if (!isValueBuilt) {
                 // Consult the breaker before aggregating, so an empty base scan (which only calls
                 // updateEmpty below, never the row loop) still observes cancellation.
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 final Record baseRecord = baseCursor.getRecord();
                 if (baseCursor.hasNext()) {
                     long rowId = 0;

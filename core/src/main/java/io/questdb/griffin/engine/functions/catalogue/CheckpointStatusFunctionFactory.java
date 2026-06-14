@@ -85,7 +85,7 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;

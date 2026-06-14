@@ -57,7 +57,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         cursor.of(base, executionContext);
         return cursor;
     }

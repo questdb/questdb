@@ -201,7 +201,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
 
     private void buildAndSort() {
         // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         // Pre-allocate if size is known
         long estimatedSize = baseCursor.size();
         long maxEntries = SortKeyEncoder.maxEntries(keyCapBytes, valueCapBytes, keyType);

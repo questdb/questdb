@@ -51,7 +51,7 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext.getCairoEngine().getConfiguration().getAllPairs());
     }
 

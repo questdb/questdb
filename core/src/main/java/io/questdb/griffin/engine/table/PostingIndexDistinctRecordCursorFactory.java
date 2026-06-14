@@ -225,7 +225,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         private void scanPartitions(SqlExecutionCircuitBreaker cb) {
             // Consult the breaker before scanning, so an empty table (whose first frame is null and
             // returns below before the in-loop check) still observes cancellation.
-            cb.statefulThrowExceptionIfTripped();
+            cb.statefulThrowExceptionIfTrippedTimeThrottled();
             int totalExpected = symbolCount + 1;
             while (foundCount < totalExpected) {
                 PartitionFrame frame = frameCursor.next();

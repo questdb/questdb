@@ -171,10 +171,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        // Consult the breaker at open (un-throttled), so a scan over an empty table (zero frames, so the
-        // per-frame check in hasNext never runs) still observes cancellation even when this cursor is not
-        // the query's first breaker consultation (a throttled check could be skipped in that case).
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        // Consult the breaker at open (time-throttled), so a scan over an empty table (zero frames, so the
+        // per-frame check in hasNext never runs) still observes cancellation/timeout even when this cursor is
+        // not the query's first breaker consultation. The time-throttled variant checks cancellation/timeout
+        // unconditionally (so the count-throttle window can't skip it, unlike statefulThrowExceptionIfTripped())
+        // while bounding the connection probe to once per wall-clock window, matching the per-frame check above.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);

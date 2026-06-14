@@ -125,7 +125,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
         // Consult the breaker at open, so an empty base scan (whose row loops never run) stays cancellable.
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;

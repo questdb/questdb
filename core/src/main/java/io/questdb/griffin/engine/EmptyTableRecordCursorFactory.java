@@ -49,7 +49,7 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
         // The cursor is empty, so it never iterates and never consults the circuit breaker on its own.
         // Honor cancellation once at open time, so a query that optimized down to an empty result still
         // observes a tripped breaker instead of silently ignoring it.
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return EmptyTableRandomRecordCursor.INSTANCE;
     }
 

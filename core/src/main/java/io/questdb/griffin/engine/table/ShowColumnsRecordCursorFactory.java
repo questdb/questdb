@@ -76,7 +76,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 

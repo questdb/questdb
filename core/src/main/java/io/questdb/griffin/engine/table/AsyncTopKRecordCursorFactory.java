@@ -141,7 +141,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // Consult the breaker at open, so a scan over an empty table (which dispatches no frames and
         // runs no per-frame worker checks) still observes cancellation.
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
         cursor.of(frameSequence);

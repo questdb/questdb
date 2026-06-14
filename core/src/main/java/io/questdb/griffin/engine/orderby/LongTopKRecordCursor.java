@@ -144,7 +144,7 @@ class LongTopKRecordCursor implements RecordCursor {
     private void setupTopK() {
         if (!initialized) {
             // Consult the breaker before building, so an empty base scan still observes cancellation.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             topK();
             initialized = true;
         }
