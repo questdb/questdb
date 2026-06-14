@@ -66,6 +66,7 @@ public class MetadataCache implements QuietCloseable {
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMR metaMem = Vm.getCMRInstance();
+    private volatile boolean startupHydrated;
     private TxReader txReader;
     private long version;
 
@@ -103,6 +104,11 @@ public class MetadataCache implements QuietCloseable {
             try (MetadataCacheReader metadataRO = readLock()) {
                 LOG.info().$("metadata hydration completed [tables=").$(metadataRO.getTableCount()).I$();
             }
+            // The startup pass completed: from here writers keep the cache in
+            // sync incrementally, so hydrateAllTables() can skip its reconcile.
+            // Left unset on an abnormal abort below, so the reconcile keeps
+            // running as a self-healing fallback.
+            startupHydrated = true;
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$safe(e.getFlyweightMessage()).$();
@@ -123,11 +129,19 @@ public class MetadataCache implements QuietCloseable {
      * could return an incomplete catalogue immediately after a restart. Calling
      * this first guarantees the complete set of tables is observed.
      * <p>
-     * In steady state (cache fully populated) this is a cheap read-only scan:
-     * no write lock is taken, so the {@link MetadataCacheReader#snapshot}
-     * version fast-path remains intact.
+     * The reconcile is only needed while the one-shot startup hydration is in
+     * progress. Once {@link #onStartupAsyncHydrator()} finishes, writers keep
+     * the cache in sync incrementally, so this method short-circuits on a single
+     * volatile read and adds no per-query overhead (no allocation, no lock). If
+     * the startup pass aborts abnormally the flag stays unset and the reconcile
+     * keeps running as a self-healing fallback.
      */
     public void hydrateAllTables() {
+        // Fast path: after startup hydration the cache is authoritative and kept
+        // current by writers, so no reconcile (or allocation/lock) is needed.
+        if (startupHydrated) {
+            return;
+        }
         final ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
         engine.getTableTokens(tableTokensSet, false);
         final ObjList<TableToken> tableTokens = tableTokensSet.getList();

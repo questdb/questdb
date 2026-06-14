@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
@@ -843,6 +844,34 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertQuery("table_columns('y')")
                     .noLeakCheck()
                     .fails(14, "table does not exist");
+        });
+    }
+
+    @Test
+    public void testHydrateAllTablesShortCircuitsAfterStartup() throws Exception {
+        // hydrateAllTables() backs the tables()/all_tables() startup-race fix, but
+        // it must be a no-op once the one-shot startup hydration has completed:
+        // from then on writers keep the cache current, so a per-query reconcile
+        // would be pure overhead. This pins that fast-path contract.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Complete the one-shot startup hydration: fills the cache and flips
+            // MetadataCache into its steady-state fast path.
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            // Empty the cache to mimic a missing entry post-startup. Because the
+            // startup pass has completed, hydrateAllTables() must short-circuit
+            // and leave the cache untouched (no reconcile, no repopulation).
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+            engine.getMetadataCache().hydrateAllTables();
+            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+                Assert.assertEquals(0, ro.getTableCount());
+            }
         });
     }
 
