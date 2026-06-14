@@ -30,7 +30,32 @@ import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
+
 public class CairoExceptionTest extends AbstractTest {
+
+    // CairoException is a reused thread-local flyweight: instance() calls clear(errno) to recycle it.
+    // cancellation and preferencesOutOfDateError are only ever set true, so clear() MUST reset them;
+    // otherwise a stale flag leaks onto an unrelated exception built later on the same worker thread
+    // (e.g. a corrupt-parquet decode error inheriting cancellation=true from an earlier CANCEL QUERY).
+    // These guards invoke clear() directly so they hold even under -ea, where instance() allocates fresh.
+    @Test
+    public void testClearResetsStickyCancellationFlag() throws Exception {
+        CairoException ex = CairoException.queryCancelled();
+        Assert.assertTrue(ex.isCancellation());
+        Assert.assertTrue(ex.isInterruption());
+        invokeClear(ex);
+        Assert.assertFalse("clear() must reset the sticky cancellation flag", ex.isCancellation());
+        Assert.assertFalse(ex.isInterruption());
+    }
+
+    @Test
+    public void testClearResetsStickyPreferencesOutOfDateFlag() throws Exception {
+        CairoException ex = CairoException.preferencesOutOfDate(1, 2);
+        Assert.assertTrue(ex.isPreferencesOutOfDateError());
+        invokeClear(ex);
+        Assert.assertFalse("clear() must reset the sticky preferences-out-of-date flag", ex.isPreferencesOutOfDateError());
+    }
 
     @Test
     public void testMatViewDoesNotExistIsNotCritical() {
@@ -45,5 +70,11 @@ public class CairoExceptionTest extends AbstractTest {
     @Test
     public void testTableDroppedIsNotCriticial() {
         Assert.assertFalse(CairoException.tableDropped(new TableToken("x", "x", null, 123, false, false, false)).isCritical());
+    }
+
+    private static void invokeClear(CairoException ex) throws Exception {
+        Method clear = CairoException.class.getDeclaredMethod("clear", int.class);
+        clear.setAccessible(true);
+        clear.invoke(ex, CairoException.NON_CRITICAL);
     }
 }

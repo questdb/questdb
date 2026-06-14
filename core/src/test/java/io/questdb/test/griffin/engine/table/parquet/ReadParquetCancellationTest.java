@@ -44,6 +44,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * Regression guard: a tripped circuit breaker (CANCEL QUERY / timeout) observed by the non-parallel
  * {@link io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor} must keep its cancellation
@@ -79,6 +81,83 @@ public class ReadParquetCancellationTest extends AbstractCairoTest {
         super.setUp();
         inputRoot = root;
         ((SqlExecutionContextImpl) sqlExecutionContext).with(circuitBreaker);
+    }
+
+    @Test
+    public void testCancelledScanKeepsCancellationFlagAndMessage() throws Exception {
+        // An explicit CANCEL QUERY surfaces via queryCancelled(), which sets BOTH the interruption and
+        // cancellation flags. After dropping `|| ex.isCancellation()` the parquet catch keys on the
+        // interruption flag alone; queryCancelled() still sets it, so a genuine cancellation must keep
+        // its classification/message and not be relabeled "Parquet file is likely corrupted".
+        // We drive cancellation through a deterministic breaker toggle rather than a cancelledFlag,
+        // because QueryRegistry resets the breaker's cancelledFlag to null around query execution.
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final SqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 2_000_000;
+            }
+        };
+        final NetworkSqlExecutionCircuitBreaker cancelBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
+            @Override
+            public void statefulThrowExceptionIfTripped() {
+                if (armed.get()) {
+                    throw CairoException.queryCancelled();
+                }
+                super.statefulThrowExceptionIfTripped();
+            }
+
+            @Override
+            protected boolean testConnection(long fd) {
+                return false;
+            }
+        };
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(cancelBreaker);
+        try {
+            assertMemoryLeak(() -> {
+                final long rows = 10;
+                execute("create table x as (select" +
+                        " cast(x as int) id," +
+                        " timestamp_sequence(0, 1_000_000) ts" +
+                        " from long_sequence(" + rows + "))");
+
+                try (
+                        Path path = new Path();
+                        PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                        TableReader reader = engine.getReader("x")
+                ) {
+                    path.of(root).concat("x.parquet").$();
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encode(partitionDescriptor, path);
+
+                    sink.clear();
+                    sink.put("select * from read_parquet('x.parquet')");
+
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        // Disarmed while compiling so only the drain observes the cancellation.
+                        try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                            armed.set(true);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                    // drain to force switchToNextRowGroup()
+                                }
+                                Assert.fail("expected the parquet scan to abort on an explicit cancellation");
+                            } catch (CairoException e) {
+                                // Must keep the cancellation classification and message, not be relabeled corrupt.
+                                TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                                TestUtils.assertNotContains(e.getFlyweightMessage(), "Parquet file is likely corrupted");
+                                Assert.assertTrue("expected interruption flag to survive the parquet catch", e.isInterruption());
+                                Assert.assertTrue("expected cancellation flag to survive the parquet catch", e.isCancellation());
+                            }
+                        }
+                    }
+                }
+            });
+        } finally {
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(circuitBreaker);
+            cancelBreaker.close();
+        }
     }
 
     @Test

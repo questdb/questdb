@@ -267,10 +267,15 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             return false;
         } catch (CairoException ex) {
-            // A tripped circuit breaker (cancellation/timeout) must keep its classification and
-            // message, not be relabeled as a corrupt-file error, so wire processors that branch on
-            // isInterruption()/isCancellation() still see a cancellation rather than a read error.
-            if (ex.isInterruption() || ex.isCancellation()) {
+            // A tripped circuit breaker (cancellation/timeout/remote-disconnect) must keep its
+            // classification and message, not be relabeled as a corrupt-file error, so wire processors
+            // that branch on isInterruption()/isCancellation() still see it rather than a read error.
+            // Every breaker exception sets the interruption flag (queryCancelled/queryTimedOut/remote
+            // disconnect), so isInterruption() alone identifies them. We must NOT also key on
+            // isCancellation(): that flag is sticky on the reused thread-local CairoException flyweight
+            // (clear() does not reset it), so a stale cancellation from an earlier CANCEL QUERY on this
+            // worker thread would misclassify a genuinely corrupt decode error as a cancellation.
+            if (ex.isInterruption()) {
                 throw ex;
             }
             // Preserve the underlying decode error (e.g. the native parquet guard message)
@@ -345,9 +350,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                             return;
                         }
                     } catch (CairoException ex) {
-                        // A tripped circuit breaker (cancellation/timeout) must keep its classification
-                        // and message instead of being relabeled as a corrupt-file error (see hasNext).
-                        if (ex.isInterruption() || ex.isCancellation()) {
+                        // A tripped circuit breaker must keep its classification and message instead of
+                        // being relabeled as a corrupt-file error. Key only on isInterruption() (set by
+                        // every breaker exception); isCancellation() is sticky on the flyweight (see hasNext).
+                        if (ex.isInterruption()) {
                             throw ex;
                         }
                         // Preserve the underlying decode error instead of discarding it (see hasNext).
