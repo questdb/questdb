@@ -752,12 +752,19 @@ public class TableSnapshotRestore implements QuietCloseable {
         DirectIntList parquetColumns = null;
         ParquetPartitionDecoder decoder = null;
         ObjList<IndexWriter> indexWriters = null;
+        // Heap scratch reused across every partition this worker handles, mirroring
+        // the native-backed scratch above: the per-partition StringSink/long[] that
+        // rebuildParquetPartitionIndexes used to allocate now fold in here.
+        StringSink columnNamesSink = null;
+        LongList columnTops = null;
         try {
             if (rebuildIndexes) {
                 rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
                 decoder = new ParquetPartitionDecoder();
                 indexWriters = new ObjList<>();
+                columnNamesSink = new StringSink();
+                columnTops = new LongList();
             }
             int i;
             while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < partitionCount) {
@@ -766,7 +773,11 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
                 final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 final long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                final long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+                // The raw partition index i is already in hand, so read the
+                // committed row count by index (O(1) array read) instead of
+                // re-resolving it by timestamp (O(log P) binary search) for the
+                // identical masked value.
+                final long partitionRowCount = txWriter.getPartitionSize(i);
                 // Use the committed parquet file size from _txn, not the on-disk size.
                 // A snapshot may capture data.parquet mid-append; bytes past the
                 // committed size are not MVCC-visible and must not be published.
@@ -782,6 +793,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                             parquetColumns,
                             decoder,
                             indexWriters,
+                            columnNamesSink,
+                            columnTops,
                             tablePathStr,
                             pathTableLen,
                             partitionTimestamp,
@@ -941,10 +954,12 @@ public class TableSnapshotRestore implements QuietCloseable {
      * {@code Path} across every item the worker handles instead of allocating one
      * per (partition, column) task. Distributing individual (partition, column)
      * items -- rather than a whole partition per worker -- preserves column-level
-     * parallelism for non-partitioned and low-partition-count tables. The work list
-     * is built partition-major, so consecutive items usually share a partition; the
-     * worker caches the last partition's resolved timestamp/rowcount/nameTxn to
-     * avoid re-resolving them per column. The per-column {@link SymbolColumnIndexer}
+     * parallelism for non-partitioned and low-partition-count tables. Partition
+     * metadata (timestamp/rowcount/nameTxn) is resolved per item via O(1) by-index
+     * getters: the shared cursor disperses a worker's items ~workerCount apart in
+     * the partition-major list, so a per-partition cache would mostly miss for the
+     * typical 1-3 indexed columns/partition and buys nothing over the array reads.
+     * The per-column {@link SymbolColumnIndexer}
      * is still created fresh per column inside
      * {@link #rebuildBitmapIndexForNativePartitionColumn}, so the index-writer
      * lifecycle is identical to the former one-task-per-column path.
@@ -956,41 +971,43 @@ public class TableSnapshotRestore implements QuietCloseable {
             int timestampType,
             boolean isPartitioned,
             AtomicInteger cursor,
-            LongList nativeIndexWork
+            LongList nativeIndexWork,
+            LongList nativeIndexColumnTops
     ) {
         final Path path = new Path();
         try {
             final int workCount = nativeIndexWork.size();
-            // The work list is partition-major, so a worker pulling consecutive
-            // items usually stays within one partition: cache its resolved metadata
-            // and only re-resolve when the partition actually changes.
-            int cachedPartitionIndex = -1;
-            long partitionTimestamp = 0;
-            long partitionRowCount = 0;
-            long partitionNameTxn = 0;
             int i;
             while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < workCount) {
                 final long item = nativeIndexWork.getQuick(i);
                 final int partitionIndex = Numbers.decodeLowInt(item);
                 final int colIdx = Numbers.decodeHighInt(item);
 
-                if (partitionIndex != cachedPartitionIndex) {
-                    if (isPartitioned) {
-                        partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                        partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-                        partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-                    } else {
-                        partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                        partitionRowCount = txWriter.getTransientRowCount();
-                        partitionNameTxn = -1L;
-                    }
-                    cachedPartitionIndex = partitionIndex;
+                // Resolve partition metadata per item rather than caching the last
+                // partition's: the shared cursor disperses a worker's items
+                // ~workerCount apart in the partition-major list, so a per-partition
+                // cache mostly misses for the typical 1-3 indexed columns/partition,
+                // and the by-index getters are O(1) array reads anyway -- there is
+                // nothing worth caching.
+                final long partitionTimestamp;
+                final long partitionRowCount;
+                final long partitionNameTxn;
+                if (isPartitioned) {
+                    partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                    partitionRowCount = txWriter.getPartitionSize(partitionIndex);
+                    partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+                } else {
+                    partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                    partitionRowCount = txWriter.getTransientRowCount();
+                    partitionNameTxn = -1L;
                 }
 
                 final int writerIndex = tableMetadata.getWriterIndex(colIdx);
                 final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-                // columnTop validity was checked when the work list was built.
-                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                // columnTop was computed and validated when the work list was built;
+                // read it back from the index-aligned list instead of re-running
+                // the getColumnTop lookup here.
+                final long columnTop = nativeIndexColumnTops.getQuick(i);
                 final String columnName = tableMetadata.getColumnName(colIdx);
                 final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
                 final byte indexType = tableMetadata.getColumnIndexType(colIdx);
@@ -1126,6 +1143,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             DirectIntList parquetColumns,
             ParquetPartitionDecoder decoder,
             ObjList<IndexWriter> indexWriters,
+            StringSink columnNamesSink,
+            LongList columnTops,
             String tablePathStr,
             int pathTableLen,
             long partitionTimestamp,
@@ -1215,6 +1234,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                         rowGroupBuffers,
                         parquetColumns,
                         indexWriters,
+                        columnNamesSink,
+                        columnTops,
                         tableMetadata,
                         columnVersionReader,
                         partitionTimestamp,
@@ -1269,12 +1290,18 @@ public class TableSnapshotRestore implements QuietCloseable {
         // a whole partition to a worker would serialize that partition's columns
         // on a single thread.
         final LongList nativeIndexWork = new LongList();
+        // Index-aligned with nativeIndexWork: entry j holds the columnTop already
+        // computed here for work item j, so the worker reads it back instead of
+        // re-running the O(log V) getColumnTop lookup per item.
+        final LongList nativeIndexColumnTops = new LongList();
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             final long partitionTimestamp;
             final long partitionRowCount;
             if (isPartitioned) {
                 partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+                // partitionIndex is in hand: read by index (O(1)) rather than
+                // re-resolving by timestamp (O(log P)).
+                partitionRowCount = txWriter.getPartitionSize(partitionIndex);
             } else {
                 partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
                 partitionRowCount = txWriter.getTransientRowCount();
@@ -1301,6 +1328,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     continue;
                 }
                 nativeIndexWork.add(Numbers.encodeLowHighInts(partitionIndex, colIdx));
+                nativeIndexColumnTops.add(columnTop);
             }
         }
 
@@ -1319,7 +1347,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                     timestampType,
                     isPartitioned,
                     cursor,
-                    nativeIndexWork
+                    nativeIndexWork,
+                    nativeIndexColumnTops
             )));
         }
     }
@@ -1608,6 +1637,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             RowGroupBuffers rowGroupBuffers,
             DirectIntList parquetColumns,
             ObjList<IndexWriter> indexWriters,
+            StringSink columnNamesSink,
+            LongList columnTops,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
@@ -1617,9 +1648,11 @@ public class TableSnapshotRestore implements QuietCloseable {
     ) {
         final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
         final int columnCount = metadata.getColumnCount();
-        final StringSink columnNamesSink = new StringSink();
 
-        // First pass: identify indexed columns and collect names for logging
+        // First pass: identify indexed columns and collect names for logging.
+        // columnNamesSink/columnTops are caller-owned scratch reused across every
+        // partition this worker handles; reset them here instead of allocating.
+        columnNamesSink.clear();
         parquetColumns.clear();
         indexWriters.clear();
 
@@ -1698,15 +1731,14 @@ public class TableSnapshotRestore implements QuietCloseable {
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
 
             // We need to track columnTop per indexed column - re-iterate to get them
-            long[] columnTops = new long[indexedColumnCount];
-            int colIdx = 0;
-            for (int columnIndex = 0; columnIndex < columnCount && colIdx < indexedColumnCount; columnIndex++) {
+            columnTops.clear();
+            for (int columnIndex = 0; columnIndex < columnCount && columnTops.size() < indexedColumnCount; columnIndex++) {
                 if (getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount) == -1) {
                     continue;
                 }
 
                 final int writerIndex = metadata.getWriterIndex(columnIndex);
-                columnTops[colIdx++] = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                columnTops.add(columnVersionReader.getColumnTop(partitionTimestamp, writerIndex));
             }
 
             long rowCount = 0;
@@ -1716,7 +1748,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // Check if any column needs data from this row group
                 boolean needsDecode = false;
                 for (int i = 0; i < indexedColumnCount; i++) {
-                    if (rowCount + rowGroupSize > columnTops[i]) {
+                    if (rowCount + rowGroupSize > columnTops.getQuick(i)) {
                         needsDecode = true;
                         break;
                     }
@@ -1742,7 +1774,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                 // Process each indexed column
                 for (int i = 0; i < indexedColumnCount; i++) {
-                    final long columnTop = columnTops[i];
+                    final long columnTop = columnTops.getQuick(i);
                     if (rowCount + rowGroupSize <= columnTop) {
                         continue; // This column doesn't have data in this row group yet
                     }
