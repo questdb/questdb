@@ -69,7 +69,9 @@ public class EmptySymbolMapReader implements SymbolMapReader {
 
     @Override
     public int keyOf(CharSequence value) {
-        return SymbolTable.VALUE_NOT_FOUND;
+        // Mirror SymbolMapReaderImpl: null reverse-maps to the null key, not "not found",
+        // so a null symbol round-trips (getInt -> keyOf) consistently with a real reader.
+        return value != null ? SymbolTable.VALUE_NOT_FOUND : SymbolTable.VALUE_IS_NULL;
     }
 
     @Override

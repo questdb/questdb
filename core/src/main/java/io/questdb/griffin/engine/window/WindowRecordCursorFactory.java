@@ -179,7 +179,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             // we can't skip to an arbitrary result set point because current window function value might depend
             // on values in other rows that could be located anywhere
             RecordCursor.skipRows(this, rowCount);

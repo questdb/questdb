@@ -58,6 +58,7 @@ import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -629,8 +630,18 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+            base.setParentUsedColumns(columnIndexes);
+        }
+
+        @Override
         public void setParquetDecodeHint(ParquetDecodeHint hint) {
             base.setParquetDecodeHint(hint);
+        }
+
+        @Override
+        public void setRecordAtRows(@Nullable RowIdSource source) {
+            base.setRecordAtRows(source);
         }
 
         @Override
@@ -639,8 +650,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
-            base.skipRows(rowCount);
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+            base.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override

@@ -431,6 +431,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
 
         Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
@@ -1751,6 +1753,47 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "0");
         newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testMemoryUsageLogConfiguration() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "5s");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(5_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalAcceptsMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(86_400_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsAboveMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_001");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "-1");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
     }
 
     @Test

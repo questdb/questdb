@@ -79,10 +79,15 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
-        cursorA.skipRows(rowCount);
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        // Each leg clamps against its own post-skip output, never the joint output.
+        // The skip reaches B only when it exhausts A (rowCount still > 0); in that
+        // case A yields no post-skip rows, so the full remaining output comes from B
+        // and the cap passed to B is exact. When the skip lands inside A, B is not
+        // skipped here and runs unclamped on later iteration.
+        cursorA.skipRows(rowCount, maxRowsAfterSkip);
         if (rowCount.get() > 0) {
-            cursorB.skipRows(rowCount);
+            cursorB.skipRows(rowCount, maxRowsAfterSkip);
             record.setAb(false);
             nextMethod = nextB;
         }

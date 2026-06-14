@@ -637,6 +637,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             QwpMessageCursor messageCursor = streamingDecoder.decode(
                     bufferAddress, bufferPosition, connectionSymbolDict);
 
+            // A redefined client symbol dictionary (orphan-adoption replays a
+            // different sender's dict-from-0 into this connection, remapping
+            // existing client symbol IDs to new strings) leaves the
+            // clientSymbolId -> tableSymbolId cache pointing at the prior
+            // sender's keys. Drop it so symbols re-resolve against the
+            // refreshed dictionary; the watermark check alone cannot catch a
+            // remap that adds no new table symbols.
+            if (messageCursor.isSymbolDictRedefined()) {
+                symbolCache.clear();
+            }
+
             // Process each table block using streaming cursors
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
