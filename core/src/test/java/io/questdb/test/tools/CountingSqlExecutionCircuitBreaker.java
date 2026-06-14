@@ -35,8 +35,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * A delegating {@link SqlExecutionCircuitBreaker} that counts how many times execution code
  * consults the breaker, without changing its behavior. A consultation is a call to any of
  * {@link #checkIfTripped()}, {@link #checkIfTripped(long, long)}, {@link #getState()},
- * {@link #getState(long, long)}, {@link #statefulThrowExceptionIfTripped()} or
- * {@link #statefulThrowExceptionIfTrippedNoThrottle()}; all other methods delegate without
+ * {@link #getState(long, long)}, {@link #statefulThrowExceptionIfTripped()},
+ * {@link #statefulThrowExceptionIfTrippedNoThrottle()} or
+ * {@link #statefulThrowExceptionIfTrippedTimeThrottled()}; all other methods delegate without
  * counting. The counter is thread-safe: parallel execution shares a thread-safe execution-context
  * circuit breaker across worker threads, so the wrapper may be consulted concurrently.
  * <p>
@@ -147,6 +148,12 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         checkCount.incrementAndGet();
         delegate.statefulThrowExceptionIfTrippedNoThrottle();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+        checkCount.incrementAndGet();
+        delegate.statefulThrowExceptionIfTrippedTimeThrottled();
     }
 
     @Override

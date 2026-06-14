@@ -125,11 +125,14 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
-                // Use the un-throttled variant: a per-frame check is already coarse (at most once per
-                // pageFrameMaxRows rows), so the throttle (which exists to keep per-row loops cheap) buys
-                // nothing here and would instead skip ~throttle frames between real checks, effectively
-                // disabling mid-scan cancellation for any realistic table.
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                // Use the time-throttled variant rather than the count-throttled statefulThrowExceptionIfTripped()
+                // (whose 2M-consultation window would skip ~2M frames between real checks, disabling mid-scan
+                // cancellation for any realistic table) and rather than the un-throttled variant (which would
+                // perform a recv() connection probe on every frame). A nested-loop/cross join re-scans this
+                // cursor once per master row, so an un-throttled per-frame probe becomes ~one syscall per
+                // master row. The time-throttled variant still checks cancellation/timeout every frame (cheap)
+                // while bounding the connection probe to once per wall-clock window for the whole query.
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 frameAddressCache.add(frameCount, frame);
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
