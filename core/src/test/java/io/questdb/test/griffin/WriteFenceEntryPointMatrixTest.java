@@ -25,8 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
@@ -38,16 +42,22 @@ import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The write-fence matrix: every declared CompiledQuery statement type, crossed against every
@@ -64,11 +74,18 @@ import java.util.TreeMap;
  * path lists are not trusted: a reviewer's "every other path honors the fence" list once omitted /exec
  * UPDATE, which is exactly the kind of cell this enumeration pins.
  * <p>
+ * The classification sweep alone is not enough -- a reflection-only matrix once classified the
+ * parse-time DDL, parked-writer, and async-enqueue cells as safe while all three were unfenced. So the
+ * matrix also DRIVES a real write through each fenced externalization path (the parse-time TRUNCATE mint,
+ * the pg-wire parked-writer UPDATE branch, and the OperationDispatcher async-enqueue fallback) against a
+ * read-only engine and asserts each is refused. A future write path that skips the fence reds these
+ * drives, not just the classification map.
+ * <p>
  * Classification meaning:
  * <ul>
- *   <li>FENCED -- the execution is wrapped in the role-switch read lock with an in-lock
- *       ReadOnlyStatementGate re-check (the fencing method is named in the reason and asserted to
- *       exist, so renaming or removing it breaks the matrix).</li>
+ *   <li>FENCED -- the execution is wrapped in the role-switch read lock with an in-lock read-only
+ *       re-check (the fencing method is named in the reason and asserted to exist, so renaming or
+ *       removing it breaks the matrix).</li>
  *   <li>ACQUIRE_GATED -- the externalization reaches a writer only through an engine acquire API whose
  *       enterprise override refuses on read-only (getWriter / getTableWriterAPI), or through a pooled
  *       writer the demote drain counts via getBusyWriterCount so the drain serializes against it. The
@@ -87,10 +104,60 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     private static final byte ACQUIRE_GATED = 2;
     private static final byte EXEMPT = 3;
     private static final byte FENCED = 1;
+    private static final String READ_ONLY_REFUSAL = "replica access is read-only";
 
     /**
-     * Asserts the fencing methods the matrix names actually exist, so a rename or removal of either
-     * fence breaks this matrix (not just the protocol's own tests).
+     * Drives a real WAL UPDATE into the OperationDispatcher async-enqueue fallback (the WAL writer-pool
+     * exhaustion path) on a read-only engine and asserts the catch branch refuses before enqueuing. On a
+     * read-only node the async apply would physical-commit without a replicated txn -- a silent
+     * acked-loss -- so the fence must refuse. A non-null event sub-sequence selects the async-enqueue
+     * branch (the re-throw branch fires only when it is null).
+     */
+    @Test
+    public void testAsyncEnqueueBranchDrivesRealWriteAndIsFenced() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine readOnlyEngine = poolExhaustedReadOnlyEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "matrix update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fenceProbeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    Assert.fail("the async-enqueue fallback must refuse a WAL UPDATE on a read-only node");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+            }
+        });
+    }
+
+    /**
+     * The export-temp-table DROP exemption cross-check, exercised both ways: the parquet-export temp
+     * table DROP is the one DROP a read-only replica runs (allowed), a genuine client DROP stays refused.
+     * This is the single FENCED type that is conditionally exempt, so the matrix pins it explicitly.
+     */
+    @Test
+    public void testExportTempDropExemptionCrossCheck() {
+        CairoConfiguration cfg = new DefaultCairoConfiguration(root);
+        String prefix = cfg.getParquetExportTableNamePrefix().toString();
+        Operation clientDrop = dropOperation("client_orders");
+        Assert.assertTrue(
+                "a genuine client DROP must be refused on a read-only node",
+                ReadOnlyStatementGate.isRefusedOnReadOnly(CompiledQuery.DROP, clientDrop, cfg)
+        );
+        Operation exportDrop = dropOperation(prefix + "1234");
+        Assert.assertFalse(
+                "the parquet-export temp-table DROP is exempt and must be allowed on a read-only node",
+                ReadOnlyStatementGate.isRefusedOnReadOnly(CompiledQuery.DROP, exportDrop, cfg)
+        );
+    }
+
+    /**
+     * Asserts the fencing methods and the mint-observer seams the matrix names actually exist, so a
+     * rename or removal of any fence or its test seam breaks this matrix (not just the protocol's own
+     * tests).
      */
     @Test
     public void testFenceMethodsExist() throws Exception {
@@ -127,6 +194,22 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                         TableWriterAPI.class
                 )
         );
+        Assert.assertNotNull(
+                "CairoEngine.setRoleSwitchMintObserver must exist -- the parse-time DDL fence's test seam,"
+                        + " fired inside the role-switch read-lock hold at the TRUNCATE/RENAME/ALTER VIEW/"
+                        + "storage-policy mints",
+                CairoEngine.class.getDeclaredMethod("setRoleSwitchMintObserver", Runnable.class)
+        );
+        Assert.assertNotNull(
+                "PGPipelineEntry.setParkedUpdateMintObserver must exist -- the parked-writer UPDATE fence's"
+                        + " test seam",
+                PGPipelineEntry.class.getDeclaredMethod("setParkedUpdateMintObserver", Runnable.class)
+        );
+        Assert.assertNotNull(
+                "OperationDispatcher.setAsyncEnqueueObserver must exist -- the async-enqueue fence's test"
+                        + " seam",
+                OperationDispatcher.class.getDeclaredMethod("setAsyncEnqueueObserver", Runnable.class)
+        );
     }
 
     /**
@@ -157,13 +240,21 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("UPDATE", FENCED);
         // ALTER routes to executeAlterTable -> the same OperationDispatcher.execute fence as UPDATE.
         http.put("ALTER", FENCED);
-        // The sendConfirmation-routed write types externalize during compile and reach a writer only
-        // through the gated acquire APIs (getTableWriterAPI / getWriter / rename / replaceViewDefinition
-        // / the storage-policy + mat-view-refresh writer acquire), refused by the enterprise override.
-        http.put("TRUNCATE", ACQUIRE_GATED);
-        http.put("RENAME_TABLE", ACQUIRE_GATED);
-        http.put("ALTER_VIEW", ACQUIRE_GATED);
-        http.put("ALTER_STORAGE_POLICY", ACQUIRE_GATED);
+        // The parse-time WAL DDL types (TRUNCATE, RENAME_TABLE, ALTER_VIEW, ALTER_STORAGE_POLICY) mint a
+        // replicated WAL sequencer txn INSIDE compile(), before any ingress gate. The earlier rationale
+        // marked them ACQUIRE_GATED citing the eager getTableWriterAPI / getWalWriter / rename /
+        // replaceViewDefinition acquire, but that gate was check-then-act (it released before the mint), so
+        // a demote could interleave and mint on an already-demoting node. Each mint now holds the
+        // role-switch read lock around an in-lock re-check (SqlCompilerImpl.compileTruncate;
+        // EntCairoEngine.rename / replaceViewDefinition; StoragePolicyWriterImpl.saveStoragePolicy), so
+        // they are FENCED. The pg-wire side reaches the same mints through compile() and is fenced
+        // identically. The async-enqueue drive test below exercises one of these mints for real.
+        http.put("TRUNCATE", FENCED);
+        http.put("RENAME_TABLE", FENCED);
+        http.put("ALTER_VIEW", FENCED);
+        http.put("ALTER_STORAGE_POLICY", FENCED);
+        // REFRESH MAT VIEW enqueues an async refresh (no synchronous WAL txn mint); the eager getWalWriter
+        // gate plus the demote's mat-view quiesce and the async job's own read-only re-check cover it.
         http.put("REFRESH_MAT_VIEW", ACQUIRE_GATED);
         // Read / bookkeeping / transaction-control / ACL types: EXEMPT.
         http.put("SELECT", EXEMPT);
@@ -188,68 +279,6 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("COPY_REMOTE", EXEMPT);
         http.put("BACKUP_DATABASE", EXEMPT);
         assertEveryTypeClassified("HTTP /exec", http);
-    }
-
-    /**
-     * The pg-wire msgExecute arms: every declared CompiledQuery type classified. Forcing property: a new
-     * type absent here fails with a classify-me message.
-     */
-    @Test
-    public void testPgWireEntryPointClassifiesEveryType() throws Exception {
-        Map<String, Byte> pg = new LinkedHashMap<>();
-        // CTAS/CREATE/CREATE MAT VIEW/DROP arms -> executeDdlFenced. FENCED.
-        put(pg, "CREATE_TABLE", FENCED);
-        put(pg, "CREATE_TABLE_AS_SELECT", FENCED);
-        put(pg, "CREATE_MAT_VIEW", FENCED);
-        put(pg, "DROP", FENCED);
-        // Default-arm refused types routed to executeFenced by the gate predicate. FENCED.
-        put(pg, "CREATE_VIEW", FENCED);
-        put(pg, "TRUNCATE", FENCED);
-        put(pg, "RENAME_TABLE", FENCED);
-        put(pg, "ALTER_VIEW", FENCED);
-        put(pg, "ALTER_STORAGE_POLICY", FENCED);
-        put(pg, "REFRESH_MAT_VIEW", FENCED);
-        // INSERT / INSERT_AS_SELECT -> msgExecuteInsert: the in-op InsertOperation fence + a pooled
-        // writer the drain counts. ACQUIRE_GATED.
-        put(pg, "INSERT", ACQUIRE_GATED);
-        put(pg, "INSERT_AS_SELECT", ACQUIRE_GATED);
-        // UPDATE -> msgExecuteUpdate, ALTER -> msgExecuteDDL: both funnel through
-        // OperationDispatcher.execute, which fences the inline apply() under the role-switch read lock
-        // with an in-lock isReadOnlyMode() re-check (the same dispatcher fence the /exec UPDATE/ALTER
-        // cells take). FENCED.
-        put(pg, "UPDATE", FENCED);
-        put(pg, "ALTER", FENCED);
-        // COMMIT flushes pending writers inside commit(), which holds the role-switch fence around the
-        // writer commit (the pg-wire COMMIT fence). Classified ACQUIRE_GATED: it reaches the writer only
-        // under the fenced commit. Note COMMIT is intentionally NOT in the gate refusal set; the commit()
-        // fence is its authoritative refusal, so it is asserted separately below, not via the gate
-        // cross-check.
-        put(pg, "COMMIT", ACQUIRE_GATED);
-        // Read / bookkeeping / transaction-control / ACL types: EXEMPT.
-        put(pg, "SELECT", EXEMPT);
-        put(pg, "EXPLAIN", EXEMPT);
-        put(pg, "PSEUDO_SELECT", EXEMPT);
-        put(pg, "SET", EXEMPT);
-        put(pg, "BEGIN", EXEMPT);
-        put(pg, "ROLLBACK", EXEMPT);
-        put(pg, "VACUUM", EXEMPT);
-        put(pg, "REPAIR", EXEMPT);
-        put(pg, "CHECKPOINT_CREATE", EXEMPT);
-        put(pg, "CHECKPOINT_RELEASE", EXEMPT);
-        put(pg, "DEALLOCATE", EXEMPT);
-        put(pg, "TABLE_RESUME", EXEMPT);
-        put(pg, "TABLE_SUSPEND", EXEMPT);
-        put(pg, "TABLE_SET_TYPE", EXEMPT);
-        put(pg, "CANCEL_QUERY", EXEMPT);
-        put(pg, "CREATE_USER", EXEMPT);
-        put(pg, "ALTER_USER", EXEMPT);
-        put(pg, "COMPILE_VIEW", EXEMPT);
-        put(pg, "COPY_REMOTE", EXEMPT);
-        put(pg, "BACKUP_DATABASE", EXEMPT);
-        // COMMIT is fenced inside commit() but is not in the gate refusal set, so exclude it from the
-        // gate cross-check (which expects FENCED/ACQUIRE_GATED == refused). All other types follow the
-        // cross-check.
-        assertEveryTypeClassified("pg-wire", pg, "COMMIT");
     }
 
     /**
@@ -291,6 +320,113 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Drives a real WAL TRUNCATE through compile() on an engine whose read-only flag flips after the
+     * table is created -- exercising the parse-time TRUNCATE mint fence for real, not by reflection. The
+     * SqlCompilerImpl.compileTruncate WAL branch holds the role-switch read lock around an in-lock
+     * re-check and truncateSoft(); a read-only flag must refuse the truncate before it externalizes.
+     */
+    @Test
+    public void testParseTimeTruncateDrivesRealWriteAndIsFenced() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean readOnly = new AtomicBoolean(false);
+            try (CairoEngine flipEngine = flipReadOnlyEngine(readOnly)) {
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(flipEngine);
+                flipEngine.execute(
+                        "CREATE TABLE matrix_tr (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                        ctx
+                );
+                // Flip read-only after the table exists: the truncate's WAL externalization must be
+                // refused by the in-lock re-check before truncateSoft() runs.
+                readOnly.set(true);
+                try {
+                    flipEngine.execute("TRUNCATE TABLE matrix_tr", ctx);
+                    Assert.fail("a parse-time TRUNCATE must be refused on a read-only node");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+            }
+        });
+    }
+
+    /**
+     * The pg-wire msgExecute arms: every declared CompiledQuery type classified. Forcing property: a new
+     * type absent here fails with a classify-me message.
+     */
+    @Test
+    public void testPgWireEntryPointClassifiesEveryType() throws Exception {
+        Map<String, Byte> pg = new LinkedHashMap<>();
+        // CTAS/CREATE/CREATE MAT VIEW/DROP arms -> executeDdlFenced. FENCED.
+        put(pg, "CREATE_TABLE", FENCED);
+        put(pg, "CREATE_TABLE_AS_SELECT", FENCED);
+        put(pg, "CREATE_MAT_VIEW", FENCED);
+        put(pg, "DROP", FENCED);
+        // CREATE VIEW routes to the default arm -> executeFenced by the gate predicate. FENCED.
+        put(pg, "CREATE_VIEW", FENCED);
+        // The parse-time WAL DDL types execute inside compile() at parse time (msgParse), and msgExecute
+        // short-circuits at stateParseExecuted BEFORE the gate and the default-arm executeFenced route, so
+        // the protocol layer cannot fence them. The mint itself is now fenced (compile() holds the
+        // role-switch read lock around the externalization), so they are FENCED at the mint, identically
+        // to the /exec side.
+        put(pg, "TRUNCATE", FENCED);
+        put(pg, "RENAME_TABLE", FENCED);
+        put(pg, "ALTER_VIEW", FENCED);
+        put(pg, "ALTER_STORAGE_POLICY", FENCED);
+        put(pg, "REFRESH_MAT_VIEW", ACQUIRE_GATED);
+        // INSERT / INSERT_AS_SELECT -> msgExecuteInsert: the in-op InsertOperation fence + a pooled
+        // writer the drain counts. ACQUIRE_GATED.
+        put(pg, "INSERT", ACQUIRE_GATED);
+        put(pg, "INSERT_AS_SELECT", ACQUIRE_GATED);
+        // UPDATE -> msgExecuteUpdate, ALTER -> msgExecuteDDL: both funnel through
+        // OperationDispatcher.execute, which fences the inline apply() under the role-switch read lock
+        // with an in-lock isReadOnlyMode() re-check (the same dispatcher fence the /exec UPDATE/ALTER
+        // cells take). The parked-writer index < 0 branch of msgExecuteUpdate now holds the same fence
+        // around its implicit commit() + apply(). FENCED.
+        put(pg, "UPDATE", FENCED);
+        put(pg, "ALTER", FENCED);
+        // COMMIT flushes pending writers inside commit(), which holds the role-switch fence around the
+        // writer commit (the pg-wire COMMIT fence). Classified ACQUIRE_GATED: it reaches the writer only
+        // under the fenced commit. Note COMMIT is intentionally NOT in the gate refusal set; the commit()
+        // fence is its authoritative refusal, so it is asserted separately below, not via the gate
+        // cross-check.
+        put(pg, "COMMIT", ACQUIRE_GATED);
+        // Read / bookkeeping / transaction-control / ACL types: EXEMPT.
+        put(pg, "SELECT", EXEMPT);
+        put(pg, "EXPLAIN", EXEMPT);
+        put(pg, "PSEUDO_SELECT", EXEMPT);
+        put(pg, "SET", EXEMPT);
+        put(pg, "BEGIN", EXEMPT);
+        put(pg, "ROLLBACK", EXEMPT);
+        put(pg, "VACUUM", EXEMPT);
+        put(pg, "REPAIR", EXEMPT);
+        put(pg, "CHECKPOINT_CREATE", EXEMPT);
+        put(pg, "CHECKPOINT_RELEASE", EXEMPT);
+        put(pg, "DEALLOCATE", EXEMPT);
+        put(pg, "TABLE_RESUME", EXEMPT);
+        put(pg, "TABLE_SUSPEND", EXEMPT);
+        put(pg, "TABLE_SET_TYPE", EXEMPT);
+        put(pg, "CANCEL_QUERY", EXEMPT);
+        put(pg, "CREATE_USER", EXEMPT);
+        put(pg, "ALTER_USER", EXEMPT);
+        put(pg, "COMPILE_VIEW", EXEMPT);
+        put(pg, "COPY_REMOTE", EXEMPT);
+        put(pg, "BACKUP_DATABASE", EXEMPT);
+        // COMMIT is fenced inside commit() but is not in the gate refusal set, so exclude it from the
+        // gate cross-check (which expects FENCED/ACQUIRE_GATED == refused). All other types follow the
+        // cross-check.
+        assertEveryTypeClassified("pg-wire", pg, "COMMIT");
+    }
+
+    // --- helpers ---
+
+    private static void assertReadOnlyRefusal(CairoException e) {
+        Assert.assertTrue("exception must be an authorization error: " + e.getMessage(), e.isAuthorizationError());
+        Assert.assertTrue(
+                "message must be '" + READ_ONLY_REFUSAL + "': " + e.getMessage(),
+                e.getMessage().contains(READ_ONLY_REFUSAL)
+        );
+    }
+
     private static TreeMap<String, Short> declaredCompiledQueryTypes() throws IllegalAccessException {
         TreeMap<String, Short> out = new TreeMap<>();
         for (Field f : CompiledQuery.class.getDeclaredFields()) {
@@ -304,6 +440,21 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
             }
         }
         return out;
+    }
+
+    private static Operation dropOperation(String tableName) {
+        return new GenericDropOperation(OperationCodes.DROP_TABLE, null, tableName, 0, false);
+    }
+
+    /**
+     * A real UpdateOperation used only to carry a TableToken into OperationDispatcher.execute (the
+     * dispatcher's apply() is overridden to a no-op, so the operation's own apply() never runs).
+     */
+    private static UpdateOperation fenceProbeOperation() {
+        final TableToken token = new TableToken("matrix_disp", "matrix_disp~1", null, 1, true, false, false);
+        final ObjList<CharSequence> columns = new ObjList<>();
+        columns.add("val");
+        return new UpdateOperation(token, 1, 0, 0, columns);
     }
 
     private static void put(Map<String, Byte> map, String name, byte classification) {
@@ -329,7 +480,7 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
             Assert.assertNotNull(
                     entryPoint + " entry point does not classify CompiledQuery." + name + " (=" + sqlType + ")."
                             + " Classify it FENCED (execution under the role-switch read lock + in-lock"
-                            + " ReadOnlyStatementGate re-check), ACQUIRE_GATED (reaches a writer only through a"
+                            + " read-only re-check), ACQUIRE_GATED (reaches a writer only through a"
                             + " gated/pooled acquire), or EXEMPT (non-mutating / ACL-governed / bookkeeping) with"
                             + " a recorded reason.",
                     cell
@@ -355,27 +506,40 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     }
 
     /**
-     * The export-temp-table DROP exemption cross-check, exercised both ways: the parquet-export temp
-     * table DROP is the one DROP a read-only replica runs (allowed), a genuine client DROP stays refused.
-     * This is the single FENCED type that is conditionally exempt, so the matrix pins it explicitly.
+     * An engine on a dedicated root whose isReadOnlyMode() reads a toggleable flag, so a test can create
+     * a table while writable and then flip read-only to drive a fenced externalization. A dedicated root
+     * avoids the table-name registry lock the shared test engine holds; the table-name registry stays
+     * writable, so the fence (not the read-only registry) is the refusal source.
      */
-    @Test
-    public void testExportTempDropExemptionCrossCheck() {
-        CairoConfiguration cfg = new DefaultCairoConfiguration(root);
-        String prefix = cfg.getParquetExportTableNamePrefix().toString();
-        Operation clientDrop = dropOperation("client_orders");
-        Assert.assertTrue(
-                "a genuine client DROP must be refused on a read-only node",
-                ReadOnlyStatementGate.isRefusedOnReadOnly(CompiledQuery.DROP, clientDrop, cfg)
-        );
-        Operation exportDrop = dropOperation(prefix + "1234");
-        Assert.assertFalse(
-                "the parquet-export temp-table DROP is exempt and must be allowed on a read-only node",
-                ReadOnlyStatementGate.isRefusedOnReadOnly(CompiledQuery.DROP, exportDrop, cfg)
-        );
+    private CairoEngine flipReadOnlyEngine(AtomicBoolean readOnly) throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultTestCairoConfiguration(dir);
+        return new CairoEngine(cfg) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return readOnly.get();
+            }
+        };
     }
 
-    private static Operation dropOperation(String tableName) {
-        return new GenericDropOperation(OperationCodes.DROP_TABLE, null, tableName, 0, false);
+    /**
+     * An engine on a dedicated root whose WAL writer acquire always throws EntryUnavailableException (the
+     * pool-exhausted condition that routes OperationDispatcher.execute into the async-enqueue catch
+     * branch) and whose isReadOnlyMode() is fixed true, so the catch-branch re-check must refuse.
+     */
+    private CairoEngine poolExhaustedReadOnlyEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                throw EntryUnavailableException.instance("pool size exceeded");
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return true;
+            }
+        };
     }
 }
