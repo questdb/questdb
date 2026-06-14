@@ -81,8 +81,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             AtomicInteger commitCalled = new AtomicInteger(0);
             AtomicInteger rollbackCalled = new AtomicInteger(0);
-            AtomicInteger readOnlyCallCount = new AtomicInteger(0);
-            try (CairoEngine flipEngine = buildFlipAfterFirstCallEngine(readOnlyCallCount)) {
+            try (CairoEngine flipEngine = buildFlipAfterFirstCallEngine()) {
                 TableToken token = new TableToken("ias_flip", "ias_flip~1", null, 1, false, false, false);
                 TableWriterAPI writer = fakeWriter(token, commitCalled, rollbackCalled);
                 InsertAsSelectOperationImpl op = new InsertAsSelectOperationImpl(
@@ -144,8 +143,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             AtomicInteger commitCalled = new AtomicInteger(0);
             AtomicInteger rollbackCalled = new AtomicInteger(0);
-            AtomicInteger readOnlyCallCount = new AtomicInteger(0);
-            try (CairoEngine flipEngine = buildFlipAfterFirstCallEngine(readOnlyCallCount)) {
+            try (CairoEngine flipEngine = buildFlipAfterFirstCallEngine()) {
                 TableToken token = new TableToken("ins_flip", "ins_flip~1", null, 1, false, false, false);
                 TableWriterAPI writer = fakeWriter(token, commitCalled, rollbackCalled);
                 InsertOperationImpl op = new InsertOperationImpl(flipEngine, token, 7L);
@@ -212,8 +210,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     public void testDispatcherFenceInLockReCheckCatchesFlip() throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger applyCalled = new AtomicInteger(0);
-            AtomicInteger readOnlyCallCount = new AtomicInteger(0);
-            try (CairoEngine flipEngine = buildFlipAfterFirstCallWriterEngine(readOnlyCallCount)) {
+            try (CairoEngine flipEngine = buildFlipAfterFirstCallWriterEngine()) {
                 OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(flipEngine, "test update") {
                     @Override
                     protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
@@ -423,9 +420,10 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
      * isReadOnlyMode() returns false on the first call (early-out passes) and true on every
      * subsequent call (the flip happened inside the lock window).
      */
-    private CairoEngine buildFlipAfterFirstCallEngine(AtomicInteger callCount) throws Exception {
+    private CairoEngine buildFlipAfterFirstCallEngine() throws Exception {
         String dir = temp.newFolder().getAbsolutePath();
         CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        final AtomicInteger callCount = new AtomicInteger(0);
         return new CairoEngine(cfg, false) {
             @Override
             public boolean isReadOnlyMode() {
@@ -463,9 +461,10 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
      * call (the flip happened inside the lock window). getTableWriterAPI returns a fake writer so no
      * real table is needed.
      */
-    private CairoEngine buildFlipAfterFirstCallWriterEngine(AtomicInteger callCount) throws Exception {
+    private CairoEngine buildFlipAfterFirstCallWriterEngine() throws Exception {
         String dir = temp.newFolder().getAbsolutePath();
         CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        final AtomicInteger callCount = new AtomicInteger(0);
         return new CairoEngine(cfg, false) {
             @Override
             public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {

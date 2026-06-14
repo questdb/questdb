@@ -52,8 +52,8 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
     // via apply(), i.e. inside the role-switch read-lock hold once the fence below is in place. A test
     // can install a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote either blocks
     // behind the read hold or expires its tryLock budget, exercising the demote race deterministically
-    // without host load. Null in production (the default): the fire-site is a single static volatile
-    // read folded away by the JIT when no test installed a hook, so execute() stays byte-identical.
+    // without host load. Null in production (the default): the fire-site is one volatile read with a
+    // null check, negligible (the volatile read is an acquire load, not eliminable, but trivially cheap).
     @TestOnly
     private static volatile Runnable preApplyObserver;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
@@ -65,6 +65,28 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         this.engine = engine;
         futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
         this.lockReason = lockReason;
+    }
+
+    /**
+     * Test seam: installs a hook execute() fires at the top of the EntryUnavailableException
+     * async-enqueue catch branch. Pass null to uninstall. The hook is shared across dispatcher
+     * instances, so an installer must scope its own pause to the statement under test. Never set
+     * outside tests -- the field defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setAsyncEnqueueObserver(Runnable observer) {
+        asyncEnqueueObserver = observer;
+    }
+
+    /**
+     * Test seam: installs a hook execute() fires just before apply(). Pass null to uninstall. The
+     * hook is shared across dispatcher instances (the per-CompiledQuery dispatchers are anonymous and
+     * not individually reachable), so an installer must scope its own pause to the statement under
+     * test. Never set outside tests -- the field defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setPreApplyObserver(Runnable observer) {
+        preApplyObserver = observer;
     }
 
     public OperationFuture execute(
@@ -121,28 +143,6 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         }
     }
 
-    /**
-     * Test seam: installs a hook execute() fires at the top of the EntryUnavailableException
-     * async-enqueue catch branch. Pass null to uninstall. The hook is shared across dispatcher
-     * instances, so an installer must scope its own pause to the statement under test. Never set
-     * outside tests -- the field defaults to null and the fire-site is a no-op then.
-     */
-    @TestOnly
-    public static void setAsyncEnqueueObserver(Runnable observer) {
-        asyncEnqueueObserver = observer;
-    }
-
-    /**
-     * Test seam: installs a hook execute() fires just before apply(). Pass null to uninstall. The
-     * hook is shared across dispatcher instances (the per-CompiledQuery dispatchers are anonymous and
-     * not individually reachable), so an installer must scope its own pause to the statement under
-     * test. Never set outside tests -- the field defaults to null and the fire-site is a no-op then.
-     */
-    @TestOnly
-    public static void setPreApplyObserver(Runnable observer) {
-        preApplyObserver = observer;
-    }
-
     private static void fireAsyncEnqueueObserver() {
         final Runnable observer = asyncEnqueueObserver;
         if (observer != null) {
@@ -184,9 +184,12 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
      * <p>
      * The fence is a strict no-op for pure-OSS deployments: the read lock is uncontended and
      * isReadOnlyMode() returns the static read-only-instance flag, so the only cost is one uncontended
-     * lock/unlock and one volatile read. The non-WAL EntryUnavailableException async-queue branch in
-     * execute() stays outside this fence -- it is the writer-busy enqueue path, not the WAL externalize
-     * path, and must remain reachable without re-authorization.
+     * lock/unlock and one volatile read. The EntryUnavailableException async-queue branch in execute()
+     * is the writer-busy enqueue fallback. It is NOT only a non-WAL path: a WAL writer-pool exhaustion
+     * routes a WAL UPDATE here too, and the legacy enqueue applies it without minting a replicated
+     * sequencer txn, so on a demoting node it would be a silent acked-loss. That branch therefore
+     * carries its own read-only re-check at the top of the catch (see execute()), refusing cleanly on a
+     * demote rather than relying on this fence; the inline-apply success path is the one fenced here.
      */
     private long applyFenced(T operation, TableWriterAPI writer) {
         if (engine.isReadOnlyMode()) {
