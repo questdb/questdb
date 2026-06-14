@@ -189,6 +189,32 @@ public class MetadataCache implements QuietCloseable {
     }
 
     /**
+     * Refreshes {@code localCache} with a complete, current view of the cache and
+     * returns the new snapshot version. This is the catalogue read-path used by
+     * {@code tables()}, {@code all_tables()}, {@code information_schema.columns()}
+     * and {@code pg_catalog.pg_attribute}: it first reconciles the cache against
+     * the table registry via {@link #hydrateAllTables()} (so the snapshot is
+     * complete even mid startup hydration), then snapshots under the read lock.
+     * <p>
+     * Prefer this over taking {@link #readLock()} and calling
+     * {@link MetadataCacheReader#snapshot} directly; the reader-level variant
+     * skips the reconcile and exists for callers that already hold the read lock
+     * or deliberately want the raw, possibly-incomplete cache contents.
+     *
+     * @param localCache   the snapshot to be refreshed
+     * @param priorVersion the version of the snapshot
+     * @return the current version of the snapshot
+     */
+    public long snapshot(CharSequenceObjMap<CairoTable> localCache, long priorVersion) {
+        // Reconcile first (cheap no-op once startup hydration has completed), then
+        // snapshot under a single read lock.
+        hydrateAllTables();
+        try (MetadataCacheReader metadataRO = readLock()) {
+            return metadataRO.snapshot(localCache, priorVersion);
+        }
+    }
+
+    /**
      * Begins the read-path by taking a write lock and acquiring a thread-local
      * {@link MetadataCacheWriterImpl}, an implementation of {@link MetadataCacheWriter}.
      * Also increments a version counter, used to invalidate the cache.
