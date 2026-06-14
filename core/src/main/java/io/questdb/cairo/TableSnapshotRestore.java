@@ -86,6 +86,7 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
+    private final int threadCount;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
@@ -99,7 +100,7 @@ public class TableSnapshotRestore implements QuietCloseable {
     public TableSnapshotRestore(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
-        int threadCount = Math.max(
+        this.threadCount = Math.max(
                 configuration.getCheckpointRecoveryThreadpoolMin(),
                 Math.min(configuration.getCheckpointRecoveryThreadpoolMax(), Runtime.getRuntime().availableProcessors())
         );
@@ -655,87 +656,141 @@ public class TableSnapshotRestore implements QuietCloseable {
      * regenerates it from {@code data.parquet} when missing, stale, torn or
      * zero-length, and -- when {@code rebuildIndexes} is set and the partition
      * holds rows -- reuses that same resolved mapping to rebuild the partition's
-     * bitmap indexes (see {@link #processParquetPartition}). The cheap
-     * committed-size truncation check stays on this serial thread so a truncated
-     * capture fails fast with a path-bearing diagnostic.
+     * bitmap indexes (see {@link #processParquetPartition}). The committed-size
+     * truncation check on {@code data.parquet} runs inside that same task (see
+     * {@link #processParquetPartition}), so this loop issues no per-partition
+     * syscalls at all: a ~100k-partition table no longer pays a serial stat per
+     * partition on the calling thread, which on cold/object/network storage with
+     * ms-class stat latency would otherwise become the Amdahl tail dominating the
+     * very restore this parallelizes. A truncated capture still fails with a
+     * path-bearing diagnostic, surfaced through {@link #finalizeParallelTasks}.
      * <p>
      * Replaces the former serial map+CRC validation: that pass mapped and
      * CRC-verified every {@code _pm} on the calling thread and the rebuild then
      * mapped and CRC-verified it again, so large (~100k) partition tables paid a
      * redundant serial map/CRC/unmap per parquet partition at startup.
+     * <p>
+     * One task per parquet partition would queue up to ~100k futures/lambdas and
+     * allocate (then free) a {@code Path} + {@code _pm} reader -- plus, on rebuild,
+     * a {@code RowGroupBuffers}, {@code DirectIntList} and {@code ParquetPartitionDecoder}
+     * -- per partition. The executor is a fixed pool, so only {@code threadCount} of
+     * those tasks ever run at once: the surplus buys no parallelism, only overhead.
+     * Instead submit one worker per pool thread; each {@link #processParquetPartitions}
+     * worker pulls partition indices from a shared cursor (dynamic load balancing
+     * across skewed partition sizes) and reuses a single scratch set across every
+     * partition it processes.
      */
     private void prepareParquetPartitions(Path tablePath, int pathTableLen, boolean rebuildIndexes) {
-        int partitionBy = tableMetadata.getPartitionBy();
+        final int partitionBy = tableMetadata.getPartitionBy();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return;
         }
-        int timestampType = tableMetadata.getTimestampType();
-        int plen = tablePath.size();
-        int partitionCount = txWriter.getPartitionCount();
-        // Snapshot the table root: the submitted tasks build their own Path from
-        // this string and never touch the shared tablePath this loop mutates.
+        final int timestampType = tableMetadata.getTimestampType();
+        final int partitionCount = txWriter.getPartitionCount();
+        if (partitionCount == 0) {
+            return;
+        }
+        // Snapshot the table root: the workers build their own Path from this
+        // string and never touch the shared tablePath owned by this thread.
         final String tablePathStr = tablePath.toString();
 
-        for (int i = 0; i < partitionCount; i++) {
-            if (!txWriter.isPartitionParquet(i)) {
-                continue;
-            }
-            long partitionTs = txWriter.getPartitionTimestampByIndex(i);
-            long nameTxn = txWriter.getPartitionNameTxn(i);
-            long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTs);
-
-            TableUtils.setPathForNativePartition(
-                    tablePath.trimTo(plen), timestampType, partitionBy, partitionTs, nameTxn
-            );
-            int partitionDirLen = tablePath.size();
-
-            // Use the committed parquet file size from _txn, not the on-disk size.
-            // A snapshot may capture data.parquet mid-append; bytes past the committed
-            // size are not part of the MVCC-visible state and must not be published.
-            long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
-
-            // Validate data.parquet against _txn by its size alone. This serial
-            // loop visits every parquet partition of every restored table, so it
-            // reads the size by path instead of opening an fd; the task opens the
-            // file only when it has to regenerate or rebuild.
-            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            long onDiskSize = ff.length(tablePath.$());
-            if (onDiskSize < 0) {
-                // Keep the full data.parquet path in the message: the same restore
-                // can cover hundreds of parquet partitions, and the operator needs
-                // to know which one failed. rebuildTableFiles() restores tablePath
-                // to the table root in its finally block.
-                throw CairoException.critical(ff.errno()).put("cannot read size of restored parquet file [path=").put(tablePath).put(']');
-            }
-            // This must run even when _pm was restored alongside the partition:
-            // an undersized data.parquet means the snapshot paired _txn with a
-            // stale or truncated parquet file, and reading the partition at the
-            // committed size would produce garbage.
-            if (onDiskSize < parquetFileSize) {
-                throw CairoException.critical(0)
-                        .put("restored parquet file is shorter than committed size [path=").put(tablePath)
-                        .put(", committed=").put(parquetFileSize)
-                        .put(", onDisk=").put(onDiskSize)
-                        .put(']');
-            }
-            tablePath.trimTo(plen);
-
-            // A parquet partition with no rows still needs a valid _pm, but no
-            // index rebuild: rebuildBitmapIndexes skips rowCount<=0 too.
-            final boolean doRebuild = rebuildIndexes && partitionRowCount > 0;
-            futures.add(submitParallelTask(() -> processParquetPartition(
+        // Shared work cursor: each worker pulls the next partition index until the
+        // table is exhausted. txWriter's per-partition getters are pure reads over
+        // the in-memory attached-partitions array, safe to call concurrently here.
+        final AtomicInteger cursor = new AtomicInteger(0);
+        final int workerCount = Math.min(threadCount, partitionCount);
+        for (int w = 0; w < workerCount; w++) {
+            futures.add(submitParallelTask(() -> processParquetPartitions(
                     tablePathStr,
                     pathTableLen,
-                    partitionTs,
-                    partitionRowCount,
-                    nameTxn,
-                    parquetFileSize,
                     partitionBy,
                     timestampType,
-                    doRebuild
+                    rebuildIndexes,
+                    cursor,
+                    partitionCount
             )));
         }
-        tablePath.trimTo(plen);
+    }
+
+    /**
+     * Worker body for {@link #prepareParquetPartitions}: pulls parquet partition
+     * indices from the shared {@code cursor} and processes each, reusing a single
+     * set of native-backed scratch objects across every partition it handles
+     * instead of allocating and freeing them per partition. The rebuild-only
+     * buffers stay {@code null} on the validation-only (checkpoint recovery) path,
+     * so that light path never maps native buffers it will not use. All scratch is
+     * freed in the {@code finally}, so nothing leaks past this task -- there is no
+     * {@code ThreadLocal}-on-a-fixed-pool lifecycle to manage.
+     */
+    private void processParquetPartitions(
+            String tablePathStr,
+            int pathTableLen,
+            int partitionBy,
+            int timestampType,
+            boolean rebuildIndexes,
+            AtomicInteger cursor,
+            int partitionCount
+    ) {
+        final Path path = new Path();
+        final ParquetMetaFileReader metaReader = new ParquetMetaFileReader();
+        RowGroupBuffers rowGroupBuffers = null;
+        DirectIntList parquetColumns = null;
+        ParquetPartitionDecoder decoder = null;
+        ObjList<IndexWriter> indexWriters = null;
+        try {
+            if (rebuildIndexes) {
+                rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
+                decoder = new ParquetPartitionDecoder();
+                indexWriters = new ObjList<>();
+            }
+            int i;
+            while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < partitionCount) {
+                if (!txWriter.isPartitionParquet(i)) {
+                    continue;
+                }
+                final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                final long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                final long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+                // Use the committed parquet file size from _txn, not the on-disk size.
+                // A snapshot may capture data.parquet mid-append; bytes past the
+                // committed size are not MVCC-visible and must not be published.
+                final long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
+                // A parquet partition with no rows still needs a valid _pm, but no
+                // index rebuild: rebuildBitmapIndexes skips rowCount<=0 too.
+                final boolean doRebuild = rebuildIndexes && partitionRowCount > 0;
+                try {
+                    processParquetPartition(
+                            path,
+                            metaReader,
+                            rowGroupBuffers,
+                            parquetColumns,
+                            decoder,
+                            indexWriters,
+                            tablePathStr,
+                            pathTableLen,
+                            partitionTimestamp,
+                            partitionRowCount,
+                            partitionNameTxn,
+                            parquetFileSize,
+                            partitionBy,
+                            timestampType,
+                            doRebuild
+                    );
+                } finally {
+                    // POSTING seal() retains Path thread-locals; clear per partition
+                    // so this executor thread does not carry native paths forward.
+                    Path.clearThreadLocals();
+                }
+            }
+        } finally {
+            Misc.free(decoder);
+            Misc.free(parquetColumns);
+            Misc.free(rowGroupBuffers);
+            metaReader.clear();
+            path.close();
+            Path.clearThreadLocals();
+        }
     }
 
     /**
@@ -864,44 +919,98 @@ public class TableSnapshotRestore implements QuietCloseable {
         return addr;
     }
 
-    private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
-        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            // Skip non-indexed columns and non-symbol columns (deleted columns may still have indexed flag set)
-            if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
-                continue;
+    /**
+     * Worker body for {@link #rebuildBitmapIndexes}: pulls partition indices from
+     * the shared {@code cursor} and rebuilds the bitmap/posting indexes of every
+     * indexed symbol column in each non-parquet partition, reusing one {@code Path}
+     * across all of them instead of allocating one per (partition, column) task.
+     * The per-column {@link SymbolColumnIndexer} is still created fresh per column
+     * (its writer's index type is fixed at construction), so the index-writer
+     * lifecycle is identical to the former one-task-per-column path.
+     */
+    private void rebuildBitmapIndexesForNativePartitions(
+            String tablePathStr,
+            int pathTableLen,
+            int columnCount,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            AtomicInteger cursor,
+            int partitionCount
+    ) {
+        final Path path = new Path();
+        try {
+            int partitionIndex;
+            while (!abortParallelTasks.get() && (partitionIndex = cursor.getAndIncrement()) < partitionCount) {
+                final long partitionTimestamp;
+                final long partitionRowCount;
+                final long partitionNameTxn;
+                if (isPartitioned) {
+                    partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                    partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+                    partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+                } else {
+                    partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                    partitionRowCount = txWriter.getTransientRowCount();
+                    partitionNameTxn = -1L;
+                }
+
+                if (partitionRowCount <= 0) {
+                    continue;
+                }
+                if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
+                    // Parquet partitions are validated, regenerated and index-rebuilt
+                    // by prepareParquetPartitions.
+                    continue;
+                }
+
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    // Skip non-indexed and non-symbol columns (deleted columns may
+                    // still carry the indexed flag).
+                    if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
+                        continue;
+                    }
+                    final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                    // -1 means the column does not exist in this partition,
+                    // see ColumnVersionReader.getColumnTop().
+                    if (columnTop < 0 || columnTop >= partitionRowCount) {
+                        continue;
+                    }
+                    final String columnName = tableMetadata.getColumnName(colIdx);
+                    final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
+                    final byte indexType = tableMetadata.getColumnIndexType(colIdx);
+                    try {
+                        rebuildBitmapIndexForNativePartitionColumn(
+                                path,
+                                tablePathStr,
+                                pathTableLen,
+                                columnName,
+                                columnNameTxn,
+                                indexBlockCapacity,
+                                indexType,
+                                partitionTimestamp,
+                                partitionNameTxn,
+                                partitionRowCount,
+                                columnTop,
+                                partitionBy,
+                                timestampType
+                        );
+                    } finally {
+                        // POSTING seal() retains Path thread-locals; clear per column.
+                        Path.clearThreadLocals();
+                    }
+                }
             }
-
-            final int writerIndex = tableMetadata.getWriterIndex(colIdx);
-            final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-            final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-
-            // -1 means column doesn't exist in partition, see ColumnVersionReader.getColumnTop()
-            if (columnTop < 0 || columnTop >= partitionRowCount) {
-                continue;
-            }
-
-            final String columnName = tableMetadata.getColumnName(colIdx);
-            final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
-            final byte indexType = tableMetadata.getColumnIndexType(colIdx);
-
-            futures.add(submitParallelTask(() -> rebuildBitmapIndexForNativePartitionColumn(
-                    tablePathStr,
-                    pathTableLen,
-                    columnName,
-                    columnNameTxn,
-                    indexBlockCapacity,
-                    indexType,
-                    partitionTimestamp,
-                    partitionNameTxn,
-                    partitionRowCount,
-                    columnTop,
-                    partitionBy,
-                    timestampType
-            )));
+        } finally {
+            path.close();
+            Path.clearThreadLocals();
         }
     }
 
     private void rebuildBitmapIndexForNativePartitionColumn(
+            Path path,
             String tablePathStr,
             int pathTableLen,
             String columnName,
@@ -915,31 +1024,25 @@ public class TableSnapshotRestore implements QuietCloseable {
             int partitionBy,
             int timestampType
     ) {
-        if (abortParallelTasks.get()) {
+        // Reset the reused path to the table root.
+        path.of(tablePathStr).trimTo(pathTableLen);
+
+        // Set path to partition directory
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        int partitionPathLen = path.size();
+
+        // Check if partition exists
+        if (!ff.exists(path.$())) {
+            LOG.info().$("partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
             return;
         }
 
-        // Since we're using an executor, we can't use Path thread locals.
-        // POSTING seal internally uses Path.getThreadLocal — clear them in
-        // finally so the executor thread does not retain native paths.
-        try (
-                Path path = new Path().put(tablePathStr);
-                SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType)
-        ) {
-            path.trimTo(pathTableLen);
+        LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
 
-            // Set path to partition directory
-            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            int partitionPathLen = path.size();
-
-            // Check if partition exists
-            if (!ff.exists(path.$())) {
-                LOG.info().$("partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
-                return;
-            }
-
-            LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
-
+        // Fresh per-column indexer: its writer's index type is fixed at construction
+        // and its lifecycle (build + commit/seal on close) matches the former
+        // one-task-per-column behavior exactly.
+        try (SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType)) {
             // Remove existing index files if they exist
             removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexType);
 
@@ -984,23 +1087,33 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", column=").$(columnName)
                     .$(", rowCount=").$(partitionRowCount - columnTop)
                     .I$();
-        } finally {
-            Path.clearThreadLocals();
         }
     }
 
     /**
-     * Single parallel task per parquet partition: maps {@code _pm} once, validates
-     * it (footer resolve + full-file CRC) against the committed parquet size and
-     * regenerates it from {@code data.parquet} when missing/stale/torn, then --
-     * when {@code rebuildIndexes} is set -- reuses that same resolved mapping to
-     * rebuild the partition's bitmap indexes. Reusing the resolved reader feeds
-     * the decoder via {@link ParquetPartitionDecoder#of(ParquetMetaFileReader, long, long, int)},
-     * which shallow-copies the resolved+verified state, so the {@code _pm} footer
-     * is resolved and CRC-verified exactly once on this path instead of three
-     * times (serial validation, per-task validation, decoder re-resolve).
+     * Processes one parquet partition, reusing the caller-owned scratch objects so a
+     * worker amortizes their native allocation across every partition it pulls (see
+     * {@link #processParquetPartitions}). First validates {@code data.parquet}
+     * against its committed size (a stat by path, no fd), then maps {@code _pm} once
+     * via the reused {@code metaReader}, validates it (footer resolve + full-file
+     * CRC) against the committed parquet size and regenerates it from
+     * {@code data.parquet} when missing/stale/torn, then -- when {@code rebuildIndexes}
+     * is set -- reuses that resolved mapping to rebuild the partition's bitmap
+     * indexes. Feeding the resolved reader to the decoder via
+     * {@link ParquetPartitionDecoder#of(ParquetMetaFileReader, long, long, int)}
+     * shallow-copies the resolved+verified state, so the {@code _pm} footer is
+     * resolved and CRC-verified exactly once instead of three times. The caller owns
+     * {@code path} (and clears its thread-locals between partitions); the
+     * rebuild-only {@code rowGroupBuffers}/{@code parquetColumns}/{@code decoder}/
+     * {@code indexWriters} are non-null only when {@code rebuildIndexes} is set.
      */
     private void processParquetPartition(
+            Path path,
+            ParquetMetaFileReader metaReader,
+            RowGroupBuffers rowGroupBuffers,
+            DirectIntList parquetColumns,
+            ParquetPartitionDecoder decoder,
+            ObjList<IndexWriter> indexWriters,
             String tablePathStr,
             int pathTableLen,
             long partitionTimestamp,
@@ -1011,100 +1124,110 @@ public class TableSnapshotRestore implements QuietCloseable {
             int timestampType,
             boolean rebuildIndexes
     ) {
-        if (abortParallelTasks.get()) {
-            return;
+        // Reset the reused path to the table root.
+        path.of(tablePathStr).trimTo(pathTableLen);
+
+        // Set path to partition dir
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        int partitionDirLen = path.size();
+
+        // Validate data.parquet against _txn by its size alone, before touching
+        // _pm: regenerateParquetMetaFile (via mapResolvableParquetMeta below)
+        // reads data.parquet at the committed size, so an undersized file must
+        // fail here first. This must run even when a valid _pm was restored
+        // alongside the partition -- an undersized data.parquet means the
+        // snapshot paired _txn with a stale or truncated parquet file, and
+        // reading it at the committed size would produce garbage. Parallelized
+        // per partition: the size is read by path (a stat, no fd) so it scales
+        // with the workers instead of serializing one stat per partition on the
+        // caller, which on cold/object/network storage dominates wall-clock time.
+        path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+        long onDiskSize = ff.length(path.$());
+        if (onDiskSize < 0) {
+            // Keep the full data.parquet path in the message: one restore can
+            // cover hundreds of parquet partitions and the operator needs to
+            // know which one failed. The failure propagates through
+            // finalizeParallelTasks, which preserves this path-bearing message.
+            throw CairoException.critical(ff.errno()).put("cannot read size of restored parquet file [path=").put(path).put(']');
+        }
+        if (onDiskSize < parquetFileSize) {
+            throw CairoException.critical(0)
+                    .put("restored parquet file is shorter than committed size [path=").put(path)
+                    .put(", committed=").put(parquetFileSize)
+                    .put(", onDisk=").put(onDiskSize)
+                    .put(']');
         }
 
-        // POSTING seal() uses Path.getThreadLocal() internally; mirror the
-        // native partition rebuild path and clear thread-locals so this
-        // executor thread does not retain native paths across tasks.
-        try (Path path = new Path().put(tablePathStr)) {
-            path.trimTo(pathTableLen);
+        long parquetMetaAddr = 0;
+        long parquetMetaFileSize = 0;
+        try {
+            // Validate + (if needed) regenerate the sidecar, leaving it mapped
+            // and its footer resolved. This is the only _pm map+CRC for the
+            // partition on this path.
+            parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, metaReader);
+            parquetMetaFileSize = metaReader.getFileSize();
 
-            // Set path to partition dir
-            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            int partitionDirLen = path.size();
+            if (!rebuildIndexes) {
+                // Checkpoint-recovery default: validation/regeneration only.
+                return;
+            }
 
-            // Per-task instance: this method runs on parallel executor threads,
-            // so it owns its reader and never shares a field across threads.
-            final ParquetMetaFileReader taskParquetMetaReader = new ParquetMetaFileReader();
-            long parquetMetaAddr = 0;
-            long parquetMetaFileSize = 0;
+            final long parquetSize = metaReader.getParquetFileSize();
+
+            // mmap data.parquet: existence and committed size were validated at
+            // the top of this method, so the committed size is safe to map.
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            if (!ff.exists(path.$())) {
+                LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
+                return;
+            }
+
+            long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             try {
-                // Validate + (if needed) regenerate the sidecar, leaving it mapped
-                // and its footer resolved. This is the only _pm map+CRC for the
-                // partition on this path.
-                parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, taskParquetMetaReader);
-                parquetMetaFileSize = taskParquetMetaReader.getFileSize();
+                // Reuse the already-resolved+CRC-verified reader: of(reader)
+                // shallow-copies its footer state, so the decoder skips a
+                // redundant resolveFooter + full-file CRC over the same mapping.
+                decoder.of(metaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-                if (!rebuildIndexes) {
-                    // Checkpoint-recovery default: validation/regeneration only.
-                    return;
-                }
+                // Set path to native partition directory (where index files go)
+                path.trimTo(pathTableLen);
+                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                int partitionPathLen = path.size();
 
-                final long parquetSize = taskParquetMetaReader.getParquetFileSize();
-
-                // mmap data.parquet (existence + committed size already validated
-                // serially in prepareParquetPartitions).
-                path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-                if (!ff.exists(path.$())) {
-                    LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
-                    return;
-                }
-
-                long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                try (
-                        RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                        DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
-                        // Decoder lives strictly inside the parquet/_pm mmaps. Closing it
-                        // before either munmap honors the documented clear-then-munmap
-                        // contract of ParquetPartitionDecoder.
-                        ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder()
-                ) {
-                    ObjList<IndexWriter> indexWriters = new ObjList<>();
-                    // Reuse the already-resolved+CRC-verified reader: of(reader)
-                    // shallow-copies its footer state, so the decoder skips a
-                    // redundant resolveFooter + full-file CRC over the same mapping.
-                    partitionDecoder.of(taskParquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-
-                    // Set path to native partition directory (where index files go)
-                    path.trimTo(pathTableLen);
-                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-                    int partitionPathLen = path.size();
-
-                    rebuildParquetPartitionIndexes(
-                            ff,
-                            configuration,
-                            path,
-                            partitionPathLen,
-                            partitionDecoder,
-                            rowGroupBuffers,
-                            parquetColumns,
-                            indexWriters,
-                            tableMetadata,
-                            columnVersionReader,
-                            partitionTimestamp,
-                            partitionNameTxn,
-                            partitionRowCount,
-                            txWriter.getTxn()
-                    );
-                } catch (CairoException e) {
-                    LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
-                            .$(", errno=").$(e.getErrno())
-                            .$(", msg=").$safe(e.getFlyweightMessage())
-                            .I$();
-                    throw e;
-                } finally {
-                    ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                }
+                rebuildParquetPartitionIndexes(
+                        ff,
+                        configuration,
+                        path,
+                        partitionPathLen,
+                        decoder,
+                        rowGroupBuffers,
+                        parquetColumns,
+                        indexWriters,
+                        tableMetadata,
+                        columnVersionReader,
+                        partitionTimestamp,
+                        partitionNameTxn,
+                        partitionRowCount,
+                        txWriter.getTxn()
+                );
+            } catch (CairoException e) {
+                LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", msg=").$safe(e.getFlyweightMessage())
+                        .I$();
+                throw e;
             } finally {
-                taskParquetMetaReader.clear();
-                if (parquetMetaAddr != 0) {
-                    ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                }
+                // Reused decoder: destroy its decode context BEFORE munmap to honor
+                // ParquetPartitionDecoder's clear-then-munmap contract; the next
+                // partition's of() re-initializes it.
+                decoder.close();
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
         } finally {
-            Path.clearThreadLocals();
+            metaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
         }
     }
 
@@ -1117,34 +1240,30 @@ public class TableSnapshotRestore implements QuietCloseable {
         final int columnCount = tableMetadata.getColumnCount();
         final String tablePathStr = tablePath.toString();
 
-        // Iterate through partitions (or single default partition for non-partitioned tables)
-        int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
+        // One default partition for non-partitioned tables, else every attached one.
+        final int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
+        if (partitionCount == 0) {
+            return;
+        }
 
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final long partitionTimestamp;
-            final long partitionRowCount;
-            final long partitionNameTxn;
-
-            if (isPartitioned) {
-                partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-                partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-            } else {
-                partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                partitionRowCount = txWriter.getTransientRowCount();
-                partitionNameTxn = -1L;
-            }
-
-            if (partitionRowCount <= 0) {
-                continue;
-            }
-
-            if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                // Parquet partitions are validated, regenerated and index-rebuilt
-                // by prepareParquetPartitions in a single _pm-mapping task.
-                continue;
-            }
-            rebuildBitmapIndexForNativePartition(pathTableLen, columnCount, partitionTimestamp, partitionRowCount, partitionNameTxn, tablePathStr, partitionBy, timestampType);
+        // Same shape as prepareParquetPartitions: instead of one task per
+        // (partition, indexed column) -- which would queue a future/lambda and
+        // allocate a Path per item -- submit one worker per pool thread. Each
+        // worker pulls partition indices from a shared cursor and reuses its Path
+        // across every (partition, column) it rebuilds.
+        final AtomicInteger cursor = new AtomicInteger(0);
+        final int workerCount = Math.min(threadCount, partitionCount);
+        for (int w = 0; w < workerCount; w++) {
+            futures.add(submitParallelTask(() -> rebuildBitmapIndexesForNativePartitions(
+                    tablePathStr,
+                    pathTableLen,
+                    columnCount,
+                    partitionBy,
+                    timestampType,
+                    isPartitioned,
+                    cursor,
+                    partitionCount
+            )));
         }
     }
 
@@ -1163,40 +1282,70 @@ public class TableSnapshotRestore implements QuietCloseable {
         tablePath.trimTo(pathTableLen);
         final String tablePathStr = tablePath.toString();
 
-        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
-            final int columnType = tableMetadata.getColumnType(i);
-            if (ColumnType.isSymbol(columnType)) {
+        final int columnCount = tableMetadata.getColumnCount();
+        if (columnCount == 0) {
+            return;
+        }
+        // Cursor over columns: each worker pulls column indices and rebuilds the
+        // symbol files of the symbol columns, reusing one Path per worker instead
+        // of allocating a Path (and queuing a future/lambda) per symbol column.
+        final AtomicInteger cursor = new AtomicInteger(0);
+        final int workerCount = Math.min(threadCount, columnCount);
+        for (int w = 0; w < workerCount; w++) {
+            futures.add(submitParallelTask(() -> rebuildSymbolFilesForColumns(
+                    tablePathStr,
+                    recoveredSymbolFiles,
+                    cursor,
+                    columnCount
+            )));
+        }
+    }
+
+    /**
+     * Worker body for {@link #rebuildSymbolFiles}: pulls column indices from the
+     * shared {@code cursor} and rebuilds the symbol files of each symbol column,
+     * reusing one {@code Path} across all of them. {@link SymbolMapUtil} frees its
+     * native memories internally on every call, so a fresh instance per column
+     * matches the former per-task behavior exactly -- only the Path is amortized.
+     */
+    private void rebuildSymbolFilesForColumns(
+            String tablePathStr,
+            AtomicInteger recoveredSymbolFiles,
+            AtomicInteger cursor,
+            int columnCount
+    ) {
+        final Path path = new Path();
+        try {
+            int i;
+            while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < columnCount) {
+                if (!ColumnType.isSymbol(tableMetadata.getColumnType(i))) {
+                    continue;
+                }
                 final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
                 final String columnName = tableMetadata.getColumnName(i);
                 final int writerIndex = tableMetadata.getWriterIndex(i);
                 final int indexKeyBlockCapacity = tableMetadata.getIndexBlockCapacity(i);
                 final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
 
-                futures.add(submitParallelTask(() -> {
-                    if (abortParallelTasks.get()) {
-                        return;
-                    }
+                LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
+                        .$(", column=").$safe(columnName)
+                        .$(", count=").$(cleanSymbolCount)
+                        .I$();
 
-                    LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
-                            .$(", column=").$safe(columnName)
-                            .$(", count=").$(cleanSymbolCount)
-                            .I$();
-
-                    SymbolMapUtil localSymbolMapUtil = new SymbolMapUtil();
-                    try (Path localPath = new Path().of(tablePathStr)) {
-                        localSymbolMapUtil.rebuildSymbolFiles(
-                                configuration,
-                                localPath,
-                                columnName,
-                                columnNameTxn,
-                                cleanSymbolCount,
-                                -1,
-                                indexKeyBlockCapacity
-                        );
-                    }
-                    recoveredSymbolFiles.incrementAndGet();
-                }));
+                final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
+                symbolMapUtil.rebuildSymbolFiles(
+                        configuration,
+                        path.of(tablePathStr),
+                        columnName,
+                        columnNameTxn,
+                        cleanSymbolCount,
+                        -1,
+                        indexKeyBlockCapacity
+                );
+                recoveredSymbolFiles.incrementAndGet();
             }
+        } finally {
+            path.close();
         }
     }
 
