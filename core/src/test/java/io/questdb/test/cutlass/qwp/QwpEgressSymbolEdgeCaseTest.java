@@ -312,12 +312,12 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
-    public void testMultiBatchSchemaReferenceWithDelta() throws Exception {
+    public void testMultiBatchWithDelta() throws Exception {
         // MULTI_BATCH_ROWS rows span 3 batches (4096 rows/batch max). Batch 1
-        // ships the full schema + dict delta; batches 2 and 3 must use schema
-        // reference mode AND a (possibly empty) delta section. Catches bugs
-        // where the schema-reference branch accidentally skips or corrupts
-        // the delta section read.
+        // ships the full schema + dict delta; batches 2 and 3 carry rows only
+        // (schema known from batch 1) AND a (possibly empty) delta section.
+        // Catches bugs where a continuation batch skips or corrupts the delta
+        // section read.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE multi(s SYMBOL, x LONG, ts TIMESTAMP) "

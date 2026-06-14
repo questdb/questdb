@@ -99,11 +99,13 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
             execute("alter table x drop column arr;");
-            assertSql("\n", "x;");
-            assertSql(
-                    "column\ttype\n",
-                    "select \"column\", \"type\" from table_columns('x')"
-            );
+            assertQuery("x;")
+                    .noLeakCheck()
+                    .returns("\n");
+            assertQuery("select \"column\", \"type\" from table_columns('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\ttype\n");
         });
     }
 
@@ -202,8 +204,10 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
             }
 
             // verify columns were not dropped
-            assertSql(
-                    """
+            assertQuery("SELECT \"column\" FROM table_columns('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column
                             i
                             sym
@@ -221,9 +225,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
                             l
                             m
                             n
-                            """,
-                    "SELECT \"column\" FROM table_columns('x')"
-            );
+                            """);
         });
     }
 
@@ -266,7 +268,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                select(sql);
+                select(sql).close();
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -276,7 +278,7 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
         });
     }
 
-    private void createX() throws SqlException {
+    private void createX() throws Exception {
         execute(
                 "create table x as (" +
                         "select" +

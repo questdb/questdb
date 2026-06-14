@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -60,6 +61,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable ex) {
@@ -204,9 +206,28 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (rowCount.get() == 0) {
                 return;
+            }
+
+            // The bulk per-master-row skip below is only valid at a master-row boundary: with a fresh
+            // master row whose slave scan starts at the top. When a prior skipRows() or hasNext() has
+            // already advanced us partway through the current master row's slave scan
+            // (isMasterHasNextPending == false), first skip the remaining slave rows of that row. Without
+            // this realignment a second skipRows() call re-skips the already-consumed master cursor and
+            // silently drops the partially iterated master row's remaining rows.
+            if (!isMasterHasNextPending) {
+                if (!masterHasNext) {
+                    return; // the cursor is already exhausted
+                }
+                slaveCursor.skipRows(rowCount, UNBOUNDED_ROW_COUNT);
+                if (rowCount.get() == 0) {
+                    return; // skipped entirely within the current master row
+                }
+                // Drained the current master row; realign to the next master-row boundary.
+                slaveCursor.toTop();
+                isMasterHasNextPending = true;
             }
 
             if (!isSlaveSizeCalculated) {
@@ -223,7 +244,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             long masterToSkip = rowCount.get() / slaveSize;
             tmpCounter.set(masterToSkip);
 
-            masterCursor.skipRows(tmpCounter);
+            masterCursor.skipRows(tmpCounter, UNBOUNDED_ROW_COUNT);
             masterHasNext = masterCursor.hasNext();
             isMasterHasNextPending = false;
 
@@ -238,7 +259,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 slaveCursor.toTop();
                 isSlaveReset = true;
             }
-            slaveCursor.skipRows(rowCount);
+            slaveCursor.skipRows(rowCount, UNBOUNDED_ROW_COUNT);
         }
 
         @Override

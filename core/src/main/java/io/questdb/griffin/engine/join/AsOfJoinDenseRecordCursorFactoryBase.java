@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -106,6 +107,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
@@ -283,6 +285,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             fwdScanKeyToRowId.clear();
             bwdScanKeyToRowId.reopen();
             bwdScanKeyToRowId.clear();
+            resetScanState();
         }
 
         @Override
@@ -294,8 +297,13 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             if (bwdScanKeyToRowId.isOpen()) {
                 bwdScanKeyToRowId.clear();
             }
+            resetScanState();
+        }
+
+        private void resetScanState() {
             slaveCursorReadyForForwardScan = false;
             forwardScanExhausted = false;
+            backwardScanExhausted = false;
             backwardRowId = -1;
             forwardRowId = -1;
         }

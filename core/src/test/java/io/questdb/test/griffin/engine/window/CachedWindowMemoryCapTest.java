@@ -45,11 +45,9 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
                     " FROM long_sequence(50_000)) TIMESTAMP(ts)");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
-                    0,
-                    "breached in VirtualMemory (raise cairo.sql.window.store.max.pages)"
-            );
+            assertQuery("SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab")
+                    .noLeakCheck()
+                    .fails(0, "breached in VirtualMemory (raise cairo.sql.window.store.max.pages)");
         });
     }
 
@@ -65,11 +63,9 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
                     " FROM long_sequence(50_000)) TIMESTAMP(ts)");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
-                    0,
-                    "breached in VirtualMemory (raise cairo.sql.window.cache.max.bytes)"
-            );
+            assertQuery("SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab")
+                    .noLeakCheck()
+                    .fails(0, "breached in VirtualMemory (raise cairo.sql.window.cache.max.bytes)");
         });
     }
 
@@ -86,15 +82,13 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
                     " FROM long_sequence(50_000)) TIMESTAMP(ts)");
 
-            assertQueryNoLeakCheck(
-                    "sym\tts\tlag\n" +
+            assertQuery("SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("sym\tts\tlag\n" +
                             "s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z\n" +
                             "s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z\n" +
-                            "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n",
-                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab LIMIT 3",
-                    "ts",
-                    true
-            );
+                            "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n");
         });
     }
 
@@ -109,8 +103,12 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     " x::LONG AS v" +
                     " FROM long_sequence(12)) TIMESTAMP(ts)");
 
-            assertQueryNoLeakCheck(
-                    "sym\tts\tv\tprev_v\n" +
+            assertQuery("SELECT sym, ts, v, lag(v, 1) OVER (PARTITION BY sym ORDER BY ts) AS prev_v FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("sym\tts\tv\tprev_v\n" +
                             "s1\t1970-01-01T00:00:00.000000Z\t1\tnull\n" +
                             "s2\t1970-01-01T00:00:01.000000Z\t2\tnull\n" +
                             "s3\t1970-01-01T00:00:02.000000Z\t3\tnull\n" +
@@ -122,12 +120,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                             "s1\t1970-01-01T00:00:08.000000Z\t9\t5\n" +
                             "s2\t1970-01-01T00:00:09.000000Z\t10\t6\n" +
                             "s3\t1970-01-01T00:00:10.000000Z\t11\t7\n" +
-                            "s0\t1970-01-01T00:00:11.000000Z\t12\t8\n",
-                    "SELECT sym, ts, v, lag(v, 1) OVER (PARTITION BY sym ORDER BY ts) AS prev_v FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "s0\t1970-01-01T00:00:11.000000Z\t12\t8\n");
         });
     }
 
@@ -154,8 +147,14 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     "s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z\n" +
                     "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, query, "ts", true);
-            assertQueryNoLeakCheck(expected, query, "ts", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -171,11 +170,9 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
                     " FROM long_sequence(50_000)) TIMESTAMP(ts)");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
-                    0,
-                    "memory exceeded in LongTreeChain (raise cairo.sql.window.rowid.max.bytes)"
-            );
+            assertQuery("SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab")
+                    .noLeakCheck()
+                    .fails(0, "memory exceeded in LongTreeChain (raise cairo.sql.window.rowid.max.bytes)");
         });
     }
 
@@ -191,11 +188,9 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
                     " FROM long_sequence(50_000)) TIMESTAMP(ts)");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
-                    0,
-                    "memory exceeded in RedBlackTree (raise cairo.sql.window.tree.max.bytes)"
-            );
+            assertQuery("SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab")
+                    .noLeakCheck()
+                    .fails(0, "memory exceeded in RedBlackTree (raise cairo.sql.window.tree.max.bytes)");
         });
     }
 }

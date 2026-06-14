@@ -31,26 +31,17 @@ public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidKind() throws Exception {
-        assertException(
-                "select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
-                18,
-                "invalid unit 'invalid'"
-        );
+        assertQuery("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated")
+                .fails(18, "invalid unit 'invalid'");
 
-        assertException(
-                "select DATE_TRUNC('invalid', TIMESTAMP_NS '2000-12-17T02:09:30.111111Z') as truncated",
-                18,
-                "invalid unit 'invalid'"
-        );
+        assertQuery("select DATE_TRUNC('invalid', TIMESTAMP_NS '2000-12-17T02:09:30.111111Z') as truncated")
+                .fails(18, "invalid unit 'invalid'");
     }
 
     @Test
     public void testNullKind() throws Exception {
-        assertException(
-                "select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
-                18,
-                "invalid unit 'null'"
-        );
+        assertQuery("select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated")
+                .fails(18, "invalid unit 'null'");
     }
 
     @Test
@@ -179,10 +170,11 @@ public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void assertTimestamp(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "truncated\n" +
-                        expected + "\n", sql
-        ));
+        assertMemoryLeak(() -> assertQuery(sql)
+                .noLeakCheck()
+                .expectSize()
+                .returns("truncated\n" +
+                        expected + "\n"));
     }
 
 }

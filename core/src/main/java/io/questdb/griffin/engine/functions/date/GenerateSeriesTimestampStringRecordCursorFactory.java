@@ -67,7 +67,18 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         if (cursor != null && cursor.stride != 0) {
             return cursor.stride > 0 ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
         }
-        return SCAN_DIRECTION_FORWARD;
+        // The cursor has not been opened yet (getScanDirection() is plan-time metadata).
+        // Determine the order from a constant step: a leading '-' means the series counts
+        // down, so the output descends. A bind-variable step is only known at runtime, so
+        // the order cannot be guaranteed at plan time.
+        if (stepFunc.isConstant()) {
+            final CharSequence step = stepFunc.getStrA(null);
+            if (step != null && !step.isEmpty()) {
+                return step.charAt(0) == '-' ? SCAN_DIRECTION_BACKWARD : SCAN_DIRECTION_FORWARD;
+            }
+            return SCAN_DIRECTION_FORWARD;
+        }
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -189,18 +200,16 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (supportsRandomAccess()) {
-                long currentRowId = recordA.getRowId()
-                        - 1 // one-indexed
-                        - 1 // we increment at the start of hasNext()
-                        ;
-                long rowsToSkip = Math.min(rowCount.get(), size() - currentRowId);
-                long newRowId = currentRowId + rowsToSkip;
-                recordAt(recordA, newRowId);
+                // curr is always on-grid at start + stride * (rowId - 1), so the signed offset
+                // maps the top sentinel to rowId 0 and makes skip-of-0 a positional no-op.
+                long currentRowId = (recordA.curr - start) / adjustStride() + 1;
+                long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size() - currentRowId));
+                recordAt(recordA, currentRowId + rowsToSkip);
                 rowCount.dec(rowsToSkip);
             } else {
-                super.skipRows(rowCount);
+                super.skipRows(rowCount, maxRowsAfterSkip);
             }
         }
 

@@ -208,7 +208,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+        // The async-filtered cursor services recordAt()/getRecordB() through its own
+        // page-frame memory pool (PageFrameMemoryRecord), independent of the base's
+        // record-cursor random-access capability. It therefore always supports random
+        // access. Delegating to base.recordCursorSupportsRandomAccess() was only ever
+        // correct because every page-frame base reported true; a base whose record
+        // cursor reports false (e.g. CoveringIndex, whose row cursor throws on recordAt)
+        // made this factory wrongly report false while its cursor still serviced
+        // recordAt(), violating the cursor random-access contract.
+        return true;
     }
 
     @Override
@@ -301,7 +309,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 if (isParquetFrame) {
                     atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                 }
-                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }
                 task.setFilteredRowCount(rows.size());

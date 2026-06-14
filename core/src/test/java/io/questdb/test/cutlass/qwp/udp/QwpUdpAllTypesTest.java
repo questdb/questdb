@@ -182,18 +182,18 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            b_bool\tb_byte\tb_short\tb_char\tb_int\tb_ipv4\tb_float\tb_long\tb_date\tb_double\tb_sym\tb_str\tb_uuid\tb_l256\tb_geo\tb_dec64\tb_dec128\tb_dec256\tb_darr\tb_ts\tb_tsns
-                            true\t42\t1234\tX\t56789\t192.168.1.1\t3.14\t99999\t2024-01-15T00:00:00.000Z\t2.718\tabc\thello\t\
-                            550e8400-e29b-41d4-a716-446655440000\t\
-                            0x4444444444444444333333333333333322222222222222221111111111111111\t\
-                            s24se0\t123.45\t12345.6789\t99999.12345\t[1.0,2.0,3.0]\t\
-                            2024-01-15T00:00:00.000000Z\t2024-01-15T00:00:00.000000123Z
-                            """,
-                    "SELECT b_bool, b_byte, b_short, b_char, b_int, b_ipv4, b_float, b_long, b_date, b_double, " +
-                            "b_sym, b_str, b_uuid, b_l256, b_geo, b_dec64, b_dec128, b_dec256, b_darr, b_ts, b_tsns FROM t_all"
-            );
+            assertQuery("SELECT b_bool, b_byte, b_short, b_char, b_int, b_ipv4, b_float, b_long, b_date, b_double, " +
+                    "b_sym, b_str, b_uuid, b_l256, b_geo, b_dec64, b_dec128, b_dec256, b_darr, b_ts, b_tsns FROM t_all")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    b_bool\tb_byte\tb_short\tb_char\tb_int\tb_ipv4\tb_float\tb_long\tb_date\tb_double\tb_sym\tb_str\tb_uuid\tb_l256\tb_geo\tb_dec64\tb_dec128\tb_dec256\tb_darr\tb_ts\tb_tsns
+                                    true\t42\t1234\tX\t56789\t192.168.1.1\t3.14\t99999\t2024-01-15T00:00:00.000Z\t2.718\tabc\thello\t\
+                                    550e8400-e29b-41d4-a716-446655440000\t\
+                                    0x4444444444444444333333333333333322222222222222221111111111111111\t\
+                                    s24se0\t123.45\t12345.6789\t99999.12345\t[1.0,2.0,3.0]\t\
+                                    2024-01-15T00:00:00.000000Z\t2024-01-15T00:00:00.000000123Z
+                                    """);
         });
     }
 
@@ -214,14 +214,14 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            flag
-                            true
-                            false
-                            """,
-                    "SELECT flag FROM t_bool ORDER BY timestamp"
-            );
+            assertQuery("SELECT flag FROM t_bool ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    flag
+                                    true
+                                    false
+                                    """);
         });
     }
 
@@ -242,10 +242,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n42\n",
-                    "SELECT val FROM t_byte"
-            );
+            assertQuery("SELECT val FROM t_byte")
+                    .noLeakCheck()
+                    .returnsOnce("val\n42\n");
         });
     }
 
@@ -266,10 +265,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\nA\n",
-                    "SELECT val FROM t_char"
-            );
+            assertQuery("SELECT val FROM t_char")
+                    .noLeakCheck()
+                    .returnsOnce("val\nA\n");
         });
     }
 
@@ -291,10 +289,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n2024-01-15T00:00:00.000Z\n",
-                    "SELECT val FROM t_date"
-            );
+            assertQuery("SELECT val FROM t_date")
+                    .noLeakCheck()
+                    .returnsOnce("val\n2024-01-15T00:00:00.000Z\n");
         });
     }
 
@@ -312,10 +309,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n12345.6789\n",
-                    "SELECT val FROM t_dec128"
-            );
+            assertQuery("SELECT val FROM t_dec128")
+                    .noLeakCheck()
+                    .returnsOnce("val\n12345.6789\n");
         });
     }
 
@@ -333,10 +329,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n99999.12345\n",
-                    "SELECT val FROM t_dec256"
-            );
+            assertQuery("SELECT val FROM t_dec256")
+                    .noLeakCheck()
+                    .returnsOnce("val\n99999.12345\n");
         });
     }
 
@@ -354,10 +349,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n123.45\n",
-                    "SELECT val FROM t_dec64"
-            );
+            assertQuery("SELECT val FROM t_dec64")
+                    .noLeakCheck()
+                    .returnsOnce("val\n123.45\n");
         });
     }
 
@@ -377,10 +371,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "vals\n[1.1,2.2,3.3]\n",
-                    "SELECT vals FROM t_darr1"
-            );
+            assertQuery("SELECT vals FROM t_darr1")
+                    .noLeakCheck()
+                    .returnsOnce("vals\n[1.1,2.2,3.3]\n");
         });
     }
 
@@ -400,10 +393,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "vals\n[[1.0,2.0],[3.0,4.0]]\n",
-                    "SELECT vals FROM t_darr2"
-            );
+            assertQuery("SELECT vals FROM t_darr2")
+                    .noLeakCheck()
+                    .returnsOnce("vals\n[[1.0,2.0],[3.0,4.0]]\n");
         });
     }
 
@@ -424,10 +416,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "vals\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT vals FROM t_darr3"
-            );
+            assertQuery("SELECT vals FROM t_darr3")
+                    .noLeakCheck()
+                    .returnsOnce("vals\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -445,10 +436,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n2.718281828\n",
-                    "SELECT val FROM t_dbl"
-            );
+            assertQuery("SELECT val FROM t_dbl")
+                    .noLeakCheck()
+                    .returnsOnce("val\n2.718281828\n");
         });
     }
 
@@ -469,10 +459,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n3.14\n",
-                    "SELECT val FROM t_float"
-            );
+            assertQuery("SELECT val FROM t_float")
+                    .noLeakCheck()
+                    .returnsOnce("val\n3.14\n");
         });
     }
 
@@ -513,10 +502,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\ns24se0\n",
-                    "SELECT val FROM t_geo"
-            );
+            assertQuery("SELECT val FROM t_geo")
+                    .noLeakCheck()
+                    .returnsOnce("val\ns24se0\n");
         });
     }
 
@@ -563,17 +551,17 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             // Render through CAST to STRING so the NULL/0 rows surface as the literal token
             // "null". This avoids depending on the implicit-cast rules of the IPv4 IN
             // operator and matches QuestDB's IPv4 NULL convention.
-            assertSql(
-                    """
-                            v
-                            192.168.1.1
-                            255.255.255.255
-                            10.0.0.1
-                            null
-                            null
-                            """,
-                    "SELECT coalesce(addr::string, 'null') v FROM t_ipv4 ORDER BY timestamp"
-            );
+            assertQuery("SELECT coalesce(addr::string, 'null') v FROM t_ipv4 ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    v
+                                    192.168.1.1
+                                    255.255.255.255
+                                    10.0.0.1
+                                    null
+                                    null
+                                    """);
         });
     }
 
@@ -594,10 +582,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n12345\n",
-                    "SELECT val FROM t_int"
-            );
+            assertQuery("SELECT val FROM t_int")
+                    .noLeakCheck()
+                    .returnsOnce("val\n12345\n");
         });
     }
 
@@ -621,10 +608,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n0x4444444444444444333333333333333322222222222222221111111111111111\n",
-                    "SELECT val FROM t_l256"
-            );
+            assertQuery("SELECT val FROM t_l256")
+                    .noLeakCheck()
+                    .returnsOnce("val\n0x4444444444444444333333333333333322222222222222221111111111111111\n");
         });
     }
 
@@ -642,10 +628,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n9876543210\n",
-                    "SELECT val FROM t_lng"
-            );
+            assertQuery("SELECT val FROM t_lng")
+                    .noLeakCheck()
+                    .returnsOnce("val\n9876543210\n");
         });
     }
 
@@ -666,10 +651,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n1234\n",
-                    "SELECT val FROM t_short"
-            );
+            assertQuery("SELECT val FROM t_short")
+                    .noLeakCheck()
+                    .returnsOnce("val\n1234\n");
         });
     }
 
@@ -721,10 +705,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 try {
                     TestUtils.assertEventually(() -> {
                         drainWalQueue();
-                        assertSql(
-                                "count\n100000\n",
-                                "SELECT count() FROM t_stress100k"
-                        );
+                        assertQuery("SELECT count() FROM t_stress100k")
+                                .noLeakCheck()
+                                .returnsOnce("count\n100000\n");
                     });
                 } catch (Throwable th) {
                     failure = th;
@@ -753,14 +736,12 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 }
             }
 
-            assertSql(
-                    "count\n100000\n",
-                    "SELECT count() FROM t_stress100k"
-            );
-            assertSql(
-                    "sum_id\n4999950000\n",
-                    "SELECT sum(id) AS sum_id FROM t_stress100k"
-            );
+            assertQuery("SELECT count() FROM t_stress100k")
+                    .noLeakCheck()
+                    .returnsOnce("count\n100000\n");
+            assertQuery("SELECT sum(id) AS sum_id FROM t_stress100k")
+                    .noLeakCheck()
+                    .returnsOnce("sum_id\n4999950000\n");
         });
     }
 
@@ -782,14 +763,12 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1000\n",
-                    "SELECT count() FROM t_stress"
-            );
-            assertSql(
-                    "sum_id\n499500\n",
-                    "SELECT sum(id) AS sum_id FROM t_stress"
-            );
+            assertQuery("SELECT count() FROM t_stress")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1000\n");
+            assertQuery("SELECT sum(id) AS sum_id FROM t_stress")
+                    .noLeakCheck()
+                    .returnsOnce("sum_id\n499500\n");
         });
     }
 
@@ -807,16 +786,14 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "msg\nhello world\n",
-                    "SELECT msg FROM t_str"
-            );
+            assertQuery("SELECT msg FROM t_str")
+                    .noLeakCheck()
+                    .returnsOnce("msg\nhello world\n");
             // stringColumn() must send the VARCHAR wire type (0x0F), so the
             // auto-created column type must be VARCHAR, not STRING.
-            assertSql(
-                    "column\ttype\nmsg\tVARCHAR\n",
-                    "SELECT \"column\", type FROM table_columns('t_str') WHERE \"column\" = 'msg'"
-            );
+            assertQuery("SELECT \"column\", type FROM table_columns('t_str') WHERE \"column\" = 'msg'")
+                    .noLeakCheck()
+                    .returnsOnce("column\ttype\nmsg\tVARCHAR\n");
         });
     }
 
@@ -841,28 +818,26 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n200\n",
-                    "SELECT count() FROM t_sym_overflow"
-            );
-            assertSql(
-                    "distinct_tags\n200\n",
-                    "SELECT count_distinct(tag) AS distinct_tags FROM t_sym_overflow"
-            );
-            assertSql(
-                    """
-                            tag\tid
-                            unique-0\t0
-                            """,
-                    "SELECT tag, id FROM t_sym_overflow ORDER BY timestamp LIMIT 1"
-            );
-            assertSql(
-                    """
-                            tag\tid
-                            unique-199\t199
-                            """,
-                    "SELECT tag, id FROM t_sym_overflow ORDER BY timestamp DESC LIMIT 1"
-            );
+            assertQuery("SELECT count() FROM t_sym_overflow")
+                    .noLeakCheck()
+                    .returnsOnce("count\n200\n");
+            assertQuery("SELECT count_distinct(tag) AS distinct_tags FROM t_sym_overflow")
+                    .noLeakCheck()
+                    .returnsOnce("distinct_tags\n200\n");
+            assertQuery("SELECT tag, id FROM t_sym_overflow ORDER BY timestamp LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    tag\tid
+                                    unique-0\t0
+                                    """);
+            assertQuery("SELECT tag, id FROM t_sym_overflow ORDER BY timestamp DESC LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    tag\tid
+                                    unique-199\t199
+                                    """);
         });
     }
 
@@ -880,10 +855,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "created\n2024-01-15T00:00:00.000000Z\n",
-                    "SELECT created FROM t_tscol"
-            );
+            assertQuery("SELECT created FROM t_tscol")
+                    .noLeakCheck()
+                    .returnsOnce("created\n2024-01-15T00:00:00.000000Z\n");
         });
     }
 
@@ -901,10 +875,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "created\n2024-01-15T00:00:00.000000123Z\n",
-                    "SELECT created FROM t_tsnano"
-            );
+            assertQuery("SELECT created FROM t_tsnano")
+                    .noLeakCheck()
+                    .returnsOnce("created\n2024-01-15T00:00:00.000000123Z\n");
         });
     }
 
@@ -927,10 +900,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\n550e8400-e29b-41d4-a716-446655440000\n",
-                    "SELECT val FROM t_uuid"
-            );
+            assertQuery("SELECT val FROM t_uuid")
+                    .noLeakCheck()
+                    .returnsOnce("val\n550e8400-e29b-41d4-a716-446655440000\n");
         });
     }
 
@@ -951,10 +923,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "val\nhello varchar\n",
-                    "SELECT val FROM t_varchar"
-            );
+            assertQuery("SELECT val FROM t_varchar")
+                    .noLeakCheck()
+                    .returnsOnce("val\nhello varchar\n");
         });
     }
 
@@ -976,14 +947,12 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 drainReceiver(receiver);
             }
             drainWalQueue();
-            assertSql(
-                    "type\n" + expectedColumnType + "\n",
-                    "SELECT type FROM (SHOW COLUMNS FROM " + tableName + ") WHERE column = 'val'"
-            );
-            assertSql(
-                    "val\n" + hash + "\n",
-                    "SELECT val FROM " + tableName
-            );
+            assertQuery("SELECT type FROM (SHOW COLUMNS FROM " + tableName + ") WHERE column = 'val'")
+                    .noLeakCheck()
+                    .returnsOnce("type\n" + expectedColumnType + "\n");
+            assertQuery("SELECT val FROM " + tableName)
+                    .noLeakCheck()
+                    .returnsOnce("val\n" + hash + "\n");
         });
     }
 
@@ -1021,7 +990,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         // Encode using QwpWebSocketEncoder (public API) then send via raw UDP
         try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             encoder.setGorillaEnabled(false);
-            int len = encoder.encode(tb, false);
+            int len = encoder.encode(tb);
 
             long fd = Net.socketUdp();
             Assert.assertTrue("failed to open UDP socket", fd > -1);

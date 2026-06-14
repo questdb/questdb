@@ -313,7 +313,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             // written with only (a, ts).
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertParquetColumnCount("x", 2);
+            assertParquetColumnCount(2);
 
             execute("ALTER TABLE x ADD COLUMN newcol DOUBLE");
             drainWalQueue();
@@ -329,7 +329,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertParquetColumnCount("x", 3);
+            assertParquetColumnCount(3);
         });
     }
 
@@ -366,7 +366,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertParquetColumnCount("x", 3);
+            assertParquetColumnCount(3);
 
             execute("ALTER TABLE x DROP COLUMN b");
             drainWalQueue();
@@ -380,7 +380,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertParquetColumnCount("x", 2);
+            assertParquetColumnCount(2);
         });
     }
 
@@ -474,12 +474,16 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
             // A fresh reader sees the post-merge state with the new rows
             // merged in.
-            assertSql(
-                    "count\n14\n",
-                    "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'"
-            );
-            assertSql(
-                    """
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n14\n");
+            assertQuery("SELECT a, newcol, ts FROM x ORDER BY ts, a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tnewcol\tts
                             1\tnull\t2020-01-01T00:00:00.000000Z
                             50\t7.5\t2020-01-01T00:30:00.000000Z
@@ -496,9 +500,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             11\tnull\t2020-01-01T10:00:00.000000Z
                             12\tnull\t2020-01-01T11:00:00.000000Z
                             99\tnull\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT a, newcol, ts FROM x ORDER BY ts, a"
-            );
+                            """);
         });
     }
 
@@ -511,8 +513,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         return -1;
     }
 
-    private void assertParquetColumnCount(String tableName, int expectedColumnCount) {
-        try (TableReader reader = getReader(tableName)) {
+    private void assertParquetColumnCount(int expectedColumnCount) {
+        try (TableReader reader = getReader("x")) {
             int parquetCount = 0;
             for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
                 if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {

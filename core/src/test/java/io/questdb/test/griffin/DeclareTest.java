@@ -240,7 +240,8 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertException("delcare @ts := timestamp select @ts from trades", 12, "perhaps `DECLARE` was misspelled?");
+            assertQuery("delcare @ts := timestamp select @ts from trades")
+                    .fails(12, "perhaps `DECLARE` was misspelled?");
         });
     }
 
@@ -249,7 +250,8 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertException("declare @ts = timestamp select @ts from trades", 12, "expected variable assignment operator `:=`");
+            assertQuery("declare @ts = timestamp select @ts from trades")
+                    .fails(12, "expected variable assignment operator `:=`");
         });
     }
 
@@ -265,19 +267,20 @@ public class DeclareTest extends AbstractSqlParserTest {
                     query, ExecutionModel.INSERT);
             execute(query);
             drainWalQueue();
-            assertSql("""
-                    x
-                    3
-                    """, "select * from foo");
+            assertQuery("select * from foo")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            """);
         });
     }
 
     @Test
     public void testDeclareMultiDeclares() throws Exception {
-        assertException(
-                "DECLARE @from_time := dateadd('h',-1,now()), DECLARE @to_time := now() WITH t as ( select now() as ts ) select * from t where ts between @from_time and @to_time;",
-                45,
-                "unexpected token [DECLARE] - Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
+        assertQuery("DECLARE @from_time := dateadd('h',-1,now()), DECLARE @to_time := now() WITH t as ( select now() as ts ) select * from t where ts between @from_time and @to_time;")
+                .fails(45, "unexpected token [DECLARE] - Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
     }
 
     @Test
@@ -298,7 +301,8 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareOverridableMissingVariable() throws Exception {
-        assertException("DECLARE OVERRIDABLE SELECT 1", 20, "variable name expected after OVERRIDABLE");
+        assertQuery("DECLARE OVERRIDABLE SELECT 1")
+                .fails(20, "variable name expected after OVERRIDABLE");
     }
 
     @Test
@@ -315,11 +319,13 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareReuseVariable() throws Exception {
-        assertSql("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n",
-                "declare " +
-                        "@ts := '2025-07-02T13:00:00.000000Z', " +
-                        "@int := interval(@ts, @ts)" +
-                        "select @int");
+        assertQuery("declare " +
+                "@ts := '2025-07-02T13:00:00.000000Z', " +
+                "@int := interval(@ts, @ts)" +
+                "select @int")
+                .noLeakCheck()
+                .expectSize()
+                .returns("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n");
     }
 
     @Test
@@ -388,25 +394,30 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectExplainPlan() throws Exception {
         assertModel("EXPLAIN (FORMAT TEXT) ", "EXPLAIN DECLARE @x := 5 SELECT @x", ExecutionModel.EXPLAIN);
-        assertSql("""
-                QUERY PLAN
-                VirtualRecord
-                  functions: [5]
-                    long_sequence count: 1
-                """, "EXPLAIN DECLARE @x := 5 SELECT @x");
+        assertQuery("EXPLAIN DECLARE @x := 5 SELECT @x")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [5]
+                            long_sequence count: 1
+                        """);
     }
 
     @Test
     public void testDeclareSelectFromGenerateSeries() throws Exception {
         // Test for issue #6547: DECLARE substitution should work for function arguments in FROM clause
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("DECLARE @lo := '2025-01-01', @hi := '2025-01-02', @unit := '1d' SELECT * FROM generate_series(@lo, @hi, @unit)")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("generate_series")
+                .returns("""
                         generate_series
                         2025-01-01T00:00:00.000000Z
                         2025-01-02T00:00:00.000000Z
-                        """,
-                "DECLARE @lo := '2025-01-01', @hi := '2025-01-02', @unit := '1d' SELECT * FROM generate_series(@lo, @hi, @unit)"
-        ));
+                        """));
     }
 
     @Test
@@ -500,11 +511,13 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b",
                 query
                 , ExecutionModel.QUERY);
-        assertSql("""
+        assertQuery(query)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         col2
                         4
-                        """,
-                query);
+                        """);
     }
 
     @Test
@@ -534,12 +547,16 @@ public class DeclareTest extends AbstractSqlParserTest {
             String query = "DECLARE @lo := -5, @hi := -2 SELECT * FROM trades LIMIT @lo, @hi";
             assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(5),-(2)",
                     query, ExecutionModel.QUERY);
-            assertSql("""
-                    symbol\tside\tprice\tamount\ttimestamp
-                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
-                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
-                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
+                            symbol\tside\tprice\tamount\ttimestamp
+                            \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                            \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                            \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                            """);
         });
     }
 
@@ -575,7 +592,8 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectPositionalBindVariables() throws Exception {
-        assertException("DECLARE @x := ?, @y := ? SELECT @x, @y", 14, "Invalid column: ?");
+        assertQuery("DECLARE @x := ?, @y := ? SELECT @x, @y")
+                .fails(14, "Invalid column: ?");
     }
 
     @Test
@@ -705,16 +723,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertSql("""
+            assertQuery("""
+                    DECLARE
+                        @today := today(),
+                        @start := interval_start(@today),
+                        @end := interval_end(@today)
+                        SELECT @today = interval(@start, @end)""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
-                            """,
-                    """
-                            DECLARE
-                                @today := today(),
-                                @start := interval_start(@today),
-                                @end := interval_end(@today)
-                                SELECT @today = interval(@start, @end)""");
+                            """);
         });
     }
 
@@ -786,7 +806,8 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectWrongAssignmentOperator() throws Exception {
-        assertException("DECLARE @x = 5 SELECT @x;", 11, "expected variable assignment operator");
+        assertQuery("DECLARE @x = 5 SELECT @x;")
+                .fails(11, "expected variable assignment operator");
     }
 
     @Test
@@ -800,14 +821,11 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareVariableAsSubQueryWithEmptyLimit() throws Exception {
-        assertException(
-                "declare @pair := (select symbol from fx_trades limit ), " +
-                        "with bids as (select symbol, bids[1,1] from market_data where symbol = @pair), " +
-                        "asks as (select symbol, asks[1,1] from market_data where symbol = @pair) " +
-                        "select symbol, * from bids",
-                53,
-                "limit expression expected"
-        );
+        assertQuery("declare @pair := (select symbol from fx_trades limit ), " +
+                "with bids as (select symbol, bids[1,1] from market_data where symbol = @pair), " +
+                "asks as (select symbol, asks[1,1] from market_data where symbol = @pair) " +
+                "select symbol, * from bids")
+                .fails(53, "limit expression expected");
     }
 
     @Test
@@ -832,9 +850,9 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareVariableWithBracketedExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
-            assertException("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
-                            "SELECT * FROM trades WHERE @symbols IN @symbols",
-                    43, "bracket lists");
+            assertQuery("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
+                    "SELECT * FROM trades WHERE @symbols IN @symbols")
+                    .fails(43, "bracket lists");
 
         });
     }
@@ -854,8 +872,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;", plan);
+            assertQuery("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -874,8 +896,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000001Z","2024-08-22T23:59:59.999999Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01' and timestamp < '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp > @lo and timestamp < @hi;", plan);
+            assertQuery("declare @ts := (timestamp > '2024-01-01' and timestamp < '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp > @lo and timestamp < @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -894,8 +920,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("MIN","2024-08-22T23:59:59.999999Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp < '2024-08-23')  select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp < @hi;", plan);
+            assertQuery("declare @ts := (timestamp < '2024-08-23')  select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp < @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -914,8 +944,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;", plan);
+            assertQuery("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -934,8 +968,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp >= '2024-01-01' and timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp >= @lo and timestamp <= @hi;", plan);
+            assertQuery("declare @ts := (timestamp >= '2024-01-01' and timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp >= @lo and timestamp <= @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -954,8 +992,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("MIN","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp <= @hi;", plan);
+            assertQuery("declare @ts := (timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp <= @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -974,8 +1016,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp >= '2024-01-01') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp >= @lo;", plan);
+            assertQuery("declare @ts := (timestamp >= '2024-01-01') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp >= @lo;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
 
         });
     }
@@ -995,8 +1041,12 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts := (timestamp between '2024-01-01' and '2024-08-23') select timestamp, count() from trades where @ts;", plan);
-            assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp between @lo and @hi;", plan);
+            assertQuery("declare @ts := (timestamp between '2024-01-01' and '2024-08-23') select timestamp, count() from trades where @ts;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp between @lo and @hi;")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -1015,8 +1065,11 @@ public class DeclareTest extends AbstractSqlParserTest {
                             Interval forward scan on: trades
                               intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T00:00:00.000000Z"),("2024-08-23T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
                     """;
-            assertPlanNoLeakCheck("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);", plan);
-            assertException("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts", 44, "bracket lists are not supported");
+            assertQuery("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts")
+                    .fails(44, "bracket lists are not supported");
         });
     }
 
@@ -1042,17 +1095,21 @@ public class DeclareTest extends AbstractSqlParserTest {
                               from long_sequence(10)
                             ) timestamp(ts) partition by hour;"""
             );
-            assertPlanNoLeakCheck("declare @id := id, @val := 4 select * from x where @id < @val", plan);
-            assertPlanNoLeakCheck("declare @expr := (id < 4) select * from x where @expr", plan);
-            assertSql(
-                    """
+            assertQuery("declare @id := id, @val := 4 select * from x where @id < @val")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @expr := (id < 4) select * from x where @expr")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("x where id < 4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:16:40.000000Z
                             3\t1970-01-01T00:33:20.000000Z
-                            """,
-                    "x where id < 4"
-            );
+                            """);
         });
     }
 }

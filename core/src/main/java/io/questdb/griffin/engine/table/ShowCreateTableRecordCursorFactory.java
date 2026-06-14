@@ -88,6 +88,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
+    public static void tableFormatToSink(int format, CharSink<?> sink) {
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
+            sink.putAscii(" FORMAT PARQUET");
+        }
+    }
+
     public static void ttlToSink(int ttl, CharSink<?> sink) {
         if (ttl == 0) {
             return;
@@ -186,6 +192,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
+            // SHOW CREATE TABLE rejects views and materialized views during parsing
+            // (see SqlParserCallback.getTableToken); guard against any future caller that bypasses it.
+            assert !tableToken.isView() && !tableToken.isMatView();
 
             toTop();
             return this;
@@ -219,6 +228,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 putPartitionBy();
                 // TTL n unit
                 ttlToSink(sink);
+                // FORMAT PARQUET (only emitted when not the default NATIVE)
+                tableFormatToSink(table.getTableFormat(), sink);
                 // (BYPASS) WAL
                 putWal();
             }

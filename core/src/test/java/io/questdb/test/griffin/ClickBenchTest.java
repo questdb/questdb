@@ -534,7 +534,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q27",
                         "SELECT * FROM (SELECT CounterID, AVG(length_bytes(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         """
-                                Sort light lo: 25
+                                Encode sort light lo: 25
                                   keys: [l desc]
                                     Filter filter: 100000<c
                                         Async JIT Group By workers: 1
@@ -549,7 +549,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 new TestCase(
                         "Q28",
                         "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length_bytes(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
-                        "Sort light lo: 25\n" +
+                        "Encode sort light lo: 25\n" +
                                 "  keys: [l desc]\n" +
                                 "    VirtualRecord\n" +
                                 (aliasExpressionsEnabled ? "      functions: [k,l,c,MIN(Referer)]\n" : "      functions: [k,l,c,MIN]\n") +
@@ -710,7 +710,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q38",
                         "SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND IsLink <> 0 AND IsDownload = 0 GROUP BY URL ORDER BY PageViews DESC LIMIT 1000, 1010;",
                         """
-                                Sort light lo: 1000 hi: 1010
+                                Encode sort light lo: 1000 hi: 1010
                                   keys: [PageViews desc]
                                     Async JIT Group By workers: 1
                                       keys: [URL]
@@ -726,7 +726,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q39",
                         "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst ORDER BY PageViews DESC LIMIT 1000, 1010;",
                         """
-                                Sort light lo: 1000 hi: 1010
+                                Encode sort light lo: 1000 hi: 1010
                                   keys: [PageViews desc]
                                     VirtualRecord
                                       functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
@@ -745,7 +745,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q40",
                         "SELECT URLHash, EventTime, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventTime ORDER BY PageViews DESC LIMIT 100, 110;",
                         """
-                                Sort light lo: 100 hi: 110
+                                Encode sort light lo: 100 hi: 110
                                   keys: [PageViews desc]
                                     Async JIT Group By workers: 1
                                       keys: [URLHash,EventTime]
@@ -761,7 +761,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q41",
                         "SELECT WindowClientWidth, WindowClientHeight, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND DontCountHits = 0 AND URLHash = 2868770270353813622 GROUP BY WindowClientWidth, WindowClientHeight ORDER BY PageViews DESC LIMIT 10000, 10010;",
                         """
-                                Sort light lo: 10000 hi: 10010
+                                Encode sort light lo: 10000 hi: 10010
                                   keys: [PageViews desc]
                                     Async JIT Group By workers: 1
                                       keys: [WindowClientWidth,WindowClientHeight]
@@ -777,7 +777,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q42",
                         "SELECT EventTime AS M, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-14T00:00:00Z' AND EventTime <= '2013-07-15T23:59:59Z' AND IsRefresh = 0 AND DontCountHits = 0 SAMPLE BY 1m ALIGN TO CALENDAR ORDER BY M LIMIT 1000, 1010;",
                         """
-                                Sort light lo: 1000 hi: 1010
+                                Encode sort light lo: 1000 hi: 1010
                                   keys: [M]
                                     Async JIT Group By workers: 1
                                       keys: [M]
@@ -806,7 +806,9 @@ public class ClickBenchTest extends AbstractCairoTest {
 
             for (TestCase testCase : testCases) {
                 LOG.info().$("verifying exec plan for ").$(testCase.name).$();
-                assertPlanNoLeakCheck(testCase.query, testCase.expectedPlan);
+                assertQuery(testCase.query)
+                        .noLeakCheck()
+                        .assertsPlan(testCase.expectedPlan);
             }
         });
     }

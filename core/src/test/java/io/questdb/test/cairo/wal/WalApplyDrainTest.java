@@ -153,7 +153,11 @@ public class WalApplyDrainTest extends AbstractCairoTest {
             drainWalQueue();
 
             // The WAL transactions must be durably applied...
-            assertSql("count\n2\n", "select count() from " + tableName);
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
             // ...the table must not be suspended...
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             // ...the apply-job drain call-site must have run (fails if it is removed; the pool-return
