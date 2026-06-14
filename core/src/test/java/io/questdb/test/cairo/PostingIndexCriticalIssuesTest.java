@@ -2313,6 +2313,168 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Forward-reader sibling of
+     * {@link #testRowCursorClosedAfterReaderDoesNotLeakBlockBuffer}. The PR guards
+     * four pooling {@code close()} paths with {@code isOpen()}; the backward-reader
+     * test above only pins {@link PostingIndexBwdReader.Cursor#close()}. The fuzz
+     * {@link #testMultiThreadedO3CoveringLatestByConcurrentReaderFuzz} is LATEST ON
+     * (covering BACKWARD reader, asserts {@code plan.contains("CoveringIndex")}), so
+     * the forward-reader fix otherwise has no regression coverage. This drives
+     * {@link PostingIndexFwdReader.Cursor#close()} the same way: allocate the decode
+     * block buffer (NATIVE_INDEX_READER, 512 bytes), close the reader while the
+     * cursor is still checked out, then close the cursor -- which without the
+     * {@code isOpen()} guard re-pools the live block buffer into a drained reader.
+     */
+    @Test
+    public void testFwdRowCursorClosedAfterReaderDoesNotLeakBlockBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_fwd_cursor_after_reader_close";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Irregular gaps -> non-zero bit width blocks -> decode allocates
+                    // blockBufferAddr. See the backward-reader test for why constant
+                    // deltas would hide the leak.
+                    long rowId = 0;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                // columnTop == 0 -> getCursor returns a plain Cursor (not NullCursor).
+                final PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+
+                final RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                long count = 0;
+                while (cursor.hasNext()) {
+                    cursor.next();
+                    count++;
+                }
+                Assert.assertEquals(4096, count);
+
+                // Reseal/reload race: reader closed while the cursor is checked out;
+                // reader.close() drains only the idle pool.
+                reader.close();
+
+                // Slow consumer closes its cursor: without isOpen() this re-pools the
+                // retained block buffer into the drained (closed) reader -> leak.
+                cursor.close();
+            }
+        });
+    }
+
+    /**
+     * Null-cursor sibling of
+     * {@link #testRowCursorClosedAfterReaderDoesNotLeakBlockBuffer}. The pooling
+     * close on {@link PostingIndexBwdReader.NullCursor#close()} is a fourth patched
+     * path reachable only when {@code key == 0 && columnTop > 0 && minValue < columnTop}
+     * (see {@code getCursor}); the other regression tests use {@code columnTop == 0}
+     * and never hit it. Here {@code columnTop > 0} so {@code getCursor} returns a
+     * {@link PostingIndexBwdReader.NullCursor}, whose {@code hasNext()} first drains
+     * the real key-0 entries via {@code super.hasNext()} -- allocating the decode
+     * block buffer (NATIVE_INDEX_READER) -- before synthesising the implicit nulls.
+     * Closing the reader mid-iteration then closing the cursor re-pools that buffer
+     * into the drained reader unless the {@code isOpen()} guard short-circuits it.
+     */
+    @Test
+    public void testBwdNullCursorClosedAfterReaderDoesNotLeakBlockBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_null_cursor_after_reader_close";
+            final long columnTop = 256;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Real key-0 entries live at/after columnTop with irregular gaps
+                    // so the NullCursor's super.hasNext() decode allocates the block
+                    // buffer; rows below columnTop are surfaced as implicit nulls.
+                    long rowId = columnTop;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                // key==0 && columnTop>0 && minValue(0)<columnTop -> NullCursor path.
+                final PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, columnTop,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0);
+
+                final RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                long count = 0;
+                while (cursor.hasNext()) {
+                    cursor.next();
+                    count++;
+                }
+                // 4096 real entries + columnTop synthesised nulls (columnTop-1..0).
+                Assert.assertEquals(4096 + columnTop, count);
+
+                // Reseal/reload race, then the slow consumer closes its null cursor.
+                reader.close();
+                cursor.close();
+            }
+        });
+    }
+
+    /**
+     * Forward-reader counterpart of
+     * {@link #testBwdNullCursorClosedAfterReaderDoesNotLeakBlockBuffer}, pinning the
+     * fourth and last patched path: {@link PostingIndexFwdReader.NullCursor#close()}.
+     * Same reachability gate ({@code key == 0 && columnTop > 0 && minValue < columnTop}),
+     * but the forward NullCursor emits the synthesised nulls FIRST and then drains
+     * the real key-0 entries via {@code super.hasNext()} (which allocates the decode
+     * block buffer). Together with the three sibling tests this gives every
+     * isOpen()-guarded close() its own RED-on-revert regression.
+     */
+    @Test
+    public void testFwdNullCursorClosedAfterReaderDoesNotLeakBlockBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_fwd_null_cursor_after_reader_close";
+            final long columnTop = 256;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = columnTop;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                // key==0 && columnTop>0 && minValue(0)<columnTop -> Fwd NullCursor.
+                final PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, columnTop);
+
+                final RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                long count = 0;
+                while (cursor.hasNext()) {
+                    cursor.next();
+                    count++;
+                }
+                // columnTop synthesised nulls (0..columnTop-1) + 4096 real entries.
+                Assert.assertEquals(4096 + columnTop, count);
+
+                reader.close();
+                cursor.close();
+            }
+        });
+    }
+
     @Test
     public void testReaderHidesHeadEntryTailGensAbovePin() throws Exception {
         assertMemoryLeak(() -> {
