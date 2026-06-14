@@ -1216,6 +1216,166 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsBitmapIndexesAcrossParquetPartitionsReusingWorkerScratch() throws Exception {
+        // Regression guard for cross-partition reuse of the per-worker parquet
+        // scratch (metaReader / decoder / RowGroupBuffers / parquetColumns /
+        // indexWriters) in TableSnapshotRestore.processParquetPartitions. Each
+        // worker drains a shared cursor, so a worker that handles more than one
+        // parquet partition reuses those native objects and relies on the
+        // per-partition resets (decoder.of/close cycling, metaReader.clear(),
+        // parquetColumns/indexWriters clearing, Path.clearThreadLocals()) not
+        // leaking state into partition N+1.
+        //
+        // workerCount = min(threadCount, partitionCount) and the default recovery
+        // pool floor is 4, so with <= 2 parquet partitions every partition gets
+        // its own worker and the reuse path is never reached. We pin the pool to
+        // 2 and build 5 all-parquet partitions: with 2 workers over 5 partitions
+        // at least one worker processes >= 3 of them (pigeonhole), so the reuse
+        // path runs deterministically. Every partition carries a distinct
+        // indexed-symbol distribution, so any state bleeding from one partition's
+        // rebuilt index into the next fails the per-partition assertions below.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val LONG,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (10, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (11, 'B', '2024-01-01T08:00:00.000000Z'),
+                    (12, 'A', '2024-01-01T16:00:00.000000Z'),
+                    (20, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (21, 'A', '2024-01-02T08:00:00.000000Z'),
+                    (22, 'A', '2024-01-02T16:00:00.000000Z'),
+                    (30, 'B', '2024-01-03T00:00:00.000000Z'),
+                    (31, 'C', '2024-01-03T08:00:00.000000Z'),
+                    (32, 'C', '2024-01-03T16:00:00.000000Z'),
+                    (40, 'C', '2024-01-04T00:00:00.000000Z'),
+                    (41, 'A', '2024-01-04T08:00:00.000000Z'),
+                    (42, 'B', '2024-01-04T16:00:00.000000Z'),
+                    (50, 'B', '2024-01-05T00:00:00.000000Z'),
+                    (51, 'B', '2024-01-05T08:00:00.000000Z'),
+                    (52, 'C', '2024-01-05T16:00:00.000000Z'),
+                    (60, 'Z', '2024-01-06T00:00:00.000000Z')
+                    """);
+
+            // 2024-01-06 ('Z') stays a native partition: it is the active
+            // partition (CONVERT TO PARQUET cannot target it) and its distinct
+            // symbol keeps the A/B/C counts below unaffected. The 5 days that DO
+            // convert are all non-active and therefore parquet-convertible.
+            final String[] days = {"2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"};
+            for (String day : days) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + day + "'");
+            }
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+
+            // Release readers/writers: rebuildTableFiles targets on-disk files as
+            // it would during checkpoint recovery after an engine restart.
+            engine.clear();
+
+            // Delete the bitmap index sidecars from every parquet partition so the
+            // rebuild has to recreate all of them.
+            File[] partDirs = new File[days.length];
+            for (int i = 0; i < days.length; i++) {
+                File partDir = findParquetPartitionDir(tableDir, days[i]);
+                partDirs[i] = partDir;
+                deleteFilesWithPrefix(partDir, "sym.k");
+                deleteFilesWithPrefix(partDir, "sym.v");
+            }
+
+            // Pin the recovery pool to 2 workers. The test configuration captures
+            // properties at build time, so setProperty would not reach the
+            // already-built configuration; wrap it instead and override only the
+            // two threadpool getters (threadCount = max(2, min(2, cpus)) = 2).
+            CairoConfiguration pinnedPoolConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCheckpointRecoveryThreadpoolMax() {
+                    return 2;
+                }
+
+                @Override
+                public int getCheckpointRecoveryThreadpoolMin() {
+                    return 2;
+                }
+            };
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(pinnedPoolConfig)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            // Every parquet partition must have had its bitmap index rebuilt.
+            for (int i = 0; i < partDirs.length; i++) {
+                File[] keyFiles = partDirs[i].listFiles((_, name) -> name.startsWith("sym.k"));
+                Assert.assertNotNull("sym.k not rebuilt for " + days[i], keyFiles);
+                Assert.assertTrue("sym.k not rebuilt for " + days[i], keyFiles.length > 0);
+                File[] valFiles = partDirs[i].listFiles((_, name) -> name.startsWith("sym.v"));
+                Assert.assertNotNull("sym.v not rebuilt for " + days[i], valFiles);
+                Assert.assertTrue("sym.v not rebuilt for " + days[i], valFiles.length > 0);
+            }
+
+            // Per-partition, per-symbol indexed counts. Distinct per partition, so
+            // any scratch-reuse leak between partitions corrupts at least one of
+            // these. sym == literal on an indexed SYMBOL is served by the rebuilt
+            // bitmap index.
+            assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-01'", 2);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-01'", 1);
+            assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-01'", 0);
+            assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-02'", 3);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-02'", 0);
+            assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-02'", 0);
+            assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-03'", 0);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-03'", 1);
+            assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-03'", 2);
+            assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-04'", 1);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-04'", 1);
+            assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-04'", 1);
+            assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-05'", 0);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-05'", 2);
+            assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-05'", 1);
+
+            // Global per-symbol totals across all rebuilt partitions.
+            assertIndexedSymCount("sym = 'A'", 6);
+            assertIndexedSymCount("sym = 'B'", 5);
+            assertIndexedSymCount("sym = 'C'", 4);
+
+            // Row-level checks: the index must resolve to the right rows, not just
+            // the right cardinality.
+            assertQuery("SELECT val FROM t WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("val\n10\n12\n");
+            assertQuery("SELECT val FROM t WHERE sym = 'C' AND ts IN '2024-01-03' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("val\n31\n32\n");
+        });
+    }
+
+    private static void deleteFilesWithPrefix(File dir, String prefix) {
+        File[] files = dir.listFiles((_, name) -> name.startsWith(prefix));
+        if (files != null) {
+            for (File f : files) {
+                Assert.assertTrue("failed to delete " + f, f.delete());
+            }
+        }
+    }
+
+    private void assertIndexedSymCount(String whereClause, long expected) throws Exception {
+        assertQuery("SELECT count() FROM t WHERE " + whereClause)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n" + expected + "\n");
+    }
+
+    @Test
     public void testCheckpointRestoreGeneratesMissingParquetMetaFileMultiPartition() throws Exception {
         // Two parquet partitions: delete _pm from only one. Verify the
         // missing one is regenerated and the existing one is untouched.

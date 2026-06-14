@@ -376,13 +376,28 @@ public class TableSnapshotRestore implements QuietCloseable {
             // Validate restored parquet partitions and ensure each has a _pm
             // sidecar that resolves a footer at the committed parquet size:
             // generate one for old backups that predate the _pm format, and
-            // regenerate stale, torn or partially written captures. The cheap
-            // committed-size truncation check runs serially (fail-fast); the
-            // map+CRC validation, regeneration and -- when requested -- the
-            // parquet bitmap-index rebuild run as one parallel task per parquet
-            // partition, mapping _pm exactly once. Passing the rebuild flag here
-            // fuses validation with the index rebuild so the sidecar is not
-            // mapped and CRC-verified twice on the enterprise-restore path.
+            // regenerate stale, torn or partially written captures. All of this
+            // -- the committed-size truncation check, the map+CRC validation,
+            // regeneration and (when requested) the parquet bitmap-index rebuild
+            // -- runs inside the parallel workers, mapping _pm exactly once.
+            // prepareParquetPartitions submits one worker per pool thread that
+            // pulls partitions from a shared cursor; it does not stat or throw on
+            // the calling thread. Passing the rebuild flag here fuses validation
+            // with the index rebuild so the sidecar is not mapped and CRC-verified
+            // twice on the enterprise-restore path.
+            //
+            // Fail-fast tradeoff: because this phase no longer runs serially
+            // ahead of the symbol/bitmap phases, a truncated capture is no longer
+            // detected before that sibling work is submitted. It surfaces, with
+            // the same path-bearing diagnostic, at the single finalizeParallelTasks
+            // drain below. The first failing worker trips the shared abort latch
+            // (see submitParallelTask), so sibling workers across all three phases
+            // bail at their next item boundary instead of running to completion;
+            // the restore still aborts and never feeds a truncated file to
+            // ParquetMetadataWriter.generate (the per-partition size check guards
+            // regeneration). The cost on a bad capture is the in-flight items
+            // already running when the latch trips -- wasted I/O on an
+            // already-doomed restore, not corruption.
             prepareParquetPartitions(tablePath.trimTo(pathTableLen), pathTableLen, rebuildPartitionColumnIndexes);
 
             // Symbols are not append-only data structures, they can be corrupt
@@ -1403,12 +1418,28 @@ public class TableSnapshotRestore implements QuietCloseable {
      * wrapper therefore logs the failure on the throwing thread and hands the
      * future an immutable {@link ParallelTaskException} carrying the
      * materialized message instead of the thread-local original.
+     * <p>
+     * On any failure the wrapper also trips {@code abortParallelTasks}, the
+     * shared latch every worker loop polls between items. Restore semantics are
+     * already "report the first failure, abort the rest" ({@link #finalizeParallelTasks}
+     * surfaces only the first error in submission order); setting the latch here
+     * just makes "abort the rest" happen at the next item boundary instead of
+     * after the drain reaches the failing future, bounding wasted I/O on a doomed
+     * restore. It costs nothing on a successful restore -- no worker throws, so
+     * the latch never trips -- and cannot reorder the reported error: a worker
+     * that bails on the latch returns at a clean boundary with nothing to throw,
+     * so the earliest-submitted thrower is still the one reported.
      */
     private Future<?> submitParallelTask(Runnable task) {
         return executor.submit(() -> {
             try {
                 task.run();
             } catch (Throwable e) {
+                // Trip the shared latch so sibling workers across every phase
+                // (parquet validate/regen, symbol, native bitmap) short-circuit
+                // at their next item check rather than running to completion on a
+                // doomed restore. finalizeParallelTasks resets it after the drain.
+                abortParallelTasks.set(true);
                 LOG.critical().$("error in parallel task").$(e).I$();
                 if (e instanceof FlyweightMessageContainer) {
                     String message = e.getMessage();
