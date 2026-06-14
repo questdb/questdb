@@ -183,6 +183,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         ) throws SqlException {
             this.tableToken = tableToken;
             this.executionContext = executionContext;
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this table on demand so we do
+            // not report a registered-but-not-yet-cached table as non-existent during
+            // the startup hydration window (or before any catalogue query has warmed an
+            // embedded engine).
+            executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (this.table == null) {
