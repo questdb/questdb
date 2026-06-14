@@ -1,10 +1,14 @@
 package io.questdb.test.lifecycle;
 
+import io.questdb.Metrics;
 import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.LifecycleStartupException;
 import io.questdb.lifecycle.State;
+import io.questdb.mp.Job;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.ObjList;
 import io.questdb.test.lifecycle.fakes.ProbeComponent;
 import org.junit.Assert;
@@ -12,7 +16,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.io.Closeable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Guards boot-failure surfacing for stage-2 stable-below callbacks.
@@ -84,6 +92,98 @@ public class WorkerPoolBootFailureTest {
             Assert.assertEquals(State.READY, orch.stateOf("dep"));
         } finally {
             orch.close();
+        }
+    }
+
+    /**
+     * When start() stalls between running=true and started.countDown() (realistic on an OOM
+     * mid-launch: a worker thread is already spawned and looping, but the start latch never
+     * counts down), halt(long) must STILL signal worker.halt() for every worker before it clears
+     * and frees freeOnExit. Otherwise a worker keeps looping on RUNNING against freed resources --
+     * a use-after-free plus an orphan thread leak.
+     */
+    @Test
+    public void testStartLatchTimeoutStillHaltsEveryWorker() throws Exception {
+        final int workerCount = 2;
+        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public String getPoolName() {
+                return "halt-on-start-timeout";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
+        });
+
+        final AtomicLong jobTicks = new AtomicLong();
+        pool.assign((workerId, runStatus) -> {
+            jobTicks.incrementAndGet();
+            return false;
+        });
+
+        // Track that freeOnExit is released by halt(): a worker still looping after halt against a
+        // freed resource is the use-after-free this guards.
+        final AtomicBoolean resourceFreed = new AtomicBoolean(false);
+        pool.freeOnExit((Closeable) () -> resourceFreed.set(true));
+
+        // Stall start() in the running=true / started-not-counted-down window: the workers are
+        // already spawned and looping, but the start latch is held open until we release it.
+        final CountDownLatch releaseStart = new CountDownLatch(1);
+        final CountDownLatch startEntered = new CountDownLatch(1);
+        pool.setBeforeStartedSignalForTesting(() -> {
+            startEntered.countDown();
+            try {
+                releaseStart.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        final Thread starter = new Thread(pool::start, "pool-starter");
+        starter.setDaemon(true);
+        starter.start();
+        try {
+            // start() has entered the stall window; the worker threads are looping.
+            Assert.assertTrue("start() must reach the pre-countDown stall window",
+                    startEntered.await(10, TimeUnit.SECONDS));
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (jobTicks.get() == 0 && System.nanoTime() < deadline) {
+                Thread.sleep(1);
+            }
+            Assert.assertTrue("the workers must be running their assigned job", jobTicks.get() > 0);
+
+            // halt(long) takes the start-latch-timeout branch (started never counted down). It must
+            // still signal every worker, so the loops exit promptly.
+            pool.halt(TimeUnit.MILLISECONDS.toNanos(200));
+
+            Assert.assertTrue("halt() must free freeOnExit", resourceFreed.get());
+
+            // After halt the workers must STOP ticking. Sample, wait well past the worker sleep
+            // cadence, sample again: a halted worker leaves the count stable; an un-halted worker
+            // keeps incrementing (the bug).
+            final long afterHalt = jobTicks.get();
+            Thread.sleep(300);
+            final long settled = jobTicks.get();
+            Assert.assertEquals(
+                    "every worker must be halted on the start-latch-timeout branch; a still-ticking "
+                            + "count means a worker is looping on RUNNING against freed resources",
+                    afterHalt, settled);
+        } finally {
+            releaseStart.countDown();
+            starter.join(TimeUnit.SECONDS.toMillis(10));
+            pool.halt();
         }
     }
 

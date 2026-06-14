@@ -45,6 +45,8 @@ public class WorkerPool implements Closeable {
     // Callers that want a tighter, shared budget across several pools pass an explicit timeout to halt(long).
     public static final long DEFAULT_HALT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final Log LOG = LogFactory.getLog(WorkerPool.class);
+    @TestOnly
+    private volatile Runnable beforeStartedSignalForTesting;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
@@ -170,8 +172,22 @@ public class WorkerPool implements Closeable {
         if (closed.compareAndSet(false, true)) {
             if (running.compareAndSet(true, false)) {
                 final long deadline = System.nanoTime() + timeoutNanos;
+                // Signal halt to every spawned worker UNCONDITIONALLY, before clearing or freeing.
+                // start() may have stalled between running=true and started.countDown() (e.g. an OOM
+                // mid-launch), so the start latch may never count down -- but the worker threads are
+                // already spawned and looping. Skipping the signal there (the old start-latch-timeout
+                // branch) left those workers looping on RUNNING against the freeOnExit resources this
+                // method then frees: a use-after-free plus an orphan thread leak. The per-worker halt
+                // flag is idempotent, so signalling unconditionally is safe on every branch. Iterate
+                // the live workers list (not workerCount) so a partially-spawned pool is covered.
+                for (int i = 0, n = workers.size(); i < n; i++) {
+                    workers.getQuick(i).halt();
+                }
                 if (started.await(remaining(deadline))) {
-                    for (int i = 0; i < workerCount; i++) {
+                    // start() completed: every worker is now in the list. Re-signal to catch any
+                    // worker spawned after the first pass but before started counted down (the flag
+                    // is idempotent), then wait for them to exit.
+                    for (int i = 0, n = workers.size(); i < n; i++) {
                         workers.getQuick(i).halt();
                     }
                     if (!halted.await(remaining(deadline))) {
@@ -198,6 +214,18 @@ public class WorkerPool implements Closeable {
             halted.await();
         }
         workers.clear();
+    }
+
+    /**
+     * Installs a hook fired inside {@link #start(Log)} after the worker threads are spawned and
+     * running but BEFORE {@code started.countDown()}. A test uses it to reproduce a start() that
+     * stalls in that window (realistic on an OOM mid-launch): the hook blocks or throws, leaving
+     * {@code started} un-counted while the workers loop, so a concurrent {@link #halt(long)} takes
+     * the start-latch-timeout branch. Pass {@code null} to clear.
+     */
+    @TestOnly
+    public void setBeforeStartedSignalForTesting(Runnable hook) {
+        this.beforeStartedSignalForTesting = hook;
     }
 
     public void start() {
@@ -236,6 +264,10 @@ public class WorkerPool implements Closeable {
             }
             if (log != null) {
                 log.debug().$("worker pool started [pool=").$(poolName).I$();
+            }
+            final Runnable beforeStarted = beforeStartedSignalForTesting;
+            if (beforeStarted != null) {
+                beforeStarted.run();
             }
             started.countDown();
         }
