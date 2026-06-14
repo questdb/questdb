@@ -182,7 +182,9 @@ public class PGCommitDemoteFenceTest extends AbstractCairoTest {
         };
     }
 
-    /** Builds a minimal CairoEngine that always reports primary (read-write) mode. */
+    /**
+     * Builds a minimal CairoEngine that always reports primary (read-write) mode.
+     */
     private CairoEngine buildPrimaryEngine() throws Exception {
         String dir = temp.newFolder().getAbsolutePath();
         CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
@@ -194,7 +196,9 @@ public class PGCommitDemoteFenceTest extends AbstractCairoTest {
         };
     }
 
-    /** Builds a minimal CairoEngine that always reports read-only mode. */
+    /**
+     * Builds a minimal CairoEngine that always reports read-only mode.
+     */
     private CairoEngine buildReadOnlyEngine() throws Exception {
         String dir = temp.newFolder().getAbsolutePath();
         CairoConfiguration cfg = new DefaultCairoConfiguration(dir);

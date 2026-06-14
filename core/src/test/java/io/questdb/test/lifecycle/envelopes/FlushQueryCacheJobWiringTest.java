@@ -44,13 +44,19 @@ public class FlushQueryCacheJobWiringTest {
                 add("worker-pool-manager");
                 add("pg-wire");
             }};
-            private final ObjList<String> softDeps = new ObjList<String>() {{ add("engine"); }};
+            private final ObjList<String> softDeps = new ObjList<String>() {{
+                add("engine");
+            }};
 
             @Override
-            public ObjList<String> hardRequiredDependencies() { return hardDeps; }
+            public ObjList<String> hardRequiredDependencies() {
+                return hardDeps;
+            }
 
             @Override
-            public String name() { return "web-http"; }
+            public String name() {
+                return "web-http";
+            }
 
             @Override
             public void onDependencyState(String depName, State previous, State current) {
@@ -61,7 +67,9 @@ public class FlushQueryCacheJobWiringTest {
             }
 
             @Override
-            public ObjList<String> softDependencies() { return softDeps; }
+            public ObjList<String> softDependencies() {
+                return softDeps;
+            }
 
             @Override
             public void start(LifecycleContext ctx) {
@@ -77,7 +85,8 @@ public class FlushQueryCacheJobWiringTest {
             }
 
             @Override
-            public void stop() {}
+            public void stop() {
+            }
         };
     }
 

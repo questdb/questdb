@@ -57,23 +57,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Proves the acceptOpen gate in HttpServer and PGServer freezes in-flight IO when armed.
- *
+ * <p>
  * This is the positive complement to the ENT D-08 structural guard: together they form
  * the airtight no-freeze story. D-08 (RegistrationGuardTest) proves ENT never arms the
  * gate for pg-wire/web-http. This test proves the gate WOULD freeze IF armed.
- *
+ * <p>
  * The airtight argument: (gate would freeze IF armed) + (ENT never arms it) =
  * reads-never-freeze is guaranteed.
- *
+ * <p>
  * This is a regression guard: it fires if someone changes the gate semantics, removes
  * the acceptOpen check, or re-arms the gate for HTTP/pg-wire in the ENT server.
- *
+ * <p>
  * The injection seam: both HttpServer and PGServer expose a 4-arg / 6-arg constructor
  * that accepts a caller-supplied AtomicBoolean acceptOpen. The 3-arg / 5-arg constructors
  * default it to new AtomicBoolean(true), which is always open. The gate sites are:
  * - HttpServer.java dispatcher job (:120), rescheduleContext job (:130), IO queue job (:149)
  * - PGServer.java dispatcher job (:119), IO queue job (:162)
- *
+ * <p>
  * LineTcpReceiver.java:76 is an accept-only gate (in-flight-safe) and is intentionally
  * NOT tested for in-flight freeze here.
  */
@@ -89,13 +89,13 @@ public class AcceptOpenGateProofTest extends AbstractCairoTest {
 
     /**
      * Proves the HttpServer acceptOpen gate freezes in-flight IO when armed.
-     *
+     * <p>
      * The test injects a test-owned AtomicBoolean into the 4-arg HttpServer ctor.
      * It drives traffic through the server with acceptOpen=true (requests complete
      * normally), then flips the flag false and verifies a new request stalls at the
      * gate within a bounded window, then restores acceptOpen=true and confirms the
      * stalled connection resumes.
-     *
+     * <p>
      * This test is RED if the gate code at HttpServer.java:120/130/149 is removed
      * and GREEN with the gate in place.
      */
@@ -150,15 +150,15 @@ public class AcceptOpenGateProofTest extends AbstractCairoTest {
 
     /**
      * Proves the PGServer acceptOpen gate freezes in-flight IO when armed.
-     *
+     * <p>
      * Mirrors the HTTP proof for the pg-wire protocol. The 6-arg PGServer constructor
      * accepts a caller-supplied AtomicBoolean acceptOpen. The gate sites at
      * PGServer.java:119 (dispatcher job) and :162 (per-worker IO queue job) both
      * return false when acceptOpen=false.
-     *
+     * <p>
      * Uses JDBC connections to avoid interactions with QuestDB's internal FD tracking,
      * which can cause spurious EBADF / fd-cache assertion failures with raw sockets.
-     *
+     * <p>
      * This test is RED if the gate code at PGServer.java:119/162 is removed
      * and GREEN with the gate in place.
      */
@@ -245,7 +245,7 @@ public class AcceptOpenGateProofTest extends AbstractCairoTest {
     /**
      * Asserts that NO bytes arrive on fd within stallWindowMs. Used to verify the
      * acceptOpen=false gate at HttpServer.java:120/130/149.
-     *
+     * <p>
      * If the gate code were removed, the server would respond and this assertion
      * would fail -- making the test RED.
      */
@@ -292,12 +292,12 @@ public class AcceptOpenGateProofTest extends AbstractCairoTest {
 
     /**
      * Asserts that a JDBC connection to the PGServer times out when gate=closed.
-     *
+     * <p>
      * With acceptOpen=false the PGServer dispatcher (PGServer.java:119) does not call
      * dispatcher.run(), so new connections are never accepted from the OS backlog.
      * The JDBC driver will wait for the PG startup handshake but never receive it,
      * resulting in a socket timeout -- proving the gate blocks in-flight IO.
-     *
+     * <p>
      * If the gate code at PGServer.java:119/162 were removed, the PGServer would
      * respond normally and this assertion would fail -- making the test RED.
      */

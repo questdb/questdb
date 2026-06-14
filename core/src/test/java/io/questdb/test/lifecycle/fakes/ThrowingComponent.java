@@ -6,7 +6,9 @@ import io.questdb.std.ObjList;
 
 import java.util.function.Supplier;
 
-/** Test fake: start() throws a RuntimeException supplied at construction. */
+/**
+ * Test fake: start() throws a RuntimeException supplied at construction.
+ */
 public final class ThrowingComponent implements Component {
 
     private final Supplier<RuntimeException> exceptionFactory;

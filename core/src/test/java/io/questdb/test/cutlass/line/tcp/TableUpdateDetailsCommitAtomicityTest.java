@@ -49,23 +49,23 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Verifies that TableUpdateDetails commit, closeNoLock, and releaseWriter paths
  * hold the role-switch lock around the read-only re-check so that a PRIMARY-to-REPLICA
  * flip cannot race a client commit onto the replica.
- *
+ * <p>
  * RED state (before the fix):
- *   - closeNoLock() and releaseWriter(true) had no read-only check: writerAPI.commit()
- *     was called unconditionally on a read-only node.
- *   - commit() had only a single volatile read with no lock: a flip between the gate-read
- *     and writerAPI.commit() was undetected.
- *
+ * - closeNoLock() and releaseWriter(true) had no read-only check: writerAPI.commit()
+ * was called unconditionally on a read-only node.
+ * - commit() had only a single volatile read with no lock: a flip between the gate-read
+ * and writerAPI.commit() was undetected.
+ * <p>
  * GREEN state (after the fix):
- *   - All three paths acquire the role-switch lock and re-check isReadOnlyMode() inside
- *     the lock before committing; a read-only node never calls writerAPI.commit().
+ * - All three paths acquire the role-switch lock and re-check isReadOnlyMode() inside
+ * the lock before committing; a read-only node never calls writerAPI.commit().
  */
 public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
 
     /**
      * commit() must throw CairoException.authorization("replica access is read-only") when
      * the engine is read-only, and must NOT call writerAPI.commit().
-     *
+     * <p>
      * This exercises the early-out path (engine already read-only before lock acquire) AND
      * the in-lock re-check via the AlwaysReadOnlyEngine: both paths must refuse.
      */
@@ -114,7 +114,7 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
     /**
      * closeNoLock() with commitOnClose=true must NOT call writerAPI.commit() when the engine
      * is read-only.
-     *
+     * <p>
      * RED state (before fix): no read-only check in closeNoLock -> commit is called anyway.
      * GREEN state (after fix): in-lock check sees read-only -> commit is skipped.
      */
@@ -136,7 +136,7 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
 
     /**
      * releaseWriter(true) must NOT call writerAPI.commit() when the engine is read-only.
-     *
+     * <p>
      * RED state (before fix): no read-only check in releaseWriter -> commit is called anyway.
      * GREEN state (after fix): in-lock check sees read-only -> commit is skipped.
      */
@@ -164,7 +164,7 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
      * The in-lock re-check in commit() catches the TOCTOU scenario: engine is PRIMARY on the
      * first isReadOnlyMode() call (early-out passes) but REPLICA on the second call (in-lock
      * re-check). The fix prevents writerAPI.commit() from being invoked in this case.
-     *
+     * <p>
      * RED state (before fix): only one check exists (the early-out), so the flip between the
      * two reads is undetected and writerAPI.commit() is called.
      * GREEN state (after fix): the in-lock re-check catches the flip and throws authorization.
@@ -269,7 +269,9 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
         );
     }
 
-    /** Builds a minimal CairoEngine that always returns read-only mode. */
+    /**
+     * Builds a minimal CairoEngine that always returns read-only mode.
+     */
     private CairoEngine buildReadOnlyEngine() throws Exception {
         String dir = temp.newFolder().getAbsolutePath();
         CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
@@ -281,7 +283,9 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
         };
     }
 
-    /** Builds a minimal CairoEngine that always returns primary (read-write) mode. */
+    /**
+     * Builds a minimal CairoEngine that always returns primary (read-write) mode.
+     */
     private CairoEngine buildPrimaryEngine() throws Exception {
         String dir = temp.newFolder().getAbsolutePath();
         CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
@@ -309,7 +313,9 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
         };
     }
 
-    /** Calls the package-private releaseWriter(boolean) via reflection. */
+    /**
+     * Calls the package-private releaseWriter(boolean) via reflection.
+     */
     private static void callReleaseWriter(WalTableUpdateDetails tud, boolean commit) throws Exception {
         Method m = io.questdb.cutlass.line.tcp.TableUpdateDetails.class.getDeclaredMethod("releaseWriter", boolean.class);
         m.setAccessible(true);

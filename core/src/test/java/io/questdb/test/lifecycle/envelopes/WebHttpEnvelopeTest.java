@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * - starts DEGRADED (acceptOpen=false, socket bound but accept paused)
  * - transitions to READY when engine reaches READY via onDependencyState
  * - hard-deps on BOTH worker-pool-manager AND pg-wire (RESEARCH Section 6 --
- *   FlushQueryCacheJob wiring requires pgServer reference)
+ * FlushQueryCacheJob wiring requires pgServer reference)
  * - switchRole is a NO-OP (D4-08)
  */
 public class WebHttpEnvelopeTest {
@@ -38,13 +38,19 @@ public class WebHttpEnvelopeTest {
                 add("worker-pool-manager");
                 add("pg-wire");
             }};
-            private final ObjList<String> softDeps = new ObjList<String>() {{ add("engine"); }};
+            private final ObjList<String> softDeps = new ObjList<String>() {{
+                add("engine");
+            }};
 
             @Override
-            public ObjList<String> hardRequiredDependencies() { return hardDeps; }
+            public ObjList<String> hardRequiredDependencies() {
+                return hardDeps;
+            }
 
             @Override
-            public String name() { return "web-http"; }
+            public String name() {
+                return "web-http";
+            }
 
             @Override
             public void onDependencyState(String depName, State previous, State current) {
@@ -55,7 +61,9 @@ public class WebHttpEnvelopeTest {
             }
 
             @Override
-            public ObjList<String> softDependencies() { return softDeps; }
+            public ObjList<String> softDependencies() {
+                return softDeps;
+            }
 
             @Override
             public void start(LifecycleContext ctx) {
@@ -66,7 +74,8 @@ public class WebHttpEnvelopeTest {
             }
 
             @Override
-            public void stop() {}
+            public void stop() {
+            }
         };
     }
 

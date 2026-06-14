@@ -40,7 +40,9 @@ public interface LifecycleContext {
      */
     void publish(State next, CharSequence reason);
 
-    /** Current state of any registered component. Volatile read. */
+    /**
+     * Current state of any registered component. Volatile read.
+     */
     State state(String componentName);
 
     /**
@@ -51,7 +53,9 @@ public interface LifecycleContext {
     @Nullable
     Object tokioRuntime();
 
-    /** Cancel a stable-below watch returned by {@link #onStableBelow}. */
+    /**
+     * Cancel a stable-below watch returned by {@link #onStableBelow}.
+     */
     void unwatchStable(long watchId);
 
     /**

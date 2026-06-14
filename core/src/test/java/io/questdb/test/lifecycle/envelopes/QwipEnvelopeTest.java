@@ -33,14 +33,22 @@ public class QwipEnvelopeTest {
         return new Component() {
             private volatile LifecycleContext ctxRef;
             private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
-            private final ObjList<String> hardDeps = new ObjList<String>() {{ add("worker-pool-manager"); }};
-            private final ObjList<String> softDeps = new ObjList<String>() {{ add("engine"); }};
+            private final ObjList<String> hardDeps = new ObjList<String>() {{
+                add("worker-pool-manager");
+            }};
+            private final ObjList<String> softDeps = new ObjList<String>() {{
+                add("engine");
+            }};
 
             @Override
-            public ObjList<String> hardRequiredDependencies() { return hardDeps; }
+            public ObjList<String> hardRequiredDependencies() {
+                return hardDeps;
+            }
 
             @Override
-            public String name() { return "qwip"; }
+            public String name() {
+                return "qwip";
+            }
 
             @Override
             public void onDependencyState(String depName, State previous, State current) {
@@ -51,7 +59,9 @@ public class QwipEnvelopeTest {
             }
 
             @Override
-            public ObjList<String> softDependencies() { return softDeps; }
+            public ObjList<String> softDependencies() {
+                return softDeps;
+            }
 
             @Override
             public void start(LifecycleContext ctx) {
@@ -62,7 +72,8 @@ public class QwipEnvelopeTest {
             }
 
             @Override
-            public void stop() {}
+            public void stop() {
+            }
         };
     }
 

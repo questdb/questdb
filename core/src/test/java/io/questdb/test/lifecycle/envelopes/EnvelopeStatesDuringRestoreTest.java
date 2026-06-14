@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * accept paused) BEFORE the engine reaches READY. This models the scenario where the engine
  * is held in DEGRADED (e.g., during a PITR restore) and the protocol sockets should already
  * be listening.
- *
+ * <p>
  * This is the in-process test analog of the smoke harness's OBS-03 verification
  * (ss -tlnp shows listening sockets before the engine is READY).
  */
@@ -36,7 +36,9 @@ public class EnvelopeStatesDuringRestoreTest {
             private volatile LifecycleContext ctxRef;
             private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
             private final ObjList<String> hardDeps;
-            private final ObjList<String> softDeps = new ObjList<String>() {{ add("engine"); }};
+            private final ObjList<String> softDeps = new ObjList<String>() {{
+                add("engine");
+            }};
 
             {
                 hardDeps = new ObjList<>();
@@ -47,10 +49,14 @@ public class EnvelopeStatesDuringRestoreTest {
             }
 
             @Override
-            public ObjList<String> hardRequiredDependencies() { return hardDeps; }
+            public ObjList<String> hardRequiredDependencies() {
+                return hardDeps;
+            }
 
             @Override
-            public String name() { return name; }
+            public String name() {
+                return name;
+            }
 
             @Override
             public void onDependencyState(String depName, State previous, State current) {
@@ -61,7 +67,9 @@ public class EnvelopeStatesDuringRestoreTest {
             }
 
             @Override
-            public ObjList<String> softDependencies() { return softDeps; }
+            public ObjList<String> softDependencies() {
+                return softDeps;
+            }
 
             @Override
             public void start(LifecycleContext ctx) {
@@ -73,7 +81,8 @@ public class EnvelopeStatesDuringRestoreTest {
             }
 
             @Override
-            public void stop() {}
+            public void stop() {
+            }
         };
     }
 
@@ -130,7 +139,9 @@ public class EnvelopeStatesDuringRestoreTest {
             h.register(engineFake);
 
             ProbeComponent wpmFake = new ProbeComponent("worker-pool-manager",
-                    new ObjList<String>() {{ add("engine"); }}, new ObjList<>());
+                    new ObjList<String>() {{
+                        add("engine");
+                    }}, new ObjList<>());
             h.register(wpmFake);
 
             Component pgWire = newProtocolEnvelopeContract("pg-wire", new String[0]);

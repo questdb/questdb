@@ -42,51 +42,51 @@ public class LifecycleTransitionTableTest {
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
                 // Valid transitions -- the key positive paths from Pattern F.
-                {State.INIT,      State.STARTING,  State.STARTING},
-                {State.STARTING,  State.READY,     State.READY},
-                {State.STARTING,  State.DEGRADED,  State.DEGRADED},
-                {State.STARTING,  State.FAILED,    State.FAILED},
+                {State.INIT, State.STARTING, State.STARTING},
+                {State.STARTING, State.READY, State.READY},
+                {State.STARTING, State.DEGRADED, State.DEGRADED},
+                {State.STARTING, State.FAILED, State.FAILED},
                 // CR-03: STARTING -> STOPPING is valid so close() can cancel an in-flight start
                 // (e.g. SIGTERM during a long-running PITR restore). The component's stop()
                 // path is the only place that runs signalRestoreCancel + awaitRestoreCancel.
-                {State.STARTING,  State.STOPPING,  State.STOPPING},
-                {State.DEGRADED,  State.READY,     State.READY},
-                {State.DEGRADED,  State.SWITCHING, State.SWITCHING},
-                {State.DEGRADED,  State.STOPPING,  State.STOPPING},
-                {State.READY,     State.DEGRADED,  State.DEGRADED},
-                {State.READY,     State.SWITCHING, State.SWITCHING},
-                {State.READY,     State.STOPPING,  State.STOPPING},
-                {State.READY,     State.FAILED,    State.FAILED},
-                {State.SWITCHING, State.READY,     State.READY},
-                {State.SWITCHING, State.DEGRADED,  State.DEGRADED},
-                {State.SWITCHING, State.STOPPING,  State.STOPPING},
-                {State.STOPPING,  State.STOPPED,   State.STOPPED},
+                {State.STARTING, State.STOPPING, State.STOPPING},
+                {State.DEGRADED, State.READY, State.READY},
+                {State.DEGRADED, State.SWITCHING, State.SWITCHING},
+                {State.DEGRADED, State.STOPPING, State.STOPPING},
+                {State.READY, State.DEGRADED, State.DEGRADED},
+                {State.READY, State.SWITCHING, State.SWITCHING},
+                {State.READY, State.STOPPING, State.STOPPING},
+                {State.READY, State.FAILED, State.FAILED},
+                {State.SWITCHING, State.READY, State.READY},
+                {State.SWITCHING, State.DEGRADED, State.DEGRADED},
+                {State.SWITCHING, State.STOPPING, State.STOPPING},
+                {State.STOPPING, State.STOPPED, State.STOPPED},
 
                 // Invalid transitions -- the key negative paths. STOPPED and FAILED are terminal.
-                {State.INIT,      State.READY,     State.INIT},        // INIT -> READY rejected (must go via STARTING)
-                {State.INIT,      State.DEGRADED,  State.INIT},
-                {State.INIT,      State.STOPPING,  State.INIT},
-                {State.INIT,      State.STOPPED,   State.INIT},
-                {State.INIT,      State.SWITCHING, State.INIT},
-                {State.STARTING,  State.STOPPED,   State.STARTING},    // STOPPED only reachable from STOPPING
-                {State.STARTING,  State.SWITCHING, State.STARTING},
-                {State.READY,     State.STOPPED,   State.READY},
-                {State.READY,     State.STARTING,  State.READY},       // no rewind
-                {State.READY,     State.INIT,      State.READY},
-                {State.DEGRADED,  State.STARTING,  State.DEGRADED},
-                {State.DEGRADED,  State.STOPPED,   State.DEGRADED},
-                {State.STOPPING,  State.READY,     State.STOPPING},
-                {State.STOPPING,  State.DEGRADED,  State.STOPPING},
-                {State.STOPPING,  State.SWITCHING, State.STOPPING},
-                {State.STOPPED,   State.STARTING,  State.STOPPED},     // STOPPED is terminal
-                {State.STOPPED,   State.READY,     State.STOPPED},
-                {State.STOPPED,   State.FAILED,    State.STOPPED},     // even FAILED rejected from STOPPED
-                {State.FAILED,    State.READY,     State.FAILED},      // FAILED is terminal (D-11)
-                {State.FAILED,    State.STARTING,  State.FAILED},
-                {State.FAILED,    State.STOPPING,  State.FAILED},
-                {State.FAILED,    State.STOPPED,   State.FAILED},
-                {State.SWITCHING, State.STARTING,  State.SWITCHING},
-                {State.SWITCHING, State.INIT,      State.SWITCHING},
+                {State.INIT, State.READY, State.INIT},        // INIT -> READY rejected (must go via STARTING)
+                {State.INIT, State.DEGRADED, State.INIT},
+                {State.INIT, State.STOPPING, State.INIT},
+                {State.INIT, State.STOPPED, State.INIT},
+                {State.INIT, State.SWITCHING, State.INIT},
+                {State.STARTING, State.STOPPED, State.STARTING},    // STOPPED only reachable from STOPPING
+                {State.STARTING, State.SWITCHING, State.STARTING},
+                {State.READY, State.STOPPED, State.READY},
+                {State.READY, State.STARTING, State.READY},       // no rewind
+                {State.READY, State.INIT, State.READY},
+                {State.DEGRADED, State.STARTING, State.DEGRADED},
+                {State.DEGRADED, State.STOPPED, State.DEGRADED},
+                {State.STOPPING, State.READY, State.STOPPING},
+                {State.STOPPING, State.DEGRADED, State.STOPPING},
+                {State.STOPPING, State.SWITCHING, State.STOPPING},
+                {State.STOPPED, State.STARTING, State.STOPPED},     // STOPPED is terminal
+                {State.STOPPED, State.READY, State.STOPPED},
+                {State.STOPPED, State.FAILED, State.STOPPED},     // even FAILED rejected from STOPPED
+                {State.FAILED, State.READY, State.FAILED},      // FAILED is terminal (D-11)
+                {State.FAILED, State.STARTING, State.FAILED},
+                {State.FAILED, State.STOPPING, State.FAILED},
+                {State.FAILED, State.STOPPED, State.FAILED},
+                {State.SWITCHING, State.STARTING, State.SWITCHING},
+                {State.SWITCHING, State.INIT, State.SWITCHING},
         });
     }
 
