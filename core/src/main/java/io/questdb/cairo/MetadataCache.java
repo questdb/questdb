@@ -112,6 +112,58 @@ public class MetadataCache implements QuietCloseable {
     }
 
     /**
+     * Ensures that every table currently registered with the engine is present
+     * in the cache, hydrating on demand any tables that the background startup
+     * hydrator ({@link #onStartupAsyncHydrator()}) has not processed yet.
+     * <p>
+     * Catalogue queries such as {@code tables()} and {@code all_tables()} read a
+     * {@link MetadataCacheReader#snapshot snapshot} of the cache, which only
+     * contains tables that have already been hydrated. Without this
+     * reconciliation those queries would race the async startup hydrator and
+     * could return an incomplete catalogue immediately after a restart. Calling
+     * this first guarantees the complete set of tables is observed.
+     * <p>
+     * In steady state (cache fully populated) this is a cheap read-only scan:
+     * no write lock is taken, so the {@link MetadataCacheReader#snapshot}
+     * version fast-path remains intact.
+     */
+    public void hydrateAllTables() {
+        final ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
+        engine.getTableTokens(tableTokensSet, false);
+        final ObjList<TableToken> tableTokens = tableTokensSet.getList();
+
+        // First pass: under a single read lock, collect tables that exist in the
+        // registry but are missing from the cache.
+        ObjList<TableToken> missing = null;
+        try (MetadataCacheReader ignore = readLock()) {
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                final TableToken token = tableTokens.getQuick(i);
+                // views are never stored in the cache (they have no _meta file),
+                // skip them so we don't take a write lock on every invocation
+                if (token.isView()) {
+                    continue;
+                }
+                if (tableMap.get(token.getTableName()) == null) {
+                    if (missing == null) {
+                        missing = new ObjList<>();
+                    }
+                    missing.add(token);
+                }
+            }
+        }
+
+        // Second pass: hydrate the missing tables. Take the write lock per table
+        // (matching onStartupAsyncHydrator) so we do not stall ongoing work.
+        if (missing != null) {
+            for (int i = 0, n = missing.size(); i < n; i++) {
+                try (MetadataCacheWriter ignore = writeLock()) {
+                    hydrateTableStartup(missing.getQuick(i), false);
+                }
+            }
+        }
+    }
+
+    /**
      * Begins the read-path by taking a read lock and acquiring a thread-local
      * {@link MetadataCacheReaderImpl}, an implementation of {@link MetadataCacheReader}.
      *

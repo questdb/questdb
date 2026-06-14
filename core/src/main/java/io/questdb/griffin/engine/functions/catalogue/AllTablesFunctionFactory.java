@@ -92,6 +92,9 @@ public class AllTablesFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
+            // Make sure the catalogue is complete even if the background startup
+            // hydrator has not finished yet (see MetadataCache#hydrateAllTables).
+            engine.getMetadataCache().hydrateAllTables();
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
