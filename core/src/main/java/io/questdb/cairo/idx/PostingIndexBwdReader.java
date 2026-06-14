@@ -463,6 +463,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadDenseGenerationCached(int gen) {
             this.isCurrentGenDense = true;
             this.bufferRangeChecked = false;
+            // See loadSparseGenByPrefixSum: clear the EF flag so a previous
+            // gen's EF mode cannot leak past this gen's empty early returns.
+            this.isEFMode = false;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -617,6 +620,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenByPrefixSum(int gen) {
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
+            // Clear the EF flag up front so a previous gen's EF mode never
+            // survives into this gen's load. The early-return "no data for this
+            // key" paths below reset encodedBlockCount and isFlatMode but not
+            // isEFMode; without this, a stale isEFMode makes the build-mode
+            // cache-add guard (hasNext -> advanceToPrevRelevantGen) record a
+            // bogus (gen, posInGen) entry for a gen that has no values for the
+            // key. Replaying that entry then reads the wrong key's posting list
+            // (or an out-of-bounds offset). readDeltaBlockMetadata sets the flag
+            // correctly when this gen actually has data.
+            this.isEFMode = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
@@ -683,6 +696,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenDirect(int gen, int idx) {
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
+            // See loadSparseGenByPrefixSum: clear the EF flag so a previous
+            // gen's EF mode cannot leak past this gen's empty (totalValueCount
+            // == 0) early return and make hasNext re-decode the prior gen.
+            this.isEFMode = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);

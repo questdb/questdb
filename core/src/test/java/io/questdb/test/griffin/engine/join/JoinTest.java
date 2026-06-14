@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -2001,10 +2003,10 @@ public class JoinTest extends AbstractCairoTest {
                             for (long skip2 = 0; skip2 <= total - skip1; skip2++) {
                                 cursor.toTop();
                                 counter.set(skip1);
-                                cursor.skipRows(counter);
+                                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                                 Assert.assertEquals("first skip should fully apply", 0, counter.get());
                                 counter.set(skip2);
-                                cursor.skipRows(counter);
+                                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                                 Assert.assertEquals("second skip should fully apply", 0, counter.get());
                                 long remaining = 0;
                                 while (cursor.hasNext()) {
@@ -2131,6 +2133,305 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testHashJoinRecordNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
+    }
+
+    @Test
+    public void testInSubQueryWithJoinOnClause() throws Exception {
+        // A JOIN nested in a lambda IN sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)",
+        // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
+        // the IN operand, crashing with an NPE in WhereClauseParser.analyzeIn. The sub-query must
+        // compile and filter correctly regardless of join type or how the ON clause is written.
+        // ON-clause sub-queries are unsupported and must reject with "query is not allowed here"
+        // at every nesting depth: the top level already did, while on master the nested case
+        // returned a misleading "Column name expected" (the ON drain consumed the enclosing operand).
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into trades values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z'), ('C', '2020-01-03T00:00:00.000000Z')");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\tts\n" +
+                    "A\t2020-01-01T00:00:00.000000Z\n" +
+                    "B\t2020-01-02T00:00:00.000000Z\n";
+
+            // HORIZON JOIN with shorthand ON (col) -- the exact shape from the bug report
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // explicit equality ON -- used to fail with "Column name expected"
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on s.symbol = r.symbol range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // a second join type with shorthand ON, to cover the shared ON-clause parse path
+            // (ASOF and the INNER/LEFT/... family share the same ON-drain code in parseJoin)
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // INNER join is the common real-world shape and enters the ON case via the direct arm
+            // (not the ASOF/HORIZON fall-through). The hash join in the lambda still filters trades
+            // down to A, B, but its slave row chain (eagerly sized to the join page size, >64 KiB) is
+            // held by the IN sub-query factory until factory close, past the outer cursor close, so
+            // skip assertQuery's post-close memory-usage check (which flags the still-owned RSS as a leak).
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
+
+            // multi-column shorthand ON (a, b) inside the lambda exercises the list-of-columns drain
+            // arm (parseJoin's default case), distinct from the single-column ON (col) above; the same
+            // hash-join slave-chain retention applies, hence noMemoryUsageCheck()
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on (symbol, ts))"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
+
+            // NOT IN exercises the same parse path with a negated operator -- expect only C
+            assertQuery(
+                    "select * from trades where symbol not in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
+
+            // A scalar sub-query operand (not just IN/NOT IN) hits the same shared arg stack: the "="
+            // left-hand side stays on the stack while the inner join's ON clause is parsed. ASOF is a
+            // merge join (<64 KiB RSS), so assertQuery works here -- max(s.ts) over the join is the
+            // last src timestamp, 2020-01-02, matching trades row B.
+            assertQuery(
+                    "select * from trades where ts = " +
+                            "(select max(s.ts) from src s asof join ref r on (symbol))"
+            ).noLeakCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n"
+            );
+
+            // the same for a scalar ">" with an INNER (hash) join; skip the memory-usage check for the
+            // >64 KiB RSS reason above. min(s.ts) over the join is 2020-01-01, so trades after it is B, C.
+            assertQuery(
+                    "select * from trades where ts > " +
+                            "(select min(s.ts) from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
+
+            // ON-clause sub-queries stay unsupported when nested, just like at top level. On master
+            // the nested "IN sub-query in ON" form returned a misleading "Column name expected" ...
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                    92,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // ... and a bare sub-query as the ON criteria returned the same "Column name expected".
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on (select symbol from trades))",
+                    80,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // The same rejection must hold two lambda levels deep. The ON-clause reject fires inside
+            // a parseExpr frame whose scope-stack bottom was raised by the outer lambdas; without the
+            // scope-stack clamp this fix adds, the error-unwind would restore that stale bottom over an
+            // already-cleared stack and surface an internal "Tried to set bottom beyond the top of the
+            // stack" IllegalStateException instead of the positioned SqlException.
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on x.symbol in (select symbol from trades)))",
+                    132,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on (select symbol from trades)))",
+                    120,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A rejected ON-clause sub-query must leave the shared parser state clean: the error
+            // path unwinds through reset() and popArgStackBottom(), so the SAME pooled compiler
+            // compiles the next, valid query without carrying over corrupted arg-stack state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "select * from trades where symbol in " +
+                                    "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("nested ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+                ).withCompiler(compiler).noLeakCheck().timestamp("ts").returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseRejectsDeclaredSubQuery() throws Exception {
+        // ON-clause sub-queries are unsupported and rejected during expression parsing. A declared
+        // variable is a literal at parse time and only expands to its definition later, in
+        // rewriteKnownStatements, so a variable bound to a sub-query (e.g. "@q := (SELECT ...)" used
+        // as "ON x IN @q") used to slip past the parse-time block and compile to surprising cross-join
+        // semantics -- the very footgun the literal rejection prevents. The declared form must now
+        // reject with "query is not allowed here", just like the literal one, at every nesting depth
+        // and in every ON-clause position: operator forms, single-column shorthand "ON (@q)", and
+        // multi-column shorthand "ON (@q, ts)" alike.
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            // declared sub-query in the ON clause of a join nested in an IN sub-query
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q)",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // the same shape at the top level (a pre-existing bypass, now also rejected)
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // a scalar operator with a declared sub-query operand hits the same rewrite path
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select max(symbol) from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol = @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand "ON (@q)" -- declared var expands to a sub-query and is
+            // rejected, instead of leaking a raw "@q" literal as "Invalid column: s.@q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand without parentheses "ON @q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // multi-column shorthand "ON (@q, ts)" -- the column-list branch rejects the sub-query too
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q, ts)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // single-column shorthand nested in an IN sub-query, to prove the reject holds at depth
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q))",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A declared variable bound to a column (not a sub-query) in the ON clause is valid and
+            // must still compile and run -- the reject only fires on sub-query nodes.
+            assertQuery(
+                    "declare @x := s.symbol, @y := r.symbol " +
+                            "select s.symbol from src s join ref r on @x = @y"
+            ).noLeakCheck().noRandomAccess().returns(
+                    "symbol\n" +
+                            "A\n" +
+                            "B\n"
+            );
+
+            // A rejected declared ON-clause sub-query must leave the shared parser state clean: the
+            // SAME pooled compiler compiles the next, valid query without carrying over corrupted state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "declare @q := (select symbol from trades) " +
+                                    "select s.symbol from src s join ref r on s.symbol in @q",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("declared ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select s.symbol from src s join ref r on s.symbol = r.symbol"
+                ).withCompiler(compiler).noLeakCheck().noRandomAccess().returns(
+                        "symbol\n" +
+                                "A\n" +
+                                "B\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseDeclaredColumnShorthand() throws Exception {
+        // A declared variable bound to a bare column may be used as a shorthand join column, exactly
+        // like the inline column it expands to. "ON (@c)" with "@c := symbol" behaves like
+        // "ON (symbol)" -> "src.symbol = ref.symbol"; the variable is expanded before the join-column
+        // dispatch instead of leaking a raw "@c" literal as "Invalid column: s.@c".
+        assertMemoryLeak(() -> {
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\n" +
+                    "A\n" +
+                    "B\n";
+
+            // single-column shorthand with parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // single-column shorthand without parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on @c order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // multi-column shorthand mixing a declared column var with a plain column
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c, ts) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // baseline: the equivalent inline shorthand must produce the same result
+            assertQuery(
+                    "select s.symbol from src s join ref r on (symbol) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+        });
     }
 
     @Test
@@ -2266,6 +2567,80 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("count\n");
+        });
+    }
+
+    @Test
+    public void testJoinContextIsolationInLambdaConstCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
+            execute("CREATE TABLE tc (ckey SYMBOL INDEX, cv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb2 VALUES ('x', 'bx'), ('y', 'by')");
+            execute("INSERT INTO tc VALUES ('x', 'cx'), ('y', 'cy')");
+
+            // optimiseExpressionModels optimises the IN-lambda before the enclosing
+            // query's join pass. The lambda's join pass collects akey='x' into the
+            // transitive-filter const maps; the enclosing pass must not read that
+            // stale entry and derive ckey='x' on tc, which would drop the 'y' row.
+            assertQuery(
+                    """
+                            SELECT a.akey, a.av, c.cv
+                            FROM ta a
+                            JOIN tc c ON c.ckey = a.akey
+                            WHERE a.akey IN (SELECT t1.akey FROM ta t1 CROSS JOIN tb2 t2 WHERE t1.akey = t2.akey AND t1.akey = 'x')
+                               OR a.av = 'ay'
+                            ORDER BY av"""
+            )
+                    .noLeakCheck()
+                    // a join inside an IN (SELECT ...) lambda retains ~131 KiB of factory
+                    // memory until factory close, tripping the 64 KiB post-close RSS check
+                    // for any such query; the test-end leak check still guards real leaks
+                    .noMemoryUsageCheck()
+                    .returns("""
+                            akey\tav\tcv
+                            x\tax\tcx
+                            y\tay\tcy
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinContextIsolationInLambdaPushedPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
+            execute("CREATE TABLE tc (ckey SYMBOL INDEX, cv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb2 VALUES ('x', 'bx'), ('y', 'by')");
+            execute("INSERT INTO tc VALUES ('x', 'cx'), ('y', 'cy')");
+            execute("CREATE VIEW v1 AS (SELECT t1.akey AS k, t1.av FROM ta t1 CROSS JOIN tb2 t2 WHERE t1.akey = t2.akey)");
+
+            // moveWhereInsideSubQueries pushes k='x' into the view's join inside the
+            // IN-lambda and re-derives transitive filters from the pushed predicate.
+            // The const-map entry it writes must not survive into the enclosing
+            // query's join pass, or tc picks up a derived ckey='x' filter and the
+            // 'y' row disappears.
+            assertQuery(
+                    """
+                            SELECT a.akey, a.av, c.cv
+                            FROM ta a
+                            JOIN tc c ON c.ckey = a.akey
+                            WHERE a.akey IN (SELECT k FROM v1 WHERE k = 'x')
+                               OR a.av = 'ay'
+                            ORDER BY av"""
+            )
+                    .noLeakCheck()
+                    // a join inside an IN (SELECT ...) lambda retains ~131 KiB of factory
+                    // memory until factory close, tripping the 64 KiB post-close RSS check
+                    // for any such query; the test-end leak check still guards real leaks
+                    .noMemoryUsageCheck()
+                    .returns("""
+                            akey\tav\tcv
+                            x\tax\tcx
+                            y\tay\tcy
+                            """);
         });
     }
 
@@ -7112,7 +7487,7 @@ public class JoinTest extends AbstractCairoTest {
                 for (int i = 0; i < size + 2; i++) {
                     cursor.toTop();
                     counter.set(i);
-                    cursor.skipRows(counter);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
 
                     Assert.assertEquals(Math.max(i - size, 0), counter.get());
 

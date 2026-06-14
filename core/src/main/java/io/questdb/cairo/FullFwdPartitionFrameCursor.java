@@ -60,6 +60,10 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.rowLo = 0;
                 frame.rowHi = hi;
                 if (hi <= skipTarget) {
+                    // Skip-only skeleton: drop any prior nextSlow()'s decoder ref
+                    // so it can't reach PageFrameAddressCache as a stale pointer.
+                    frame.format = PartitionFormat.NATIVE;
+                    frame.parquetMetaDecoder = null;
                     partitionIndex++;
                     return frame;
                 }
