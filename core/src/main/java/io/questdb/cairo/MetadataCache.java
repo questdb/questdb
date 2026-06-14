@@ -66,7 +66,12 @@ public class MetadataCache implements QuietCloseable {
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMR metaMem = Vm.getCMRInstance();
-    private volatile boolean startupHydrated;
+    // True once the cache is known to hold every registered (non-view) table. Set by
+    // the startup hydrator and by any catalogue reconcile that observes the cache as
+    // already complete; from then on writers keep the cache in sync incrementally, so
+    // hydrateAllTables() short-circuits. Reset by clearCache() so a wiped cache is
+    // reconciled afresh.
+    private volatile boolean cacheComplete;
     private TxReader txReader;
     private long version;
 
@@ -97,18 +102,18 @@ public class MetadataCache implements QuietCloseable {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
                 // acquire a write lock for each table
                 try (MetadataCacheWriter ignore = writeLock()) {
-                    hydrateTableStartup(tableTokens.getQuick(i), false);
+                    hydrateTableStartup(tableTokens.getQuick(i), false, true);
                 }
             }
 
             try (MetadataCacheReader metadataRO = readLock()) {
                 LOG.info().$("metadata hydration completed [tables=").$(metadataRO.getTableCount()).I$();
             }
-            // The startup pass completed: from here writers keep the cache in
-            // sync incrementally, so hydrateAllTables() can skip its reconcile.
-            // Left unset on an abnormal abort below, so the reconcile keeps
-            // running as a self-healing fallback.
-            startupHydrated = true;
+            // The startup pass completed: the cache now holds every table and from
+            // here writers keep it in sync incrementally, so hydrateAllTables() can
+            // skip its reconcile. Left unset on an abnormal abort below, so the
+            // reconcile keeps running as a self-healing fallback.
+            cacheComplete = true;
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$safe(e.getFlyweightMessage()).$();
@@ -129,17 +134,19 @@ public class MetadataCache implements QuietCloseable {
      * could return an incomplete catalogue immediately after a restart. Calling
      * this first guarantees the complete set of tables is observed.
      * <p>
-     * The reconcile is only needed while the one-shot startup hydration is in
-     * progress. Once {@link #onStartupAsyncHydrator()} finishes, writers keep
-     * the cache in sync incrementally, so this method short-circuits on a single
-     * volatile read and adds no per-query overhead (no allocation, no lock). If
-     * the startup pass aborts abnormally the flag stays unset and the reconcile
-     * keeps running as a self-healing fallback.
+     * The reconcile is only needed until the cache is known to be complete. Once
+     * either {@link #onStartupAsyncHydrator()} finishes or a reconcile pass observes
+     * the cache already holding every registered table, writers keep the cache in
+     * sync incrementally, so this method short-circuits on a single volatile read and
+     * adds no per-query overhead (no allocation, no lock). This matters for embedded
+     * engines, which never run the startup hydrator: without it every catalogue query
+     * would reconcile forever. {@link MetadataCacheWriter#clearCache()} resets the
+     * state so a wiped cache is reconciled afresh.
      */
     public void hydrateAllTables() {
-        // Fast path: after startup hydration the cache is authoritative and kept
-        // current by writers, so no reconcile (or allocation/lock) is needed.
-        if (startupHydrated) {
+        // Fast path: once the cache is known complete it is kept current by writers,
+        // so no reconcile (or allocation/lock) is needed.
+        if (cacheComplete) {
             return;
         }
         final ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
@@ -166,13 +173,24 @@ public class MetadataCache implements QuietCloseable {
             }
         }
 
+        if (missing == null) {
+            // The cache already holds every registered table. From here writers keep
+            // it in sync incrementally, so future catalogue queries short-circuit on
+            // the fast path above. This is what spares embedded engines (which never
+            // run the startup hydrator) a per-query reconcile once warmed up; the flag
+            // is cleared by clearCache() so a wiped cache is reconciled again.
+            cacheComplete = true;
+            return;
+        }
+
         // Second pass: hydrate the missing tables. Take the write lock per table
         // (matching onStartupAsyncHydrator) so we do not stall ongoing work.
-        if (missing != null) {
-            for (int i = 0, n = missing.size(); i < n; i++) {
-                try (MetadataCacheWriter ignore = writeLock()) {
-                    hydrateTableStartup(missing.getQuick(i), false);
-                }
+        // We deliberately do NOT set cacheComplete here: a per-table hydration can
+        // fail silently (throwError=false), so the next reconcile re-scans and only
+        // flips the flag once a pass observes nothing missing.
+        for (int i = 0, n = missing.size(); i < n; i++) {
+            try (MetadataCacheWriter ignore = writeLock()) {
+                hydrateTableStartup(missing.getQuick(i), false, true);
             }
         }
     }
@@ -239,7 +257,7 @@ public class MetadataCache implements QuietCloseable {
         return columnVersionReader = new ColumnVersionReader();
     }
 
-    private void hydrateTableStartup(@NotNull TableToken token, boolean throwError) {
+    private void hydrateTableStartup(@NotNull TableToken token, boolean throwError, boolean skipIfCached) {
         if (engine.isTableDropped(token)) {
             // Table writer can still process some transactions when DROP table has already
             // been executed, essentially updating dropped table. We should ignore such updates.
@@ -249,6 +267,18 @@ public class MetadataCache implements QuietCloseable {
         if (token.isView()) {
             // views do not have _meta file
             // view metadata will be added to the cache when the view is compiled
+            return;
+        }
+
+        // Exactly-once hydration per clearCache() epoch. The startup hydrator and
+        // the catalogue reconcile (hydrateAllTables) only need to ensure a table is
+        // present; both run under the write lock. If another pass already hydrated
+        // this table since the last clear, skip the redundant meta-file read. The
+        // write lock makes this check-and-hydrate atomic, so each table is read from
+        // disk exactly once between clears. The writer-driven refresh path
+        // (hydrateTable(TableToken)) passes skipIfCached=false and still re-reads to
+        // pick up newer on-disk metadata.
+        if (skipIfCached && tableMap.get(token.getTableName()) != null) {
             return;
         }
 
@@ -708,6 +738,9 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void clearCache() {
             tableMap.clear();
+            // The cache is no longer complete; force the next catalogue reconcile to
+            // re-hydrate from the registry (see hydrateAllTables()).
+            cacheComplete = false;
         }
 
         /**
@@ -849,7 +882,7 @@ public class MetadataCache implements QuietCloseable {
 
         @Override
         public void hydrateTable(@NotNull TableToken token) {
-            hydrateTableStartup(token, true);
+            hydrateTableStartup(token, true, false);
         }
 
         @Override

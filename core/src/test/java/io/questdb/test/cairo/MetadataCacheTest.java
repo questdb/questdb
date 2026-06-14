@@ -848,11 +848,37 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHydrateAllTablesShortCircuitsAfterStartup() throws Exception {
-        // hydrateAllTables() backs the tables()/all_tables() startup-race fix, but
-        // it must be a no-op once the one-shot startup hydration has completed:
-        // from then on writers keep the cache current, so a per-query reconcile
-        // would be pure overhead. This pins that fast-path contract.
+    public void testClearCacheReenablesReconcile() throws Exception {
+        // clearCache() wipes the cache and must reset the fast-path flag so the next
+        // catalogue reconcile rebuilds the full set. Guards the checkpoint/restore
+        // style window where the registry is ahead of a freshly-cleared cache.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Warm the cache and flip it into the fast path.
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            // Wipe the cache. clearCache() must clear the completeness flag too.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            // The reconcile must run again and rebuild the complete set.
+            engine.getMetadataCache().hydrateAllTables();
+            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+                Assert.assertEquals(2, ro.getTableCount());
+            }
+        });
+    }
+
+    @Test
+    public void testHydrateAllTablesShortCircuitsWhenCacheComplete() throws Exception {
+        // hydrateAllTables() backs the tables()/all_tables() startup-race fix, but it
+        // must be a no-op once the cache is known complete: from then on writers keep
+        // the cache current, so a per-query reconcile would be pure overhead. This pins
+        // that fast-path contract.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -862,15 +888,77 @@ public class MetadataCacheTest extends AbstractCairoTest {
             // MetadataCache into its steady-state fast path.
             engine.getMetadataCache().onStartupAsyncHydrator();
 
-            // Empty the cache to mimic a missing entry post-startup. Because the
-            // startup pass has completed, hydrateAllTables() must short-circuit
-            // and leave the cache untouched (no reconcile, no repopulation).
+            // Evict a single still-registered table directly from the cache (not via
+            // clearCache(), which would reset the fast-path flag). Because the cache was
+            // marked complete, hydrateAllTables() must short-circuit and leave the gap.
+            TableToken a = engine.getTableTokenIfExists("a");
             try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
-                w.clearCache();
+                w.dropTable(a);
             }
             engine.getMetadataCache().hydrateAllTables();
             try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
-                Assert.assertEquals(0, ro.getTableCount());
+                Assert.assertEquals(1, ro.getTableCount());
+                Assert.assertNull(ro.getTable(a));
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotHydratesEachTableExactlyOncePerClearEpoch() throws Exception {
+        // The catalogue read path (MetadataCache.snapshot()) reconciles via
+        // hydrateAllTables(), which reads each table's _meta exactly once per
+        // clearCache() epoch: a table already present in the cache is never re-read.
+        // We prove this through CairoTable object identity - a re-hydration would
+        // replace the instance.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            final TableToken a = engine.getTableTokenIfExists("a");
+            final TableToken b = engine.getTableTokenIfExists("b");
+            final CharSequenceObjSortedHashMap<CairoTable> snap = new CharSequenceObjSortedHashMap<>();
+            long version = -1;
+
+            // Start from an empty cache to mimic the post-restart reconcile window.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+
+            // First snapshot hydrates both tables from disk.
+            version = cache.snapshot(snap, version);
+            CairoTable a1, b1;
+            try (MetadataCacheReader ro = cache.readLock()) {
+                a1 = ro.getTable(a);
+                b1 = ro.getTable(b);
+            }
+            Assert.assertNotNull(a1);
+            Assert.assertNotNull(b1);
+
+            // Repeated snapshots within the same epoch must NOT re-read: the cached
+            // CairoTable instances stay identical.
+            for (int i = 0; i < 3; i++) {
+                version = cache.snapshot(snap, version);
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertSame(a1, ro.getTable(a));
+                    Assert.assertSame(b1, ro.getTable(b));
+                }
+            }
+
+            // A clearCache() opens a new epoch: the next snapshot re-reads from disk,
+            // producing fresh CairoTable instances.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+            cache.snapshot(snap, version);
+            try (MetadataCacheReader ro = cache.readLock()) {
+                CairoTable a2 = ro.getTable(a);
+                CairoTable b2 = ro.getTable(b);
+                Assert.assertNotNull(a2);
+                Assert.assertNotNull(b2);
+                Assert.assertNotSame(a1, a2);
+                Assert.assertNotSame(b1, b2);
             }
         });
     }
