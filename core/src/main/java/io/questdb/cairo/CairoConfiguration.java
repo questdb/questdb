@@ -1071,6 +1071,19 @@ public interface CairoConfiguration {
         return true;
     }
 
+    /**
+     * Experimental: route the {@code ~} regex operator over VARCHAR through the native
+     * (Rust {@code regex} crate) backend bound via the JDK FFM API, instead of
+     * {@code java.util.regex}. Controlled by {@code cairo.sql.varchar.regex.native.enabled}
+     * (default off). When on but a pattern is unsupported by the native engine
+     * (e.g. backreferences/lookaround) the operator falls back to {@code java.util.regex}.
+     *
+     * @return true if the native VARCHAR regex backend should be used when available
+     */
+    default boolean isVarcharRegexNativeEnabled() {
+        return false;
+    }
+
     boolean isWalApplyEnabled();
 
     boolean isWalApplyParallelSqlEnabled();

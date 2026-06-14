@@ -1663,6 +1663,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isVarcharRegexNativeEnabled() {
+        return getDelegate().isVarcharRegexNativeEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
     }
