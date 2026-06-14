@@ -52,6 +52,13 @@ import io.questdb.griffin.engine.ops.Operation;
  * CREATE_USER/ALTER_USER are intentionally NOT listed: they are ACL ops gated by the enterprise ACL
  * permission layer, not the table-write class this gate covers.
  * <p>
+ * The local-maintenance verbs (REPAIR, VACUUM, and snapshot/checkpoint operations) are also
+ * intentionally NOT listed: a read-only replica still runs them as a deliberate replica-admin
+ * allow-list. They rebuild local on-disk artifacts (indexes, partition layout, checkpoints) that the
+ * replica owns and that the downloader regenerates anyway -- they do not externalize a WAL transaction
+ * or change replicated data, so they do not lose an acknowledged write across a demote. Their absence
+ * here is by design, not an omission; do not "fix" it by adding them to the refused set.
+ * <p>
  * One DROP shape is exempt: a DROP that targets the HTTP parquet exporter's temp table. A read-only
  * replica still runs parquet export (it materializes a temp table behind a SELECT), and when its own
  * cleanup fails the admin drops the leftover temp table. That drop is a purely local operation the
