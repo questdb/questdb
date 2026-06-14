@@ -2242,6 +2242,77 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Deterministic regression for the native-memory leak that the concurrent fuzz
+     * {@link #testMultiThreadedO3CoveringLatestByConcurrentReaderFuzz} surfaces
+     * non-deterministically as
+     * {@code Memory usage by tag: NATIVE_INDEX_READER, difference: 512 ... was:<512>}.
+     * The fuzz seed only fixes the data shape, not the thread interleaving, so it
+     * cannot reproduce the race on demand. This test exercises the underlying
+     * lifecycle hazard directly, single-threaded.
+     * <p>
+     * {@link PostingIndexBwdReader} pools idle row cursors in {@code freeCursors}.
+     * To reuse the decode scratch the pooling {@code close()} path RETAINS the
+     * cursor's {@code blockBufferAddr} (BLOCK_CAPACITY longs = 512 bytes, tagged
+     * NATIVE_INDEX_READER); that buffer is only ever reclaimed by the reader's own
+     * {@code close()}, which drains {@code freeCursors}. So if the reader is closed
+     * while a cursor is still checked out -- exactly what a concurrent reseal/reload
+     * does to a reader thread that is mid-query -- the later {@code cursor.close()}
+     * re-pools the cursor (with its block buffer) into a reader that is never
+     * drained again, leaking the block buffer.
+     */
+    @Test
+    public void testRowCursorClosedAfterReaderDoesNotLeakBlockBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_cursor_after_reader_close";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Single key with IRREGULAR gaps so the per-key value blocks
+                    // encode with a non-zero bit width (packed/EF/flat) -- the only
+                    // decode path that allocates blockBufferAddr. Consecutive rowids
+                    // would hit the bitWidth==0 constant-delta fast path and allocate
+                    // nothing, hiding the leak.
+                    long rowId = 0;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7); // varying delta -> non-constant blocks
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                final PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0);
+
+                // Check out a cursor and fully drive it so the decode block buffer
+                // (NATIVE_INDEX_READER) is allocated on this active, un-pooled cursor.
+                final RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                long count = 0;
+                while (cursor.hasNext()) {
+                    cursor.next();
+                    count++;
+                }
+                Assert.assertEquals(4096, count);
+
+                // Reseal/reload race: the owning reader is closed while the cursor is
+                // still checked out. reader.close() drains only the idle pool, so this
+                // active cursor's block buffer is NOT reclaimed here.
+                reader.close();
+
+                // The slow consumer now closes its cursor. The cursor is not yet
+                // pooled and the (closed) reader's freeCursors still has room, so
+                // close() re-pools it and keeps blockBufferAddr -- now unreachable and
+                // never freed. assertMemoryLeak fails with a NATIVE_INDEX_READER leak.
+                cursor.close();
+            }
+        });
+    }
+
     @Test
     public void testReaderHidesHeadEntryTailGensAbovePin() throws Exception {
         assertMemoryLeak(() -> {

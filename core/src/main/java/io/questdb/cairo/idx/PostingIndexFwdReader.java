@@ -193,7 +193,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // Never re-pool into a closed reader: the pool retains blockBufferAddr
+            // (NATIVE_INDEX_READER) for reuse and only the reader's close() drains it,
+            // so a cursor that re-pools after the reader closed would leak its block
+            // buffer. See PostingIndexBwdReader.Cursor.close().
+            if (!isPooled && isOpen() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
@@ -893,7 +897,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // See Cursor.close(): never re-pool into a closed reader.
+            if (!isPooled && isOpen() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
