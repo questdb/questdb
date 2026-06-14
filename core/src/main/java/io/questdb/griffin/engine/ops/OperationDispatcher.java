@@ -33,10 +33,19 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
     public static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
+    // Test seam: when non-null, execute() runs this hook just before it externalizes the operation
+    // via apply(), i.e. inside the role-switch read-lock hold once the fence below is in place. A test
+    // can install a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote either blocks
+    // behind the read hold or expires its tryLock budget, exercising the demote race deterministically
+    // without host load. Null in production (the default): the fire-site is a single static volatile
+    // read folded away by the JIT when no test installed a hook, so execute() stays byte-identical.
+    @TestOnly
+    private static volatile Runnable preApplyObserver;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
@@ -61,6 +70,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
         try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
+            firePreApplyObserver();
             final long result = apply(operation, writer);
             isDone = true;
             return doneFuture.of(result);
@@ -87,6 +97,24 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             if (closeOnDone && isDone) {
                 operation.close();
             }
+        }
+    }
+
+    /**
+     * Test seam: installs a hook execute() fires just before apply(). Pass null to uninstall. The
+     * hook is shared across dispatcher instances (the per-CompiledQuery dispatchers are anonymous and
+     * not individually reachable), so an installer must scope its own pause to the statement under
+     * test. Never set outside tests -- the field defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setPreApplyObserver(Runnable observer) {
+        preApplyObserver = observer;
+    }
+
+    private static void firePreApplyObserver() {
+        final Runnable observer = preApplyObserver;
+        if (observer != null) {
+            observer.run();
         }
     }
 
