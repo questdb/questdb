@@ -237,10 +237,19 @@ public class MetadataCache implements QuietCloseable {
 
         // Second pass: hydrate the missing tables. Take the write lock per table
         // (matching onStartupAsyncHydrator) so we do not stall ongoing work.
-        for (int i = 0, n = missing.size(); i < n; i++) {
-            try (MetadataCacheWriter ignore = writeLock()) {
-                hydrateTableStartup(missing.getQuick(i), false, true);
+        try {
+            for (int i = 0, n = missing.size(); i < n; i++) {
+                try (MetadataCacheWriter ignore = writeLock()) {
+                    hydrateTableStartup(missing.getQuick(i), false, true);
+                }
             }
+        } finally {
+            // hydrateTableStartup() acquires a thread-local Path; release it so a caller
+            // running on a short-lived (non-pooled) thread does not leak the
+            // NATIVE_PATH_THREAD_LOCAL buffer when the thread terminates. Mirrors
+            // onStartupAsyncHydrator(). Only reached on the hydration slow path; once the
+            // cache is warm hydrateAllTables() short-circuits before allocating.
+            Path.clearThreadLocals();
         }
 
         // We could not confirm completeness this pass (some tables were missing).
@@ -308,6 +317,13 @@ public class MetadataCache implements QuietCloseable {
             // locks. throwError=false: swallow a per-table failure so the caller reports
             // the table as missing rather than failing hard (mirrors hydrateAllTables()).
             hydrateTableStartup(token, false, true);
+        } finally {
+            // hydrateTableStartup() acquires a thread-local Path; release it so a caller
+            // running on a short-lived (non-pooled) thread does not leak the
+            // NATIVE_PATH_THREAD_LOCAL buffer when the thread terminates. Mirrors
+            // onStartupAsyncHydrator(); only reached on the hydration slow path, since the
+            // cacheComplete / already-cached checks above short-circuit once warm.
+            Path.clearThreadLocals();
         }
     }
 
