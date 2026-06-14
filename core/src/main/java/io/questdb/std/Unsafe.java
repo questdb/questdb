@@ -258,8 +258,7 @@ public final class Unsafe {
      * and that assigned to memory mapped files.
      */
     public static long getMemUsed() {
-        return UNSAFE.getLongVolatile(null, NON_RSS_MEM_USED_ADDR) +
-                UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
+        return getNonRssMemUsed() + getRssMemUsed();
     }
 
     public static long getMemUsedByTag(int memoryTag) {
@@ -272,6 +271,10 @@ public final class Unsafe {
      */
     public static long getNativeAllocator(int memoryTag) {
         return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
+    }
+
+    public static long getNonRssMemUsed() {
+        return UNSAFE.getLongVolatile(null, NON_RSS_MEM_USED_ADDR);
     }
 
     public static Object getObject(Object o, long offset) {

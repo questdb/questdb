@@ -53,9 +53,9 @@ public class DistinctTest extends AbstractCairoTest {
                 " ORDER BY e0 DESC LIMIT 2")
                 .expectSize()
                 .returns("""
-                        e0\te1\te2\te3\te4
-                        -676\t36\t-97\t2024-01-23T16:57:00.000000Z\t36
-                        -676\t26\t-97\t2024-01-23T16:57:00.000000Z\t26
+                        e0	e1	e2	e3	e4
+                        -676	26	-97	2024-01-23T16:57:00.000000Z	26
+                        -676	36	-97	2024-01-23T16:57:00.000000Z	36
                         """);
     }
 
@@ -67,9 +67,9 @@ public class DistinctTest extends AbstractCairoTest {
         assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
                 .expectSize()
                 .returns("""
-                        e0\te1\te4
-                        -1\t3\t3
-                        -1\t2\t2
+                        e0	e1	e4
+                        -1	2	2
+                        -1	3	3
                         """);
     }
 
@@ -211,7 +211,7 @@ public class DistinctTest extends AbstractCairoTest {
 
             // position 1 == e0 (virtual-only constant): not pushed, same plan as the alias form, no AIOOBE.
             final String notPushedPlan = """
-                    Sort light lo: 2
+                    Encode sort light lo: 2
                       keys: [e0 desc]
                         VirtualRecord
                           functions: [-1,e1,e4]

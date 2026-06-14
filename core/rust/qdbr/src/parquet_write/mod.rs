@@ -308,6 +308,36 @@ mod tests {
         save_to_file(bytes);
     }
 
+    #[test]
+    fn test_symbol_column_populates_dictionary_page_offset() {
+        // Regression guard: a dict-encoded (symbol) column must declare
+        // dictionary_page_offset, with data_page_offset pointing past it.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = vec![0, 1, i32::MIN, 2, 4];
+        let (col_chars, offsets) =
+            serialize_as_symbols(vec!["foo", "bar", "baz", "notused", "plus"]);
+        serialize_to_parquet(&mut buf, col1, col_chars, offsets);
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let col_meta = metadata.row_groups[0].columns()[0].metadata();
+        let dict_offset = col_meta
+            .dictionary_page_offset
+            .expect("symbol column must declare dictionary_page_offset");
+        assert!(
+            col_meta.data_page_offset > dict_offset,
+            "data_page_offset {} must be past dictionary_page_offset {}",
+            col_meta.data_page_offset,
+            dict_offset
+        );
+    }
+
     fn serialize_to_parquet(
         mut buf: &mut Cursor<Vec<u8>>,
         col1: Vec<i32>,
@@ -605,6 +635,13 @@ mod tests {
             columns: vec![ts_col],
         };
 
+        // An unspecified designated timestamp defaults to delta_binary_packed
+        // regardless of sort direction.
+        assert_eq!(
+            crate::parquet_write::schema::to_encodings(&partition)[0],
+            parquet2::encoding::Encoding::DeltaBinaryPacked,
+        );
+
         let sorting_columns = Some(vec![SortingColumn::new(0, true, false)]); // descending=true
         ParquetWriter::new(&mut buf)
             .with_statistics(true)
@@ -664,6 +701,12 @@ mod tests {
             columns: vec![ts_col],
         };
 
+        // An unspecified designated timestamp defaults to delta_binary_packed.
+        assert_eq!(
+            crate::parquet_write::schema::to_encodings(&partition)[0],
+            parquet2::encoding::Encoding::DeltaBinaryPacked,
+        );
+
         let sorting_columns = Some(vec![SortingColumn::new(0, false, false)]); // descending=false
         ParquetWriter::new(&mut buf)
             .with_statistics(true)
@@ -690,6 +733,44 @@ mod tests {
             "Expected descending=false for ascending timestamp"
         );
         assert!(!sorting_cols[0].nulls_first);
+    }
+
+    #[test]
+    fn designated_timestamp_explicit_encoding_overrides_delta_default() {
+        use crate::parquet_write::schema::{to_encodings, ParquetEncodingConfig};
+
+        // ENCODING id 1 == PLAIN (matching the Java ParquetEncoding.ENCODING_*
+        // ids). An explicit user encoding must win over the delta_binary_packed
+        // default applied to an unencoded designated timestamp.
+        let explicit_plain = ParquetEncodingConfig::new(1, 0, -1).raw();
+        let timestamps: Vec<i64> = vec![1000, 2000, 3000];
+        let ts_col = Column::from_raw_data(
+            0,
+            "timestamp",
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            timestamps.len(),
+            timestamps.as_ptr() as *const u8,
+            timestamps.len() * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            true, // designated timestamp
+            true, // ascending
+            explicit_plain,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![ts_col],
+        };
+
+        assert_eq!(
+            to_encodings(&partition)[0],
+            parquet2::encoding::Encoding::Plain,
+        );
     }
 
     #[test]
