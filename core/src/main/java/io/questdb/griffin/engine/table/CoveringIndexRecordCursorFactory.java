@@ -498,8 +498,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void close() {
-            frameCursor = Misc.free(frameCursor);
+            // Free the row cursor BEFORE the frame cursor. The frame cursor owns the
+            // TableReader and Misc.free(frameCursor) returns it to the pool; once pooled,
+            // another thread can acquire+reload the reader and close the per-partition
+            // PostingIndex*Reader that currentRowCursor was checked out from. Closing the
+            // row cursor first guarantees its owning reader is still open (this thread
+            // still holds it), so the cursor re-pools into a live reader rather than a
+            // stale/closed one. Mirrors CoveringPageFrameCursor.close() (closePendingCursor
+            // before freeing frameCursor).
             this.currentRowCursor = Misc.free(currentRowCursor);
+            frameCursor = Misc.free(frameCursor);
         }
 
         @Override

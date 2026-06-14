@@ -101,6 +101,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        assert assertStampOperatingThread();
         reloadConditionally();
 
         // Clamp the index-walked range to the picked chain entry's
@@ -193,7 +194,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            assert assertSameOperatingThread() : "posting index cursor closed off the reader's owning thread";
+            // Never re-pool into a closed reader: the pool retains blockBufferAddr
+            // (NATIVE_INDEX_READER) for reuse and only the reader's close() drains it,
+            // so a cursor that re-pools after the reader closed would leak its block
+            // buffer. This isOpen() guard is a single-threaded leak mitigation, not a
+            // concurrency primitive; cross-thread safety comes from single reader
+            // ownership + CoveringCursor.close() ordering. See
+            // PostingIndexBwdReader.Cursor.close() for the full rationale.
+            if (!isPooled && isOpen() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
@@ -893,7 +902,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            assert assertSameOperatingThread() : "posting index null cursor closed off the reader's owning thread";
+            // See Cursor.close(): the isOpen() guard is a single-threaded leak
+            // mitigation, not a concurrency primitive.
+            if (!isPooled && isOpen() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
