@@ -27,14 +27,17 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.mp.SCSequence;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -115,6 +118,15 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                 "PGPipelineEntry.executeFenced must exist for the pg-wire default-arm FENCED cells",
                 PGPipelineEntry.class.getDeclaredMethod("executeFenced", SqlExecutionContext.class)
         );
+        Assert.assertNotNull(
+                "OperationDispatcher.applyFenced must exist for the WAL UPDATE/ALTER FENCED cells on both"
+                        + " pg-wire and /exec; renaming or removing it must break this matrix",
+                OperationDispatcher.class.getDeclaredMethod(
+                        "applyFenced",
+                        AbstractOperation.class,
+                        TableWriterAPI.class
+                )
+        );
     }
 
     /**
@@ -124,7 +136,7 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     @Test
     public void testHttpExecEntryPointClassifiesEveryType() throws Exception {
         Map<String, Byte> http = new LinkedHashMap<>();
-        // DDL routed to executeDdl -> executeDdlFenced (the C1 fix). FENCED.
+        // DDL routed to executeDdl -> executeDdlFenced. FENCED.
         http.put("CREATE_TABLE", FENCED);
         http.put("CREATE_TABLE_AS_SELECT", FENCED);
         http.put("CREATE_MAT_VIEW", FENCED);
@@ -135,15 +147,16 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // counts. ACQUIRE_GATED.
         http.put("INSERT", ACQUIRE_GATED);
         http.put("INSERT_AS_SELECT", ACQUIRE_GATED);
-        // UPDATE routes to executeUpdate -> cq.execute() -> OperationFutureImpl.of ->
-        // engine.getWriterOrPublishCommand: a POOLED writer the demote drain counts via
-        // getBusyWriterCount, so the drain serializes against an in-flight /exec UPDATE (it cannot
-        // settle to REPLICA while the pooled writer is busy), and the pre-compile gate refuses it
-        // eagerly on an already-read-only node. ACQUIRE_GATED. (This is the cell a reviewer's
-        // hand-built contract list omitted -- pinned here explicitly.)
-        http.put("UPDATE", ACQUIRE_GATED);
-        // ALTER routes to executeAlterTable -> the same OperationFutureImpl pooled-writer path as UPDATE.
-        http.put("ALTER", ACQUIRE_GATED);
+        // UPDATE routes to executeUpdate -> cq.execute() -> OperationDispatcher.execute, which holds the
+        // role-switch read lock with an in-lock isReadOnlyMode() re-check around the inline apply() that
+        // externalizes the operation (mints the WAL sequencer txn). For a WAL table the writer is the
+        // WalWriter pool, NOT the non-WAL pooled writer the demote drain counts, so the earlier "pooled
+        // writer the drain counts" rationale was wrong: only the dispatcher fence makes UPDATE
+        // replicate-or-refuse across a demote. FENCED. (This is the cell a reviewer's hand-built contract
+        // list omitted -- pinned here explicitly.)
+        http.put("UPDATE", FENCED);
+        // ALTER routes to executeAlterTable -> the same OperationDispatcher.execute fence as UPDATE.
+        http.put("ALTER", FENCED);
         // The sendConfirmation-routed write types externalize during compile and reach a writer only
         // through the gated acquire APIs (getTableWriterAPI / getWriter / rename / replaceViewDefinition
         // / the storage-policy + mat-view-refresh writer acquire), refused by the enterprise override.
@@ -200,10 +213,12 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // writer the drain counts. ACQUIRE_GATED.
         put(pg, "INSERT", ACQUIRE_GATED);
         put(pg, "INSERT_AS_SELECT", ACQUIRE_GATED);
-        // UPDATE -> msgExecuteUpdate, ALTER -> msgExecuteDDL: the same pooled-writer
-        // getWriterOrPublishCommand path the /exec UPDATE/ALTER cells take. ACQUIRE_GATED.
-        put(pg, "UPDATE", ACQUIRE_GATED);
-        put(pg, "ALTER", ACQUIRE_GATED);
+        // UPDATE -> msgExecuteUpdate, ALTER -> msgExecuteDDL: both funnel through
+        // OperationDispatcher.execute, which fences the inline apply() under the role-switch read lock
+        // with an in-lock isReadOnlyMode() re-check (the same dispatcher fence the /exec UPDATE/ALTER
+        // cells take). FENCED.
+        put(pg, "UPDATE", FENCED);
+        put(pg, "ALTER", FENCED);
         // COMMIT flushes pending writers inside commit(), which holds the role-switch fence around the
         // writer commit (the pg-wire COMMIT fence). Classified ACQUIRE_GATED: it reaches the writer only
         // under the fenced commit. Note COMMIT is intentionally NOT in the gate refusal set; the commit()
