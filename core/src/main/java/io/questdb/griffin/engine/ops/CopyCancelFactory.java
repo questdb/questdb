@@ -119,7 +119,10 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
                 }
             }
         }
-        cursor.of(executionContext.getCircuitBreaker());
+        // The cancel action has already been executed (circuitBreaker.cancel() / context.cancel()) by this
+        // point, so keep this ack cursor on the no-op breaker: a CANCEL QUERY or a tripped deadline must not
+        // suppress the cancel acknowledgment row after the control operation has been committed.
+        cursor.toTop();
         return cursor;
     }
 

@@ -117,7 +117,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                // Use the un-throttled variant: a per-frame check is already coarse (at most once per
+                // pageFrameMaxRows rows), so the throttle (which exists to keep per-row loops cheap) buys
+                // nothing here and would instead skip ~throttle frames between real checks, effectively
+                // disabling mid-scan cancellation for any realistic table.
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 frameAddressCache.add(frameCount, frame);
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
                 rowCursor = Misc.free(rowCursor);
@@ -152,9 +156,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        // Consult the breaker at open, so a scan over an empty table (zero frames, so the per-frame
-        // check in hasNext never runs) still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        // Consult the breaker at open (un-throttled), so a scan over an empty table (zero frames, so the
+        // per-frame check in hasNext never runs) still observes cancellation even when this cursor is not
+        // the query's first breaker consultation (a throttled check could be skipped in that case).
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);

@@ -270,7 +270,10 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             }
             // Entry is now owned by the task
             entry = null;
-            cursor.of(executionContext.getCircuitBreaker());
+            // The export task is already published (the background job is launched) at this point, so
+            // keep this ack cursor on the no-op breaker: a CANCEL QUERY or a tripped deadline must not
+            // suppress the export-id row while the data-movement operation keeps running.
+            cursor.toTop();
             return cursor;
         } catch (SqlException | CairoException ex) {
             exportIdSink.clear();

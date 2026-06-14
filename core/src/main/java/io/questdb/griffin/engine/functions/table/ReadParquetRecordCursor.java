@@ -248,6 +248,12 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         try {
             return switchToNextRowGroup();
         } catch (CairoException ex) {
+            // A tripped circuit breaker (cancellation/timeout) must keep its classification and
+            // message, not be relabeled as a corrupt-file error, so wire processors that branch on
+            // isInterruption()/isCancellation() still see a cancellation rather than a read error.
+            if (ex.isInterruption() || ex.isCancellation()) {
+                throw ex;
+            }
             // Preserve the underlying decode error (e.g. the native parquet guard message)
             // instead of discarding it. ex shares the thread-local CairoException flyweight
             // that nonCritical() resets, so copy its message to a String first, then append
@@ -316,6 +322,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                         return;
                     }
                 } catch (CairoException ex) {
+                    // A tripped circuit breaker (cancellation/timeout) must keep its classification
+                    // and message instead of being relabeled as a corrupt-file error (see hasNext).
+                    if (ex.isInterruption() || ex.isCancellation()) {
+                        throw ex;
+                    }
                     // Preserve the underlying decode error instead of discarding it (see hasNext).
                     final String cause = ex.getFlyweightMessage().toString();
                     throw CairoException.nonCritical()
