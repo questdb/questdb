@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
@@ -40,6 +41,7 @@ import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -279,6 +281,70 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The async-enqueue fallback fence: when the WAL writer acquire throws EntryUnavailableException (the
+     * pool is exhausted), the catch branch must re-check read-only BEFORE enqueuing the operation. On a
+     * read-only (demoting) node the branch must refuse with the standard authorization error rather than
+     * route the WAL UPDATE through the legacy non-WAL writer pool, which would physical-commit it without
+     * minting a replicated sequencer txn (a silent acked-loss). A non-null event sub-sequence is supplied
+     * so the branch is the async-enqueue path, not the re-throw.
+     */
+    @Test
+    public void testAsyncEnqueueBranchRefusesOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine readOnlyEngine = buildPoolExhaustedWriterEngine(true)) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    Assert.fail("the async-enqueue branch must refuse on a read-only node before enqueuing");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+            }
+        });
+    }
+
+    /**
+     * On a PRIMARY node the async-enqueue branch must remain reachable: the read-only re-check passes and
+     * the branch proceeds to enqueue (it does not refuse a legitimate writer-busy fallback). The enqueue
+     * itself is exercised by the protocol/integration tests; here we assert the fence does not turn the
+     * non-WAL writer-busy fallback into a refusal on a primary node.
+     */
+    @Test
+    public void testAsyncEnqueueBranchProceedsOnPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPoolExhaustedWriterEngine(false)) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false);
+                } catch (Throwable e) {
+                    // The enqueue itself does not complete against a fake table on a bare engine (the
+                    // table-name registry is not built), so the branch fails after the read-only re-check
+                    // passes. The failure must NOT be the read-only refusal -- the point is the primary
+                    // node reached the enqueue rather than refusing it.
+                    final boolean readOnlyRefusal = e instanceof CairoException ce
+                            && ce.isAuthorizationError()
+                            && ce.getMessage() != null
+                            && ce.getMessage().contains("replica access is read-only");
+                    Assert.assertFalse(
+                            "a primary node must not refuse the async-enqueue branch with the read-only error",
+                            readOnlyRefusal
+                    );
+                }
+            }
+        });
+    }
+
     // --- helpers ---
 
     private static void assertReadOnlyRefusal(CairoException e) {
@@ -441,6 +507,28 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
             @Override
             public boolean isReadOnlyMode() {
                 return true;
+            }
+        };
+    }
+
+    /**
+     * Engine whose WAL writer acquire always throws EntryUnavailableException (the pool-exhausted
+     * condition that routes OperationDispatcher.execute into the async-enqueue catch branch). The
+     * isReadOnlyMode() flag is fixed to {@code readOnly} so the catch-branch re-check either refuses
+     * (read-only) or proceeds (primary).
+     */
+    private CairoEngine buildPoolExhaustedWriterEngine(boolean readOnly) throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                throw EntryUnavailableException.instance("pool size exceeded");
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return readOnly;
             }
         };
     }

@@ -143,6 +143,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -3783,8 +3784,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final TableWriterAPI writer = tableWriters.getQuick(i);
                     try {
                         if (writer.getMetadata().isWalEnabled()) {
-                            engine.fireRoleSwitchMintObserver();
-                            writer.truncateSoft();
+                            // Demote write-fence for the parse-time TRUNCATE mint. The writer was
+                            // acquired while the node was still PRIMARY (the eager getTableWriterAPI
+                            // gate passed), but truncateSoft() externalizes a replicated WAL sequencer
+                            // txn; a demote landing between that eager gate and here would mint on an
+                            // already-demoting node whose uploader is gone, acknowledging a truncate the
+                            // peer never receives. Hold the role-switch READ lock across an authoritative
+                            // in-lock isReadOnlyMode() re-check and truncateSoft(): either the flip ran
+                            // first (refuse, the finally below frees the still-uncommitted writers) or
+                            // this runs fully as PRIMARY while the flip's write acquire waits. The fence
+                            // is a no-op for pure-OSS deployments (uncontended read lock, static flag).
+                            if (engine.isReadOnlyMode()) {
+                                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                            }
+                            final Lock lock = engine.getRoleSwitchReadLock();
+                            lock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                }
+                                engine.fireRoleSwitchMintObserver();
+                                writer.truncateSoft();
+                            } finally {
+                                lock.unlock();
+                            }
                         } else {
                             TableToken tableToken = writer.getTableToken();
                             if (engine.lockReaders(tableToken)) {

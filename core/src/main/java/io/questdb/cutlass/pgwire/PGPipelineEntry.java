@@ -1687,10 +1687,33 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             // cached writers to remain in the list until transaction end
                             @SuppressWarnings("resource")
                             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
-                            // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
-                            fireParkedUpdateMintObserver();
-                            tableWriterAPI.commit();
-                            sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                            // Demote write-fence for the parked-writer UPDATE, mirroring the sibling
+                            // commit(pendingWriters) fence. The UPDATE implicitly commits the parked
+                            // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
+                            // fence never sees these writes. Acquire the writer was done while PRIMARY; a
+                            // demote landing before commit()/apply() would externalize an unreplicated
+                            // change the drain never waited on. Hold the role-switch READ lock across an
+                            // authoritative in-lock re-check and the commit()/apply(): either the flip ran
+                            // first (we see read-only and refuse, rolling back the parked writers) or this
+                            // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
+                            if (engine.isReadOnlyMode()) {
+                                rollback(pendingWriters);
+                                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                            }
+                            final Lock lock = engine.getRoleSwitchReadLock();
+                            lock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    rollback(pendingWriters);
+                                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                }
+                                // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                                fireParkedUpdateMintObserver();
+                                tableWriterAPI.commit();
+                                sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                            } finally {
+                                lock.unlock();
+                            }
                         } else {
                             try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                                 fut.await();

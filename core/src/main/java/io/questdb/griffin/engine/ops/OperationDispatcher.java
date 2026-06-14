@@ -94,6 +94,17 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                 throw busyException;
             }
             fireAsyncEnqueueObserver();
+            // Demote write-fence for the async-enqueue fallback. The success path is fenced in
+            // applyFenced, but a WAL writer-pool exhaustion routes here: the enqueue applies the
+            // operation through the legacy non-WAL writer pool (getWriterOrPublishCommand), which mints
+            // no replicated sequencer txn for a WAL table, so on a demoting node the change is
+            // acknowledged but never replicated -- a silent acked-loss. Re-check read-only before
+            // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
+            // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
+            // role-switch-independent robustness gap is left for a dedicated fix.)
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
             OperationFutureImpl future = futurePool.pop();
             future.of(
                     operation,
