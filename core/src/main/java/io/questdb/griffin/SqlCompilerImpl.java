@@ -3783,6 +3783,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final TableWriterAPI writer = tableWriters.getQuick(i);
                     try {
                         if (writer.getMetadata().isWalEnabled()) {
+                            engine.fireRoleSwitchMintObserver();
                             writer.truncateSoft();
                         } else {
                             TableToken tableToken = writer.getTableToken();

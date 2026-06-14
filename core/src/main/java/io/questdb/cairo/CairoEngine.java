@@ -195,6 +195,17 @@ public class CairoEngine implements Closeable, WriterSource {
     // write side is never held across drainWriterPool. A plain OSS deployment that never flips
     // role only ever pays an uncontended read acquire (a single CAS in the common case), so no
     // separate "no flip path" gate is needed.
+    // Test seam: when non-null, fireRoleSwitchMintObserver() runs this hook at a parse-time DDL
+    // externalization (TRUNCATE truncateSoft, RENAME TABLE, ALTER VIEW ... AS, ALTER TABLE ... SET
+    // STORAGE POLICY), i.e. inside the role-switch read-lock hold once the parse-time fences are in
+    // place. A test installs a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote either
+    // blocks behind the read hold or expires its tryLock budget, exercising the demote race
+    // deterministically without host load. These mints externalize inside compile() and never reach
+    // OperationDispatcher, so the OperationDispatcher pre-apply hook cannot pause them; this hook is the
+    // parse-time-DDL counterpart. Null in production (the default): the fire-site is a single static
+    // volatile read with no side effect when no test installed a hook.
+    @TestOnly
+    private static volatile Runnable roleSwitchMintObserver;
     private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
@@ -823,6 +834,18 @@ public class CairoEngine implements Closeable, WriterSource {
             } catch (TableReferenceOutOfDateException e) {
                 // Retry on this exception, all interfaces like HTTP, Pg wire are supposed to retry too.
             }
+        }
+    }
+
+    /**
+     * Fires the parse-time DDL mint hook when a test installed one. A strict no-op (single static
+     * volatile read) in production where the field is null. Called by the parse-time DDL fences inside
+     * their role-switch read-lock hold so a witness can pause the externalization there.
+     */
+    public void fireRoleSwitchMintObserver() {
+        final Runnable observer = roleSwitchMintObserver;
+        if (observer != null) {
+            observer.run();
         }
     }
 
@@ -1872,6 +1895,17 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setRecentWriteTrackerHydrationCallback(Runnable callback) {
         this.recentWriteTrackerHydrationCallback = callback;
+    }
+
+    /**
+     * Test seam: installs a hook fired at a parse-time DDL externalization (inside the role-switch
+     * read-lock hold once the parse-time fences are in place). Pass null to uninstall. The hook is
+     * shared across engines, so an installer must scope its own pause to the statement under test.
+     * Never set outside tests -- the field defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setRoleSwitchMintObserver(Runnable observer) {
+        roleSwitchMintObserver = observer;
     }
 
     @TestOnly

@@ -97,6 +97,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
@@ -128,6 +129,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
+    // Test seam: when non-null, fireParkedUpdateMintObserver() runs this hook just before the parked-writer
+    // UPDATE branch (index < 0) externalizes via commit() + apply(), i.e. inside the role-switch read-lock
+    // hold once the fence below is in place. This branch never reaches OperationDispatcher, so the
+    // dispatcher pre-apply hook cannot pause it; this hook is its counterpart. A test installs a hook that
+    // pauses there so a concurrent PRIMARY-to-REPLICA demote either blocks behind the read hold or expires
+    // its tryLock budget, exercising the demote race deterministically without host load. Null in
+    // production (the default): the fire-site is a single static volatile read with no side effect.
+    @TestOnly
+    private static volatile Runnable parkedUpdateMintObserver;
     private final ObjectPool<PGNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PGNonNullBinaryArrayView::new, 1);
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -1083,6 +1093,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.stateParse = stateParse;
     }
 
+    /**
+     * Test seam: installs a hook the parked-writer UPDATE branch fires just before it externalizes via
+     * commit() + apply(). Pass null to uninstall. The hook is shared across pipeline entries, so an
+     * installer must scope its own pause to the statement under test. Never set outside tests -- the field
+     * defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setParkedUpdateMintObserver(Runnable observer) {
+        parkedUpdateMintObserver = observer;
+    }
+
+    private static void fireParkedUpdateMintObserver() {
+        final Runnable observer = parkedUpdateMintObserver;
+        if (observer != null) {
+            observer.run();
+        }
+    }
+
     private static void outBindComplete(PGResponseSink utf8Sink) {
         outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
     }
@@ -1660,6 +1688,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             @SuppressWarnings("resource")
                             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
                             // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                            fireParkedUpdateMintObserver();
                             tableWriterAPI.commit();
                             sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
                         } else {

@@ -41,6 +41,13 @@ import java.util.concurrent.locks.Lock;
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
     public static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
+    // Test seam: when non-null, execute() runs this hook at the TOP of the EntryUnavailableException
+    // async-enqueue catch branch (the writer-pool-exhausted fallback), once the read-only re-check below
+    // is in place. A test installs a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote can
+    // be coordinated against the async fallback deterministically without host load. Null in production
+    // (the default): the fire-site is a single static volatile read with no side effect.
+    @TestOnly
+    private static volatile Runnable asyncEnqueueObserver;
     // Test seam: when non-null, execute() runs this hook just before it externalizes the operation
     // via apply(), i.e. inside the role-switch read-lock hold once the fence below is in place. A test
     // can install a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote either blocks
@@ -86,6 +93,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             if (eventSubSeq == null) {
                 throw busyException;
             }
+            fireAsyncEnqueueObserver();
             OperationFutureImpl future = futurePool.pop();
             future.of(
                     operation,
@@ -103,6 +111,17 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
     }
 
     /**
+     * Test seam: installs a hook execute() fires at the top of the EntryUnavailableException
+     * async-enqueue catch branch. Pass null to uninstall. The hook is shared across dispatcher
+     * instances, so an installer must scope its own pause to the statement under test. Never set
+     * outside tests -- the field defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setAsyncEnqueueObserver(Runnable observer) {
+        asyncEnqueueObserver = observer;
+    }
+
+    /**
      * Test seam: installs a hook execute() fires just before apply(). Pass null to uninstall. The
      * hook is shared across dispatcher instances (the per-CompiledQuery dispatchers are anonymous and
      * not individually reachable), so an installer must scope its own pause to the statement under
@@ -111,6 +130,13 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
     @TestOnly
     public static void setPreApplyObserver(Runnable observer) {
         preApplyObserver = observer;
+    }
+
+    private static void fireAsyncEnqueueObserver() {
+        final Runnable observer = asyncEnqueueObserver;
+        if (observer != null) {
+            observer.run();
+        }
     }
 
     private static void firePreApplyObserver() {
