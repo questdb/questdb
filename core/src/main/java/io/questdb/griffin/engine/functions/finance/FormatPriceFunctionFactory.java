@@ -64,11 +64,10 @@ public class FormatPriceFunctionFactory implements FunctionFactory {
 
         private final Function decimalForm;
         private final Function tickSize;
-
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
-        private boolean constantTick;
+        private boolean isConstantTick;
         private int constantWidth;
 
         public FormatPriceFunction(Function decimalForm, Function tickSize) {
@@ -92,17 +91,6 @@ public class FormatPriceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            BinaryFunction.super.init(symbolTableSource, executionContext);
-
-            constantTick = tickSize.isConstant();
-
-            if (constantTick) {
-                constantWidth = calculateWidth(tickSize.getInt(null));
-            }
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             return format(rec, sinkA);
         }
@@ -110,6 +98,20 @@ public class FormatPriceFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             return format(rec, sinkB);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+
+            isConstantTick = tickSize.isConstant() || tickSize.isRuntimeConstant();
+
+            if (isConstantTick) {
+                int tick = tickSize.getInt(null);
+                if (tick != Numbers.INT_NULL) {
+                    constantWidth = calculateWidth(tick);
+                }
+            }
         }
 
         private int calculateWidth(int tick) {
@@ -142,11 +144,15 @@ public class FormatPriceFunctionFactory implements FunctionFactory {
             final int tick = tickSize.getInt(rec);
 
             if (Numbers.isNull(decimalPrice) || tick <= 0) {
-                return sink;
+                return null;
             }
 
-            final boolean negative = decimalPrice < 0;
+            final boolean isNegative = decimalPrice < 0;
             final double absolutePrice = Math.abs(decimalPrice);
+
+            if (absolutePrice >= Long.MAX_VALUE) {
+                return null;
+            }
 
             long wholePart = (long) absolutePrice;
 
@@ -161,13 +167,13 @@ public class FormatPriceFunctionFactory implements FunctionFactory {
                 fractionalTicks = 0;
             }
 
-            final int width = constantTick
+            final int width = isConstantTick
                     ? constantWidth
                     : calculateWidth(tick);
 
             final int digits = countDigits(fractionalTicks);
 
-            if (negative) {
+            if (isNegative && (wholePart > 0 || fractionalTicks > 0)) {
                 sink.putAscii('-');
             }
 
@@ -182,5 +188,6 @@ public class FormatPriceFunctionFactory implements FunctionFactory {
 
             return sink;
         }
+
     }
 }
