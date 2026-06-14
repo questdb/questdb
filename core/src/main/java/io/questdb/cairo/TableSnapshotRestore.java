@@ -935,87 +935,84 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Worker body for {@link #rebuildBitmapIndexes}: pulls partition indices from
-     * the shared {@code cursor} and rebuilds the bitmap/posting indexes of every
-     * indexed symbol column in each non-parquet partition, reusing one {@code Path}
-     * across all of them instead of allocating one per (partition, column) task.
-     * The per-column {@link SymbolColumnIndexer} is still created fresh per column
-     * (its writer's index type is fixed at construction), so the index-writer
+     * Worker body for {@link #rebuildBitmapIndexes}: pulls packed
+     * {@code (partitionIndex, colIdx)} items from the shared {@code cursor} and
+     * rebuilds the bitmap/posting index of that one native column, reusing a single
+     * {@code Path} across every item the worker handles instead of allocating one
+     * per (partition, column) task. Distributing individual (partition, column)
+     * items -- rather than a whole partition per worker -- preserves column-level
+     * parallelism for non-partitioned and low-partition-count tables. The work list
+     * is built partition-major, so consecutive items usually share a partition; the
+     * worker caches the last partition's resolved timestamp/rowcount/nameTxn to
+     * avoid re-resolving them per column. The per-column {@link SymbolColumnIndexer}
+     * is still created fresh per column inside
+     * {@link #rebuildBitmapIndexForNativePartitionColumn}, so the index-writer
      * lifecycle is identical to the former one-task-per-column path.
      */
     private void rebuildBitmapIndexesForNativePartitions(
             String tablePathStr,
             int pathTableLen,
-            int columnCount,
             int partitionBy,
             int timestampType,
             boolean isPartitioned,
             AtomicInteger cursor,
-            int partitionCount
+            LongList nativeIndexWork
     ) {
         final Path path = new Path();
         try {
-            int partitionIndex;
-            while (!abortParallelTasks.get() && (partitionIndex = cursor.getAndIncrement()) < partitionCount) {
-                final long partitionTimestamp;
-                final long partitionRowCount;
-                final long partitionNameTxn;
-                if (isPartitioned) {
-                    partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                    partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-                    partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-                } else {
-                    partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                    partitionRowCount = txWriter.getTransientRowCount();
-                    partitionNameTxn = -1L;
+            final int workCount = nativeIndexWork.size();
+            // The work list is partition-major, so a worker pulling consecutive
+            // items usually stays within one partition: cache its resolved metadata
+            // and only re-resolve when the partition actually changes.
+            int cachedPartitionIndex = -1;
+            long partitionTimestamp = 0;
+            long partitionRowCount = 0;
+            long partitionNameTxn = 0;
+            int i;
+            while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < workCount) {
+                final long item = nativeIndexWork.getQuick(i);
+                final int partitionIndex = Numbers.decodeLowInt(item);
+                final int colIdx = Numbers.decodeHighInt(item);
+
+                if (partitionIndex != cachedPartitionIndex) {
+                    if (isPartitioned) {
+                        partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                        partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+                        partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+                    } else {
+                        partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                        partitionRowCount = txWriter.getTransientRowCount();
+                        partitionNameTxn = -1L;
+                    }
+                    cachedPartitionIndex = partitionIndex;
                 }
 
-                if (partitionRowCount <= 0) {
-                    continue;
-                }
-                if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                    // Parquet partitions are validated, regenerated and index-rebuilt
-                    // by prepareParquetPartitions.
-                    continue;
-                }
-
-                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                    // Skip non-indexed and non-symbol columns (deleted columns may
-                    // still carry the indexed flag).
-                    if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
-                        continue;
-                    }
-                    final int writerIndex = tableMetadata.getWriterIndex(colIdx);
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-                    // -1 means the column does not exist in this partition,
-                    // see ColumnVersionReader.getColumnTop().
-                    if (columnTop < 0 || columnTop >= partitionRowCount) {
-                        continue;
-                    }
-                    final String columnName = tableMetadata.getColumnName(colIdx);
-                    final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
-                    final byte indexType = tableMetadata.getColumnIndexType(colIdx);
-                    try {
-                        rebuildBitmapIndexForNativePartitionColumn(
-                                path,
-                                tablePathStr,
-                                pathTableLen,
-                                columnName,
-                                columnNameTxn,
-                                indexBlockCapacity,
-                                indexType,
-                                partitionTimestamp,
-                                partitionNameTxn,
-                                partitionRowCount,
-                                columnTop,
-                                partitionBy,
-                                timestampType
-                        );
-                    } finally {
-                        // POSTING seal() retains Path thread-locals; clear per column.
-                        Path.clearThreadLocals();
-                    }
+                final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                // columnTop validity was checked when the work list was built.
+                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                final String columnName = tableMetadata.getColumnName(colIdx);
+                final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
+                final byte indexType = tableMetadata.getColumnIndexType(colIdx);
+                try {
+                    rebuildBitmapIndexForNativePartitionColumn(
+                            path,
+                            tablePathStr,
+                            pathTableLen,
+                            columnName,
+                            columnNameTxn,
+                            indexBlockCapacity,
+                            indexType,
+                            partitionTimestamp,
+                            partitionNameTxn,
+                            partitionRowCount,
+                            columnTop,
+                            partitionBy,
+                            timestampType
+                    );
+                } finally {
+                    // POSTING seal() retains Path thread-locals; clear per column.
+                    Path.clearThreadLocals();
                 }
             }
         } finally {
@@ -1261,23 +1258,68 @@ public class TableSnapshotRestore implements QuietCloseable {
             return;
         }
 
-        // Same shape as prepareParquetPartitions: instead of one task per
-        // (partition, indexed column) -- which would queue a future/lambda and
-        // allocate a Path per item -- submit one worker per pool thread. Each
-        // worker pulls partition indices from a shared cursor and reuses its Path
-        // across every (partition, column) it rebuilds.
+        // Flatten the (partition, indexed symbol column) space into one work list
+        // on the calling thread, skipping empty partitions, parquet partitions
+        // (handled by prepareParquetPartitions) and columns absent from a given
+        // partition. Each item packs (partitionIndex, colIdx). Workers then pull
+        // individual items from a shared cursor and reuse one Path each: this keeps
+        // the per-worker Path/scratch amortization that motivated this rewrite
+        // (one Path per worker, not one per item) while preserving column-level
+        // parallelism for non-partitioned and low-partition-count tables -- handing
+        // a whole partition to a worker would serialize that partition's columns
+        // on a single thread.
+        final LongList nativeIndexWork = new LongList();
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            final long partitionTimestamp;
+            final long partitionRowCount;
+            if (isPartitioned) {
+                partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                partitionRowCount = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+            } else {
+                partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                partitionRowCount = txWriter.getTransientRowCount();
+            }
+            if (partitionRowCount <= 0) {
+                continue;
+            }
+            if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
+                // Parquet partitions are validated, regenerated and index-rebuilt
+                // by prepareParquetPartitions.
+                continue;
+            }
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // Skip non-indexed and non-symbol columns (deleted columns may
+                // still carry the indexed flag).
+                if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
+                    continue;
+                }
+                final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                // -1 means the column does not exist in this partition,
+                // see ColumnVersionReader.getColumnTop().
+                if (columnTop < 0 || columnTop >= partitionRowCount) {
+                    continue;
+                }
+                nativeIndexWork.add(Numbers.encodeLowHighInts(partitionIndex, colIdx));
+            }
+        }
+
+        final int workCount = nativeIndexWork.size();
+        if (workCount == 0) {
+            return;
+        }
+
         final AtomicInteger cursor = new AtomicInteger(0);
-        final int workerCount = Math.min(threadCount, partitionCount);
+        final int workerCount = Math.min(threadCount, workCount);
         for (int w = 0; w < workerCount; w++) {
             futures.add(submitParallelTask(() -> rebuildBitmapIndexesForNativePartitions(
                     tablePathStr,
                     pathTableLen,
-                    columnCount,
                     partitionBy,
                     timestampType,
                     isPartitioned,
                     cursor,
-                    partitionCount
+                    nativeIndexWork
             )));
         }
     }
