@@ -1128,6 +1128,106 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * End-to-end guard for the bounded {@code mergeKeyValues} decode (the M-1
+     * hardening). The incremental seal sizes its per-stride merge buffer from
+     * each generation's stored per-key counts, then decodes every generation's
+     * encoded block into it. If a sparse generation's stored count is smaller
+     * than what its block actually decodes to -- a corrupt or mismatched gen --
+     * the bounded decode must throw BEFORE overflowing the exactly-sized buffer,
+     * not scribble past it into native heap.
+     * <p>
+     * Reproducer: seal a dense gen 0 over 300 keys (2 strides), append a sparse
+     * gen 1 for the hot key only (so its stride is the single dirty one, keeping
+     * the seal on the incremental branch), then shrink gen 1's stored count for
+     * that key on disk below what its block encodes. The next seal's merge must
+     * reject it rather than overflow. Restores the count afterwards so close()'s
+     * auto-seal re-compacts cleanly.
+     */
+    @Test
+    public void testIncrementalSealRejectsCorruptSparseGenBlockCountOverflow() throws Exception {
+        final int numKeys = 300;        // > 256 -> 2 strides; one dirty stride keeps the incremental branch
+        final int hotKey = 0;
+        final int gen1HotRows = 1_000;  // sparse gen 1 holds this many rows for the hot key
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "corrupt_sparse_gen";
+                final FilesFacade rawFf = configuration.getFilesFacade();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    // Phase 1: one row per key, sealed into a dense gen 0 over every key.
+                    long row = 0;
+                    for (int k = 0; k < numKeys; k++) {
+                        writer.add(k, row++);
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                    Assert.assertEquals("phase 1 must leave a single dense gen 0", 1, writer.getGenCount());
+
+                    // Phase 2: more rows for the hot key only -> sparse gen 1, dirty stride 0.
+                    for (int i = 0; i < gen1HotRows; i++) {
+                        writer.add(hotKey, row++);
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    Assert.assertEquals("phase 2 must append a sparse gen 1", 2, writer.getGenCount());
+
+                    // Resolve sparse gen 1's file offset and active key count from the chain head.
+                    final long gen1FileOffset;
+                    final int gen1ActiveKeyCount;
+                    final long curSealTxn;
+                    final long pkLen = rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                            rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(pk);
+                        PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                        chain.loadHeadEntry(pk, head);
+                        Assert.assertEquals("expected gen 0 + sparse gen 1", 2, head.genCount);
+                        curSealTxn = head.sealTxn;
+                        long gen1Dir = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 1);
+                        gen1FileOffset = pk.getLong(gen1Dir + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+                        int genKeyCount = pk.getInt(gen1Dir + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                        Assert.assertTrue("gen 1 must be sparse (negative KEY_COUNT), got " + genKeyCount, genKeyCount < 0);
+                        gen1ActiveKeyCount = -genKeyCount;
+                    }
+
+                    // Sparse gen layout in .pv: [keyIds: n ints][counts: n ints][...]. Phase 2 wrote
+                    // only the hot key, so it is index 0. Shrink its stored count below the block's.
+                    final long countsBase = gen1FileOffset + (long) gen1ActiveKeyCount * Integer.BYTES;
+                    final long pvLen = rawFf.length(PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn));
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        Assert.assertEquals("gen 1's first key must be the hot key", hotKey, pv.getInt(gen1FileOffset));
+                        Assert.assertEquals("gen 1's stored hot-key count must equal the phase 2 row count",
+                                gen1HotRows, pv.getInt(countsBase));
+                        pv.putInt(countsBase, gen1HotRows / 2); // corrupt: stored count < the block's real count
+                    }
+
+                    // The incremental seal merges gen 0 + gen 1 for the dirty stride; the bounded
+                    // decode must reject the over-long block rather than overflow the merge buffer.
+                    try {
+                        writer.seal();
+                        Assert.fail("incremental seal must reject a sparse gen whose block exceeds its stored count");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "corrupt posting index");
+                    }
+
+                    // Restore the count so the try-with-resources close()'s auto-seal re-compacts
+                    // cleanly -- leaving the corruption would re-throw out of close() and mask the above.
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        pv.putInt(countsBase, gen1HotRows);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * The sealed-sidecar validator bounded the sealed region with
      * {@code sentinel + siSize <= fileLen}, which a corrupt
      * near-{@code Long.MAX_VALUE} sentinel overflows past, marking the file

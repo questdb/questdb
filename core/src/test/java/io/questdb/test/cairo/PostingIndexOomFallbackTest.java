@@ -666,6 +666,11 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                     } finally {
                         Unsafe.setRssMemLimit(savedLimit);
                     }
+                    // Direct path assertion (not inferred from the headroom band):
+                    // the rollback must have streamed the surviving rows per key, not
+                    // truncated to empty -- half the rows survive the cutoff.
+                    Assert.assertTrue("rollback should take the per-key streaming reencode path",
+                            writer.isLastRollbackStreamingForTesting());
                     Assert.assertEquals("rollback should take the real-discard reencode path",
                             cutoff, writer.getMaxValue());
                 }

@@ -199,8 +199,45 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         path.trimTo(pathPartitionLen);
         LPSZ pv = PostingIndexUtils.valueFileName(path, task.getIndexColumnName(),
                 task.getPostingColumnNameTxn(), task.getSealTxn());
-        if (!ff.removeQuiet(pv)) {
+        boolean pvRemoved = ff.removeQuiet(pv);
+        if (!pvRemoved) {
             allRemoved = false;
+        }
+
+        // Post-unlink reuse-race detection. The pre-unlink head read and the
+        // removeQuiet above are not atomic against a concurrent seal, so a writer
+        // that REUSED this sealTxn (peekNextSealTxn does not advance without a
+        // publish) could have created and published .pv.{sealTxn} as the live chain
+        // head inside that window -- in which case removeQuiet just dropped a
+        // chain-referenced file (on Linux it unlinks the name even while the writer
+        // holds the fd open). Re-read the head AND re-stat the .pv to separate that
+        // from the benign case (we deleted a genuine orphan and a later reuse
+        // re-created a fresh, still-present .pv.{sealTxn}): only "head == sealTxn
+        // AND the .pv we removed no longer exists" means we unlinked a live,
+        // non-recreated file. The Windows path is self-protecting -- removeQuiet
+        // fails on an open mapped file, so pvRemoved is false and the .pv survives.
+        // The unlink cannot be undone; this is a loud, no-false-positive REINDEX
+        // diagnostic so a silent deletion cannot surface later as an opaque hard
+        // reader failure. Fully closing the window would require serializing the
+        // unlink against the writer's seal, which this background job does not hold.
+        if (pvRemoved) {
+            path.trimTo(pathPartitionLen);
+            boolean pvStillGone = !ff.exists(PostingIndexUtils.valueFileName(path, task.getIndexColumnName(),
+                    task.getPostingColumnNameTxn(), task.getSealTxn()));
+            path.trimTo(pathPartitionLen);
+            if (pvStillGone) {
+                long postUnlinkHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
+                path.trimTo(pathPartitionLen);
+                if (postUnlinkHeadSealTxn == task.getSealTxn()) {
+                    LOG.critical().$("posting seal purge: sealTxn became the live chain head during the orphan unlink (reuse race) and its .pv was deleted while live; REINDEX this column/partition [table=")
+                            .$(liveToken.getTableName())
+                            .$(", column=").$(task.getIndexColumnName())
+                            .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                            .$(", sealTxn=").$(task.getSealTxn())
+                            .I$();
+                }
+            }
         }
 
         scanAllCoversRemoved = true;

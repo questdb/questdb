@@ -208,6 +208,7 @@ public class PostingIndexWriter implements IndexWriter {
     private int[] genMetaStrideCounts;
     private boolean hasPendingData;
     private boolean hasSpillData;
+    private boolean isLastRollbackStreaming;
     private boolean isLastSealStreaming;
     private boolean isPoisoned;
     private int keyCapacity;
@@ -408,6 +409,7 @@ public class PostingIndexWriter implements IndexWriter {
                 hasPendingData = false;
                 isPoisoned = false;
                 isLastSealStreaming = false;
+                isLastRollbackStreaming = false;
                 activeKeyCount = 0;
                 coverCount = 0;
                 // Drop the cover-extent cache so a pooled reopen for a different
@@ -963,11 +965,24 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Which path the last seal() that reached the fast-vs-streaming selection
-     * took: {@code true} for the per-key streaming compaction, {@code false} for
-     * the fast stride-decoding path. Lets a test assert the RSS pre-flight
-     * actually routed to streaming rather than inferring it from a
-     * regression-fragile headroom band.
+     * Whether the last rollback re-encoded the surviving rows via the per-key
+     * streaming path ({@code true}) rather than truncating to an empty index
+     * ({@code false}, every value rolled back). Lets a test assert the rollback
+     * actually streamed the survivors instead of inferring it from a
+     * regression-fragile headroom band. Reset on close/reopen.
+     */
+    @TestOnly
+    public boolean isLastRollbackStreamingForTesting() {
+        return isLastRollbackStreaming;
+    }
+
+    /**
+     * Which path the last full seal() that reached the fast-vs-streaming
+     * selection took: {@code true} for the per-key streaming compaction,
+     * {@code false} for the fast stride-decoding path -- and {@code false} for an
+     * incremental seal, which is neither (it copies clean strides and merges only
+     * the dirty ones). Lets a test assert the RSS pre-flight actually routed to
+     * streaming rather than inferring it from a regression-fragile headroom band.
      */
     @TestOnly
     public boolean isLastSealStreamingForTesting() {
@@ -2359,7 +2374,10 @@ public class PostingIndexWriter implements IndexWriter {
                 long encodedAddr = strideAddr + deltaHeaderSize + dataOff;
 
                 long destAddr = strideValsAddr + keyOffsets[j] * Long.BYTES;
-                PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
+                // Bound the decode by the gen-dir count -- strideValsAddr is sized
+                // from the same per-key counts, so a corrupt DELTA block whose
+                // internal value count exceeds count would otherwise overflow it.
+                PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx, count);
                 keyOffsets[j] += count;
             }
         }
@@ -2442,7 +2460,10 @@ public class PostingIndexWriter implements IndexWriter {
 
             int j = keyId - strideStart;
             long destAddr = strideValsAddr + keyOffsets[j] * Long.BYTES;
-            PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
+            // Bound the decode by the gen-dir count -- strideValsAddr is sized from
+            // the same per-key counts, so a corrupt block whose internal value count
+            // exceeds count would otherwise overflow it.
+            PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx, count);
             keyOffsets[j] += count;
         }
     }
@@ -3749,7 +3770,9 @@ public class PostingIndexWriter implements IndexWriter {
                         long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
                         int deltaHdrSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
                         long encodedAddr = strideAddr + deltaHdrSize + dataOffset;
-                        PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
+                        // Bound the decode by the gen-dir count; see the sparse-gen
+                        // decode below for the buffer-overflow rationale.
+                        PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx, count);
                         totalCount += count;
                     }
                 }
@@ -3775,7 +3798,14 @@ public class PostingIndexWriter implements IndexWriter {
 
             long dataOffset = Unsafe.getLong(offsetsBase + (long) idx * Long.BYTES);
             long encodedAddr = genAddr + headerSize + dataOffset;
-            PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr + (long) totalCount * Long.BYTES, decodeCtx);
+            // Bound the decode by the gen-dir count. destAddr is a slice of
+            // mergedValuesAddr, which sealIncremental sizes from these same per-key
+            // counts (totalCountsAddr); a corrupt block whose internal value count
+            // exceeds count would otherwise overflow that exactly-sized buffer.
+            // (The FLAT branches above read their counts from the prefix array --
+            // the same source the sizing sweep folds in -- so they cannot exceed
+            // the buffer and need no separate bound.)
+            PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr + (long) totalCount * Long.BYTES, decodeCtx, count);
             totalCount += count;
         }
 
@@ -4529,9 +4559,11 @@ public class PostingIndexWriter implements IndexWriter {
                     int newKeyCount = filterCountsForRollback(maxValueCutoff, totalCountsAddr, keyBuffer, maxKeyCount);
                     if (newKeyCount == 0) {
                         // Every value was above the cutoff; nothing survives.
+                        isLastRollbackStreaming = false;
                         truncate();
                         setMaxValue(maxValue);
                     } else {
+                        isLastRollbackStreaming = true;
                         keyCount = newKeyCount;
                         // Mark the reencode started BEFORE staging the covered
                         // sidecars -- openSidecarFiles can throw (ENOSPC/EMFILE) and
@@ -4555,7 +4587,17 @@ public class PostingIndexWriter implements IndexWriter {
                             // captureCoverEndOffsets snapshots stale old-txn append
                             // offsets into the new chain entry and readers probe a
                             // missing .pc. The O3 flow re-seals afterwards and
-                            // rebuilds the .pc there.
+                            // rebuilds the .pc there before this rollback entry is
+                            // ever exposed to a reader (the reseal supersedes it
+                            // within the same writer-locked O3 op). Asserted because
+                            // a path-based cover that ever reached here (covers live
+                            // but no partition path) would SILENTLY skip rebuilding
+                            // its real .pc; a genuine addr-based cover leaves
+                            // coveredColumnNames empty (only coveredColumnAddrs set).
+                            // Exercised by PostingIndexO3ConcurrencyFuzzTest's
+                            // covering O3/squash/parquet-spill rollback fuzz.
+                            assert coveredColumnNames.size() == 0
+                                    : "addr-based cover rollback reached with path-based cover names but no partition path; its .pc would not be rebuilt";
                             closeSidecarMems();
                         }
                         reencodeWithPerKeyStreaming(newSealTxn, maxValue, totalCountsAddr, keyBuffer, maxKeyCount, true);
@@ -5147,9 +5189,12 @@ public class PostingIndexWriter implements IndexWriter {
         final long oldSealTxn = sealTxn;
         final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
         reencodeAllGenerations(newSealTxn, maxValue, maxValue);
-        // Skip when reencode bypassed via truncate(): that path already
-        // recorded its own purge entry.
-        if (sealTxn != oldSealTxn) {
+        // Record the superseded oldSealTxn for purge -- but ONLY for the normal
+        // reencode path. When every value was rolled back, reencodeAllGenerations
+        // routes through truncate(), which already recorded oldSealTxn and left
+        // genCount == 0; recording again here would queue a redundant (no-op)
+        // purge for the same file. The reencode path always leaves genCount == 1.
+        if (genCount > 0 && sealTxn != oldSealTxn) {
             recordPostingSealPurge(oldSealTxn);
         }
     }
@@ -5517,6 +5562,12 @@ public class PostingIndexWriter implements IndexWriter {
                 return;
             }
         }
+
+        // Committed to the incremental path now (every fallback above returns via
+        // sealFull, which sets this in reencodeAllGenerations). The incremental seal
+        // is neither the fast nor the streaming full-seal path, so clear the flag
+        // rather than leaving a prior full seal's value stale for the test hook.
+        isLastSealStreaming = false;
 
         long strideIndexBuf = 0;
         long bpTrialBuf = 0;
