@@ -92,6 +92,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        assert assertStampOperatingThread();
         reloadConditionally();
 
         // See PostingIndexFwdReader.getCursor: clamp the index-walked
@@ -177,7 +178,27 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            assert assertSameOperatingThread() : "posting index cursor closed off the reader's owning thread";
+            // Only return to the idle pool while the owning reader is still open.
+            // The pool retains blockBufferAddr (NATIVE_INDEX_READER) for reuse and
+            // relies on the reader's close() draining freeCursors to reclaim it; a
+            // cursor that re-pools after the reader was closed would never be drained
+            // again and would leak its block buffer. When the reader is closed,
+            // release everything immediately instead.
+            //
+            // NOTE: this isOpen() guard is a single-threaded leak mitigation
+            // (defense-in-depth), NOT a concurrency primitive. isOpen() reads a
+            // non-volatile fd and "check isOpen() then freeCursors.add(this)" is a
+            // non-atomic check-then-act on a plain (unsynchronized) ObjList, so it is
+            // only correct when this close() runs on the thread that owns the reader.
+            // Cross-thread safety comes from elsewhere: a TableReader is owned by a
+            // single thread between pool acquire/release and its reseal/reload
+            // (TableReader.reloadColumnAt) runs on that owner, while
+            // CoveringIndexRecordCursorFactory.CoveringCursor.close() frees the row
+            // cursor BEFORE the frame cursor -- i.e. before the TableReader is
+            // released back to the pool where another thread could reload it -- so
+            // this close() always runs intra-thread while the reader is still open.
+            if (!isPooled && isOpen() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 if (efRankDirAddr != 0) {
@@ -463,6 +484,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadDenseGenerationCached(int gen) {
             this.isCurrentGenDense = true;
             this.bufferRangeChecked = false;
+            // See loadSparseGenByPrefixSum: clear the EF flag so a previous
+            // gen's EF mode cannot leak past this gen's empty early returns.
+            this.isEFMode = false;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -617,6 +641,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenByPrefixSum(int gen) {
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
+            // Clear the EF flag up front so a previous gen's EF mode never
+            // survives into this gen's load. The early-return "no data for this
+            // key" paths below reset encodedBlockCount and isFlatMode but not
+            // isEFMode; without this, a stale isEFMode makes the build-mode
+            // cache-add guard (hasNext -> advanceToPrevRelevantGen) record a
+            // bogus (gen, posInGen) entry for a gen that has no values for the
+            // key. Replaying that entry then reads the wrong key's posting list
+            // (or an out-of-bounds offset). readDeltaBlockMetadata sets the flag
+            // correctly when this gen actually has data.
+            this.isEFMode = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
@@ -683,6 +717,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenDirect(int gen, int idx) {
             this.isCurrentGenDense = false;
             this.bufferRangeChecked = false;
+            // See loadSparseGenByPrefixSum: clear the EF flag so a previous
+            // gen's EF mode cannot leak past this gen's empty (totalValueCount
+            // == 0) early return and make hasNext re-decode the prior gen.
+            this.isEFMode = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
@@ -903,7 +941,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            assert assertSameOperatingThread() : "posting index null cursor closed off the reader's owning thread";
+            // See Cursor.close(): the isOpen() guard is a single-threaded leak
+            // mitigation (it avoids re-pooling into a closed reader and leaking the
+            // retained blockBufferAddr, NATIVE_INDEX_READER), not a concurrency
+            // primitive. Cross-thread safety relies on single reader ownership +
+            // CoveringCursor.close() ordering, not on this guard.
+            if (!isPooled && isOpen() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 if (efRankDirAddr != 0) {

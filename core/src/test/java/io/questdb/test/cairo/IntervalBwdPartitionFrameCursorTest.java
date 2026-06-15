@@ -37,6 +37,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -215,6 +216,77 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 """, timestampType.getTypeName());
 
         testIntervals(PartitionBy.NONE, increment, N, expected, 3);
+    }
+
+    @Test
+    public void testCalculateSizeUnboundedLowIntervalAcrossPartitions() throws Exception {
+        // Regression for an off-by-one (and early-exit) in calculateSize() on an unbounded-low
+        // interval ("ts < X", intervalLo == Long.MIN_VALUE). The frame size is hi - lo with lo the
+        // exclusive lower index, which must be -1 when the interval reaches below row 0; a previous
+        // ": 0" dropped row 0 and -- because that also routes to "skip interval" instead of "skip
+        // partition" -- stopped after the first matching partition, so calculateSize() diverged from
+        // what next() iterates. Three day-partitions with the cut inside the middle one exercise both
+        // the partially-cut partition and a wholly-included lower one; with convertToParquet the cut
+        // lands inside a parquet partition.
+        assertMemoryLeak(() -> {
+            final long increment = timestampType.getDriver().fromHours(1);
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .timestamp(timestampType.getTimestampType());
+            AbstractCairoTest.create(model);
+
+            long timestamp = timestampType.getDriver().parseFloorLiteral("2024-01-01T00:00:00.000Z");
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                // 72 hourly rows across three day-partitions (2024-01-01..03).
+                for (int i = 0; i < 72; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putInt(0, i);
+                    row.append();
+                    timestamp += increment;
+                }
+                writer.commit();
+            }
+            if (convertToParquet) {
+                // Converts the two non-active partitions; 2024-01-03 stays native, so the cut below
+                // lands inside parquet 2024-01-02.
+                execute("alter table x convert partition to parquet where timestamp >= 0;");
+            }
+
+            // "ts < 2024-01-02T05:00:00" -> [Long.MIN_VALUE, 2024-01-02T04:00:00] (edges inclusive).
+            // Matches all 24 rows of 2024-01-01 plus 00:00..04:00 of 2024-01-02 = 29 rows.
+            intervals.clear();
+            intervals.add(Long.MIN_VALUE);
+            intervals.add(timestampType.getDriver().parseFloorLiteral("2024-01-02T04:00:00.000Z"));
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                            new RuntimeIntervalModel(
+                                    ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
+                                    reader.getPartitionedBy(),
+                                    intervals
+                            ),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
+                cursor.of(reader, null);
+
+                // Ground truth: what next() actually iterates (the path the bug did not touch).
+                long iterated = 0;
+                PartitionFrame frame;
+                while ((frame = cursor.next()) != null) {
+                    iterated += frame.getRowHi() - frame.getRowLo();
+                }
+                Assert.assertEquals(29L, iterated);
+
+                // calculateSize() must agree with the iteration. The pre-fix ": 0" returned 4 here
+                // (off by one on the cut partition, then stopping before the wholly-included one).
+                cursor.toTop();
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.calculateSize(counter);
+                Assert.assertEquals(iterated, counter.get());
+            }
+        });
     }
 
     @Test

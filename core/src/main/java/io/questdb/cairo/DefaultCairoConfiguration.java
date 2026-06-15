@@ -1168,8 +1168,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return 8;
+    public long getSqlParquetCacheMemorySize() {
+        return 256L * Numbers.SIZE_1MB;
     }
 
     @Override

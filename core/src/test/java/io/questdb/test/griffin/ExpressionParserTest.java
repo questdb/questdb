@@ -901,6 +901,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDottedNameAfterOperatorFailsCleanly() {
+        // A dotted name whose qualifier is a pending operator (not an identifier) used to
+        // blow up with an internal ClassCastException, e.g. the demo-box scanner probes
+        // "tables()/.env" and "tables()/.git/HEAD" (parsed as the division tables() / .env).
+        // It must now fail with a clean SqlException instead.
+        assertFail("tables()/.env", 10, "'.' is unexpected here");
+        assertFail("tables()/.git/HEAD", 10, "'.' is unexpected here");
+        assertFail("tables() / .env", 12, "'.' is unexpected here");
+        assertFail("1/.env", 3, "'.' is unexpected here");
+    }
+
+    @Test
     public void testDotDereferenceFunction() throws SqlException {
         x("a.b 1 2 3 f .", "(a.b).f(1,2,3)");
     }
