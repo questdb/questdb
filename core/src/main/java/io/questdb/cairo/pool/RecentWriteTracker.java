@@ -137,25 +137,6 @@ public class RecentWriteTracker {
         );
     }
 
-    private WriteStats getOrCreateStats(
-            @NotNull TableToken tableToken,
-            long timestamp,
-            long rowCount,
-            long writerTxn,
-            long sequencerTxn,
-            long walTimestamp,
-            long tableMinTimestamp,
-            long tableMaxTimestamp
-    ) {
-        WriteStats stats = writeStats.get(tableToken);
-        if (stats == null) {
-            WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp);
-            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
-            stats = existing != null ? existing : newStats;
-        }
-        return stats;
-    }
-
     /**
      * Returns the most recently written tables, sorted by write time (most recent first).
      * <p>
@@ -310,33 +291,6 @@ public class RecentWriteTracker {
     }
 
     /**
-     * Records that WAL rows have been processed (applied to the table).
-     * <p>
-     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
-     * Called after successful WAL transaction application.
-     *
-     * @param tableToken       the table whose WAL was processed
-     * @param seqTxn           the sequencer transaction number being processed
-     * @param walRowCount      the number of WAL rows that were processed (before dedup)
-     * @param dedupRowsRemoved the number of duplicate rows removed during dedup
-     */
-    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long dedupRowsRemoved) {
-        try {
-            WriteStats stats = getOrCreateStats(tableToken);
-            stats.touch();
-            // Only subtract if seqTxn is above the floor (rows added after tracking started)
-            if (seqTxn > stats.getFloorSeqTxn()) {
-                stats.walRowCount.add(-walRowCount);
-            }
-            if (dedupRowsRemoved > 0) {
-                stats.dedupRowCount.add(dedupRowsRemoved);
-            }
-        } catch (Throwable th) {
-            LOG.error().$("could not record WAL processed [table=").$(tableToken).$(", error=").$(th).I$();
-        }
-    }
-
-    /**
      * Records a replica download batch, updating sequencerTxn, walTimestamp, and walRowCount.
      * <p>
      * This method is called by replicas when WAL data is downloaded from the object store.
@@ -364,6 +318,33 @@ public class RecentWriteTracker {
             }
         } catch (Throwable th) {
             LOG.error().$("could not record replica download [table=").$(tableToken).$(", error=").$(th).I$();
+        }
+    }
+
+    /**
+     * Records that WAL rows have been processed (applied to the table).
+     * <p>
+     * This decrements the pending WAL row count (if seqTxn > floor) and accumulates dedup row count.
+     * Called after successful WAL transaction application.
+     *
+     * @param tableToken       the table whose WAL was processed
+     * @param seqTxn           the sequencer transaction number being processed
+     * @param walRowCount      the number of WAL rows that were processed (before dedup)
+     * @param dedupRowsRemoved the number of duplicate rows removed during dedup
+     */
+    public void recordWalProcessed(@NotNull TableToken tableToken, long seqTxn, long walRowCount, long dedupRowsRemoved) {
+        try {
+            WriteStats stats = getOrCreateStats(tableToken);
+            stats.touch();
+            // Only subtract if seqTxn is above the floor (rows added after tracking started)
+            if (seqTxn > stats.getFloorSeqTxn()) {
+                stats.walRowCount.add(-walRowCount);
+            }
+            if (dedupRowsRemoved > 0) {
+                stats.dedupRowCount.add(dedupRowsRemoved);
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not record WAL processed [table=").$(tableToken).$(", error=").$(th).I$();
         }
     }
 
@@ -559,6 +540,25 @@ public class RecentWriteTracker {
         }
     }
 
+    private WriteStats getOrCreateStats(
+            @NotNull TableToken tableToken,
+            long timestamp,
+            long rowCount,
+            long writerTxn,
+            long sequencerTxn,
+            long walTimestamp,
+            long tableMinTimestamp,
+            long tableMaxTimestamp
+    ) {
+        WriteStats stats = writeStats.get(tableToken);
+        if (stats == null) {
+            WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp);
+            WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
+            stats = existing != null ? existing : newStats;
+        }
+        return stats;
+    }
+
     private int partitionDescending(ObjList<TableToken> tokens, LongList timestamps, int lo, int hi) {
         long pivot = timestamps.getQuick(hi);
         int i = lo - 1;
@@ -637,13 +637,13 @@ public class RecentWriteTracker {
         private final AtomicLong walTimestamp;
         // Write amplification histogram - tracks ratio of physical rows written to logical rows
         private final DoubleHistogram writeAmplificationHistogram = new DoubleHistogram(2);
+        private volatile long lastActivityTimestamp;
+        // Writer fields - updated by TableWriter only
+        private volatile long rowCount;
         // Table data timestamps - min/max timestamp values of actual data in the table (updated during WAL merge)
         // Protected by mergeStatsLock
         private long tableMaxTimestamp;
         private long tableMinTimestamp;
-        private volatile long fallbackTimestamp;
-        // Writer fields - updated by TableWriter only
-        private volatile long rowCount;
         private volatile long timestamp;
         private volatile long writerTxn;
 
@@ -655,7 +655,7 @@ public class RecentWriteTracker {
             this.walTimestamp = new AtomicLong(walTimestamp);
             this.tableMinTimestamp = tableMinTimestamp;
             this.tableMaxTimestamp = tableMaxTimestamp;
-            this.fallbackTimestamp = MicrosecondClockImpl.INSTANCE.getTicks();
+            this.lastActivityTimestamp = MicrosecondClockImpl.INSTANCE.getTicks();
             this.batchSizeHistogram.setAutoResize(true);
             this.mergeThroughputHistogram.setAutoResize(true);
             this.txnSizeHistogram.setAutoResize(true);
@@ -757,52 +757,6 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the maximum timestamp of actual data in the table.
-         * <p>
-         * This is the highest timestamp value present in the table's data,
-         * updated when WAL transactions are merged into the table.
-         *
-         * @return max data timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
-         */
-        public long getTableMaxTimestamp() {
-            mergeStatsLock.readLock().lock();
-            try {
-                return tableMaxTimestamp;
-            } finally {
-                mergeStatsLock.readLock().unlock();
-            }
-        }
-
-        /**
-         * Returns the minimum timestamp of actual data in the table.
-         * <p>
-         * This is the lowest timestamp value present in the table's data,
-         * updated when WAL transactions are merged into the table.
-         *
-         * @return min data timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
-         */
-        public long getTableMinTimestamp() {
-            mergeStatsLock.readLock().lock();
-            try {
-                return tableMinTimestamp;
-            } finally {
-                mergeStatsLock.readLock().unlock();
-            }
-        }
-
-        /**
-         * Returns whether the last replica download batch was limited and more data is available.
-         * <p>
-         * This is only populated on replicas via {@link RecentWriteTracker#recordReplicaDownload}.
-         * On primaries, this will always return false.
-         *
-         * @return true if more data is available to download, false otherwise
-         */
-        public boolean isReplicaMorePending() {
-            return replicaMorePending.get();
-        }
-
-        /**
          * Returns the timestamp of the last WAL write in microseconds.
          *
          * @return timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
@@ -822,7 +776,7 @@ public class RecentWriteTracker {
             long ts = timestamp;
             long walTs = walTimestamp.get();
             if (ts == Numbers.LONG_NULL && walTs == Numbers.LONG_NULL) {
-                return fallbackTimestamp;
+                return lastActivityTimestamp;
             }
             return Math.max(ts, walTs);
         }
@@ -928,6 +882,40 @@ public class RecentWriteTracker {
          */
         public long getSequencerTxn() {
             return sequencerTxn.get();
+        }
+
+        /**
+         * Returns the maximum timestamp of actual data in the table.
+         * <p>
+         * This is the highest timestamp value present in the table's data,
+         * updated when WAL transactions are merged into the table.
+         *
+         * @return max data timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
+         */
+        public long getTableMaxTimestamp() {
+            mergeStatsLock.readLock().lock();
+            try {
+                return tableMaxTimestamp;
+            } finally {
+                mergeStatsLock.readLock().unlock();
+            }
+        }
+
+        /**
+         * Returns the minimum timestamp of actual data in the table.
+         * <p>
+         * This is the lowest timestamp value present in the table's data,
+         * updated when WAL transactions are merged into the table.
+         *
+         * @return min data timestamp in microseconds, or {@link Numbers#LONG_NULL} if not available
+         */
+        public long getTableMinTimestamp() {
+            mergeStatsLock.readLock().lock();
+            try {
+                return tableMinTimestamp;
+            } finally {
+                mergeStatsLock.readLock().unlock();
+            }
         }
 
         /**
@@ -1105,6 +1093,22 @@ public class RecentWriteTracker {
         }
 
         /**
+         * Returns whether the last replica download batch was limited and more data is available.
+         * <p>
+         * This is only populated on replicas via {@link RecentWriteTracker#recordReplicaDownload}.
+         * On primaries, this will always return false.
+         *
+         * @return true if more data is available to download, false otherwise
+         */
+        public boolean isReplicaMorePending() {
+            return replicaMorePending.get();
+        }
+
+        private void touch() {
+            lastActivityTimestamp = MicrosecondClockImpl.INSTANCE.getTicks();
+        }
+
+        /**
          * Updates replica download fields. Unlike updateWal, this records to the batch
          * histogram instead of the transaction histogram, since replicas download data
          * in batches that may contain multiple transactions.
@@ -1199,10 +1203,6 @@ public class RecentWriteTracker {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
-        }
-
-        private void touch() {
-            fallbackTimestamp = MicrosecondClockImpl.INSTANCE.getTicks();
         }
 
         /**
