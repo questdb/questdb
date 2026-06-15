@@ -1757,9 +1757,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // SET TYPE writes the _convert marker via createConvertFile during compilation,
             // outside the engine writer chokepoint, so the per-statement ingress write-gate (which
             // runs after compile() for parse-time-executed statements) cannot stop it. Refuse the
-            // instant the node is read-only. This also closes the demote window: isReadOnlyMode()
-            // flips first, while a connection's security context may still be the PRIMARY one that
-            // authorizeAlterTableSetType() would accept, so the check must precede the auth call.
+            // instant the node is read-only. This eager check also orders before the auth call:
+            // isReadOnlyMode() flips first, while a connection's security context may still be the
+            // PRIMARY one that authorizeAlterTableSetType() would accept, so the check must precede
+            // the auth call. The eager check alone does not close the demote window though -- a
+            // demote landing between here and the marker write would still strand the marker on a
+            // demoting node; the role-switch read-lock hold around the write below is what closes it.
             throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
@@ -1779,8 +1782,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             if (!executionContext.isValidationOnly()) {
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                TableUtils.createConvertFile(ff, path, walFlag);
+                // Demote write-fence for the parse-time SET TYPE marker write. The eager check above
+                // ran while the node was still PRIMARY, but createConvertFile externalizes the
+                // _convert marker (acted on at the next restart to flip the table's WAL<->non-WAL
+                // format); a demote landing between that eager check and here would write the marker
+                // on an already-demoting node, where at restart it would convert the now-replica
+                // table's format and diverge from the primary. Hold the role-switch READ lock across
+                // an authoritative in-lock isReadOnlyMode() re-check and the write: either the flip
+                // ran first (refuse) or this runs fully as PRIMARY while the flip's write acquire
+                // waits. The fence is a no-op for pure-OSS deployments (uncontended read lock, static
+                // flag).
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    if (engine.isReadOnlyMode()) {
+                        throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    }
+                    engine.fireRoleSwitchMintObserver();
+                    path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                    TableUtils.createConvertFile(ff, path, walFlag);
+                } finally {
+                    lock.unlock();
+                }
             }
             compiledQuery.ofTableSetType();
         } catch (CairoException e) {
