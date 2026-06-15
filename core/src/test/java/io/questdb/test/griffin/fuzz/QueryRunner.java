@@ -304,8 +304,18 @@ public final class QueryRunner {
      * A query that throws without the fault firing is a benign skip when the error
      * is user-facing, or a failure otherwise. {@code rnd} supplies the trigger
      * point so replay reproduces the run.
+     * <p>
+     * {@code parallel} reports whether the query runs with parallel SQL execution
+     * enabled (only FUNCTION faults do, gated by the parallel-fault knob). It
+     * relaxes oracle 1 for a LIMIT query: under the eager parallel reduce, a fired
+     * {@code test_fault()} can land on a page frame whose rows fall past the LIMIT
+     * cutoff, so its throw is discarded on a worker and the query still returns a
+     * result. Whether the throw propagates or gets discarded depends on worker
+     * timing, so both outcomes must reach the same verdict for replay to be
+     * stable; the relaxed oracle lets the discarded case fall through to the same
+     * leak / fd / recovery checks the propagating case runs.
      */
-    public Result runFault(GeneratedQuery query, FaultType type, Rnd rnd) {
+    public Result runFault(GeneratedQuery query, FaultType type, Rnd rnd, boolean parallel) {
         String sql = query.sql();
         faultsArmedByType[type.ordinal()]++;
         // Drain pooled readers/writers so the post-fault delta reflects this query
@@ -356,7 +366,14 @@ public final class QueryRunner {
         // handled gracefully (a non-fatal -1 return), so only the deterministic
         // throws (MALLOC OOM, FUNCTION throw) are required to surface.
         if (outcome.failure == null) {
-            if (faultFired && type != FaultType.FILE) {
+            // Under parallel execution a fired FUNCTION fault can land on a page
+            // frame whose rows fall past a LIMIT cutoff: the eager reduce throws on
+            // a worker, but the frame's result is discarded and the query completes.
+            // That is legitimate early-termination, not a swallowed error, so let it
+            // fall through to the leak / fd / recovery checks below (which the
+            // propagating case runs too, keeping the verdict timing-independent).
+            boolean discardedPastLimit = parallel && Chars.containsLowerCase(sql, "limit");
+            if (faultFired && type != FaultType.FILE && !discardedPastLimit) {
                 return Result.failed(sql, new AssertionError(
                         "fault " + type + " fired but the query returned a result (swallowed): " + sql));
             }

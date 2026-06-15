@@ -90,7 +90,13 @@ import java.nio.file.Paths;
  *         memory limit, or a thrown {@code test_fault()} woven into the query.
  *         The runner then asserts the factory frees its resources on the error
  *         path and that the same query runs cleanly once the fault is removed.
- *         Fault queries run serially and bypass the differential oracle.</li>
+ *         Fault queries bypass the differential oracle. The {@code test_fault()}
+ *         (FUNCTION) faults run with parallel SQL execution enabled by default
+ *         ({@code -Dquestdb.fuzz.fault.parallel}, default true), so the parallel
+ *         filter / GROUP BY / top-K reduce error paths get a throw mid-reduce;
+ *         pass false to run them serially. FILE and MALLOC faults always run
+ *         serially because they would fire on background-job file ops or trip
+ *         the process-global RSS ceiling on a background thread.</li>
  *     <li>{@code -Dquestdb.fuzz.window=true|false} &mdash; generate
  *         window-function shapes ({@code fn(...) OVER (PARTITION BY ...
  *         ORDER BY ts [frame])}) on a fraction of queries (default true).
@@ -268,6 +274,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", verifyCursor=").$(config.isVerifyCursorEnabled())
                 .$(", faults=").$(config.isFaultInjectionEnabled())
                 .$(", faultPct=").$(config.getFaultProbabilityPct())
+                .$(", parallelFaults=").$(config.isParallelFaultEnabled())
                 .$(", window=").$(config.isWindowEnabled())
                 .$();
 
@@ -321,23 +328,41 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         dump.write(query.sql());
                         dump.newLine();
                     }
-                    LOG.info().$("fuzz fault (").$(faultType.name()).$("): ").$safe(query.sql()).$();
-                    // Run faults with parallel execution disabled. A fault thrown
-                    // mid-parallel-execution can leave a pooled page-frame reduce
-                    // task holding an un-released buffer, which then corrupts a
-                    // later query that reuses the task. Serial execution exercises
-                    // the resource-cleanup path without that shared-state hazard.
-                    sqlExecutionContext.setParallelFilterEnabled(false);
-                    sqlExecutionContext.setParallelGroupByEnabled(false);
-                    sqlExecutionContext.setParallelReadParquetEnabled(false);
-                    sqlExecutionContext.setParallelTopKEnabled(false);
+                    // FUNCTION faults can run with parallel execution enabled when
+                    // the parallel-fault knob is on, so the parallel filter / GROUP
+                    // BY / top-K reduce error paths get a test_fault() throw
+                    // mid-reduce. FUNCTION is data-scoped -- test_fault() fires only
+                    // inside queries we generate, never in a background job -- so a
+                    // worker throw can only come from the query under test. FILE and
+                    // MALLOC stay serial: FILE would fire on background-job file ops
+                    // and MALLOC's RSS ceiling is process-global, so both would
+                    // contaminate the leak oracle under parallel (that is Step 2).
+                    boolean runFaultParallel = config.isParallelFaultEnabled() && faultType == FaultType.FUNCTION;
+                    LOG.info().$("fuzz fault (").$(faultType.name()).$(runFaultParallel ? ", parallel" : ", serial").$("): ").$safe(query.sql()).$();
+                    // A fault thrown mid-parallel-execution can leave a pooled
+                    // page-frame reduce task holding an un-released buffer, which
+                    // then corrupts a later query that reuses the task. Serial
+                    // execution exercises the resource-cleanup path without that
+                    // shared-state hazard; the parallel FUNCTION path accepts it
+                    // because every non-fault query already runs parallel, so the
+                    // engine-global reduce machinery is at steady-state size before
+                    // any fault query and a fault query adds no net pooled growth
+                    // for the leak oracle to misread.
+                    if (!runFaultParallel) {
+                        sqlExecutionContext.setParallelFilterEnabled(false);
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelReadParquetEnabled(false);
+                        sqlExecutionContext.setParallelTopKEnabled(false);
+                    }
                     try {
-                        result = runner.runFault(query, faultType, rnd);
+                        result = runner.runFault(query, faultType, rnd, runFaultParallel);
                     } finally {
-                        sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
-                        sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
-                        sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
-                        sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
+                        if (!runFaultParallel) {
+                            sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
+                            sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
+                            sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
+                        }
                     }
                 } else {
                     // With small probability, regenerate the same query with a

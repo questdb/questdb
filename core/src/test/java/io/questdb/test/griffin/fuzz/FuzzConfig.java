@@ -37,6 +37,7 @@ public final class FuzzConfig {
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
+    public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
@@ -45,6 +46,7 @@ public final class FuzzConfig {
     private final boolean isDiffJitEnabled;
     private final boolean isDiffShadowEnabled;
     private final boolean isFaultInjectionEnabled;
+    private final boolean isParallelFaultEnabled;
     private final boolean isVerifyCursorEnabled;
     private final boolean isWindowEnabled;
     private final String dumpPath;
@@ -72,6 +74,14 @@ public final class FuzzConfig {
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
+        // On by default, like fault injection: parallel fault injection runs
+        // FUNCTION-fault queries with parallel SQL execution enabled so the
+        // parallel filter / GROUP BY / top-K reduce error paths get exercised by
+        // the crash-and-recover oracle. FILE / MALLOC faults stay serial regardless
+        // of this knob (they leak into background jobs or are process-global; see
+        // the runFuzz fault branch). Pass -Dquestdb.fuzz.fault.parallel=false to
+        // run every fault serially.
+        this.isParallelFaultEnabled = Boolean.parseBoolean(System.getProperty(FAULT_PARALLEL_PROP, "true"));
         // On by default, like fault injection: window-function shapes still
         // surface unfixed window-function defects, so the run goes red on the
         // seeds that hit them until those are fixed. Pass
@@ -125,6 +135,10 @@ public final class FuzzConfig {
 
     public boolean isFaultInjectionEnabled() {
         return isFaultInjectionEnabled;
+    }
+
+    public boolean isParallelFaultEnabled() {
+        return isParallelFaultEnabled;
     }
 
     public boolean isVerifyCursorEnabled() {
