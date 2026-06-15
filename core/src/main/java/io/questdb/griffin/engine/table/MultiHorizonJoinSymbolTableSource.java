@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,7 +32,7 @@ import io.questdb.std.ObjList;
  * Symbol table source for multi-slave HORIZON JOIN queries that routes symbol table
  * lookups to the correct source (master or one of N slaves) based on column mappings.
  */
-class MultiHorizonJoinSymbolTableSource implements SymbolTableSource {
+public class MultiHorizonJoinSymbolTableSource implements SymbolTableSource {
     private final int[] columnIndices;
     private final int[] columnSources;
     private final ObjList<SymbolTableSource> slaveSources;

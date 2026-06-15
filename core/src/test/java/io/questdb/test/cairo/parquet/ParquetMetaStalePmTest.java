@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo.parquet;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -57,11 +56,14 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES(3, '2024-06-12T00:00:00.000000Z')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
 
-            corruptPm("t");
+            corruptPm();
 
             // The non-parquet partition (2024-06-11, 2024-06-12) should still be
             // accessible. A query targeting only native data must not crash.
-            assertSql("id\tts\n2\t2024-06-11T00:00:00.000000Z\n", "SELECT * FROM t WHERE ts = '2024-06-11'");
+            assertQuery("SELECT * FROM t WHERE ts = '2024-06-11'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\n2\t2024-06-11T00:00:00.000000Z\n");
         });
     }
 
@@ -89,7 +91,11 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
             // Convert all parquet back to native — writer regenerates the stale one.
             execute("ALTER TABLE t CONVERT PARTITION TO NATIVE WHERE ts > 0");
 
-            assertSql("count\n4\n", "SELECT count() FROM t");
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
         });
     }
 
@@ -101,14 +107,21 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
 
-            corruptPm("t");
+            corruptPm();
 
             // Writer converts back to native, regenerating the stale _pm internally.
             execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
 
             // Now a fresh reader sees all data.
-            assertSql("count\n2\n", "SELECT count() FROM t");
-            assertSql("id\tts\n1\t2024-06-10T00:00:00.000000Z\n", "SELECT * FROM t WHERE ts = '2024-06-10'");
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            assertQuery("SELECT * FROM t WHERE ts = '2024-06-10'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\n1\t2024-06-10T00:00:00.000000Z\n");
         });
     }
 
@@ -120,18 +133,21 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
 
-            corruptPm("t");
+            corruptPm();
 
             // Convert back to native — writer must regenerate stale _pm first.
             execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
 
             // Data should be intact.
-            assertSql("id\tts\n1\t2024-06-10T00:00:00.000000Z\n", "SELECT * FROM t WHERE ts = '2024-06-10'");
+            assertQuery("SELECT * FROM t WHERE ts = '2024-06-10'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\n1\t2024-06-10T00:00:00.000000Z\n");
         });
     }
 
-    private void corruptPm(String tableName) throws Exception {
-        final TableToken token = engine.verifyTableName(tableName);
+    private void corruptPm() {
+        final TableToken token = engine.verifyTableName("t");
 
         // Collect partition info before releasing caches.
         long[] timestamps;

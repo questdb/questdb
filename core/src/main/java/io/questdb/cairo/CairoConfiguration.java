@@ -548,26 +548,6 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
-    default double getPostingIndexAlignedBitWidthThreshold() {
-        return 0.0;
-    }
-
-    /**
-     * Maximum bytes the posting index writer's per-key spill buffers may hold
-     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
-     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
-     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
-     * negative value disables the back-pressure entirely (legacy behaviour:
-     * accumulate until {@code seal()}). Default is 256 MiB.
-     */
-    default long getPostingIndexerSpillBytesMax() {
-        return 256L << 20;
-    }
-
-    default byte getPostingIndexRowIdEncoding() {
-        return PostingIndexUtils.ENCODING_ADAPTIVE;
-    }
-
     /**
      * Threshold at which the adaptive posting-index row-id encoder forces
      * DELTA instead of running the size-only EF-vs-DELTA race. When a key has
@@ -586,6 +566,26 @@ public interface CairoConfiguration {
      */
     default int getPostingIndexAdaptiveDeltaAtOrAbove() {
         return 2000;
+    }
+
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Maximum bytes the posting index writer's per-key spill buffers may hold
+     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
+     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
+     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
+     * negative value disables the back-pressure entirely (legacy behaviour:
+     * accumulate until {@code seal()}). Default is 256 MiB.
+     */
+    default long getPostingIndexerSpillBytesMax() {
+        return 256L << 20;
     }
 
     int getPostingSealGenThreshold();
@@ -823,7 +823,7 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
-    int getSqlParquetFrameCacheCapacity();
+    long getSqlParquetCacheMemorySize();
 
     int getSqlPivotMaxProducedColumns();
 
@@ -839,25 +839,42 @@ public interface CairoConfiguration {
 
     int getSqlSortKeyMaterializationThreshold();
 
-    int getSqlSortKeyMaxPages();
+    long getSqlSortKeyMaxBytes();
 
     long getSqlSortKeyPageSize();
 
-    int getSqlSortLightValueMaxPages();
+    long getSqlSortLightValueMaxBytes();
 
     long getSqlSortLightValuePageSize();
 
-    int getSqlSortValueMaxPages();
+    long getSqlSortValueMaxBytes();
 
     int getSqlSortValuePageSize();
 
     int getSqlUnorderedMapMaxEntrySize();
 
+    long getSqlWindowCacheMaxBytes();
+
+    /**
+     * Resolves which config key the CachedWindow record-store cap was sourced from. Returned as a
+     * property path string (e.g. "cairo.sql.window.cache.max.bytes") so error messages can name the
+     * actual binding constraint when growth fails. The new bytes key wins when explicitly set; the
+     * legacy pages key wins when only it is explicit; the new bytes default wins otherwise.
+     */
+    String getSqlWindowCacheMaxPagesConfigKey();
+
+    /**
+     * Effective cap (in pages of {@link #getSqlWindowStorePageSize()}) on the CachedWindow record
+     * store, after reconciling cairo.sql.window.cache.max.bytes and the legacy
+     * cairo.sql.window.store.max.pages. Paired with {@link #getSqlWindowCacheMaxPagesConfigKey()}.
+     */
+    int getSqlWindowCacheMaxPagesResolved();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();
 
-    int getSqlWindowRowIdMaxPages();
+    long getSqlWindowRowIdMaxBytes();
 
     int getSqlWindowRowIdPageSize();
 
@@ -865,7 +882,7 @@ public interface CairoConfiguration {
 
     int getSqlWindowStorePageSize();
 
-    int getSqlWindowTreeKeyMaxPages();
+    long getSqlWindowTreeKeyMaxBytes();
 
     int getSqlWindowTreeKeyPageSize();
 
@@ -980,6 +997,18 @@ public interface CairoConfiguration {
     int getWriterTickRowsCountMod();
 
     boolean isCairoMetadataCacheSnapshotOrdered();
+
+    /**
+     * Rollback flag for the by-name column emit to UNION siblings in the SQL optimizer's top-down
+     * column propagation. The optimizer matches UNION columns by position; the legacy by-name emit
+     * could prune one branch inconsistently and crash code generation when branch aliases differed.
+     * When {@code true}, restores the legacy by-name behavior. Defaults to {@code false}.
+     *
+     * @return whether to restore the legacy by-name UNION column propagation
+     */
+    default boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return false;
+    }
 
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.

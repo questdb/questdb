@@ -31,19 +31,15 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testConstant() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, approx_count_distinct('127.0.0.1'::ipv4) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns("""
                         a\tapprox_count_distinct
                         a\t1
                         b\t1
                         c\t1
-                        """,
-                "select a, approx_count_distinct('127.0.0.1'::ipv4) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -51,26 +47,22 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100000)) timestamp(ts))");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             99685
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             for (int precision = 4; precision <= 18; precision++) {
-                assertQueryNoLeakCheck(
-                        "approx_count_distinct" + precision + "\n" +
-                                "99152\n",
-                        "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
-                        null,
-                        false,
-                        true
-                );
+                assertQuery("select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("approx_count_distinct" + precision + "\n" +
+                                "99152\n");
             }
         });
     }
@@ -80,26 +72,22 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             100
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             for (int precision = 4; precision <= 18; precision++) {
-                assertQueryNoLeakCheck(
-                        "approx_count_distinct" + precision + "\n" +
-                                "100\n",
-                        "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
-                        null,
-                        false,
-                        true
-                );
+                assertQuery("select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("approx_count_distinct" + precision + "\n" +
+                                "100\n");
             }
         });
     }
@@ -113,17 +101,17 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                     b\t6
                     c\t8
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select a, approx_count_distinct(s + 42) from x order by a",
-                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_ipv4('1.1.1.1/16', 0) s from long_sequence(20)))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select a, approx_count_distinct(s + 42) from x order by a")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_ipv4('1.1.1.1/16', 0) s from long_sequence(20)))")
+                    .expectSize()
+                    .returns(expected);
             // addition shouldn't affect the number of distinct values,
             // so the result should stay the same
-            assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
+            assertQuery("select a, approx_count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -133,8 +121,10 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
             execute("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
                     ") timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tcount_distinct
                             a\t165309
                             b\t166198
@@ -142,14 +132,11 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                             d\t165973
                             e\t165557
                             f\t165845
-                            """,
-                    "select a, count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select a, approx_count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tapprox_count_distinct
                             a\t165044
                             b\t164963
@@ -157,12 +144,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                             d\t166100
                             e\t165568
                             f\t166248
-                            """,
-                    "select a, approx_count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -172,8 +154,10 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
             execute("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/16', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
                     ") timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tcount_distinct
                             a\t2
                             b\t1
@@ -181,14 +165,11 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                             d\t4
                             e\t5
                             f\t6
-                            """,
-                    "select a, count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select a, approx_count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tapprox_count_distinct
                             a\t2
                             b\t1
@@ -196,12 +177,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                             d\t4
                             e\t5
                             f\t6
-                            """,
-                    "select a, approx_count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -209,26 +185,22 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     public void testGroupNotKeyedDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100000)) timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             99685
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_count_distinct
                             99152
-                            """,
-                    "select approx_count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -236,26 +208,22 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     public void testGroupNotKeyedSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             100
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_count_distinct
                             100
-                            """,
-                    "select approx_count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -275,25 +243,29 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                     975818
                     """;
 
-            assertQueryNoLeakCheck(
-                    expectedExact,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    expectedEstimated,
-                    "select approx_count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
 
             execute("insert into x values(cast(null as IPV4), '2021-05-21')");
             execute("insert into x values(cast(null as IPV4), '1970-01-01')");
-            assertSql(expectedExact, "select count_distinct(s) from x");
-            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
         });
     }
 
@@ -313,86 +285,84 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                     100
                     """;
 
-            assertQueryNoLeakCheck(
-                    expectedExact,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    expectedEstimated,
-                    "select approx_count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
 
             execute("insert into x values(cast(null as IPV4), '2021-05-21')");
             execute("insert into x values(cast(null as IPV4), '1970-01-01')");
-            assertSql(expectedExact, "select count_distinct(s) from x");
-            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
         });
     }
 
     @Test
     public void testInterpolation() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ts, approx_count_distinct(s) from x sample by 1s fill(linear) limit 2")
+                .ddl("create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .returns("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.000000Z\t1
                         1970-01-01T00:00:01.000000Z\t1
-                        """,
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(linear) limit 2",
-                "create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testNoValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select approx_count_distinct(a) from x")
+                .ddl("create table x (a ipv4)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         approx_count_distinct
                         0
-                        """,
-                "select approx_count_distinct(a) from x",
-                "create table x (a ipv4)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNullConstant() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, approx_count_distinct(cast(null as IPV4)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns("""
                         a\tapprox_count_distinct
                         a\t0
                         b\t0
                         c\t0
-                        """,
-                "select a, approx_count_distinct(cast(null as IPV4)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testPrecisionOutOfRange() throws Exception {
-        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 3) from long_sequence(1)", 7, "precision must be between 4 and 18");
-        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 19) from long_sequence(1)", 7, "precision must be between 4 and 18");
+        assertQuery("select approx_count_distinct('127.0.0.1'::ipv4, 3) from long_sequence(1)")
+                .fails(7, "precision must be between 4 and 18");
+        assertQuery("select approx_count_distinct('127.0.0.1'::ipv4, 19) from long_sequence(1)")
+                .fails(7, "precision must be between 4 and 18");
     }
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ts, approx_count_distinct(s) from x sample by 1s fill(linear)")
+                .ddl("create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.000000Z\t9
                         1970-01-01T00:00:01.000000Z\t9
@@ -404,32 +374,30 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                         1970-01-01T00:00:07.000000Z\t9
                         1970-01-01T00:00:08.000000Z\t7
                         1970-01-01T00:00:09.000000Z\t8
-                        """,
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(linear)",
-                "create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testSampleFillNone() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        // returnsOnce(): the query projects rnd_ipv4() inline in a CTE, so the random IPv4s - and thus
+        // the approx_count_distinct results - differ across the re-reads returns() performs. The sibling
+        // fill tests materialize the random data into a table first, so they use the full returns().
+        assertQuery("with x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
+                "select ts, approx_count_distinct(s) from x sample by 2s align to first observation")
+                .returnsOnce("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.050000Z\t16
                         1970-01-01T00:00:02.050000Z\t16
-                        """,
-                "with x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
-                        "select ts, approx_count_distinct(s) from x sample by 2s align to first observation"
-        ));
+                        """);
     }
 
     @Test
     public void testSampleFillValue() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ts, approx_count_distinct(s) from x sample by 1s fill(99)")
+                .ddl("create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.000000Z\t9
                         1970-01-01T00:00:01.000000Z\t9
@@ -441,18 +409,16 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                         1970-01-01T00:00:07.000000Z\t9
                         1970-01-01T00:00:08.000000Z\t7
                         1970-01-01T00:00:09.000000Z\t8
-                        """,
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+                        """);
     }
 
     @Test
     public void testSampleKeyed() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, approx_count_distinct(s), ts from x sample by 5s align to first observation")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
                         a\tapprox_count_distinct\tts
                         a\t4\t1970-01-01T00:00:00.000000Z
                         f\t6\t1970-01-01T00:00:00.000000Z
@@ -466,11 +432,6 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                         e\t8\t1970-01-01T00:00:05.000000Z
                         d\t7\t1970-01-01T00:00:05.000000Z
                         a\t5\t1970-01-01T00:00:05.000000Z
-                        """,
-                "select a, approx_count_distinct(s), ts from x sample by 5s align to first observation",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+                        """);
     }
 }

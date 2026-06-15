@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -31,13 +32,18 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
@@ -45,7 +51,10 @@ import io.questdb.griffin.engine.table.TimeFrameCursorImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -57,6 +66,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.util.IdentityHashMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -75,7 +86,11 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
             // Force-open partition 0 via a regular query so that the table reader
             // has it open before we create the time frame cursor. This exercises
             // the addOpenPartitionFrames() fast path for already-open partitions.
-            assertSql("count\n24\n", "SELECT count() FROM x WHERE t < '1970-01-02'");
+            assertQuery("SELECT count() FROM x WHERE t < '1970-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n24\n");
 
             try (RecordCursorFactory factory = select("x")) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
@@ -85,10 +100,10 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
                 // TimeFrameCursorImpl: partition 0 is already open, partitions 1-2 are lazy.
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
                 // ConcurrentTimeFrameCursorImpl: same scenario.
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -212,7 +227,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     Assert.assertNotNull(cursor);
                     try {
                         cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
-                        assertForwardScanWithColumnData(cursor, metadata, sink);
+                        assertForwardScanWithColumnData(cursor, metadata);
                     } finally {
                         Misc.free(cursor);
                     }
@@ -330,7 +345,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
                     Assert.assertTrue(sharedState.getFrameCount() > 0);
                     TestUtils.printSql(engine, sqlExecutionContext, "x WHERE t < '1970-01-03'", sink);
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 } finally {
                     Misc.free(cursor);
                     Misc.free(sharedState);
@@ -526,9 +541,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
                 RecordMetadata metadata = factory.getMetadata();
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -564,9 +579,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
                 RecordMetadata metadata = factory.getMetadata();
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -595,9 +610,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
                 RecordMetadata metadata = factory.getMetadata();
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -812,6 +827,476 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 }
             });
         }
+    }
+
+    @Test
+    public void testParquetDecodeCacheMonotonicCapsCachedFrameCount() throws Exception {
+        // The table spans many parquet partitions, so the cursor sees many page frames. A
+        // MONOTONIC cursor caps the decode cache at ParquetDecodeHint.MONOTONIC.maxCachedBuffers
+        // (4) entries regardless of the byte budget, so a forward random-access sweep across all
+        // frames must evict and leave the cache holding at most 4 frames. Asserting against
+        // PageFrameMemoryPool observability turns "eviction fired" into a regression guard.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    Assert.assertEquals(ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
+                    // MONOTONIC scales the configured budget down to a quarter.
+                    Assert.assertEquals(configuration.getSqlParquetCacheMemorySize() >>> 2, pool.getEffectiveBudgetBytes());
+
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue("need more than 4 frames to force eviction, got " + frameCount, frameCount > 4);
+
+                    sweepFramesByRandomAccess(cursor, frameCount);
+
+                    // The default budget is far larger than the decoded bytes, so only the
+                    // 4-buffer count cap fires: the cache holds at most 4 frames, fewer than total.
+                    int cachedFrames = pool.getCachedFrameCount();
+                    Assert.assertTrue("eviction should leave at most 4 cached frames, got " + cachedFrames, cachedFrames <= 4);
+                    Assert.assertTrue("cache should not be empty after the sweep", cachedFrames >= 1);
+                    Assert.assertTrue(pool.getCachedBytes() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeCacheRowFilteredDeclaration() throws Exception {
+        // setRecordAtRows must actually row-filter the parquet decode: a declared row
+        // reads its real value while an undeclared row of the same frame materializes
+        // as NULL (the fill-with-nulls decode). A regression that ignores the
+        // declaration (e.g. hasParquetFrames never set on the address cache) decodes
+        // the full frame and the undeclared row reads a real value instead.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xrf AS (" +
+                    " SELECT x::int v, timestamp_sequence(0, 100_000_000) t" +
+                    " FROM long_sequence(2_000)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+            execute("ALTER TABLE xrf CONVERT PARTITION TO PARQUET WHERE t >= 0");
+            try (RecordCursorFactory factory = select("xrf")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue(frameCount > 2);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    Record record = cursor.getRecord();
+                    final int vIndex = metadata.getColumnIndex("v");
+
+                    pool.setRecordAtRows((target, _) -> {
+                        target.ensureCapacity(1);
+                        target.add(Rows.toRowID(0, 0));
+                    });
+                    cursor.recordAt(record, 0, 0);
+                    Assert.assertEquals(1, record.getInt(vIndex));
+                    cursor.recordAt(record, 0, 1);
+                    Assert.assertEquals(Numbers.INT_NULL, record.getInt(vIndex));
+
+                    // An undeclared frame decodes in full while the declaration is
+                    // active; navigating there also unpins frame 0's filtered buffer.
+                    cursor.recordAt(record, 1, 0);
+                    Assert.assertEquals(865, record.getInt(vIndex));
+
+                    // Clearing the declaration restores full-frame decode.
+                    pool.setRecordAtRows(null);
+                    cursor.recordAt(record, 0, 0);
+                    Assert.assertEquals(1, record.getInt(vIndex));
+                    cursor.recordAt(record, 0, 1);
+                    Assert.assertEquals(2, record.getInt(vIndex));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeCacheScatteredRespectsByteBudget() throws Exception {
+        // A SCATTERED cursor keeps the full configured budget and the larger 256-buffer count
+        // cap, so eviction is driven purely by the byte budget. With a tight 128 KiB budget and
+        // a varchar-heavy table whose total decoded size across frames dwarfs it, a forward
+        // random-access sweep must evict and keep the cached bytes bounded near the budget.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        final long budget = 128 * 1024;
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, budget);
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    // SCATTERED keeps the full configured budget.
+                    Assert.assertEquals(budget, pool.getEffectiveBudgetBytes());
+
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue("need more than one frame, got " + frameCount, frameCount > 1);
+
+                    sweepFramesByRandomAccess(cursor, frameCount);
+
+                    // The byte budget holds only a fraction of the frames, so the sweep evicts.
+                    int cachedFrames = pool.getCachedFrameCount();
+                    Assert.assertTrue("cache should not be empty after the sweep", cachedFrames >= 1);
+                    Assert.assertTrue("byte budget should drop the cached frame count below the total, got " + cachedFrames, cachedFrames < frameCount);
+                    // Cached bytes stay bounded near the budget (a single just-decoded frame may
+                    // briefly push it over, so allow generous slack rather than an exact cap).
+                    long cachedBytes = pool.getCachedBytes();
+                    Assert.assertTrue(cachedBytes > 0);
+                    Assert.assertTrue("cached bytes should stay near the budget, got " + cachedBytes, cachedBytes <= 2 * budget);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeHintPropagatesThroughWrapperStack() throws Exception {
+        // setParquetDecodeHint set on the outermost cursor must reach the base page-frame pool
+        // through the wrapper stack a real query builds (a virtual-column projection over a parquet
+        // scan, plus QueryProgress). A dropped forward in any wrapper would silently leave the base
+        // at the default MONOTONIC. Walk the live chain to the base cursor and assert its pool honors
+        // the hint both ways, proving the whole stack forwards.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT a, s, a + 1 AS b FROM x")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    AbstractPageFrameRecordCursor base = findBasePageFrameCursor(cursor);
+                    Assert.assertNotNull("expected a page-frame cursor under the wrapper stack", base);
+                    Assert.assertNotSame("expected at least one wrapper above the base cursor", cursor, base);
+
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, base.getFrameMemoryPool().getDecodeHint());
+
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                    Assert.assertEquals(ParquetDecodeHint.MONOTONIC, base.getFrameMemoryPool().getDecodeHint());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFactoryPushesMonotonicHint() throws Exception {
+        // A real ASOF join over parquet must leave every base page-frame pool at MONOTONIC:
+        // the slave is probed forward-only by row id (the factory pushes MONOTONIC) and the
+        // master is a plain forward scan (stays at the MONOTONIC default). The end-to-end cache
+        // tests are hint-blind (the hint changes only the budget, never results), so a join that
+        // forgot to push would still ship green. This pins the factory's push to the base pool.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT x1.a, x2.a AS a2 FROM x x1 ASOF JOIN x x2")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    ObjList<PageFrameMemoryPool> pools = new ObjList<>();
+                    collectFrameMemoryPools(cursor, pools);
+                    Assert.assertTrue("expected the master and slave base pools under the join", pools.size() >= 2);
+                    final long expectedBudget = configuration.getSqlParquetCacheMemorySize() >>> 2;
+                    for (int i = 0, n = pools.size(); i < n; i++) {
+                        PageFrameMemoryPool pool = pools.getQuick(i);
+                        Assert.assertEquals(ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
+                        Assert.assertEquals(expectedBudget, pool.getEffectiveBudgetBytes());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHashJoinFactoryPushesScatteredHint() throws Exception {
+        // A keyed inner join builds a hash map over the slave then probes it at scattered row
+        // ids, so the factory pushes SCATTERED to the slave's base pool. Walk every base cursor
+        // under the join and assert at least one runs at the full (SCATTERED) budget, proving the
+        // join's push reaches the base; the build-side master stays at the MONOTONIC default.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT x1.a, x2.a AS a2 FROM x x1 JOIN x x2 ON (s)")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    ObjList<PageFrameMemoryPool> pools = new ObjList<>();
+                    collectFrameMemoryPools(cursor, pools);
+                    Assert.assertTrue("expected the master and slave base pools under the join", pools.size() >= 2);
+                    final long fullBudget = configuration.getSqlParquetCacheMemorySize();
+                    boolean foundScattered = false;
+                    for (int i = 0, n = pools.size(); i < n; i++) {
+                        PageFrameMemoryPool pool = pools.getQuick(i);
+                        if (pool.getDecodeHint() == ParquetDecodeHint.SCATTERED) {
+                            Assert.assertEquals(fullBudget, pool.getEffectiveBudgetBytes());
+                            foundScattered = true;
+                        }
+                    }
+                    Assert.assertTrue("the join must push SCATTERED to the slave base pool", foundScattered);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderBySortFactoryPushesScatteredHint() throws Exception {
+        // A real ORDER BY on a non-timestamp column over parquet random-accesses the base out of
+        // order, so the sort factory must push SCATTERED to the base page-frame pool (the full
+        // configured budget). The end-to-end cache tests are hint-blind, so a sort that forgot to
+        // push would still ship green at the MONOTONIC default; this pins the push to the base.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT a, s, t FROM x ORDER BY a")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    AbstractPageFrameRecordCursor base = findBasePageFrameCursor(cursor);
+                    Assert.assertNotNull("expected a page-frame cursor under the sort", base);
+                    PageFrameMemoryPool pool = base.getFrameMemoryPool();
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    Assert.assertEquals(configuration.getSqlParquetCacheMemorySize(), pool.getEffectiveBudgetBytes());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLightSortKeepsBaseScatteredUnderMonotonicConsumer() throws Exception {
+        // A light sort random-accesses its base out of order, so of() pins the base pool to
+        // SCATTERED. When the sort is itself the slave of a MONOTONIC consumer (an ASOF light
+        // join pushes MONOTONIC onto its slave after getCursor()), the wrapper must NOT forward
+        // that downgrade to its base: quartering the base budget would cause avoidable Parquet
+        // re-decodes during the out-of-order emission. The same fix covers the top-K and
+        // latest-by light wrappers, which share this push pattern.
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("SELECT a, s, t FROM x ORDER BY a")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    AbstractPageFrameRecordCursor base = findBasePageFrameCursor(cursor);
+                    Assert.assertNotNull("expected a page-frame cursor under the sort", base);
+                    PageFrameMemoryPool pool = base.getFrameMemoryPool();
+                    // of() pinned the base to SCATTERED.
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    // An outer MONOTONIC consumer (an ASOF light join slave) must not downgrade it.
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                    Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
+                    Assert.assertEquals(configuration.getSqlParquetCacheMemorySize(), pool.getEffectiveBudgetBytes());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeCacheReleaseResetsAccounting() throws Exception {
+        // After a random-access sweep the cache holds bytes; releaseParquetBuffers() (the path
+        // of()/clear()/close() take) must zero both the byte and frame accounting, and neither
+        // count may run negative at any point during the sweep.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        final long budget = 128 * 1024;
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, budget);
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue("need more than one frame, got " + frameCount, frameCount > 1);
+
+                    Record record = cursor.getRecord();
+                    int tsIndex = cursor.getTimestampIndex();
+                    for (int f = 0; f < frameCount; f++) {
+                        cursor.recordAt(record, f, 0);
+                        record.getTimestamp(tsIndex);
+                        Assert.assertTrue("cachedBytes must never be negative, got " + pool.getCachedBytes(), pool.getCachedBytes() >= 0);
+                        Assert.assertTrue("cachedFrameCount must never be negative", pool.getCachedFrameCount() >= 0);
+                    }
+                    Assert.assertTrue(pool.getCachedBytes() > 0);
+                    Assert.assertTrue(pool.getCachedFrameCount() > 0);
+
+                    pool.releaseParquetBuffers();
+                    Assert.assertEquals("release must zero the byte accounting", 0, pool.getCachedBytes());
+                    Assert.assertEquals("release must zero the frame accounting", 0, pool.getCachedFrameCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeCacheScatteredLruRevisit() throws Exception {
+        // The plain forward sweep visits each frame once, so it never exercises the SCATTERED hit
+        // path that promotes a re-touched entry to the LRU tail (lruMoveToTail). This walks the
+        // frames forward, then repeatedly re-touches a small hot set, then walks forward again,
+        // asserting the cache stays bounded and the accounting holds under revisits.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        final long budget = 128 * 1024;
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, budget);
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue("need several frames, got " + frameCount, frameCount > 4);
+
+                    Record record = cursor.getRecord();
+                    int tsIndex = cursor.getTimestampIndex();
+                    for (int round = 0; round < 3; round++) {
+                        for (int f = 0; f < frameCount; f++) {
+                            cursor.recordAt(record, f, 0);
+                            record.getTimestamp(tsIndex);
+                            assertScatteredCacheInvariants(pool, budget, frameCount);
+                        }
+                        // Re-touch the first few frames repeatedly: SCATTERED promotes each hit.
+                        for (int r = 0; r < 4 * frameCount; r++) {
+                            cursor.recordAt(record, r % 4, 0);
+                            record.getTimestamp(tsIndex);
+                            assertScatteredCacheInvariants(pool, budget, frameCount);
+                        }
+                    }
+                    Assert.assertTrue(pool.getCachedBytes() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeCacheRecoversFromDecodeFailure() throws Exception {
+        // Force a parquet decode to fail mid-navigate by capping RSS, then assert the pool's error
+        // handling holds: a CairoException surfaces, the accounting never goes negative or leaves a
+        // phantom entry, the same frame decodes cleanly once the cap is lifted, and a final release
+        // zeroes the accounting. assertMemoryLeak guards the native rollback of the failed decode.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        assertMemoryLeak(() -> {
+            createManyFrameParquetTable();
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    Record record = cursor.getRecord();
+                    int tsIndex = cursor.getTimestampIndex();
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue("need several frames, got " + frameCount, frameCount > 4);
+
+                    // Warm a couple of frames so the cache holds live entries when the failure hits.
+                    for (int f = 0; f < 2; f++) {
+                        cursor.recordAt(record, f, 0);
+                        record.getTimestamp(tsIndex);
+                    }
+
+                    final int failedFrame = 2;
+                    CairoException decodeError = null;
+                    try {
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                        cursor.recordAt(record, failedFrame, 0);
+                        record.getTimestamp(tsIndex);
+                    } catch (CairoException e) {
+                        decodeError = e;
+                    } finally {
+                        Unsafe.setRssMemLimit(0);
+                    }
+                    Assert.assertNotNull("a decode under the RSS cap must fail", decodeError);
+                    Assert.assertTrue(decodeError.isOutOfMemory());
+
+                    // The failed navigate must drop the record's stale fast-path binding, so a later
+                    // navigateTo() to its old frame cannot read a buffer the failure freed or reused.
+                    Assert.assertEquals(
+                            "failed navigate must clear the record's stale frame binding",
+                            -1,
+                            ((PageFrameMemoryRecord) record).getFrameIndex()
+                    );
+
+                    // The failed navigate must not corrupt the accounting.
+                    Assert.assertTrue("cachedBytes must stay non-negative, got " + pool.getCachedBytes(), pool.getCachedBytes() >= 0);
+                    Assert.assertTrue(pool.getCachedFrameCount() >= 0);
+                    Assert.assertTrue("cache must stay within the MONOTONIC cap", pool.getCachedFrameCount() <= 4);
+
+                    // Recovery: the same frame decodes cleanly now that the cap is lifted.
+                    cursor.recordAt(record, failedFrame, 0);
+                    record.getTimestamp(tsIndex);
+
+                    // A full sweep then release leaves no orphaned bytes behind.
+                    for (int f = 0; f < frameCount; f++) {
+                        cursor.recordAt(record, f, 0);
+                        record.getTimestamp(tsIndex);
+                    }
+                    pool.releaseParquetBuffers();
+                    Assert.assertEquals(0, pool.getCachedBytes());
+                    Assert.assertEquals(0, pool.getCachedFrameCount());
+                }
+            }
+        });
     }
 
     @Test
@@ -1278,8 +1763,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
     private static void assertForwardScanWithColumnData(
             TimeFrameCursor cursor,
-            RecordMetadata metadata,
-            CharSequence expected
+            RecordMetadata metadata
     ) {
         Record record = cursor.getRecord();
         TimeFrame frame = cursor.getTimeFrame();
@@ -1292,7 +1776,89 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 TestUtils.println(record, metadata, actualSink);
             }
         }
-        TestUtils.assertEquals(expected, actualSink);
+        TestUtils.assertEquals(AbstractCairoTest.sink, actualSink);
+    }
+
+    // Walks the live wrapper chain (following RecordCursor-typed fields) to the base
+    // AbstractPageFrameRecordCursor so a test can observe the hint the wrappers forwarded.
+    private static AbstractPageFrameRecordCursor findBasePageFrameCursor(RecordCursor cursor) throws Exception {
+        return findBasePageFrameCursor(cursor, new IdentityHashMap<>(), 0);
+    }
+
+    private static AbstractPageFrameRecordCursor findBasePageFrameCursor(Object obj, IdentityHashMap<Object, Object> seen, int depth) throws Exception {
+        if (obj == null || depth > 32 || seen.put(obj, obj) != null) {
+            return null;
+        }
+        if (obj instanceof AbstractPageFrameRecordCursor pageFrameCursor) {
+            return pageFrameCursor;
+        }
+        for (Class<?> k = obj.getClass(); k != null && k != Object.class; k = k.getSuperclass()) {
+            for (Field f : k.getDeclaredFields()) {
+                if (!RecordCursor.class.isAssignableFrom(f.getType())) {
+                    continue;
+                }
+                f.setAccessible(true);
+                final AbstractPageFrameRecordCursor found = findBasePageFrameCursor(f.get(obj), seen, depth + 1);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    // Walks the live cursor graph and gathers every base parquet decode pool, reaching both the
+    // RecordCursor side (page-frame scans, hash-join slaves) and the TimeFrameCursor side (the
+    // fast ASOF/Lt/Splice slaves). Lets a test assert which hint each base pool ended up with.
+    private static void collectFrameMemoryPools(RecordCursor cursor, ObjList<PageFrameMemoryPool> out) throws Exception {
+        collectFrameMemoryPools(cursor, out, new IdentityHashMap<>(), 0);
+    }
+
+    private static void collectFrameMemoryPools(Object obj, ObjList<PageFrameMemoryPool> out, IdentityHashMap<Object, Object> seen, int depth) throws Exception {
+        if (obj == null || depth > 32 || seen.put(obj, obj) != null) {
+            return;
+        }
+        if (obj instanceof AbstractPageFrameRecordCursor pageFrameCursor) {
+            out.add(pageFrameCursor.getFrameMemoryPool());
+            return;
+        }
+        if (obj instanceof TimeFrameCursorImpl timeFrameCursor) {
+            out.add(timeFrameCursor.getFrameMemoryPool());
+            return;
+        }
+        for (Class<?> k = obj.getClass(); k != null && k != Object.class; k = k.getSuperclass()) {
+            for (Field f : k.getDeclaredFields()) {
+                final Class<?> fieldType = f.getType();
+                if (!RecordCursor.class.isAssignableFrom(fieldType) && !TimeFrameCursor.class.isAssignableFrom(fieldType)) {
+                    continue;
+                }
+                f.setAccessible(true);
+                collectFrameMemoryPools(f.get(obj), out, seen, depth + 1);
+            }
+        }
+    }
+
+    private static int countFrames(TimeFrameCursorImpl cursor) {
+        cursor.toTop();
+        int frameCount = 0;
+        while (cursor.next()) {
+            frameCount++;
+        }
+        return frameCount;
+    }
+
+    private static void createManyFrameParquetTable() throws Exception {
+        // 20k rows spread across ~24 DAY partitions; each parquet partition becomes one page
+        // frame, so the cursor sees many frames to evict between. The varchar column makes the
+        // total decoded size across frames dwarf a tight cache budget.
+        execute("CREATE TABLE x AS (" +
+                " SELECT" +
+                " rnd_int() a," +
+                " rnd_varchar(20, 40, 0) s," +
+                " timestamp_sequence(0, 100_000_000) t" +
+                " FROM long_sequence(20_000)" +
+                ") TIMESTAMP (t) PARTITION BY DAY");
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE t >= 0");
     }
 
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
@@ -1306,6 +1872,27 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
             WorkerPool pool = new WorkerPool(() -> 2);
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
+    }
+
+    private static void assertScatteredCacheInvariants(PageFrameMemoryPool pool, long budget, int frameCount) {
+        long bytes = pool.getCachedBytes();
+        Assert.assertTrue("cachedBytes must never be negative, got " + bytes, bytes >= 0);
+        // A single just-decoded frame can briefly push the total over the budget, so allow slack.
+        Assert.assertTrue("cachedBytes should stay near the budget, got " + bytes, bytes <= 2 * budget);
+        int frames = pool.getCachedFrameCount();
+        Assert.assertTrue("cachedFrameCount must never be negative", frames >= 0);
+        Assert.assertTrue("cachedFrameCount must not exceed the total frame count, got " + frames, frames <= frameCount);
+    }
+
+    private static void sweepFramesByRandomAccess(TimeFrameCursorImpl cursor, int frameCount) {
+        // Random-access the first row of every frame in order. Each navigateTo() decodes a
+        // distinct parquet frame, so the pass exercises misses and victim reuse across the cache.
+        Record record = cursor.getRecord();
+        int tsIndex = cursor.getTimestampIndex();
+        for (int f = 0; f < frameCount; f++) {
+            cursor.recordAt(record, f, 0);
+            record.getTimestamp(tsIndex);
+        }
     }
 
     private void testBothCursors(String ddl, TimeFrameCursorAssertion assertion) throws Exception {

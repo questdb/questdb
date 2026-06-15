@@ -62,16 +62,18 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
-    private Sinkable ttlToSinkOverride;
     // transient field, unoptimized AS SELECT model, used in toSink()
     private IQueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
+    private int tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+    private int tableFormatPosition;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
     private int ttlPosition;
+    private Sinkable ttlToSinkOverride;
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
@@ -108,6 +110,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
+                    tableFormat,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -155,6 +158,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
+                tableFormat,
                 walEnabled,
                 autoIncludeTs
         );
@@ -167,6 +171,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnModels.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
+        tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+        tableFormatPosition = 0;
         defaultSymbolCapacity = 0;
         ignoreIfExists = false;
         likeTableNameExpr = null;
@@ -214,6 +220,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public CharSequence getSelectText() {
         return selectText;
+    }
+
+    public int getTableFormat() {
+        return tableFormat;
+    }
+
+    public int getTableFormatPosition() {
+        return tableFormatPosition;
     }
 
     @Override
@@ -290,10 +304,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.partitionByExpr = partitionByExpr;
     }
 
-    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
-        this.ttlToSinkOverride = ttlToSinkOverride;
-    }
-
     @Override
     public void setSelectModel(IQueryModel selectModel) {
         this.selectModel = selectModel;
@@ -302,6 +312,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     public void setSelectText(CharSequence selectText, int selectTextPosition) {
         this.selectText = selectText;
         this.selectTextPosition = selectTextPosition;
+    }
+
+    public void setTableFormat(int tableFormat) {
+        this.tableFormat = tableFormat;
+    }
+
+    public void setTableFormatPosition(int tableFormatPosition) {
+        this.tableFormatPosition = tableFormatPosition;
     }
 
     public void setTableNameExpr(ExpressionNode expr) {
@@ -318,6 +336,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setTtlPosition(int ttlPosition) {
         this.ttlPosition = ttlPosition;
+    }
+
+    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
+        this.ttlToSinkOverride = ttlToSinkOverride;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias, int volumePosition) {
@@ -404,6 +426,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (partitionByExpr != null) {
             sink.putAscii(" partition by ").put(partitionByExpr.token);
             ttlToSink(sink);
+            ShowCreateTableRecordCursorFactory.tableFormatToSink(tableFormat, sink);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }

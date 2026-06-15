@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -177,9 +176,9 @@ public class TablesFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
-            }
+            // Reconciles against the table registry before snapshotting, so the
+            // catalogue is complete even mid startup hydration.
+            tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
             cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI());
             cursor.toTop();
             return cursor;

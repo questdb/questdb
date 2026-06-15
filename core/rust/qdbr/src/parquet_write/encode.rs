@@ -458,7 +458,12 @@ fn encode_int64_dispatch(
             bloom_set,
         ),
         (Encoding::Plain, Timestamp) => {
-            if is_designated_timestamp {
+            if is_designated_timestamp && columns[0].strided_timestamp_16 {
+                // Strided merge-index layout from O3 commit. The encoder
+                // monomorphizes its inner page writer per layout, so the
+                // per-row loop has no branch on data layout.
+                plain::encode_designated_timestamp_strided(columns, pt, options, bloom_set)
+            } else if is_designated_timestamp {
                 plain::encode_int_notnull::<i64, i64>(
                     columns,
                     first_partition_start,
@@ -501,7 +506,11 @@ fn encode_int64_dispatch(
             )
         }
         (Encoding::DeltaBinaryPacked, Timestamp) => {
-            if is_designated_timestamp {
+            if is_designated_timestamp && columns[0].strided_timestamp_16 {
+                delta_binary_packed::encode_designated_timestamp_strided(
+                    columns, pt, options, bloom_set,
+                )
+            } else if is_designated_timestamp {
                 delta_binary_packed::encode_int_notnull::<i64, i64>(
                     columns,
                     first_partition_start,
@@ -544,7 +553,9 @@ fn encode_int64_dispatch(
             )
         }
         (Encoding::RleDictionary, Timestamp) => {
-            if is_designated_timestamp {
+            if is_designated_timestamp && columns[0].strided_timestamp_16 {
+                rle_dictionary::encode_designated_timestamp_strided(columns, pt, options, bloom_set)
+            } else if is_designated_timestamp {
                 // Designated timestamps are Required: use the notnull dict path
                 // so the data page is built with Required repetition.
                 rle_dictionary::encode_int_notnull::<i64, i64>(

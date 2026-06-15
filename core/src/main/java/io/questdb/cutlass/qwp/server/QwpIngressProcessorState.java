@@ -38,7 +38,6 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -105,7 +104,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
-    private byte negotiatedVersion = QwpConstants.VERSION_1;
+    private byte negotiatedVersion = QwpConstants.VERSION;
     // Bytes that onHeadersReady staged in the raw response buffer waiting to
     // be flushed by onRequestComplete. Carried across the two calls so
     // resumeSend can finalise after a parked write.
@@ -131,7 +130,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         try {
             this.streamingDecoder = new QwpStreamingDecoder(
-                    new QwpSchemaRegistry(configuration.getQwpMaxSchemasPerConnection()),
                     configuration.getQwpMaxRowsPerTable()
             );
             this.walAppender = new QwpWalAppender(
@@ -457,7 +455,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     @Override
     public void onDisconnected() {
         clear();
-        streamingDecoder.resetConnectionState();
+        streamingDecoder.reset();
         tudCache.reset();
         connectionSymbolDict.clear();  // Reset delta symbol dictionary on disconnect
 
@@ -624,6 +622,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // Decode using streaming decoder with delta symbol dictionary support
             QwpMessageCursor messageCursor = streamingDecoder.decode(
                     bufferAddress, bufferPosition, connectionSymbolDict);
+
+            // A redefined client symbol dictionary (orphan-adoption replays a
+            // different sender's dict-from-0 into this connection, remapping
+            // existing client symbol IDs to new strings) leaves the
+            // clientSymbolId -> tableSymbolId cache pointing at the prior
+            // sender's keys. Drop it so symbols re-resolve against the
+            // refreshed dictionary; the watermark check alone cannot catch a
+            // remap that adds no new table symbols.
+            if (messageCursor.isSymbolDictRedefined()) {
+                symbolCache.clear();
+            }
 
             // Process each table block using streaming cursors
             while (messageCursor.hasNextTable()) {

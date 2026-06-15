@@ -621,6 +621,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit);
 
+    void setSampleByFill(ObjList<ExpressionNode> fill);
+
     void setSampleByFromTo(ExpressionNode from, ExpressionNode to);
 
     void setSampleByOffset(ExpressionNode sampleByOffset);

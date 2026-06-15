@@ -42,30 +42,30 @@ public class StartsWithVarcharFunctionFactoryTest extends AbstractFunctionFactor
 
     @Test
     public void testStartsWith() throws Exception {
-        assertQuery("col\ntrue\n", "select starts_with('ABC'::varchar, 'ABC'::varchar) col");
-        assertQuery("col\ntrue\n", "select starts_with('ABCX'::varchar, 'ABC'::varchar) col");
-        assertQuery("col\nfalse\n", "select starts_with('ABC'::varchar, 'ABCX'::varchar) col");
-        assertQuery("col\ntrue\n", "select starts_with('ABCDEFGH'::varchar, 'ABC'::varchar) col");
-        assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH'::varchar, 'XYZ'::varchar) col");
-        assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH'::varchar, 'ABCDEFGHIJK'::varchar) col");
-        assertQuery("col\ntrue\n", "select starts_with('cAsEsEnsItIvE'::varchar, 'cAsE'::varchar) col");
-        assertQuery("col\nfalse\n", "select starts_with('smallcase'::varchar, 'SMALL'::varchar) col");
-        assertQuery("col\nfalse\n", "select starts_with('smallcase'::varchar, 'smaLL'::varchar) col");
+        assertQuery("select starts_with('ABC'::varchar, 'ABC'::varchar) col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('ABCX'::varchar, 'ABC'::varchar) col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('ABC'::varchar, 'ABCX'::varchar) col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('ABCDEFGH'::varchar, 'ABC'::varchar) col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('ABCDEFGH'::varchar, 'XYZ'::varchar) col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('ABCDEFGH'::varchar, 'ABCDEFGHIJK'::varchar) col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('cAsEsEnsItIvE'::varchar, 'cAsE'::varchar) col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('smallcase'::varchar, 'SMALL'::varchar) col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('smallcase'::varchar, 'smaLL'::varchar) col").expectSize().returns("col\nfalse\n");
     }
 
     @Test
     public void testStartsWithNonASCII() throws Exception {
-        assertQuery("col\nfalse\n", "select starts_with('hőm','hőmé'::varchar) col");
-        assertQuery("col\ntrue\n", "select starts_with('hőmé','hőmé'::varchar) col");
-        assertQuery("col\ntrue\n", "select starts_with('hőmé','hőm'::varchar) col");
-        assertQuery("col\nfalse\n", "select starts_with('hőmé','hőmo'::varchar) col");
-        assertQuery("col\ntrue\n", "select starts_with('hőmérséklet','hőmé'::varchar) col");
-        assertQuery("col\nfalse\n", "select starts_with('hőmérséklet','hőmérséklee'::varchar) col");
+        assertQuery("select starts_with('hőm','hőmé'::varchar) col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('hőmé','hőmé'::varchar) col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('hőmé','hőm'::varchar) col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('hőmé','hőmo'::varchar) col").expectSize().returns("col\nfalse\n");
+        assertQuery("select starts_with('hőmérséklet','hőmé'::varchar) col").expectSize().returns("col\ntrue\n");
+        assertQuery("select starts_with('hőmérséklet','hőmérséklee'::varchar) col").expectSize().returns("col\nfalse\n");
     }
 
     @Test
     public void testStartsWithSpecialCharacters() throws Exception {
-        assertQuery("col\ntrue\n", "select starts_with('~!@#$%^&*()_-:<>?,./'::varchar, '~!@#'::varchar) col");
+        assertQuery("select starts_with('~!@#$%^&*()_-:<>?,./'::varchar, '~!@#'::varchar) col").expectSize().returns("col\ntrue\n");
     }
 
     @Override

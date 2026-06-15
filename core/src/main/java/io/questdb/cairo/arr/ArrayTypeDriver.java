@@ -398,7 +398,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static long getPlainValueSize(long arrayAddress) {
-        return Long.BYTES + Unsafe.getLong(arrayAddress);
+        final long totalSize = Unsafe.getLong(arrayAddress);
+        // Null arrays only write the 8-byte NULL_LEN marker, no payload follows.
+        return totalSize <= 0 ? Long.BYTES : Long.BYTES + totalSize;
     }
 
     public static long getPlainValueSize(@NotNull ArrayView value) {

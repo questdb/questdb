@@ -36,6 +36,7 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -176,10 +177,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                     }
                 }
                 if (swapped) {
+                    slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
                     ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
                     return cursor;
                 }
             }
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
@@ -212,16 +215,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     }
 
     protected static CharSequence outerJoinTypeToString(int joinType) {
-        switch (joinType) {
-            case IQueryModel.JOIN_LEFT_OUTER:
-                return "Left";
-            case IQueryModel.JOIN_RIGHT_OUTER:
-                return "Right";
-            case IQueryModel.JOIN_FULL_OUTER:
-                return "Full";
-            default:
-                return "Unknown";
-        }
+        return switch (joinType) {
+            case IQueryModel.JOIN_LEFT_OUTER -> "Left";
+            case IQueryModel.JOIN_RIGHT_OUTER -> "Right";
+            case IQueryModel.JOIN_FULL_OUTER -> "Full";
+            default -> "Unknown";
+        };
     }
 
     @Override

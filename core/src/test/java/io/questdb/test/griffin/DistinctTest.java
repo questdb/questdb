@@ -44,6 +44,36 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctConstAliasOrderByLimitFromFuzzer() throws Exception {
+        // Original failing query from the query fuzzer (seed s0=104514844543552, s1=1779785264959).
+        assertQuery("SELECT DISTINCT -676 AS e0, t0.x AS e1, -97 AS e2," +
+                " '2024-01-23T16:57:00.000000Z'::TIMESTAMP AS e3, t0.x AS e4" +
+                " FROM long_sequence(73) t0" +
+                " WHERE (t0.x > (t0.x - t0.x) AND t0.x IS NOT NULL)" +
+                " ORDER BY e0 DESC LIMIT 2")
+                .expectSize()
+                .returns("""
+                        e0	e1	e2	e3	e4
+                        -676	26	-97	2024-01-23T16:57:00.000000Z	26
+                        -676	36	-97	2024-01-23T16:57:00.000000Z	36
+                        """);
+    }
+
+    @Test
+    public void testDistinctConstAliasOrderByLimitWithDuplicateCol() throws Exception {
+        // Duplicate column refs trigger rewriteTrivialGroupByExpressions which used to push
+        // LIMIT past the virtual carrying the constant alias; ORDER BY e0 then resolved at the
+        // limited group-by and crashed with AIOOBE.
+        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
+                .expectSize()
+                .returns("""
+                        e0	e1	e4
+                        -1	2	2
+                        -1	3	3
+                        """);
+    }
+
+    @Test
     public void testDistinctImplementsLimitLoPositive() throws Exception {
         execute(
                 "create table x as (" +
@@ -55,16 +85,8 @@ public class DistinctTest extends AbstractCairoTest {
                         "  from long_sequence(100)" +
                         ") timestamp(created);"
         );
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t315515118\tnull
-                        foo\t73575701\t315515118
-                        foo\t592859671\t73575701
-                        foo\t-1191262516\t592859671
-                        foo\t-1575378703\t-1191262516
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5")
+                .withPlan("""
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             Distinct
                               keys: sym,origin,lag
@@ -74,26 +96,20 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5",
-                null,
-                false,
-                true
-        );
-
-        assertQueryAndPlan(
-                """
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym\torigin\tlag
-                        foo\t2137969456\t264240638
-                        foo\t68265578\t2137969456
-                        foo\t44173540\t68265578
-                        foo\t-2144581835\t44173540
-                        foo\t-1162267908\t-2144581835
-                        foo\t-1575135393\t-1162267908
-                        foo\t326010667\t-1575135393
-                        foo\t-2034804966\t326010667
-                        """,
-                """
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """);
+
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28")
+                .withPlan("""
                         Limit left: 20 right: 28 skip-rows: 20 take-rows: 8
                             Distinct
                               keys: sym,origin,lag
@@ -103,24 +119,24 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28",
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t2137969456\t264240638
+                        foo\t68265578\t2137969456
+                        foo\t44173540\t68265578
+                        foo\t-2144581835\t44173540
+                        foo\t-1162267908\t-2144581835
+                        foo\t-1575135393\t-1162267908
+                        foo\t326010667\t-1575135393
+                        foo\t-2034804966\t326010667
+                        """);
 
         // no early exit
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t874367915\t-1775036711
-                        foo\t1431775887\t874367915
-                        foo\t-1822590290\t1431775887
-                        foo\t957075831\t-1822590290
-                        foo\t-2043541236\t957075831
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5")
+                .withPlan("""
                         Limit value: -5 skip-rows: 95 take-rows: 5
                             Distinct
                               keys: sym,origin,lag
@@ -129,24 +145,21 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5",
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t874367915\t-1775036711
+                        foo\t1431775887\t874367915
+                        foo\t-1822590290\t1431775887
+                        foo\t957075831\t-1822590290
+                        foo\t-2043541236\t957075831
+                        """);
 
         // no early exit
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t315515118\tnull
-                        foo\t73575701\t315515118
-                        foo\t592859671\t73575701
-                        foo\t-1191262516\t592859671
-                        foo\t-1575378703\t-1191262516
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5")
+                .withPlan("""
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             Encode sort
                               keys: [sym]
@@ -157,191 +170,313 @@ public class DistinctTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5",
-                null,
-                true,
-                true
-        );
+                        """)
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """);
+    }
+
+    @Test
+    public void testDistinctOrderByPositionLimitPush() throws Exception {
+        // The trivial-group-by rewrite pushes the outer LIMIT onto the nested group by, but the
+        // gate runs before ORDER BY tokens are normalized, so it resolves positions/qualifiers
+        // itself. A position over a key (2 == e1) must push like the alias form; one over the
+        // virtual-only constant (1 == e0) must not, else rewriteOrderBy later crashes (AIOOBE).
+        assertMemoryLeak(() -> {
+            final String base = "SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ";
+
+            // position 2 == e1 (a key): pushed, same plan as the alias form. Asserting both against
+            // one literal proves the positional form normalizes to the same column.
+            final String pushedPlan = """
+                    VirtualRecord
+                      functions: [-1,e1,e4]
+                        Long Top K lo: 2
+                          keys: [e1 desc]
+                            GroupBy vectorized: false
+                              keys: [e1,e4]
+                                long_sequence count: 3
+                    """;
+            assertQuery(base + "ORDER BY e1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan);
+            assertQuery(base + "ORDER BY 2 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan);
+
+            // position 1 == e0 (virtual-only constant): not pushed, same plan as the alias form, no AIOOBE.
+            final String notPushedPlan = """
+                    Encode sort light lo: 2
+                      keys: [e0 desc]
+                        VirtualRecord
+                          functions: [-1,e1,e4]
+                            GroupBy vectorized: false
+                              keys: [e1,e4]
+                                long_sequence count: 3
+                    """;
+            assertQuery(base + "ORDER BY e0 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(notPushedPlan);
+            assertQuery(base + "ORDER BY 1 DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(notPushedPlan);
+
+            // e1 is unique, so the key-ordered result is deterministic.
+            assertQuery(base + "ORDER BY 2 DESC LIMIT 2")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("e0\te1\te4\n-1\t3\t3\n-1\t2\t2\n");
+            // constant order is unspecified (all e0 equal); assert only the row count and no crash.
+            assertQuery("SELECT count() c FROM (" + base + "ORDER BY 1 DESC LIMIT 2)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("c\n2\n");
+
+            // Qualified ORDER BY t0.x strips to x (single join model). The constant e0 forces the
+            // outer virtual, and the unaliased middle column makes x a group-by key, so the
+            // qualified form pushes like the bare column.
+            final String base2 = "SELECT DISTINCT -1 AS e0, t0.x, t0.x AS e4 FROM long_sequence(3) t0 ";
+            final String pushedPlan2 = """
+                    VirtualRecord
+                      functions: [-1,x,e4]
+                        Long Top K lo: 2
+                          keys: [x desc]
+                            GroupBy vectorized: false
+                              keys: [x,e4]
+                                long_sequence count: 3
+                    """;
+            assertQuery(base2 + "ORDER BY x DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan2);
+            assertQuery(base2 + "ORDER BY t0.x DESC LIMIT 2")
+                    .noLeakCheck()
+                    .assertsPlan(pushedPlan2);
+            assertQuery(base2 + "ORDER BY t0.x DESC LIMIT 2")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("e0\tx\te4\n-1\t3\t3\n-1\t2\t2\n");
+        });
+    }
+
+    @Test
+    public void testDistinctQualifiedColumnInExprWithBindVariableFromFuzzer() throws Exception {
+        // Bind-form of the prior fuzzer query. The bind cast steals the early aliases
+        // ("cast", "cast1") so the bare t0.x projection keeps its user alias "x". The
+        // earlier qualified emit for (t0.x)::CHAR had already registered "x" in the
+        // translating model under the stripped key, and createSelectColumn needed the
+        // same qualified-vs-stripped retry as doReplaceLiteral0 to reuse that entry
+        // instead of renaming the bare projection to "x1" and breaking the DISTINCT
+        // wrapper's lookup.
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "Y");
+            assertQuery("SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
+                    " FROM long_sequence(3) t0")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            cast\tcast1\tx
+                            Y\t\t1
+                            Y\t\t2
+                            Y\t\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctQualifiedColumnInExpressionFromFuzzer() throws Exception {
+        // Qualified t0.x inside the expression must resolve to the same column as the bare
+        // t0.x projection above; otherwise the expression's literal misses the translating
+        // entry, overwrites the columnNameToAlias mapping with a duplicate, and the parent
+        // virtual model raises Invalid column.
+        assertQuery("SELECT DISTINCT -614 AS e0, t0.x AS e1, 786 AS e2, -716 AS e3," +
+                " (278444 * t0.x) AS e4" +
+                " FROM long_sequence(2) t0" +
+                " ORDER BY e1")
+                .expectSize()
+                .returns("""
+                        e0\te1\te2\te3\te4
+                        -614\t1\t786\t-716\t278444
+                        -614\t2\t786\t-716\t556888
+                        """);
+    }
+
+    @Test
+    public void testDistinctReusedColumnWithUserAliasRepro() throws Exception {
+        // Duplicate aliased refs to the same column (x AS e1, x AS e2) under DISTINCT
+        // pointed the outer projection at the translating-model alias "x" while the
+        // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
+        assertQuery("SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)")
+                .expectSize()
+                .returns("""
+                        e0\te1\te2
+                        1\t1\t1
+                        2\t2\t2
+                        3\t3\t3
+                        """);
     }
 
     @Test
     public void testDistinctWithAlias() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                """
-                        created
-                        1970-01-01T00:00:00.000000Z
-                        """,
-                "SELECT distinct sa.created FROM x sa;",
-                "create table x as (" +
+        assertQuery("SELECT distinct sa.created FROM x sa;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(created);")
+                .expectSize()
+                .returns("""
+                        created
+                        1970-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
     public void testDuplicateColumn() throws Exception {
-        assertQuery(
-                """
-                        e1\te2
-                        24814\t24814
-                        -13027\t-13027
-                        -22955\t-22955
-                        """,
-                "SELECT DISTINCT event e1, event e2 FROM x order by 1 desc;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT event e1, event e2 FROM x order by 1 desc;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(created);")
+                .expectSize()
+                .returns("""
+                        e1\te2
+                        24814\t24814
+                        -13027\t-13027
+                        -22955\t-22955
+                        """);
     }
 
     @Test
     public void testDuplicateColumnInWhereClauseSubQuery() throws Exception {
-        assertQuery(
-                """
-                        origin\tevent\tcreated
-                        -27056\ta\t1970-01-01T00:00:00.000000Z
-                        -11455\tc\t1970-01-01T00:00:00.000000Z
-                        -21227\tc\t1970-01-01T00:00:00.000000Z
-                        """,
-                "SELECT * FROM x WHERE event IN (SELECT * FROM (SELECT DISTINCT event, event FROM x));",
-                "create table x as (" +
+        assertQuery("SELECT * FROM x WHERE event IN (SELECT * FROM (SELECT DISTINCT event, event FROM x));")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_symbol('a','b','c') event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                "created",
-                true,
-                false
-        );
+                        ") timestamp(created);")
+                .timestamp("created")
+                .returns("""
+                        origin\tevent\tcreated
+                        -27056\ta\t1970-01-01T00:00:00.000000Z
+                        -11455\tc\t1970-01-01T00:00:00.000000Z
+                        -21227\tc\t1970-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
     public void testDuplicateColumnWithSubQuery() throws Exception {
-        assertQuery(
-                """
-                        e1\te2
-                        -24814\t-24814
-                        13027\t13027
-                        22955\t22955
-                        """,
-                "SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x) order by 1;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x) order by 1;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(created);")
+                .expectSize()
+                .returns("""
+                        e1\te2
+                        -24814\t-24814
+                        13027\t13027
+                        22955\t22955
+                        """);
     }
 
     @Test
     public void testDuplicateColumnWithUnion() throws Exception {
-        assertQuery(
-                """
+        assertQuery("(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x order by 1);")
+                .ddl("create table x as (" +
+                        "  select" +
+                        "    rnd_short() origin," +
+                        "    rnd_short() event," +
+                        "    timestamp_sequence(0, 0) created" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .returns("""
                         e1\te2
                         42\t42
                         -22955\t-22955
                         -13027\t-13027
                         24814\t24814
-                        """,
-                "(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x order by 1);",
-                "create table x as (" +
-                        "  select" +
-                        "    rnd_short() origin," +
-                        "    rnd_short() event," +
-                        "    timestamp_sequence(0, 0) created" +
-                        "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testDuplicateCount() throws Exception {
-        assertQuery(
-                """
-                        count\tcount1
-                        10\t10
-                        """,
-                "SELECT DISTINCT count(*), count(*) FROM x;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT count(*), count(*) FROM x;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tcount1
+                        10\t10
+                        """);
     }
 
     @Test
     public void testDuplicateCount2() throws Exception {
-        assertQuery(
-                """
-                        sym\tcount\tcount1
-                        foo\t10\t10
-                        """,
-                "SELECT DISTINCT sym, count(*), count(*) FROM x;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT sym, count(*), count(*) FROM x;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_symbol('foo') sym," +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\tcount\tcount1
+                        foo\t10\t10
+                        """);
     }
 
     @Test
     public void testDuplicateCountNested() throws Exception {
-        assertQuery(
-                """
-                        count\tcount1
-                        10\t10
-                        """,
-                "SELECT * FROM (SELECT DISTINCT count(*), count(*) FROM x);",
-                "create table x as (" +
+        assertQuery("SELECT * FROM (SELECT DISTINCT count(*), count(*) FROM x);")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tcount1
+                        10\t10
+                        """);
     }
 
     @Test
@@ -378,14 +513,14 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select distinct sensors.sensor_id, sensors.apptype " +
+                    "from sensors")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sensor_id\tapptype
                             air\t1
-                            """,
-                    "select distinct sensors.sensor_id, sensors.apptype " +
-                            "from sensors"
-            );
+                            """);
         });
     }
 
@@ -410,15 +545,15 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select distinct samples.sensor_id, sensors.apptype " +
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sensor_id\tapptype
                             air\t1
-                            """,
-                    "select distinct samples.sensor_id, sensors.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
-            );
+                            """);
         });
     }
 
@@ -446,14 +581,14 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into samples values ('air', 1, '1970-02-02T10:10:01');");
 
             final String secondAlias = columnAliasExprEnabled ? "apptype_2" : "apptype1";
-            assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\t" + secondAlias + "\n" +
+            assertQuery("select distinct samples.sensor_id, sensors.apptype, samples.apptype " +
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sensor_id\tapptype\t" + secondAlias + "\n" +
                             "air\t2\t1\n" +
-                            "air\t1\t1\n",
-                    "select distinct samples.sensor_id, sensors.apptype, samples.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
-            );
+                            "air\t1\t1\n");
         });
     }
 }

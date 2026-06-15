@@ -31,6 +31,7 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -1217,8 +1218,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return 8;
+    public long getSqlParquetCacheMemorySize() {
+        return 256L * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -1257,8 +1258,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortKeyMaxPages() {
-        return 1024;
+    public long getSqlSortKeyMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1267,8 +1268,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortLightValueMaxPages() {
-        return 1024;
+    public long getSqlSortLightValueMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1277,8 +1278,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortValueMaxPages() {
-        return 1024;
+    public long getSqlSortValueMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1292,6 +1293,22 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlWindowCacheMaxBytes() {
+        return Long.MAX_VALUE;
+    }
+
+    @Override
+    public String getSqlWindowCacheMaxPagesConfigKey() {
+        return PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES.getPropertyPath();
+    }
+
+    @Override
+    public int getSqlWindowCacheMaxPagesResolved() {
+        final long fromBytes = Math.max(1L, getSqlWindowCacheMaxBytes() / getSqlWindowStorePageSize());
+        return (int) Math.min(fromBytes, Integer.MAX_VALUE);
+    }
+
+    @Override
     public int getSqlWindowInitialRangeBufferSize() {
         return 32;
     }
@@ -1302,8 +1319,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowRowIdMaxPages() {
-        return Integer.MAX_VALUE;
+    public long getSqlWindowRowIdMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1322,8 +1339,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowTreeKeyMaxPages() {
-        return Integer.MAX_VALUE;
+    public long getSqlWindowTreeKeyMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override

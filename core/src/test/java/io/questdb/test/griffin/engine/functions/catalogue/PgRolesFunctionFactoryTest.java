@@ -31,25 +31,17 @@ public class PgRolesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgRolesFunc() throws Exception {
-        assertQuery(
-                "rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n",
-                "pg_roles;",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("pg_roles;")
+                .ddl(null)
+                .expectSize()
+                .returns("rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n");
     }
 
     @Test
     public void testPrefixedPgRolesFunc() throws Exception {
-        assertQuery(
-                "rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n",
-                "pg_catalog.pg_roles;",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("pg_catalog.pg_roles;")
+                .ddl(null)
+                .expectSize()
+                .returns("rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n");
     }
 }

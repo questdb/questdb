@@ -77,8 +77,10 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
             execute("alter table x rename column arr to arr2;");
-            assertSql("column\ttype\narr2\tDOUBLE[]\n",
-                    "select \"column\", \"type\" from table_columns('x')");
+            assertQuery("select \"column\", \"type\" from table_columns('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\ttype\narr2\tDOUBLE[]\n");
         });
     }
 
@@ -386,10 +388,14 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                             rdr1.getMetadata().toJson(sink);
                             TestUtils.assertEquals(expected, sink);
 
-                            assertSql("""
-                                    sym\ttimestamp\tk
-                                    msft\t2018-01-01T00:12:00.000000Z\t1970-01-01T00:00:00.000000Z
-                                    """, "select * from x");
+                            assertQuery("select * from x")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("timestamp")
+                                    .returns("""
+                                            sym\ttimestamp\tk
+                                            msft\t2018-01-01T00:12:00.000000Z\t1970-01-01T00:00:00.000000Z
+                                            """);
 
                             rdr1.goPassive();
 
@@ -504,7 +510,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
         });
     }
 
-    private void createX() throws SqlException {
+    private void createX() throws Exception {
         execute(
                 "create table x as (" +
                         "select" +
