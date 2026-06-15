@@ -252,6 +252,48 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateMatViewBeforeStartupHydration() throws Exception {
+        // Regression (M3): SHOW CREATE MATERIALIZED VIEW resolves the token from the
+        // synchronously loaded registry but reads the lazily hydrated metadata cache.
+        // In the post-restart window (cache not yet hydrated) it must hydrate the matview
+        // on demand rather than report a registered matview as non-existent.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+
+            // Simulate the window: registry knows the matview, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            printSql("show create materialized view base_1h");
+            TestUtils.assertContains(sink.toString(), "CREATE MATERIALIZED VIEW 'base_1h'");
+        });
+    }
+
+    @Test
+    public void testShowCreateTableBeforeStartupHydration() throws Exception {
+        // Regression (M3): SHOW CREATE TABLE resolves the token from the synchronously
+        // loaded registry but reads the lazily hydrated metadata cache. In the
+        // post-restart window (or for an embedded engine before any catalogue query has
+        // warmed the cache) the table is not cached yet, and the command used to report
+        // a registered table as non-existent. It must hydrate the table on demand.
+        assertMemoryLeak(() -> {
+            execute("create table foo (ts timestamp, a int) timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            // Simulate the window: registry knows the table, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            printSql("show create table foo");
+            TestUtils.assertContains(sink.toString(), "CREATE TABLE 'foo'");
+        });
+    }
+
+    @Test
     public void testMissingNameReportsDoesNotExist() throws Exception {
         // the existence check must run before the view/matview check, so an unknown
         // name reports "does not exist" rather than the "got view" message

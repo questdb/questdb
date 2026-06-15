@@ -195,6 +195,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(PG_INSERT_CACHE_ENABLED + "=false");
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
             writer.println(METRICS_ENABLED + "=false");
+            writer.println(MEMORY_USAGE_LOG_ENABLED + "=false");
             writer.println(TELEMETRY_ENABLED + "=" + telemetryEnable);
             writer.println(TELEMETRY_DISABLE_COMPLETELY + "=" + !telemetryEnable);
 
