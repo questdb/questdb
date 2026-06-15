@@ -359,8 +359,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // The replaced rows carry their c values; the surviving rows predate the column and read null.
-            assertSql(
-                    """
+            assertQuery("select * from x order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts\tc
                             0\t2022-02-24T00:00:00.000000Z\t1000
                             1\t2022-02-24T00:01:00.000000Z\t1001
@@ -374,9 +377,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             9\t2022-02-24T00:09:00.000000Z\t1009
                             100\t2022-02-24T05:00:00.000000Z\tnull
                             101\t2022-02-24T05:01:00.000000Z\tnull
-                            """,
-                    "select * from x order by ts"
-            );
+                            """);
         });
     }
 
@@ -440,8 +441,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the replacement values remain; the path applies cleanly and returns correct data.
-            assertSql(
-                    """
+            assertQuery("select * from x order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1000\t2022-02-24T00:00:00.000000Z
                             1001\t2022-02-24T00:01:00.000000Z
@@ -453,9 +457,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             1007\t2022-02-24T00:07:00.000000Z
                             1008\t2022-02-24T00:08:00.000000Z
                             1009\t2022-02-24T00:09:00.000000Z
-                            """,
-                    "select * from x order by ts"
-            );
+                            """);
 
             // The data assertion above is identical whether or not the INSERT is skipped, so it does not
             // guard the barrier. Pin it via physically-written rows: the barrier stops the scan, so the
@@ -526,13 +528,13 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the post-truncate row survives.
-            assertSql(
-                    """
+            assertQuery("select s, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tv
                             kept\t42.0
-                            """,
-                    "select s, v from mv order by ts"
-            );
+                            """);
 
             // The truncate wipes the INSERT either way, so the data assertion above does not guard the SQL hard
             // barrier. Pin it via physically-written rows: the SQL barrier stops the scan before the truncate, so
@@ -604,8 +606,10 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the replacement values remain.
-            assertSql(
-                    """
+            assertQuery("select s, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tv
                             new0\t1000.0
                             new1\t1001.0
@@ -617,18 +621,15 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             new7\t1007.0
                             new8\t1008.0
                             new9\t1009.0
-                            """,
-                    "select s, v from mv order by ts"
-            );
+                            """);
 
             // The index built by ADD INDEX and rebuilt by the REPLACE_RANGE resolves the replacement row.
-            assertSql(
-                    """
+            assertQuery("select s, v from mv where s = 'new5'")
+                    .noLeakCheck()
+                    .returns("""
                             s\tv
                             new5\t1005.0
-                            """,
-                    "select s, v from mv where s = 'new5'"
-            );
+                            """);
         });
     }
 
@@ -689,10 +690,10 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the replacement values remain in the data.
-            assertSql(
-                    "s\nw0\nw1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nw9\n",
-                    "select s from x order by ts"
-            );
+            assertQuery("select s from x order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\nw0\nw1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nw9\n");
 
             // But the symbol map must hold all 20 values (10 inserted + 10 replacement), proving the conversion
             // processed the inserted rows rather than skipping them. With the bug it would be 10.
@@ -739,10 +740,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // Apply insert + add-column + truncate + insert in a single batch.
             drainWalQueue();
 
-            assertSql(
-                    "a\tts\tc\n100\t2022-02-25T00:00:00.000000Z\t900\n",
-                    "select * from x order by ts"
-            );
+            assertQuery("select * from x order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("a\tts\tc\n100\t2022-02-25T00:00:00.000000Z\t900\n");
         });
     }
 
@@ -795,10 +797,10 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the replacement values remain in the data.
-            assertSql(
-                    "s\nw0\nw1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nw9\n",
-                    "select s from x order by ts"
-            );
+            assertQuery("select s from x order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\nw0\nw1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nw9\n");
 
             // The symbol map must hold all 20 values (10 inserted + 10 replacement), proving the conversion
             // processed the inserted rows rather than skipping them. With the bug it would be 10.
@@ -1126,8 +1128,10 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the replacement values remain.
-            assertSql(
-                    """
+            assertQuery("select s, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tv
                             new0\t1000.0
                             new1\t1001.0
@@ -1139,9 +1143,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             new7\t1007.0
                             new8\t1008.0
                             new9\t1009.0
-                            """,
-                    "select s, v from mv order by ts"
-            );
+                            """);
 
             // The data assertion above is identical whether or not the INSERT is skipped, so it does not guard
             // the mat-view exemption on its own. Pin the skip directly via physically-written rows: skipping the
@@ -1205,13 +1207,13 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the post-truncate row survives.
-            assertSql(
-                    """
+            assertQuery("select s, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tv
                             kept\t42.0
-                            """,
-                    "select s, v from mv order by ts"
-            );
+                            """);
 
             // Skipping the INSERT (clamped to the first barrier) means only the single surviving post-truncate row
             // reaches disk, not the INSERT's 10 rows first. If the exemption regressed and applied the INSERT
@@ -1279,13 +1281,13 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Only the post-truncate row survives.
-            assertSql(
-                    """
+            assertQuery("select s, v from mv order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             s\tv
                             kept\t42.0
-                            """,
-                    "select s, v from mv order by ts"
-            );
+                            """);
 
             // The truncate wipes the INSERT either way, so the data assertion above does not guard the mat-view
             // exemption. Pin the skip directly via physically-written rows: skipping the INSERT (clamped to the
