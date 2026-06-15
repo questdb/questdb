@@ -55,7 +55,7 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHeader {
     private static final Comparator<HttpCookie> COOKIE_COMPARATOR = HttpHeaderParser::cookieComparator;
     private static final Log LOG = LogFactory.getLog(HttpHeaderParser.class);
-    private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
+    private final BoundaryAugmenter boundaryAugmenter;
     private final ObjList<HttpCookie> cookieList = new ObjList<>();
     private final ObjectPool<HttpCookie> cookiePool;
     private final Utf8SequenceObjHashMap<HttpCookie> cookies = new Utf8SequenceObjHashMap<>();
@@ -101,11 +101,17 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String statusText;
 
     public HttpHeaderParser(int bufferSize, ObjectPool<DirectUtf8String> csPool) {
-        this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
-        this.hi = headerPtr + bufferSize;
-        this.csPool = csPool;
-        this.cookiePool = new ObjectPool<>(HttpCookie::new, 16);
-        clear();
+        try {
+            this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.hi = headerPtr + bufferSize;
+            this.boundaryAugmenter = new BoundaryAugmenter();
+            this.csPool = csPool;
+            this.cookiePool = new ObjectPool<>(HttpCookie::new, 16);
+            clear();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -146,13 +152,21 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     @Override
     public void close() {
-        clear();
+        // cookiePool is final but may be null when close() runs after partial
+        // construction failure. clear() touches cookiePool, so guard it here.
+        if (cookiePool != null) {
+            clear();
+        }
         if (headerPtr != 0) {
             headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
+        }
+        if (boundaryAugmenter != null) {
             boundaryAugmenter.close();
         }
         sink.close();
-        csPool.clear();
+        if (csPool != null) {
+            csPool.clear();
+        }
     }
 
     @Override
