@@ -119,7 +119,8 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 perWorkerRecordsB.extendAndSet(i, new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER));
             }
 
-            this.isEncoded = SortKeyEncoder.isSupported(orderByMetadata, orderByFilter);
+            this.isEncoded = configuration.isSqlOrderBySortEnabled()
+                    && SortKeyEncoder.isSupported(orderByMetadata, orderByFilter);
             if (isEncoded) {
                 this.rankMaps = null;
                 this.ownerComparator = null;
