@@ -4754,13 +4754,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "FULL OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
+            // T2 is NULL-extended by the T2-T3 FULL OUTER JOIN, so the WHERE on T2.created must stay
+            // post-join (pushing it below leaks NULL-T2 rows); no 1970 ts equals now(), so count 0.
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Count
-                                Hash Full Outer Join Light
-                                  condition: T3.created=T2.created
-                                    Filter filter: T2.created in [now(),now()]
+                                Filter filter: T2.created in [now(),now()]
+                                    Hash Full Outer Join Light
+                                      condition: T3.created=T2.created
                                         Nested Loop Full Join
                                           filter: T1.created<T2.created
                                             Limit value: 0 skip-rows-max: 0 take-rows-max: 0
@@ -4770,10 +4772,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                             """);
 
             assertQuery(query)
@@ -4782,7 +4784,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             count
-                            2
+                            0
                             """);
         });
     }
@@ -7397,13 +7399,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "RIGHT OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
+            // T2 is NULL-extended by the T2-T3 RIGHT OUTER JOIN, so the WHERE on T2.created must stay
+            // post-join (pushing it below leaks NULL-T2 rows); no 1970 ts equals now(), so count 0.
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Count
-                                Hash Right Outer Join Light
-                                  condition: T3.created=T2.created
-                                    Filter filter: T2.created in [now(),now()]
+                                Filter filter: T2.created in [now(),now()]
+                                    Hash Right Outer Join Light
+                                      condition: T3.created=T2.created
                                         Nested Loop Right Join
                                           filter: T1.created<T2.created
                                             Limit value: 0 skip-rows-max: 0 take-rows-max: 0
@@ -7413,10 +7417,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                             """);
 
             assertQuery(query)
@@ -7425,7 +7429,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             count
-                            2
+                            0
                             """);
         });
     }
@@ -7491,10 +7495,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "WHERE T2.created::long > 0")
                     .noRandomAccess()
                     .noLeakCheck()
+                    // T2 is NULL-extended by the T2-T3 RIGHT JOIN; the post-join WHERE drops the
+                    // NULL-T2 rows (null::long > 0 is false), leaving only the matched row.
                     .returns("""
                             value\tvalue1\tvalue2
-                            null\tnull\t0
-                            null\tnull\t1
                             0\t1\t2
                             """);
 
