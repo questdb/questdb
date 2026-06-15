@@ -31,12 +31,11 @@ public class KurtosisSampleGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testKurtosisSampAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 "select kurtosis_samp(x) from (select cast(null as double) x from long_sequence(100))")
-                .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("kurtosis_samp\nnull\n"));
+                .returns("kurtosis_samp\nnull\n");
     }
 
     @Test
@@ -86,6 +85,19 @@ public class KurtosisSampleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     .noRandomAccess()
                     .expectSize()
                     .returns("kurtosis_samp\n-1.2\n");
+        });
+    }
+
+    @Test
+    public void testKurtosisSampHugeValues() throws Exception {
+        // Arithmetic sequence: sample excess kurtosis is ~-1.2 at any scale, so huge values keep a known target.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl1 AS (SELECT 100_000_000 * x x FROM long_sequence(1_000_000))");
+            assertQuery("SELECT kurtosis_samp(x) FROM tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("kurtosis_samp\n-1.2000000000000608\n");
         });
     }
 

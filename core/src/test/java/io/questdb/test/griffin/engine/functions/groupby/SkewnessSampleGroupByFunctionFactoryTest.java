@@ -31,12 +31,11 @@ public class SkewnessSampleGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testSkewnessSampAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 "select skewness_samp(x) from (select cast(null as double) x from long_sequence(100))")
-                .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("skewness_samp\nnull\n"));
+                .returns("skewness_samp\nnull\n");
     }
 
     @Test
@@ -86,6 +85,19 @@ public class SkewnessSampleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     .noRandomAccess()
                     .expectSize()
                     .returns("skewness_samp\n0.0\n");
+        });
+    }
+
+    @Test
+    public void testSkewnessSampHugeValues() throws Exception {
+        // Right-skewed x^2: a symmetric set gives ~0, so we use a clear non-zero skew to anchor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl1 AS (SELECT (x * x)::double val FROM long_sequence(1_000_000))");
+            assertQuery("SELECT skewness_samp(val) FROM tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("skewness_samp\n0.6388769842619288\n");
         });
     }
 

@@ -31,12 +31,11 @@ public class SkewnessPopGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSkewnessPopAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 "select skewness_pop(x) from (select cast(null as double) x from long_sequence(100))")
-                .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("skewness_pop\nnull\n"));
+                .returns("skewness_pop\nnull\n");
     }
 
     @Test

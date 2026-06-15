@@ -29,5 +29,4 @@ public class KurtosisGroupByFunctionFactory extends KurtosisSampleGroupByFunctio
     public String getSignature() {
         return "kurtosis(D)";
     }
-
 }

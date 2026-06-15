@@ -31,12 +31,11 @@ public class KurtosisPopGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testKurtosisPopAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 "select kurtosis_pop(x) from (select cast(null as double) x from long_sequence(100))")
-                .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("kurtosis_pop\nnull\n"));
+                .returns("kurtosis_pop\nnull\n");
     }
 
     @Test
