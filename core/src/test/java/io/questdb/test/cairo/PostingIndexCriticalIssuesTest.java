@@ -57,7 +57,9 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectBitSet;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -70,6 +72,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
@@ -105,6 +108,77 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // e.g. leaving a superseded .pv unreclaimed, or making a saturation assertion
         // see no room. Draining here makes each test independent of the prior one.
         drainPostingSealPurgeQueue();
+    }
+
+    @Test
+    public void testCloseNoTruncateSkipsSealOnPoisonedWriter() throws Exception {
+        // SymbolMapWriter's emergency closeNoTruncate() runs a best-effort seal().
+        // On a poisoned writer that seal() would throw via checkNotPoisoned() out
+        // of cleanup, masking the original rebuild failure. The fix skips the seal
+        // when poisoned; the finally still frees every resource. Pre-fix this test
+        // fails with the poison CairoException propagating out of closeNoTruncate().
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "close_no_truncate_poisoned";
+            final long fakeColBytes = 32L << 3; // 32 rows * 8 bytes (LONG cover)
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                boolean closeNoTruncateRan = false;
+                try {
+                    // Two sparse gens so seal() runs sealFull and actually switches.
+                    for (int v = 0; v < 16; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(15);
+                    writer.commit();
+                    for (int v = 16; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.commit();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcSync.arm();
+                    try {
+                        writer.seal();
+                        Assert.fail("expected post-switch .pc sync failure during seal");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+                    // The seal poisoned the writer and staged the newSealTxn orphan.
+                    Assert.assertEquals("seal must have poisoned the writer and staged the orphan",
+                            1, writer.getPendingPurgesSizeForTesting());
+
+                    // The fix under test: emergency close must not throw on a
+                    // poisoned writer. closeNoTruncate frees every resource in its
+                    // finally (even on a throw), so it doubles as the writer's close.
+                    closeNoTruncateRan = true;
+                    writer.closeNoTruncate();
+                } finally {
+                    // Only re-close on a setup failure before closeNoTruncate ran;
+                    // a closeNoTruncate that threw already freed everything, so we
+                    // let the throw surface the regression rather than double-close.
+                    if (!closeNoTruncateRan) {
+                        writer.close();
+                    }
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     /**
@@ -5184,6 +5258,96 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSwitchPartitionResealPostSwitchFailurePublishesStagedOrphanPurge() throws Exception {
+        // M1: switchPartition()'s native reseal (commit() + sealIfMultiGen()) on a
+        // post-switch .pc sync failure poisons the writer and stages the failed
+        // sealTxn's orphan purge. deferPendingPostingSealPurges must run in a
+        // finally so the propagating distress does not drop the unpublished outbox
+        // and leak the staged .pv/.pc. Pre-fix the orphan is never published
+        // (no deferred-purge-log row); with the fix it is published.
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 35));
+
+            // Drain purges queued by setup so the deferred-purge-log baseline for
+            // the index column is empty.
+            drainPostingSealPurgeQueue();
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            Assert.assertNotNull("table must exist", engine.getTableTokenIfExists(tableName));
+            final long partitionTs = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+            final int baselineValueFiles = countPostingValueFiles(tableName, indexColumnName, partitionTs);
+            Assert.assertTrue("setup must leave the live .pv on disk", baselineValueFiles >= 1);
+
+            boolean distressed = false;
+            TableWriter writer = TestUtils.getWriter(engine, tableName);
+            try {
+                // Pending rows in the 2022-02-25 partition so switchPartition's
+                // commit() flushes a 2nd gen and sealIfMultiGen(1) actually seals.
+                for (int i = 35; i < 40; i++) {
+                    TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp(timestampAtMinute(i)));
+                    row.putSym(1, "XPHI");
+                    row.putSym(2, "S");
+                    row.putLong(3, i);
+                    row.append();
+                }
+                pcSync.arm();
+                try {
+                    // Cross into a new partition -> switchPartition reseals
+                    // 2022-02-25; the staged .pc sync fails post-switch.
+                    TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-26T00:00:00.000000Z"));
+                    row.putSym(1, "next");
+                    row.putSym(2, "S");
+                    row.putLong(3, 200);
+                    row.append();
+                    writer.commit();
+                } catch (Throwable th) {
+                    distressed = true;
+                } finally {
+                    pcSync.disarm();
+                }
+            } finally {
+                try {
+                    writer.close();
+                } catch (Throwable ignore) {
+                    // a distressed writer may throw on close
+                }
+                engine.releaseAllWriters();
+            }
+            Assert.assertTrue("the partition-switch reseal must fail post-switch and distress the writer", distressed);
+
+            // The failed reseal staged its new sealTxn's .pv before the .pc sync
+            // failed, leaving it on disk pending purge.
+            Assert.assertTrue("the failed reseal must leave a staged orphan .pv on disk",
+                    countPostingValueFiles(tableName, indexColumnName, partitionTs) > baselineValueFiles);
+
+            // The fix: deferPendingPostingSealPurges ran in the switchPartition
+            // finally, publishing the staged orphan to the purge queue despite the
+            // propagating distress, so the purge job reclaims it. Pre-fix the
+            // distress close drops the unpublished outbox and the orphan .pv leaks
+            // permanently (this final count would stay at baseline + 1).
+            engine.releaseAllReaders();
+            try (PostingSealPurgeJob reclaimJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(reclaimJob);
+            }
+            Assert.assertEquals("the staged orphan .pv must be published and reclaimed, not leaked",
+                    baselineValueFiles, countPostingValueFiles(tableName, indexColumnName, partitionTs));
+        });
+    }
+
     /**
      * The seal path must clean up staged files on a PRE-switch failure, mirroring
      * the rollback path -- otherwise the staged .pv/.pc leak permanently (the
@@ -9046,6 +9210,38 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 .returns("count\n"
                         + expectedCount
                         + "\n");
+    }
+
+    private int countPostingValueFiles(String tableName, String indexColumnName, long partitionTimestamp) {
+        TableToken token = engine.getTableTokenIfExists(tableName);
+        Assert.assertNotNull("table must exist", token);
+        long partitionNameTxn = -1L;
+        try (TableReader reader = engine.getReader(token)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                    partitionNameTxn = reader.getTxFile().getPartitionNameTxn(i);
+                    break;
+                }
+            }
+        }
+        final int[] count = {0};
+        final String prefix = indexColumnName + ".pv.";
+        final StringSink fileName = new StringSink();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            configuration.getFilesFacade().iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (type != Files.DT_FILE && type != Files.DT_UNKNOWN) {
+                    return;
+                }
+                fileName.clear();
+                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+                if (Chars.startsWith(fileName, prefix)) {
+                    count[0]++;
+                }
+            });
+        }
+        return count[0];
     }
 
     // Shared single-key covered sum/count concurrent-reader workload. Seeds

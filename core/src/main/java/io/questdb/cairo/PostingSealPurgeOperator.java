@@ -199,6 +199,9 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         path.trimTo(pathPartitionLen);
         LPSZ pv = PostingIndexUtils.valueFileName(path, task.getIndexColumnName(),
                 task.getPostingColumnNameTxn(), task.getSealTxn());
+        // removeQuiet also returns true when the .pv never existed (ENOENT), so
+        // pvRemoved means "absent afterward", not "a live file was unlinked"; the
+        // exists() + head re-read below is what isolates the genuine live-unlink case.
         boolean pvRemoved = ff.removeQuiet(pv);
         if (!pvRemoved) {
             allRemoved = false;

@@ -3014,6 +3014,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     RowCursor cursor = writer.getCursor(0);
                     Assert.assertFalse(cursor.hasNext());
                     Misc.free(cursor);
+
+                    // The truncate-to-empty path inside reencodeAllGenerations already
+                    // records the superseded sealTxn's purge; rollbackToMaxValue's
+                    // genCount>0 guard must then suppress a redundant second record.
+                    // Without the guard this is 2 (a no-op duplicate for the same .pv).
+                    Assert.assertEquals("truncate-to-empty rollback must record exactly one purge for the superseded file",
+                            1, writer.getPendingPurgesSizeForTesting());
                 }
             }
         });

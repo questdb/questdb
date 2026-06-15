@@ -55,6 +55,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -450,6 +451,81 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
                 assertTrue("operator must abandon a purge targeting the live chain head and keep the .pv",
                         ff.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, liveHead)));
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeLogsReuseRaceWhenLiveHeadDeletedByOrphanUnlink() throws Exception {
+        // Post-unlink reuse-race DETECTOR (the partner of the pre-unlink abandon
+        // guard). When the pre-unlink .pk head read cannot prove the target is
+        // live -- here it transiently fails, returning -1 -- the operator proceeds
+        // to unlink, then re-reads the head and re-stats the .pv. If the head is
+        // now the target sealTxn AND the .pv is gone, it unlinked a live file and
+        // logs a critical REINDEX diagnostic. Drive that exact window: target the
+        // LIVE head, fail the .pk reads BEFORE the unlink so the pre-unlink guard
+        // misses, let them succeed AFTER, and assert the detector fires.
+        final String col = "c_detector";
+        final boolean[] armed = {false};
+        final boolean[] pvRemoved = {false};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                // Fail every .pk open until the .pv is unlinked: that bounds the
+                // failure to the pre-unlink head read (the only .pk consumer before
+                // removeQuiet), so the post-unlink read still sees the live head.
+                if (armed[0] && !pvRemoved[0] && name != null && Utf8s.containsAscii(name, col + ".pk")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                boolean removed = super.removeQuiet(name);
+                if (armed[0] && name != null && Utf8s.containsAscii(name, col + ".pv.")) {
+                    pvRemoved[0] = true;
+                }
+                return removed;
+            }
+        };
+        LogCapture capture = new LogCapture();
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_reuse_race");
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                writeAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                long liveHead = PostingIndexUtils.readSealTxnFromKeyFile(
+                        runtimeFf, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE));
+                partitionPath.trimTo(pLen);
+                assertTrue("live head sealTxn must be positive", liveHead > 0);
+                assertTrue("live .pv must exist after seal", runtimeFf.exists(
+                        PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, liveHead)));
+                partitionPath.trimTo(pLen);
+
+                // Target the LIVE head, the state a reused-then-republished orphan
+                // sealTxn lands in. Tiny window so the scoreboard reports it ready.
+                publishPurgeTask(tok, col, liveHead, 1L);
+
+                capture.start();
+                try {
+                    armed[0] = true;
+                    runPurgeJob(job, 3);
+                    capture.waitForRegex("during the orphan unlink \\(reuse race\\).*REINDEX this column/partition");
+                } finally {
+                    armed[0] = false;
+                    capture.stop();
+                }
+                // The bypassed guard genuinely unlinked the live .pv (the damage the
+                // detector reports), confirming the detector path was actually reached.
+                assertFalse("the live .pv must have been unlinked by the bypassed guard", runtimeFf.exists(
+                        PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, liveHead)));
+                partitionPath.trimTo(pLen);
             }
         });
     }

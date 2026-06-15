@@ -486,6 +486,12 @@ public class PostingIndexWriter implements IndexWriter {
                     activeKeyCount = 0;
                     coverCount = 0;
                     pendingTxnAtSeal = -1;
+                    // Return the outbox entries to the pool, mirroring close(). A
+                    // poisoned-rollback emergency close can leave the staged
+                    // newSealTxn orphan here; releasePendingPurges does not publish
+                    // (the .pv/.pc still leak on disk for a distressed writer, same
+                    // as close()), it only recycles the pooled task objects.
+                    releasePendingPurges();
                     chain.resetState();
                 }
             }
@@ -2356,6 +2362,15 @@ public class PostingIndexWriter implements IndexWriter {
                 int startIdx = Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
                 int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
                 if (count == 0) continue;
+                // A non-monotonic prefix (corruption) yields a negative count;
+                // unguarded it drives keyOffsets[j] negative and a later gen's write
+                // underflows strideValsAddr. The positive case cannot overflow -- the
+                // prefix IS the buffer-sizing source. Mirrors the dense FLAT
+                // single-key decoder's count<0 guard.
+                if (count < 0) {
+                    throw CairoException.critical(0)
+                            .put("corrupt posting index: dense FLAT stride key count negative [count=").put(count).put(']');
+                }
 
                 long destAddr = strideValsAddr + keyOffsets[j] * Long.BYTES;
                 BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, destAddr);
@@ -5361,6 +5376,13 @@ public class PostingIndexWriter implements IndexWriter {
         long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        // Incremental-candidate invariant (gated in seal()): gen 0 is dense and
+        // covers every current key. The dirty-stride fold below uses a single
+        // keysInStride(keyCount, s) to bound BOTH the gen-0 prefix read and the
+        // sizing reduction; were keyCount > gen0KeyCount the gen-0 read would run
+        // past gen 0's last stride into packed-data territory.
+        assert gen0KeyCount == keyCount
+                : "sealIncremental requires gen0KeyCount == keyCount [gen0KeyCount=" + gen0KeyCount + ", keyCount=" + keyCount + ']';
         int gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
 
         // Allocate output buffers — initialize to 0 so the finally block
