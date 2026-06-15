@@ -48,6 +48,13 @@ fi
 
 echo "Regenerating ${out_file}"
 cd "${repo_root}/core/rust/qdbr"
+
+# Build into a temp file alongside the target and only move it into place once
+# cargo-deny has succeeded. The committed copy is the fallback for local/manual
+# builds, so a mid-run failure (e.g. a registry fetch hiccup aborting under
+# set -e) must not leave it truncated to just the header lines.
+tmp_out="$(mktemp "${out_file}.XXXXXX")"
+trap 'rm -f "${tmp_out}"' EXIT
 {
     echo "Third-party licenses for Rust dependencies of QuestDB"
     echo "======================================================"
@@ -55,6 +62,8 @@ cd "${repo_root}/core/rust/qdbr"
     echo "Generated on $(date -u +%Y-%m-%d) by cargo-deny"
     echo ""
     cargo deny list --layout license
-} > "${out_file}"
+} > "${tmp_out}"
+mv "${tmp_out}" "${out_file}"
+trap - EXIT
 
 echo "Wrote ${out_file}"

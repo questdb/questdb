@@ -8,9 +8,31 @@ on:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Validate the release tag up-front so a malformed tag fails in seconds
+  # rather than after the 5 Rust builds and both packaging jobs have run. The
+  # trigger glob is loose (it lets through e.g. pre-release suffixes), so this
+  # is the real gate. Numeric x.y.z and x.y.z.w (or more components) are
+  # accepted, matching ci/docker-release-pipeline.yml. Skipped on
+  # workflow_dispatch, whose ref is a branch, not a tag.
+  # ---------------------------------------------------------------------------
+  validate-tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' is not a valid release tag (expected numeric x.y.z or x.y.z.w)"
+            exit 1
+          fi
+          echo "Tag '${GITHUB_REF_NAME}' is a valid release tag"
+
+  # ---------------------------------------------------------------------------
   # Build Rust libraries for all platforms (5 parallel jobs)
   # ---------------------------------------------------------------------------
   build-rust-linux-x64:
+    needs: validate-tag
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -37,6 +59,7 @@ jobs:
           path: core/rust/qdbr/target/release/libquestdbr.so
 
   build-rust-linux-arm64:
+    needs: validate-tag
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 30
     steps:
@@ -63,6 +86,7 @@ jobs:
           path: core/rust/qdbr/target/release/libquestdbr.so
 
   build-rust-macos-arm64:
+    needs: validate-tag
     runs-on: macos-14
     timeout-minutes: 30
     steps:
@@ -80,6 +104,7 @@ jobs:
           path: core/rust/qdbr/target/release/libquestdbr.dylib
 
   build-rust-macos-x64:
+    needs: validate-tag
     runs-on: macos-15-intel
     timeout-minutes: 30
     steps:
@@ -97,6 +122,7 @@ jobs:
           path: core/rust/qdbr/target/release/libquestdbr.dylib
 
   build-rust-windows:
+    needs: validate-tag
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -187,6 +213,14 @@ jobs:
         env:
           CARGO_DENY_VERSION: "0.19.8"
 
+      # Share the freshly generated attributions with package-windows so the
+      # Windows archive ships this same file rather than the committed fallback,
+      # which may have drifted. Both archives then carry byte-identical legal/.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: third-party-licenses
+          path: THIRD_PARTY_LICENSES.txt
+
       - name: Build QuestDB
         working-directory: core
         run: mvn package -DskipTests -DskipNative -Dhttp.keepAlive=false -P build-web-console,build-binaries
@@ -202,6 +236,7 @@ jobs:
   package-windows:
     needs:
       - build-rust-windows
+      - package-linux
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -243,6 +278,15 @@ jobs:
           name: rust-windows
           path: core/target/classes/io/questdb/bin/windows-x86-64/
 
+      # Overwrite the committed fallback with the THIRD_PARTY_LICENSES.txt that
+      # package-linux regenerated, so the Windows archive's legal attributions
+      # match libquestdbr's actual crates and are identical to the Linux/no-jre
+      # archives.
+      - uses: actions/download-artifact@v4
+        with:
+          name: third-party-licenses
+          path: .
+
       - name: Build QuestDB
         working-directory: core
         run: mvn package -DskipTests -DskipNative "-Dhttp.keepAlive=false" -P build-web-console,build-binaries
@@ -276,13 +320,6 @@ jobs:
         with:
           name: release-windows
           path: artifacts/
-
-      - name: Validate semver tag
-        run: |
-          if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Tag '${GITHUB_REF_NAME}' is not a valid semver release tag"
-            exit 1
-          fi
 
       - name: List release artifacts
         run: ls -la artifacts/
