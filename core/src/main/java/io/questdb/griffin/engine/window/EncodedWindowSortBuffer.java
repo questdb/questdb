@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -68,9 +69,13 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
                     MemoryTag.NATIVE_DEFAULT,
                     true
             );
+            // Honor the window-specific sort memory caps - the same two keys the tree path uses -
+            // so a user who lowers them to bound window sort memory keeps that bound on the encoded
+            // path too. The encoded buffer interleaves sort keys and rowIds in one block, so its
+            // budget is the sum of the key and rowid caps, mirroring the tree path's two heaps.
             this.maxEntryMemBytes = SortKeyType.maxHeapBytes(
-                    configuration.getSqlSortKeyMaxBytes(),
-                    configuration.getSqlSortLightValueMaxBytes()
+                    configuration.getSqlWindowTreeKeyMaxBytes(),
+                    configuration.getSqlWindowRowIdMaxBytes()
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.entryMem = mem;
@@ -141,10 +146,16 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
 
     @Override
     public void put(Record record, long rowId) {
-        assert maxEntries > 0 : "put() called before of()";
+        // keyType is set by of(); a null here means put() ran before of(). A tiny configured cap
+        // can legitimately leave maxEntries == 0, which falls through to the overflow below.
+        assert keyType != null : "put() called before of()";
         if (count >= maxEntries) {
             throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes)
-                    .put(" memory exceeded in window encoded sort");
+                    .put(" memory exceeded in window encoded sort (raise ")
+                    .put(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES.getPropertyPath())
+                    .put(" / ")
+                    .put(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES.getPropertyPath())
+                    .put(')');
         }
         entryMem.ensureCapacity(longsPerEntry);
         long entryAddr = entryMem.getAppendAddress();

@@ -99,6 +99,30 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEncodedSortCapFires() throws Exception {
+        // An encoded-eligible ORDER BY key (the designated timestamp) takes the encoded sort
+        // buffer, not the tree. The buffer must still honor the window-specific memory caps, so a
+        // user who lowers them to bound window sort memory keeps that bound on the encoded path.
+        // The encoded buffer interleaves keys and rowIds, so its budget is the sum of both caps.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 4096);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT" +
+                    " ('s' || (x % 8))::SYMBOL AS sym," +
+                    " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
+                    " FROM long_sequence(50_000)) TIMESTAMP(ts)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
+                    0,
+                    "memory exceeded in window encoded sort (raise cairo.sql.window.tree.max.bytes / cairo.sql.window.rowid.max.bytes)"
+            );
+        });
+    }
+
+    @Test
     public void testHappyPathUnchanged() throws Exception {
         // The default uncapped configuration must not regress small queries.
         assertMemoryLeak(() -> {

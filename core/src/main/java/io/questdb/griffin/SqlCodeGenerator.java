@@ -9816,11 +9816,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // after all columns are processed we can re-insert deferred metadata
+            boolean isAllWindowOutputFixedWidth = true;
             for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
                 TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
                 if (m != null) {
                     chainTypes.add(i, m.getColumnType());
                     factoryMetadata.add(i, m);
+                    isAllWindowOutputFixedWidth &= !isVarSize(m.getColumnType());
                 }
             }
 
@@ -9843,9 +9845,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // LIGHT path is restricted to queries where every ordered group can use the encoded
             // sort buffer. Tree-fallback in LIGHT would do O(N log N) random base reads per
             // compare, which can regress 10-100x on cold/partitioned bases.
+            // It also requires every window-output column to be fixed-width: the narrow chain
+            // never initializes var-size aux pointers, so a var-size output column would read
+            // uninitialized offsets and crash. No window function returns a var-size type today;
+            // this guard keeps the path safe if one is ever added.
             if (configuration.isSqlWindowCachedLightEnabled()
                     && base.recordCursorSupportsRandomAccess()
-                    && isAllGroupsEncodedEligible) {
+                    && isAllGroupsEncodedEligible
+                    && isAllWindowOutputFixedWidth) {
                 final IntList sourceMap = new IntList();
                 final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
                 int narrowIdx = 0;

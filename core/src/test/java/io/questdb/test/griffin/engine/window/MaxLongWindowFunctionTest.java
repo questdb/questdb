@@ -32,16 +32,16 @@ import org.junit.Test;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class MaxLongWindowFunctionTest extends AbstractCairoTest {
-    private final boolean cacheLightWindowEnabled;
+    private final boolean isCacheLightWindowEnabled;
 
     public MaxLongWindowFunctionTest() {
         Rnd rnd = generateRandom(LOG);
-        this.cacheLightWindowEnabled = rnd.nextBoolean();
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
     }
 
     @Override
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.cacheLightWindowEnabled));
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
         super.setUp();
     }
 

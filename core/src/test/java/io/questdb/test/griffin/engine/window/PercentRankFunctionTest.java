@@ -32,16 +32,16 @@ import org.junit.Test;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class PercentRankFunctionTest extends AbstractCairoTest {
-    private final boolean cacheLightWindowEnabled;
+    private final boolean isCacheLightWindowEnabled;
 
     public PercentRankFunctionTest() {
         Rnd rnd = generateRandom(LOG);
-        this.cacheLightWindowEnabled = rnd.nextBoolean();
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
     }
 
     @Override
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.cacheLightWindowEnabled));
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
         super.setUp();
     }
 
@@ -157,7 +157,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // Test plan for percent_rank() over (order by ts) - no partition, with order
             assertQuery("select ts, percent_rank() over (order by ts) from tab")
                     .noLeakCheck()
-                    .assertsPlan((this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [percent_rank() over (order by [ts])]
                                         PageFrame
@@ -168,7 +168,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // Test plan for percent_rank() over (partition by s order by ts) - with partition and order
             assertQuery("select ts, percent_rank() over (partition by s order by ts) from tab")
                     .noLeakCheck()
-                    .assertsPlan((this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
                                         PageFrame
@@ -181,7 +181,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // this branch left orderBy null and toPlan rendered "order by null".
             assertQuery("select ts, percent_rank() over (order by i) from tab")
                     .noLeakCheck()
-                    .assertsPlan((this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
                                         PageFrame
@@ -191,7 +191,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
             assertQuery("select ts, percent_rank() over (partition by s order by i) from tab")
                     .noLeakCheck()
-                    .assertsPlan((this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
                                       orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
                                         PageFrame

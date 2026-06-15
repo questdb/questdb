@@ -36,18 +36,18 @@ import org.junit.Test;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class EmaWindowFunctionTest extends AbstractCairoTest {
-    private final boolean cacheLightWindowEnabled;
+    private final boolean isCacheLightWindowEnabled;
     private final TestTimestampType timestampType;
 
     public EmaWindowFunctionTest() {
         Rnd rnd = generateRandom(LOG);
         this.timestampType = TestUtils.getTimestampType(rnd);
-        this.cacheLightWindowEnabled = rnd.nextBoolean();
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
     }
 
     @Override
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.cacheLightWindowEnabled));
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
         super.setUp();
     }
 

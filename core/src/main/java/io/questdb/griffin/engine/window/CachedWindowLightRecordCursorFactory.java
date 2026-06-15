@@ -518,7 +518,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     while (group.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         long rIdx = group.next();
-                        positionRecordA(rIdx);
+                        // pass2 reads only base columns through recordA and reads/writes its own
+                        // output via spi.getAddress (position-independent), so narrow positioning
+                        // would be wasted work over millions of rows.
+                        positionRecordABaseOnly(rIdx);
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass2(recordA, rIdx, lightSpi);
                         }
@@ -530,7 +533,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 final int funcCount = unordered2PassFunctions.size();
                 for (long rIdx = 0; rIdx < size; rIdx++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    positionRecordA(rIdx);
+                    // see the ordered pass2 loop: base-only positioning suffices here too.
+                    positionRecordABaseOnly(rIdx);
                     for (int j = 0; j < funcCount; j++) {
                         unordered2PassFunctions.getQuick(j).pass2(recordA, rIdx, lightSpi);
                     }
