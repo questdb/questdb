@@ -28,11 +28,11 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.AcceptGatedJob;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
@@ -218,35 +218,6 @@ public class PGServer implements Closeable {
     public void resetQueryCache() {
         if (typesAndSelectCache != null) {
             typesAndSelectCache.clear();
-        }
-    }
-
-    private static class AcceptGatedJob implements Job, EagerThreadSetup {
-        private final AtomicBoolean acceptOpen;
-        private final Job delegate;
-
-        AcceptGatedJob(Job delegate, AtomicBoolean acceptOpen) {
-            this.delegate = delegate;
-            this.acceptOpen = acceptOpen;
-        }
-
-        @Override
-        public boolean run(int workerId, @NotNull RunStatus runStatus) {
-            if (!acceptOpen.get()) {
-                return false;
-            }
-            return delegate.run(workerId, runStatus);
-        }
-
-        @Override
-        public void setup() {
-            // The accept gate guards run(), never setup(): pre-allocating the
-            // connection-context pool at worker start is what lets the server
-            // accept connections without allocating once the gate opens, even
-            // under memory pressure.
-            if (delegate instanceof EagerThreadSetup) {
-                ((EagerThreadSetup) delegate).setup();
-            }
         }
     }
 

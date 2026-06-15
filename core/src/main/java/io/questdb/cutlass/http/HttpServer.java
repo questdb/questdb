@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.AcceptGatedJob;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -37,7 +38,6 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
-import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -420,35 +420,6 @@ public class HttpServer implements Closeable {
     @FunctionalInterface
     public interface HttpRequestHandlerBuilder {
         HttpRequestHandler newInstance();
-    }
-
-    private static class AcceptGatedJob implements Job, EagerThreadSetup {
-        private final AtomicBoolean acceptOpen;
-        private final Job delegate;
-
-        AcceptGatedJob(Job delegate, AtomicBoolean acceptOpen) {
-            this.delegate = delegate;
-            this.acceptOpen = acceptOpen;
-        }
-
-        @Override
-        public boolean run(int workerId, @NotNull RunStatus runStatus) {
-            if (!acceptOpen.get()) {
-                return false;
-            }
-            return delegate.run(workerId, runStatus);
-        }
-
-        @Override
-        public void setup() {
-            // The accept gate guards run(), never setup(): pre-allocating the
-            // connection-context pool at worker start is what lets the server
-            // accept connections without allocating once the gate opens, even
-            // under memory pressure.
-            if (delegate instanceof EagerThreadSetup) {
-                ((EagerThreadSetup) delegate).setup();
-            }
-        }
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
