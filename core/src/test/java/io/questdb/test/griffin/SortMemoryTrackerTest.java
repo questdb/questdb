@@ -76,6 +76,11 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
         // large partition still grows it past the limit. The defaults would
         // breach on the very first record-store page.
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 64 * 1024L);
+        // Route the cached-window tests below through the tree-based CachedWindowRecordCursorFactory
+        // (record store + encoded sort buffers). The encode-eligible, fixed-width-output queries
+        // here would otherwise default to the LIGHT factory; that path's tracker binding is covered
+        // explicitly by WindowMemoryTrackerTest's testCachedLight* tests.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "false");
     }
 
     @Test
@@ -164,14 +169,14 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testCachedWindowOpenFailureReleasesAllocations() throws Exception {
-        // Inflate the window order-by tree page above the limit so the first
-        // reopenTrees() in CachedWindowRecordCursor.of() breaches before any rows
-        // are read. Reusing one factory across opens catches the failed-open
-        // cleanup: without freeing the cursor on a breach, isOpen stays true and
-        // the next open skips reopen() -> no breach -> stale, mischarged trees.
-        setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, 2 * 1024 * 1024L);
+        // CachedWindowRecordCursor.of() eagerly sizes each encoded sort buffer to the
+        // base row count before any rows are read, so a large base breaches the
+        // per-query limit during cursor open. Reusing one factory across opens catches
+        // the failed-open cleanup: without freeing the cursor on a breach, isOpen stays
+        // true and the next open skips reopen() -> no breach -> stale, mischarged sort
+        // buffers.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(100))");
+            execute("CREATE TABLE tab AS (SELECT x AS k FROM long_sequence(200_000))");
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(

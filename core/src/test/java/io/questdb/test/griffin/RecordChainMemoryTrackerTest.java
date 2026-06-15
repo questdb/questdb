@@ -87,6 +87,11 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 4 * 1024L);
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024L);
+        // Route the cached-window tests below through the tree-based CachedWindowRecordCursorFactory
+        // (record store RecordArray). The encode-eligible, fixed-width-output queries here would
+        // otherwise default to the LIGHT factory; that path's tracker binding is covered explicitly
+        // by WindowMemoryTrackerTest's testCachedLight* tests.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "false");
     }
 
     @Test
