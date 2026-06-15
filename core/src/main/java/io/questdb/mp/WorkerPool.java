@@ -47,6 +47,8 @@ public class WorkerPool implements Closeable {
     private static final Log LOG = LogFactory.getLog(WorkerPool.class);
     @TestOnly
     private volatile Runnable beforeStartedSignalForTesting;
+    @TestOnly
+    private volatile Runnable beforeWorkerAddedForTesting;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
@@ -65,6 +67,14 @@ public class WorkerPool implements Closeable {
     private final int workerCount;
     private final ObjList<ObjHashSet<Job>> workerJobs;
     private final ObjList<Worker> workers = new ObjList<>();
+    // Guards every mutation of and iteration over the workers list so halt()'s first pass can never
+    // read it torn while start() is still adding. ObjList.add reallocates a non-volatile buffer and
+    // bumps a non-volatile pos; halt()'s first-pass size()/getQuick() are guarded only by an assert
+    // (and -ea ships), so a concurrent halt() during boot could read a half-published pos/buffer or a
+    // null slot -> NPE/AssertionError -> the error escapes halt()/close() and freeOnExit.close() is
+    // skipped, leaking native handles. Building the list under this monitor makes a concurrent halt()
+    // observe an empty-or-complete-and-consistent list, never torn.
+    private final Object workersLock = new Object();
     private final long yieldThreshold;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
@@ -180,8 +190,15 @@ public class WorkerPool implements Closeable {
                 // method then frees: a use-after-free plus an orphan thread leak. The per-worker halt
                 // flag is idempotent, so signalling unconditionally is safe on every branch. Iterate
                 // the live workers list (not workerCount) so a partially-spawned pool is covered.
-                for (int i = 0, n = workers.size(); i < n; i++) {
-                    workers.getQuick(i).halt();
+                //
+                // Read the list under workersLock so a concurrent start() still mid-add cannot present
+                // it torn (a half-published pos/buffer or a null slot). The monitor makes this pass see
+                // an empty-or-complete-and-consistent snapshot; the signal still runs UNCONDITIONALLY
+                // and BEFORE started.await() below, preserving the start-stall halt ordering.
+                synchronized (workersLock) {
+                    for (int i = 0, n = workers.size(); i < n; i++) {
+                        workers.getQuick(i).halt();
+                    }
                 }
                 if (started.await(remaining(deadline))) {
                     // start() completed: every worker is now in the list. Re-signal to catch any
@@ -228,6 +245,19 @@ public class WorkerPool implements Closeable {
         this.beforeStartedSignalForTesting = hook;
     }
 
+    /**
+     * Installs a hook fired inside {@link #start(Log)} on every iteration of the spawn loop, WHILE
+     * the workersLock is held for that worker's add. Unlike {@link #setBeforeStartedSignalForTesting(Runnable)},
+     * which fires AFTER the whole add-loop has completed (outside the monitor), this hook fires in the
+     * middle of the add-loop with the monitor held: a test can block here to hold the add critical
+     * section open and prove that a concurrent {@link #halt(long)} first pass is held off (serialized)
+     * rather than reading the half-built list torn. Pass {@code null} to clear.
+     */
+    @TestOnly
+    public void setBeforeWorkerAddedForTesting(Runnable hook) {
+        this.beforeWorkerAddedForTesting = hook;
+    }
+
     public void start() {
         start(null);
     }
@@ -259,8 +289,22 @@ public class WorkerPool implements Closeable {
                 );
                 worker.setPriority(priority);
                 worker.setDaemon(daemons);
-                workers.add(worker);
-                worker.start();
+                // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
+                // torn (ObjList.add mutates a non-volatile pos/buffer). The worker is spawned inside the
+                // monitor too, so halt() either has not yet seen this worker (it is not spawned) or sees
+                // it fully published -- never a spawned-but-invisible worker that would loop on freed
+                // resources.
+                synchronized (workersLock) {
+                    // Fire the test seam INSIDE the monitor so a test can hold the add critical section
+                    // open and prove a concurrent halt() first pass is held off (serialized), never
+                    // reading a half-built list. The seam is a strict no-op when unset.
+                    final Runnable beforeWorkerAdded = beforeWorkerAddedForTesting;
+                    if (beforeWorkerAdded != null) {
+                        beforeWorkerAdded.run();
+                    }
+                    workers.add(worker);
+                    worker.start();
+                }
             }
             if (log != null) {
                 log.debug().$("worker pool started [pool=").$(poolName).I$();
