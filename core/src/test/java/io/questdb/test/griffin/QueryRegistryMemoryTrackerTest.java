@@ -30,6 +30,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerProvider;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -55,27 +56,98 @@ public class QueryRegistryMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNestedRegisterInheritsOuterTracker() throws Exception {
+    public void testNestedRegisterInheritsBackgroundWorkloadTracker() throws Exception {
+        // A mat-view refresh / WAL apply job binds its own non-QUERY tracker on a
+        // dedicated execution context before running inner SQL. The inner SQL's
+        // register() must inherit that tracker so its allocations charge the
+        // background workload's budget, not a fresh QUERY budget.
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final MemoryTrackerProvider provider = engine.getMemoryTrackerProvider();
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            // Simulate the background job binding its tracker on the context first.
+            final MemoryTracker outer = provider.acquire(
+                    sqlExecutionContext.getSecurityContext(),
+                    42,
+                    MemoryTrackerWorkload.MAT_VIEW_REFRESH
+            );
+            sqlExecutionContext.setMemoryTracker(outer);
+
+            final long innerId = registry.register("inner", sqlExecutionContext);
+            // The inner register() must observe the background tracker and skip
+            // its own acquisition.
+            Assert.assertSame(outer, sqlExecutionContext.getMemoryTracker());
+
+            registry.unregister(innerId, sqlExecutionContext);
+            // Inner unregister must leave the background tracker in place; the job
+            // owns its lifecycle.
+            Assert.assertSame(outer, sqlExecutionContext.getMemoryTracker());
+
+            sqlExecutionContext.setMemoryTracker(null);
+            outer.close();
+        });
+    }
+
+    @Test
+    public void testSiblingQueryRegistersAcquireDistinctTrackers() throws Exception {
+        // Concurrent PG named portals share one SqlExecutionContext and are
+        // siblings, not nested. A second QUERY register() that finds a sibling's
+        // QUERY tracker still bound (the first portal is suspended) must acquire
+        // its own tracker, not inherit the sibling's -- otherwise the two portals
+        // conflate accounting and the first portal's close recycles a tracker the
+        // second is still using.
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
             Assert.assertNull(sqlExecutionContext.getMemoryTracker());
 
-            final long outerId = registry.register("outer", sqlExecutionContext);
-            final MemoryTracker outer = sqlExecutionContext.getMemoryTracker();
-            Assert.assertNotNull(outer);
-            Assert.assertEquals(outerId, outer.getQueryId());
-            Assert.assertEquals(MemoryTrackerWorkload.QUERY, outer.getWorkload());
+            // Portal A executes and suspends; its tracker stays bound.
+            final long idA = registry.register("portal A", sqlExecutionContext);
+            final MemoryTracker trackerA = sqlExecutionContext.getMemoryTracker();
+            Assert.assertNotNull(trackerA);
+            Assert.assertEquals(idA, trackerA.getQueryId());
 
-            final long innerId = registry.register("inner", sqlExecutionContext);
-            // The inner register() must observe the outer's tracker already on
-            // the context and skip its own acquisition.
-            Assert.assertSame(outer, sqlExecutionContext.getMemoryTracker());
+            // Portal B executes while A is still bound. It must NOT inherit A's
+            // tracker.
+            final long idB = registry.register("portal B", sqlExecutionContext);
+            final MemoryTracker trackerB = sqlExecutionContext.getMemoryTracker();
+            Assert.assertNotNull(trackerB);
+            Assert.assertNotSame(trackerA, trackerB);
+            Assert.assertEquals(idB, trackerB.getQueryId());
 
-            registry.unregister(innerId, sqlExecutionContext);
-            // Inner unregister must leave the outer's tracker in place.
-            Assert.assertSame(outer, sqlExecutionContext.getMemoryTracker());
+            // Portal A's cursor exhausts first (out-of-order, non-LIFO). Releasing
+            // A must not disturb B's binding still on the context.
+            registry.unregister(idA, sqlExecutionContext);
+            Assert.assertSame(trackerB, sqlExecutionContext.getMemoryTracker());
 
-            registry.unregister(outerId, sqlExecutionContext);
+            // Portal B closes last; the context returns to no tracker bound.
+            registry.unregister(idB, sqlExecutionContext);
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+        });
+    }
+
+    @Test
+    public void testSiblingQueryUnregisterInLifoOrderClearsTracker() throws Exception {
+        // The same two-sibling setup, but with portals closing in LIFO order
+        // (B before A). The slot must end up null and neither unregister may strand
+        // the other's binding.
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            final long idA = registry.register("portal A", sqlExecutionContext);
+            final MemoryTracker trackerA = sqlExecutionContext.getMemoryTracker();
+            final long idB = registry.register("portal B", sqlExecutionContext);
+            final MemoryTracker trackerB = sqlExecutionContext.getMemoryTracker();
+            Assert.assertNotSame(trackerA, trackerB);
+
+            // B closes first; it owns the current slot, so the slot is cleared.
+            registry.unregister(idB, sqlExecutionContext);
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            // A closes last; the slot is already null (A no longer owns it), so the
+            // conditional clear leaves it untouched.
+            registry.unregister(idA, sqlExecutionContext);
             Assert.assertNull(sqlExecutionContext.getMemoryTracker());
         });
     }

@@ -198,18 +198,20 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testMemoryColumnsNullForNestedRegistration() throws Exception {
         // A nested registration (one whose context already has a tracker bound by an
-        // outer workload) leaves Entry.memoryTracker null, so register() acquires none
-        // of its own. query_activity must then read both memory_used and memory_limit as
-        // NULL for that row: the memoryTracker==null branch of the two columns, which
-        // neither the limit-configured nor the unlimited case reaches (both keep a bound
-        // tracker on the running query). Drive the registry directly, like the churn
-        // test, binding a tracker on a separate context first so register() takes the
-        // nested path.
+        // outer background workload) leaves Entry.memoryTracker null, so register()
+        // acquires none of its own. query_activity must then read both memory_used and
+        // memory_limit as NULL for that row: the memoryTracker==null branch of the two
+        // columns, which neither the limit-configured nor the unlimited case reaches
+        // (both keep a bound tracker on the running query). Drive the registry directly,
+        // like the churn test, binding a tracker on a separate context first so
+        // register() takes the nested path. The outer tracker must be a non-QUERY
+        // background workload (mat-view refresh / WAL apply): a sibling QUERY tracker is
+        // deliberately NOT inherited, since concurrent PG portals share a context.
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
             try (SqlExecutionContext outerCtx = TestUtils.createSqlExecutionCtx(engine)) {
                 final MemoryTracker outerTracker = engine.getMemoryTrackerProvider().acquire(
-                        outerCtx.getSecurityContext(), -1, MemoryTrackerWorkload.QUERY);
+                        outerCtx.getSecurityContext(), -1, MemoryTrackerWorkload.MAT_VIEW_REFRESH);
                 outerCtx.setMemoryTracker(outerTracker);
                 final long id = registry.register("nested-no-tracker", outerCtx);
                 try {

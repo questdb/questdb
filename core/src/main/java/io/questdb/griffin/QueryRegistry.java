@@ -156,16 +156,26 @@ public class QueryRegistry {
         e.isWAL = executionContext.isWalApplication();
         e.principal = executionContext.getSecurityContext().getPrincipal();
 
-        // Acquire a per-workload memory tracker if no outer workload has already
-        // bound one on the execution context. Nested registrations (subquery
-        // recompiles, or queries under a mat-view-refresh / WAL-apply job, which
-        // bind their tracker on the context first) inherit the outer tracker.
+        // Acquire a per-workload memory tracker for this workload, or inherit an
+        // outer one. Inheritance is allowed only when the bound tracker belongs to
+        // a non-QUERY background workload: a mat-view refresh or WAL apply job
+        // binds its own tracker on a dedicated execution context before running
+        // inner SQL, and that inner SQL must charge the background workload's
+        // budget. Such nesting is strictly LIFO and single-threaded.
+        //
+        // A QUERY tracker already on the context is NOT inherited. Concurrent PG
+        // named portals share one SqlExecutionContext and are siblings, not
+        // nested: a suspended portal leaves its tracker bound, and inheriting it
+        // would conflate the two portals' accounting and -- once the first
+        // portal's cursor closes and recycles that tracker to the pool -- corrupt
+        // an unrelated query's counter. Each top-level QUERY gets its own tracker.
         //
         // Acquire a tracker even when the QUERY limit is 0 (unlimited) so that
         // accounting stays on and query_activity.memory_used reports live usage
         // for every query. A null tracker when unlimited would save one atomic
         // on the tracked allocation path, at the cost of that observability.
-        if (executionContext.getMemoryTracker() == null) {
+        final MemoryTracker outerTracker = executionContext.getMemoryTracker();
+        if (outerTracker == null || outerTracker.getWorkload() == MemoryTrackerWorkload.QUERY) {
             final MemoryTrackerProvider provider = executionContext.getCairoEngine().getMemoryTrackerProvider();
             final MemoryTracker tracker = provider.acquire(
                     executionContext.getSecurityContext(),
@@ -214,7 +224,14 @@ public class QueryRegistry {
             // nested under an outer workload that owns the tracker; in that
             // case we must not touch the context's tracker reference.
             if (e.memoryTracker != null) {
-                executionContext.setMemoryTracker(null);
+                // Clear the context slot only if it still points at our tracker. A
+                // concurrently-suspended sibling portal (sharing this context) may
+                // have rebound the slot to its own tracker after us; nulling it then
+                // would strand that sibling. Out-of-order portal close makes this
+                // conditional necessary -- see the inheritance note in register().
+                if (executionContext.getMemoryTracker() == e.memoryTracker) {
+                    executionContext.setMemoryTracker(null);
+                }
                 e.memoryTracker.close();
                 e.memoryTracker = null;
             }
