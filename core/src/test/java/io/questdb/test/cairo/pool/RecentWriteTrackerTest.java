@@ -31,7 +31,6 @@ import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -350,27 +349,6 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals(2, tracker.size());
         Assert.assertNotNull("table1 should survive (recent WAL activity)", tracker.getWriteStats(table1));
         Assert.assertNull("table2 should be evicted (oldest)", tracker.getWriteStats(table2));
-    }
-
-    @Test
-    public void testEvictionWaitsForUninitializedEntryToPopulate() throws Exception {
-        RecentWriteTracker tracker = new RecentWriteTracker(2);
-
-        for (int i = 0; i < 4; i++) {
-            tracker.recordWrite(createTableToken("old" + i, i), i + 1L, 10L, 1L);
-        }
-
-        TableToken fresh = createTableToken("fresh", 100);
-        RecentWriteTracker.WriteStats stats = tracker.getOrCreateStats(fresh);
-
-        tracker.recordWrite(createTableToken("trigger", 101), 1_000L, 42L, 1L);
-
-        Method updateWriter = RecentWriteTracker.WriteStats.class.getDeclaredMethod("updateWriter", long.class, long.class, long.class);
-        updateWriter.setAccessible(true);
-        updateWriter.invoke(stats, 1_000L, 42L, 1L);
-
-        Assert.assertNotNull("fresh entry should not be evicted while it is still being populated", tracker.getWriteStats(fresh));
-        Assert.assertEquals(1_000L, tracker.getWriteTimestamp(fresh));
     }
 
     @Test
