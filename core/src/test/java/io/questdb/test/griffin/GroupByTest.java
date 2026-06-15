@@ -1760,7 +1760,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query1)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1800,7 +1800,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query2)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1840,7 +1840,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query3)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1877,7 +1877,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query4)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    GroupBy vectorized: false\n" +
                                 "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
@@ -2598,7 +2598,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query1)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 1000 hi: 1010
+                            Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
@@ -2623,7 +2623,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query2)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 1000 hi: 1010
+                            Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]
@@ -2647,7 +2647,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query3)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 1000 hi: 1010
+                            Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]

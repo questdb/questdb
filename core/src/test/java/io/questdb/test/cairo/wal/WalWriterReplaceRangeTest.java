@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -39,6 +40,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT;
 import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
@@ -598,6 +600,296 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceTruncatesAllDataNoRowsCommit() throws Exception {
         testReplaceTruncatesAllData(true);
+    }
+
+    @Test
+    public void testSkipDoesNotCrossSymbolConversion() throws Exception {
+        // When a future replace-range txn justifies skipping earlier data txns, the scan must
+        // not cross a structural (non-data) txn such as ALTER COLUMN ... TYPE SYMBOL. The
+        // conversion seeds its symbol map from the table rows that exist at apply time; skipping
+        // the pre-conversion rows under a large lookahead changes which strings get registered
+        // first, silently diverging the symbol key assignment from a low-lookahead applier.
+        assertMemoryLeak(() -> {
+            // Build t1 with a tiny lag window (lookahead=1 + maxLagSize=1) so the apply job
+            // sees only the current txn and cannot look ahead to the future replace-range.
+            node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+            node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            execute("create table rg_conv_small (id long, ts timestamp, s string) timestamp(ts) partition by DAY WAL");
+            TableToken tt1 = engine.verifyTableName("rg_conv_small");
+
+            // Three separate data commits with distinct strings (each is a separate sequencer txn).
+            // Use separate WalWriter instances to ensure separate sequencer txns.
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T01:00"));
+                row.putLong(0, 1);
+                row.putStr(2, "AAA");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T02:00"));
+                row.putLong(0, 2);
+                row.putStr(2, "BBB");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T03:00"));
+                row.putLong(0, 3);
+                row.putStr(2, "CCC");
+                row.append();
+                ww.commit();
+            }
+
+            // Structural txn: convert s from STRING to SYMBOL
+            execute("alter table rg_conv_small alter column s type symbol");
+
+            // Post-conversion data commits via SQL INSERT (each INSERT is a separate sequencer txn).
+            // The first-encounter order differs from the pre-conversion writes: CCC, AAA, DDD.
+            execute("insert into rg_conv_small values (4, '2022-02-24T10:00:00.000000Z', 'CCC')");
+            execute("insert into rg_conv_small values (5, '2022-02-24T11:00:00.000000Z', 'AAA')");
+            execute("insert into rg_conv_small values (6, '2022-02-24T12:00:00.000000Z', 'DDD')");
+
+            // Replace-range covering exactly the first three rows (01:00..03:00 window)
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00:00");
+                long rangeHi = MicrosTimestampDriver.floor("2022-02-24T04:00");
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // Build t2 with a large lookahead so all future txns are visible and the
+            // replace-range can justify skipping across the ALTER txn (the bug path).
+            node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 10_000);
+            node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1024 * 1024 * 1024);
+            execute("create table rg_conv_large (id long, ts timestamp, s string) timestamp(ts) partition by DAY WAL");
+            TableToken tt2 = engine.verifyTableName("rg_conv_large");
+
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T01:00"));
+                row.putLong(0, 1);
+                row.putStr(2, "AAA");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T02:00"));
+                row.putLong(0, 2);
+                row.putStr(2, "BBB");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T03:00"));
+                row.putLong(0, 3);
+                row.putStr(2, "CCC");
+                row.append();
+                ww.commit();
+            }
+            execute("alter table rg_conv_large alter column s type symbol");
+            execute("insert into rg_conv_large values (4, '2022-02-24T10:00:00.000000Z', 'CCC')");
+            execute("insert into rg_conv_large values (5, '2022-02-24T11:00:00.000000Z', 'AAA')");
+            execute("insert into rg_conv_large values (6, '2022-02-24T12:00:00.000000Z', 'DDD')");
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00:00");
+                long rangeHi = MicrosTimestampDriver.floor("2022-02-24T04:00");
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // (a) Query contents must agree
+            assertQuery("select id, s from rg_conv_small order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\ts\n4\tCCC\n5\tAAA\n6\tDDD\n");
+            assertQuery("select id, s from rg_conv_large order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\ts\n4\tCCC\n5\tAAA\n6\tDDD\n");
+
+            // (b) Symbol maps must be identical: same count, same key->string mapping.
+            // Pre-fix, t1 seeds the map from the pre-conversion rows (AAA=0, BBB=1, CCC=2)
+            // while t2 skips them and starts with CCC=0, AAA=1, DDD=2.
+            try (TableReader r1 = engine.getReader(tt1); TableReader r2 = engine.getReader(tt2)) {
+                int colIdx1 = r1.getMetadata().getColumnIndex("s");
+                int colIdx2 = r2.getMetadata().getColumnIndex("s");
+                SymbolMapReader sm1 = r1.getSymbolMapReader(colIdx1);
+                SymbolMapReader sm2 = r2.getSymbolMapReader(colIdx2);
+                int count = sm1.getSymbolCount();
+                Assert.assertEquals("symbol counts differ", count, sm2.getSymbolCount());
+                for (int k = 0; k < count; k++) {
+                    Assert.assertEquals(
+                            "symbol key " + k + " differs",
+                            String.valueOf(sm1.valueOf(k)),
+                            String.valueOf(sm2.valueOf(k))
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSkipDoesNotCrossTruncate() throws Exception {
+        // When a future replace-range txn justifies skipping earlier data txns, the inner scan
+        // must not jump straight to TRUNCATE across a non-data structural txn. A soft truncate
+        // keeps symbol maps in place, so registering symbols in different orders (depending on
+        // which rows were visible when the map was seeded) would make the map applier-dependent.
+        assertMemoryLeak(() -> {
+            // Build t1 with a tiny lag window so the apply job cannot look ahead to the
+            // future replace-range and does not skip any txns.
+            node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+            node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+            execute("create table rg_trunc_small (id long, ts timestamp, s symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tt1 = engine.verifyTableName("rg_trunc_small");
+
+            long t1 = MicrosTimestampDriver.floor("2022-02-24T01:00");
+            long t2 = MicrosTimestampDriver.floor("2022-02-24T02:00");
+            long t3 = MicrosTimestampDriver.floor("2022-02-24T03:00");
+            long t4 = MicrosTimestampDriver.floor("2022-02-24T10:00");
+            long t5 = MicrosTimestampDriver.floor("2022-02-24T11:00");
+            long t6 = MicrosTimestampDriver.floor("2022-02-24T12:00");
+
+            // Three separate data commits before the truncate
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(t1);
+                row.putLong(0, 1);
+                row.putSym(2, "AAA");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(t2);
+                row.putLong(0, 2);
+                row.putSym(2, "BBB");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(t3);
+                row.putLong(0, 3);
+                row.putSym(2, "CCC");
+                row.append();
+                ww.commit();
+            }
+
+            // Structural txn: TRUNCATE (soft-truncate keeps symbol maps)
+            execute("truncate table rg_trunc_small");
+
+            // More data commits after the truncate, same symbols in a different first-encounter order
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(t4);
+                row.putLong(0, 4);
+                row.putSym(2, "CCC");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(t5);
+                row.putLong(0, 5);
+                row.putSym(2, "AAA");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                TableWriter.Row row = ww.newRow(t6);
+                row.putLong(0, 6);
+                row.putSym(2, "DDD");
+                row.append();
+                ww.commit();
+            }
+
+            // Replace-range covering the first batch of rows
+            try (WalWriter ww = engine.getWalWriter(tt1)) {
+                long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00:00");
+                long rangeHi = MicrosTimestampDriver.floor("2022-02-24T04:00");
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // Build t2 with a large lag window so all future txns are visible and the
+            // replace-range can justify skipping across the TRUNCATE txn (the bug path).
+            node1.setProperty(CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 10_000);
+            node1.setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1024 * 1024 * 1024);
+            execute("create table rg_trunc_large (id long, ts timestamp, s symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tt2 = engine.verifyTableName("rg_trunc_large");
+
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(t1);
+                row.putLong(0, 1);
+                row.putSym(2, "AAA");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(t2);
+                row.putLong(0, 2);
+                row.putSym(2, "BBB");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(t3);
+                row.putLong(0, 3);
+                row.putSym(2, "CCC");
+                row.append();
+                ww.commit();
+            }
+            execute("truncate table rg_trunc_large");
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(t4);
+                row.putLong(0, 4);
+                row.putSym(2, "CCC");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(t5);
+                row.putLong(0, 5);
+                row.putSym(2, "AAA");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                TableWriter.Row row = ww.newRow(t6);
+                row.putLong(0, 6);
+                row.putSym(2, "DDD");
+                row.append();
+                ww.commit();
+            }
+            try (WalWriter ww = engine.getWalWriter(tt2)) {
+                long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00:00");
+                long rangeHi = MicrosTimestampDriver.floor("2022-02-24T04:00");
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // (a) Query contents must agree
+            assertQuery("select id, s from rg_trunc_small order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\ts\n4\tCCC\n5\tAAA\n6\tDDD\n");
+            assertQuery("select id, s from rg_trunc_large order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\ts\n4\tCCC\n5\tAAA\n6\tDDD\n");
+
+            // (b) Symbol maps must be identical.
+            try (TableReader r1 = engine.getReader(tt1); TableReader r2 = engine.getReader(tt2)) {
+                int colIdx1 = r1.getMetadata().getColumnIndex("s");
+                int colIdx2 = r2.getMetadata().getColumnIndex("s");
+                SymbolMapReader sm1 = r1.getSymbolMapReader(colIdx1);
+                SymbolMapReader sm2 = r2.getSymbolMapReader(colIdx2);
+                int count = sm1.getSymbolCount();
+                Assert.assertEquals("symbol counts differ", count, sm2.getSymbolCount());
+                for (int k = 0; k < count; k++) {
+                    Assert.assertEquals(
+                            "symbol key " + k + " differs",
+                            String.valueOf(sm1.valueOf(k)),
+                            String.valueOf(sm2.valueOf(k))
+                    );
+                }
+            }
+        });
     }
 
     @Test

@@ -103,6 +103,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
+    // Assertion-only stamp of the thread that last checked out a cursor; see
+    // assertStampOperatingThread() / assertSameOperatingThread().
+    private long assertOperatingThreadId = -1L;
     // Last successfully observed seqlock value of the chain header's active
     // page. Used by reloadConditionally to detect any publish (appendNewEntry
     // or extendHead — both republish the header) and skip the picker walk
@@ -1079,6 +1082,27 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     protected static long varBlockOffsetsSize(int count, boolean longOffsets) {
         return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
+    }
+
+    // Single-owner tripwire (assertion-only). A posting reader and its pooled
+    // cursors are driven by exactly one thread at a time: the thread that owns the
+    // enclosing TableReader between pool acquire/release. getCursor() stamps that
+    // thread via assertStampOperatingThread() and every cursor close() checks it
+    // here. A posting cursor whose close() runs after the reader was released to the
+    // pool and re-acquired by another thread -- the lifecycle hazard that
+    // CoveringIndexRecordCursorFactory.CoveringCursor.close() avoids by freeing the
+    // row cursor BEFORE the frame cursor -- trips this assert instead of silently
+    // re-pooling into / racing a concurrently-reloaded reader. Never relied upon for
+    // correctness: the isOpen() guard in each cursor close() is the actual leak
+    // mitigation, and this stamp is only written under -ea.
+    protected boolean assertSameOperatingThread() {
+        final long owner = assertOperatingThreadId;
+        return owner == -1L || owner == Thread.currentThread().threadId();
+    }
+
+    protected boolean assertStampOperatingThread() {
+        assertOperatingThreadId = Thread.currentThread().threadId();
+        return true;
     }
 
     protected void ensureSidecarOpen(int c) {

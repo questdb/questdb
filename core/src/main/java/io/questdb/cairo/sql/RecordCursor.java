@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntHashSet;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -41,7 +44,7 @@ import java.io.Closeable;
  * <li>Sequential record iteration with {@link #hasNext()} and {@link #getRecord()}</li>
  * <li>Dual record access with {@link #getRecord()} and {@link #getRecordB()} for comparisons</li>
  * <li>Random access positioning with {@link #recordAt(Record, long)}</li>
- * <li>Efficient row skipping with {@link #skipRows(Counter)}</li>
+ * <li>Efficient row skipping with {@link #skipRows(Counter, long)}</li>
  * <li>Size calculation with circuit breaker support</li>
  * <li>Symbol table access for symbol columns</li>
  * <li>Optimized top-K operations for ORDER BY + LIMIT queries</li>
@@ -58,6 +61,13 @@ import java.io.Closeable;
  * access, use {@link #newSymbolTable(int)} to create thread-local symbol table instances.
  */
 public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTableSource {
+
+    /**
+     * Sentinel for {@link #skipRows(Counter, long)}'s {@code maxRowsAfterSkip}
+     * parameter that indicates the caller has no upper bound on subsequent
+     * consumption. Implementations treat this as "do not clamp".
+     */
+    long UNBOUNDED_ROW_COUNT = Long.MAX_VALUE;
 
     /**
      * Utility method to convert a boolean value to its long representation.
@@ -83,7 +93,7 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @param cursor   the record cursor to skip rows in
      * @param rowCount a counter indicating how many rows to skip; this value is
      *                 decremented as rows are actually skipped
-     * @see #skipRows(Counter)
+     * @see #skipRows(Counter, long)
      */
     static void skipRows(RecordCursor cursor, Counter rowCount) {
         while (rowCount.get() > 0 && cursor.hasNext()) {
@@ -293,6 +303,22 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     long preComputedStateSize();
 
     /**
+     * Declares which projected column indexes the parent cursor will read during forward
+     * iteration (via {@link #getRecord()}); columns accessed only via
+     * {@link #recordAt(Record, long)} may be omitted. Null restores the default of
+     * materializing every projected column.
+     * <p>
+     * Wrappers that hold a delegate cursor must forward the call, translating column
+     * indexes when the wrapper remaps them. Wrappers whose own code reads further base
+     * columns during iteration (e.g. a filter or virtual functions) must NOT forward,
+     * because the parent's set cannot account for those reads.
+     *
+     * @param columnIndexes the columns the parent reads while iterating, or null
+     */
+    default void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+    }
+
+    /**
      * Declares the access pattern the enclosing factory will use when calling
      * {@link #recordAt(Record, long)} on this cursor. The Parquet decode-buffer
      * pool scales its byte budget by the hint: monotonic walks get a smaller
@@ -306,6 +332,23 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @param hint the access pattern of upcoming {@code recordAt} calls
      */
     default void setParquetDecodeHint(ParquetDecodeHint hint) {
+    }
+
+    /**
+     * Declares the complete set of row ids the caller will pass to subsequent
+     * {@link #recordAt(Record, long)} calls. Parquet-backed cursors pull the row ids from
+     * the source and then decode only the declared rows of a row group instead of the
+     * whole row group; cursors that cannot benefit never pull, so the caller pays nothing.
+     * Null restores full-frame decoding. Wrappers that forward {@code recordAt} to a
+     * delegate with unchanged row ids must forward the call; wrappers that resolve
+     * {@code recordAt} from their own storage (e.g. a record chain) must not.
+     * <p>
+     * Until the declaration is cleared with null, reading a row id outside the declared
+     * set is undefined: on a row-filtered Parquet frame such rows materialize as NULLs.
+     *
+     * @param source the supplier of the declared row ids, or null
+     */
+    default void setRecordAtRows(@Nullable RowIdSource source) {
     }
 
     /**
@@ -335,12 +378,25 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * This optimization is supported by some record cursors that provide random access
      * capabilities, such as tables ordered by a designated timestamp. For cursors that
      * don't support efficient skipping, this method falls back to iterative advancement.
+     * <p>
+     * The {@code maxRowsAfterSkip} parameter is an upper bound on the number of rows
+     * the consumer plans to read after the skip completes. It is advisory for
+     * implementations: they may use it to reduce work (e.g., clamp the decode window
+     * of underlying page frames) or ignore it, and iteration MUST remain correct
+     * either way. It is binding for callers: an implementation that honours a finite
+     * bound may stop producing rows once the bound is reached, so a caller that reads
+     * past its own stated bound gets silent truncation, not an error. Callers without
+     * a known upper bound pass {@link #UNBOUNDED_ROW_COUNT}.
      *
-     * @param rowCount a counter containing the number of rows to skip; this value is
-     *                 decremented by the number of rows actually skipped
+     * @param rowCount         a counter containing the number of rows to skip; this
+     *                         value is decremented by the number of rows actually
+     *                         skipped
+     * @param maxRowsAfterSkip upper bound on the number of rows the consumer intends
+     *                         to read after the skip; {@link #UNBOUNDED_ROW_COUNT}
+     *                         when unknown
      * @see #skipRows(RecordCursor, Counter)
      */
-    default void skipRows(Counter rowCount) {
+    default void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         while (rowCount.get() > 0 && hasNext()) {
             rowCount.dec();
         }
@@ -364,6 +420,17 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @see #preComputedStateSize()
      */
     void toTop();
+
+    interface RowIdSource {
+
+        /**
+         * Appends the declared row ids that lie in Parquet frames to the target list,
+         * skipping rows of native frames. {@link DirectLongList#add(long)} auto-grows,
+         * so pre-sizing the target via {@link DirectLongList#ensureCapacity(long)} is a
+         * performance optimization, not a correctness requirement.
+         */
+        void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache);
+    }
 
     /**
      * A simple counter utility class for tracking numeric values in RecordCursor operations.

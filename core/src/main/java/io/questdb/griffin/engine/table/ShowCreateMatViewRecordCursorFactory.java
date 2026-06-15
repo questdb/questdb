@@ -135,6 +135,11 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             this.tableToken = tableToken;
             this.executionContext = executionContext;
 
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this materialized view on demand
+            // (matviews have a _meta file and are cached) so we do not report it as
+            // non-existent during the startup hydration window.
+            executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (table == null) {

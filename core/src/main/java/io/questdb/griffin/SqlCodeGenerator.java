@@ -263,6 +263,7 @@ import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -5628,6 +5629,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("splice join doesn't support full fat mode");
                                     }
                                 }
+                                // the splice join result carries fully qualified column names, so a
+                                // subsequent join must not re-apply the master alias
+                                masterAlias = null;
                                 break;
                             case IQueryModel.JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -7462,6 +7466,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
+                final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
+                        && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
@@ -7543,6 +7549,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
+                        if (isEncodedSortSupported) {
+                            return new EncodedSortLimitedLightRecordCursorFactory(
+                                    configuration,
+                                    orderedMetadata,
+                                    recordCursorFactory,
+                                    loFunc,
+                                    hiFunc,
+                                    listColumnFilterA.copy(),
+                                    baseCursorTimestampIndex
+                            );
+                        }
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
@@ -7554,7 +7571,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseCursorTimestampIndex
                         );
                     } else {
-                        if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                        if (isEncodedSortSupported) {
                             return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
@@ -7625,7 +7642,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when base record cursor does not support random access
                 // we have to copy entire record into ordered structure
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
-                if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                if (isEncodedSortSupported) {
                     return new EncodedSortRecordCursorFactory(
                             configuration,
                             orderedMetadata,
