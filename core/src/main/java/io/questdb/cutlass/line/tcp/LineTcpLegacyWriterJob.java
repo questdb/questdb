@@ -75,14 +75,14 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
         LOG.debug().$("line protocol writer closing [workerId=").$(workerId).I$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
-            if (!run(workerId, Job.TERMINATING_STATUS)) {
+            if (!run(Job.TERMINATING_STATUS)) {
                 break;
             }
         }
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(@NotNull WorkerContext workerContext) {
         boolean busy = drainQueue();
         // while ILP is hammering the database via multiple connections the writer
         // is likely to be very busy so commitTables() will run infrequently

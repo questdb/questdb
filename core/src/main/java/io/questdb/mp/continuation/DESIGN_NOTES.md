@@ -112,11 +112,43 @@ the prior heap entry. The `DelayQueue` API has no O(log n) remove (only
 O(n) linear scan), and the accumulation cost is already cheaper than
 that scan in the burst case.
 
-## `tryCancel()` in `WaitWalFunction.getBool`'s finally instead of `abortContinuation()`
+## `cancel()` in `WaitWalFunction.getBool`'s finally instead of `abortContinuation()`
 
-The finally block calls `waiter.tryCancel()`, which CASes
-`PENDING -> CANCELLED` but does not set `parkRefused`. The only path
-that opens a window where `parkRefused` would be needed is:
+The finally block calls `waiter.cancel()`, which **unconditionally writes
+`CANCELLED`** (it is not a CAS) and does not set `parkRefused`.
+
+### Why an unconditional write rather than a CAS
+
+`cancel()` is the LAST operation on the waiter: it runs once, on the
+finally as the body unwinds, and the body never `reset()`s or
+`suspend()`s the waiter again. So writing `CANCELLED` from whatever the
+current state happens to be is correct:
+
+- **From PENDING** (the body threw during the iteration-1 PENDING window,
+  before any racer fired): the write *is* the cancellation, exactly as a
+  CAS would be. It lets the next `fireWaiters` walk drop the holder
+  (`fireWaiters` re-enqueues only non-CANCELLED waiters) instead of
+  leaving it queued until the timer pops at `waitIntervalMillis`.
+- **From FIRED** (the common iteration-2+ exit: a racer CAS'd the waiter
+  to FIRED, `scheduleResume` already woke the body, the body resumed,
+  finished its loop and reached the finally on a healthy remounted cont):
+  overwriting FIRED with CANCELLED is **unobservable**. A fired waiter was
+  already dequeued by `fireWaiters` and is never re-examined; the only
+  other reader, `expire()`, is a no-op on any terminal state; and no
+  resume is lost because the resume already ran. A CAS here would leave
+  FIRED instead of CANCELLED, but nothing reads the difference -- so the
+  cheaper unconditional store is equivalent.
+
+This is a load-bearing precondition, not an accident: it holds **only**
+because `cancel()` sits on the unwinding tail and nothing re-suspends the
+waiter afterwards. Do not move `cancel()` off that tail, and do not reuse
+it on a path that may re-park the same waiter -- such a path would have to
+preserve a concurrent FIRED and would need the CAS-and-parkRefused
+discipline of `abortContinuation()` instead.
+
+### Why no `parkRefused`
+
+The only path that opens a window where `parkRefused` would be needed is:
 
 1. The body is mid-`reset()`, between `CAS-to-PENDING` and
    `TimerShards.register`'s post-`shard.offer` `!running` check.
@@ -125,7 +157,8 @@ that opens a window where `parkRefused` would be needed is:
 3. `TimerShards.shutdown` concurrently flips `running` false.
 4. The body's `register` then throws `CairoException.queryCancelled`
    on its post-check.
-5. The finally's `tryCancel` CAS loses (state is FIRED).
+5. The finally's `cancel()` writes CANCELLED over the racer's FIRED (the
+   FIRED-clobber case above).
 
 Trigger: engine shutdown only. `TimerShards.register` has no other
 throw path in current code. The peer that dequeued the phantom spins on
@@ -135,7 +168,7 @@ WorkerContinuation.run. Tens of microseconds, once, while the engine is
 already shutting down. The pool's `lifecycle != RUNNING` transition
 closes the peer from the other side shortly after.
 
-Swapping `tryCancel` for `abortContinuation` would buy a single volatile
+Swapping `cancel` for `abortContinuation` would buy a single volatile
 write of `parkRefused` to short-circuit that microsecond spin. Not worth
 the cognitive load of explaining why a successful-cancel path uses the
 abort vocabulary. Revisit if and only if a non-shutdown throw path

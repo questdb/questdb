@@ -81,7 +81,7 @@ public class PongMain {
         // event loop job
         workerPool.assign(dispatcher);
         // queue processor job
-        workerPool.assign((ignore, runStatus) -> dispatcher.processIOQueue(processor));
+        workerPool.assign(ignore -> dispatcher.processIOQueue(processor));
         // lets go!
         workerPool.start();
     }

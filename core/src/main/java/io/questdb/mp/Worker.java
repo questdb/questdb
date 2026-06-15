@@ -73,7 +73,6 @@ public class Worker extends Thread {
     private final OnHaltAction onHaltAction;
     private final ObjList<Job> ownedJobClones = new ObjList<>();
     private final String poolName;
-    private final Job.RunStatus runStatus = () -> lifecycle.get() == WorkerLifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
     // Per-worker pool of recycled job-generation snapshots. Touched only by
@@ -84,6 +83,23 @@ public class Worker extends Thread {
     // converges to the workload's concurrent-suspend high-water mark; empty on
     // cold start.
     private final ObjList<ObjList<Job>> snapshotPool = new ObjList<>();
+    // The per-tick context handed to every job. carrierId() is pulled lazily by the
+    // job: on a continuation-aware pool it reads WORKER_ID (carrier-aware, so it
+    // tracks a remount onto a peer carrier); on a legacy pool, which never migrates,
+    // it returns the stable workerId field and pays no carrier-local read. Folding
+    // both signals into one instance keeps the hot loop free of a per-iteration
+    // WORKER_ID.get() while still letting cont-aware jobs read the live id.
+    private final Job.WorkerContext workerContext = new Job.WorkerContext() {
+        @Override
+        public int carrierId() {
+            return continuationQueue != null ? WORKER_ID.get() : workerId;
+        }
+
+        @Override
+        public boolean isTerminating() {
+            return lifecycle.get() == WorkerLifecycle.HALTED;
+        }
+    };
     private final int workerId;
     private final long yieldThreshold;
 
@@ -345,15 +361,10 @@ public class Worker extends Thread {
             boolean runAsap = false;
             // measure latency of all jobs tick
             jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
-            // Restore the pool-local worker id of the carrier running this tick. A
-            // cont remount can resume this loop on a peer carrier, so it is re-read
-            // from WORKER_ID (carrier-aware, travels with the carrier) each iteration
-            // rather than aliasing this Worker's field.
-            final int currentWorkerId = WORKER_ID.get();
             for (int i = 0, n = myJobs.size(); i < n; i++) {
                 Unsafe.loadFence();
                 try {
-                    runAsap |= myJobs.get(i).run(currentWorkerId, runStatus);
+                    runAsap |= myJobs.get(i).run(workerContext);
                 } catch (Throwable e) {
                     if (metrics.isEnabled()) {
                         try {

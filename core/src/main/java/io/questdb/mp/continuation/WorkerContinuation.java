@@ -159,8 +159,8 @@ public final class WorkerContinuation {
      * {@link #suspend()} that returned {@code false} after a {@code scheduleResume}
      * had already enqueued it. The next remount attempt by a dequeuing peer worker
      * consumes the flag and drops the dequeue. Callers must only set this when they
-     * know an enqueue has actually happened (e.g. tryCancel on the gating waiter
-     * lost to a tryFire).
+     * know an enqueue has actually happened (e.g. abortContinuation on the gating
+     * waiter lost its CAS to a tryFire).
      */
     public void markParkRefused() {
         parkRefused = 1;
@@ -187,7 +187,7 @@ public final class WorkerContinuation {
      * that pool will pick it up and call {@link #run()}. Safe to call from any
      * thread; safe against concurrent puts of the same continuation reference if
      * the caller has gated via the appropriate CAS (typically
-     * {@code TxnWaiter.tryFire} / {@code tryCancel}).
+     * {@code TxnWaiter.tryFire} / {@code expire} / {@code shutdown}).
      */
     public void scheduleResume() {
         resumeSink.put(this);

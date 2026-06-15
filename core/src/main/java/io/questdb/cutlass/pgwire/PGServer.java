@@ -126,7 +126,7 @@ public class PGServer implements Closeable {
             }
             return false;
         };
-        sharedPoolNetwork.assign((workerId, runStatus) -> dispatcher.processIOQueue(processor));
+        sharedPoolNetwork.assign(ignore -> dispatcher.processIOQueue(processor));
 
         // pgwire context factory has thread local pools
         // therefore we need each thread to clean their thread locals individually

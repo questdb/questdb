@@ -141,7 +141,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(@NotNull WorkerContext workerContext) {
         return processNotifications();
     }
 

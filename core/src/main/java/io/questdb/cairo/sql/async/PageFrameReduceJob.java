@@ -176,12 +176,13 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final int carrierId = workerContext.carrierId();
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
             useful = !consumeQueue(
-                    workerId,
+                    carrierId,
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,

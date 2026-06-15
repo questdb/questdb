@@ -468,7 +468,7 @@ public class HttpServer implements Closeable {
         }
 
         @Override
-        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        public boolean run(@NotNull WorkerContext workerContext) {
             if (selector == null) {
                 // Snapshot reused from Worker.snapshotPool after a prior
                 // recycle: re-acquire a selector for this generation.

@@ -39,7 +39,8 @@ public interface ContinuationSink {
     /**
      * Schedule {@code cont} for resumption. Must be safe to call concurrently and
      * idempotent against double-puts of the same continuation reference (the
-     * caller is expected to gate via {@code TxnWaiter.tryFire} / {@code tryCancel}).
+     * caller is expected to gate via {@code TxnWaiter.tryFire} / {@code expire} /
+     * {@code shutdown}).
      */
     void put(WorkerContinuation cont);
 }

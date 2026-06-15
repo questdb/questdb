@@ -419,7 +419,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        public boolean run(@NotNull WorkerContext workerContext) {
             Assert.fail("This is a mock job, not designed to run in a worker pool");
             return false;
         }

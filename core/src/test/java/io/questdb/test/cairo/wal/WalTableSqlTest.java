@@ -2029,7 +2029,17 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testWhenApplyJobTerminatesEarlierLagCommitted() throws Exception {
         AtomicBoolean isTerminating = new AtomicBoolean();
-        Job.RunStatus runStatus = isTerminating::get;
+        Job.WorkerContext runStatus = new Job.WorkerContext() {
+            @Override
+            public int carrierId() {
+                return 0;
+            }
+
+            @Override
+            public boolean isTerminating() {
+                return isTerminating.get();
+            }
+        };
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             // terminate WAL apply Job as soon as first wal segment is opened.
@@ -2062,16 +2072,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " values (103, 'dfd', '2022-02-24T01:03', 'asd')");
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                walApplyJob.run(0, runStatus);
+                walApplyJob.run(runStatus);
                 engine.releaseInactive();
                 isTerminating.set(false);
 
                 // Run one more time, we want to be on seqTxn 2 for the next step
-                walApplyJob.run(0, runStatus);
+                walApplyJob.run(runStatus);
                 isTerminating.set(false);
 
                 //noinspection StatementWithEmptyBody
-                while (walApplyJob.run(0, runStatus)) ;
+                while (walApplyJob.run(runStatus)) ;
 
                 engine.releaseInactive();
 

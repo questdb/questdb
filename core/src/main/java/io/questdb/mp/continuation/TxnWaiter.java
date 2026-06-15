@@ -33,26 +33,33 @@ import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Represents a single SQL evaluation parked inside a {@link SeqTxnTracker}, waiting for
- * the tracker's {@code writerTxn} to reach {@link #targetWriterTxn}.
+ * A single SQL evaluation parked inside a {@link SeqTxnTracker}, waiting for the tracker's
+ * {@code writerTxn} to reach {@link #targetWriterTxn}.
  *
- * <p>Allocated once per {@code wait_wal_table} call and reused across the wake/sleep
- * loop via {@link #reset()}: a fresh instance binds the carrier's
- * {@link WorkerContinuation} via {@link #tryBindCurrent}, then each iteration calls
- * reset to flip {@link #state} from FIRED back to PENDING and publish a new target
- * before re-registering. The waiter is not pooled across calls; the cost is one
- * allocation per active wait.
+ * <p>Allocated once per {@code wait_wal_table} call and reused across the wake/sleep loop:
+ * a fresh instance binds the carrier's {@link WorkerContinuation} via {@link #tryBindCurrent},
+ * then each iteration {@link #reset()}s {@link #state} from FIRED back to PENDING and publishes
+ * a new target before re-registering. Not pooled across calls -- one allocation per active wait.
  *
- * <p>The {@link #state} field is a CAS'd 2-way marker (PENDING / FIRED). Every wakeup
- * path - tryFire (data arrived or table terminal), expire (timer pop), shutdown
- * (engine close), tryCancel (carrier-pinned abort) - races the same CAS from PENDING
- * to FIRED and the winner schedules the resume. So {@code cont.scheduleResume()} is
- * invoked at most once per wait cycle. The body distinguishes wake causes from its
- * own exit checks ({@code writerTxn}, {@code isSuspended}, {@code isDropped},
- * {@code isShuttingDown}), not from the state value.
+ * <p>{@link #state} is a 3-way marker (PENDING / FIRED / CANCELLED). Each concurrent path leaves
+ * PENDING with a single CAS, so at most one wins per cycle and {@code cont.scheduleResume()} runs
+ * at most once:
+ * <ul>
+ *   <li>{@code tryFire} (data arrived / table terminal) and {@code expire} (timer pop): CAS to
+ *       FIRED, winner schedules the resume.</li>
+ *   <li>{@code shutdown} (engine close): CAS to CANCELLED, winner schedules the resume so the body
+ *       sees the shutdown flag on remount.</li>
+ *   <li>{@code abortContinuation} (yield refused): CAS to CANCELLED, no resume; on a lost CAS marks
+ *       parkRefused.</li>
+ * </ul>
+ * The body tells wake causes apart via its own exit checks ({@code writerTxn}, {@code isSuspended},
+ * {@code isDropped}, {@code isShuttingDown}), not the state value.
  *
- * <p>The continuation knows its origin pool's resume sink at construction; firing
- * therefore does not need to thread a resume job through the waiter.
+ * <p>{@link #cancel()} is the lone non-CAS transition: an unconditional terminal write to CANCELLED
+ * from {@code WaitWalFunction.getBool}'s finally, once, as the body unwinds -- see its contract.
+ *
+ * <p>The continuation knows its origin pool's resume sink at construction, so firing need not thread
+ * a resume job through the waiter.
  */
 public final class TxnWaiter implements DelayedFireable {
     public static final long NO_DELAY = Long.MAX_VALUE;
@@ -100,23 +107,25 @@ public final class TxnWaiter implements DelayedFireable {
     }
 
     /**
-     * Attempts to transition this waiter from PENDING to CANCELLED. Returns {@code true}
-     * if the CAS won, in which case the caller is responsible for calling
-     * {@code cont.scheduleResume()} so the parked body can observe the cancellation.
+     * Terminal cancel: unconditionally writes CANCELLED -- a plain write, NOT a CAS, and
+     * no {@code cont.scheduleResume()} since the body is already unwinding. This lets the
+     * next {@code SeqTxnTracker.fireWaiters} walk drop the tracker holder immediately (it
+     * re-enqueues only non-CANCELLED waiters) instead of leaving it queued until the timer
+     * pops at {@code waitIntervalMillis}.
      *
-     * <p>DO NOT call {@code cont.markParkRefused()} when the CAS loses. The losing path
-     * is the normal happy-path tail of io.questdb.griffin.engine.functions.table.WaitWalFunction#getBool:
-     * a racer fired the waiter, scheduleResume already woke the body via a peer worker,
-     * the body resumed and finished its loop, and is now running the finally block on
-     * a fully remounted, healthy cont. Setting parkRefused here poisons the cont for
-     * its NEXT yield -- io.questdb.mp.Worker#mountForeignCont consumes the flag
-     * and silently drops the dequeue, so the next legitimate resume is dropped and the
-     * cont is parked forever. This bricked binary_dedup.test (three back-to-back
-     * wait_wal_table calls on one PGWire connection: first works, second hangs).
-     * See DESIGN_NOTES.md "tryCancel() in WaitWalFunction.getBool's finally" for the
-     * full rationale: parkRefused is only valid as a defense against the phantom
-     * window where suspend() returned false after scheduleResume had already enqueued
-     * the cont -- it is NOT a generic "I lost a race" signal.
+     * <p>Clobbering any prior state is safe: from PENDING the write is the cancellation;
+     * from FIRED it is unobservable -- a fired waiter was already dequeued by
+     * {@code fireWaiters}, {@code expire()} is a no-op on terminal states, and the resume
+     * already ran. This holds only because {@code cancel()} is the LAST operation on the
+     * waiter. Do not call it on a path that may {@link #reset()} or {@link #suspend()} the
+     * same waiter again, or move it off the unwinding tail -- that needs the
+     * CAS-and-parkRefused discipline of {@link #abortContinuation()} instead.
+     *
+     * <p>Deliberately does NOT call {@code cont.markParkRefused()}: the FIRED case is the
+     * happy-path tail of {@code WaitWalFunction#getBool} on a healthy remounted cont, and
+     * parkRefused would poison its NEXT yield ({@code Worker#mountForeignCont} consumes the
+     * flag and drops the dequeue), parking the cont forever. See DESIGN_NOTES.md
+     * "cancel() in WaitWalFunction.getBool's finally".
      */
     public void cancel() {
         state = STATE_CANCELLED;

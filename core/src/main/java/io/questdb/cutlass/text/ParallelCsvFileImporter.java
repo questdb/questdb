@@ -55,7 +55,6 @@ import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.CarrierIdentity;
-import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
@@ -1385,7 +1384,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void stealWork() {
-        if (localImportJob.run(CarrierIdentity.current(), Job.RUNNING_STATUS)) {
+        if (localImportJob.run(CarrierIdentity.current())) {
             return;
         }
         Os.pause();

@@ -135,15 +135,16 @@ class WaitWalFunction extends BooleanFunction implements Function {
                 }
                 // else: yield was refused at least once; fall through to polling.
             } finally {
-                // Hygiene: if state is still PENDING (throw landed during the
-                // iteration-1 PENDING window, before any racer fired), CAS to
-                // CANCELLED so the next fireWaiters() walk drops the holder
-                // immediately instead of waiting up to waitIntervalMillis for
-                // the timer pop. Mostly a no-op: on iteration 2+ throws state
-                // is already FIRED by the racer that woke us, and tryCancel's
-                // CAS fails harmlessly. The timer-shard heap entry is not
-                // touched either way -- it pops at its deadline and observes
-                // CANCELLED / FIRED, so expire() short-circuits.
+                // Hygiene: unconditionally mark the waiter CANCELLED so the next
+                // fireWaiters() walk drops the holder immediately instead of waiting
+                // up to waitIntervalMillis for the timer pop. This is the last touch
+                // of the waiter -- the body is unwinding and never re-suspends -- so
+                // the write is safe from any prior state: if a throw landed during the
+                // iteration-1 PENDING window (before any racer fired) it is the
+                // cancellation; on iteration 2+ a racer already FIRED us and the
+                // overwrite is unobservable (the fired waiter was already dequeued).
+                // The timer-shard heap entry is not touched either way -- it pops at
+                // its deadline and observes CANCELLED / FIRED, so expire() short-circuits.
                 waiter.cancel();
             }
         }

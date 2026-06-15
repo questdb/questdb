@@ -362,7 +362,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             OperationExecutor operationExecutor,
             Path tempPath,
-            RunStatus runStatus,
+            WorkerContext runStatus,
             TableWriterPressureControl pressureControl
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
@@ -962,7 +962,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @NotNull TableToken tableToken,
             CairoEngine engine,
             OperationExecutor operationExecutor,
-            Job.RunStatus runStatus
+            WorkerContext runStatus
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
@@ -1028,7 +1028,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final TableToken tableToken;
         try {
             final WalTxnNotificationTask task = queue.get(cursor);
@@ -1038,7 +1038,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        applyWal(tableToken, engine, operationExecutor, runStatus);
+        applyWal(tableToken, engine, operationExecutor, workerContext);
         return true;
     }
 

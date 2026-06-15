@@ -93,7 +93,8 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
+        final int carrierId = workerContext.carrierId();
         try {
             CopyExportRequestTask task = queue.get(cursor);
             // Transfer ownership of selectFactory and createOp out of the
@@ -145,7 +146,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
         CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         try {
-            entry.setStartTime(microsecondClock.getTicks(), workerId);
+            entry.setStartTime(microsecondClock.getTicks(), carrierId);
             SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
             CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
 
