@@ -195,15 +195,21 @@ public class CairoEngine implements Closeable, WriterSource {
     // write side is never held across drainWriterPool. A plain OSS deployment that never flips
     // role only ever pays an uncontended read acquire (a single CAS in the common case), so no
     // separate "no flip path" gate is needed.
-    // Test seam: when non-null, fireRoleSwitchMintObserver() runs this hook at a parse-time DDL
-    // externalization (TRUNCATE truncateSoft, RENAME TABLE, ALTER VIEW ... AS, ALTER TABLE ... SET
-    // STORAGE POLICY), i.e. inside the role-switch read-lock hold once the parse-time fences are in
-    // place. A test installs a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote either
-    // blocks behind the read hold or expires its tryLock budget, exercising the demote race
-    // deterministically without host load. These mints externalize inside compile() and never reach
-    // OperationDispatcher, so the OperationDispatcher pre-apply hook cannot pause them; this hook is the
-    // parse-time-DDL counterpart. Null in production (the default): the fire-site is a single static
-    // volatile read with no side effect when no test installed a hook.
+    // Test seam: when non-null, fireRoleSwitchMintObserver() runs this hook at an externalization that
+    // mints replicated state, so a witness can pause the externalization there and interleave a
+    // concurrent PRIMARY-to-REPLICA demote deterministically (without host load). It fires from two
+    // kinds of sites, on BOTH the fenced and the unfenced tree, so a witness that arms this one seam
+    // trips whether or not the role-switch fence wraps the externalization:
+    //   1. Inside the role-switch read-lock hold of the parse-time DDL fences (TRUNCATE truncateSoft,
+    //      RENAME TABLE, ALTER VIEW ... AS, ALTER TABLE ... SET STORAGE POLICY / SET TYPE) and the
+    //      ENT replicated-write / mat-view fences. These mints externalize inside compile() and never
+    //      reach OperationDispatcher.
+    //   2. At the OperationDispatcher externalization site BEFORE its read-lock acquire (the WAL
+    //      UPDATE / ALTER inline-apply and async-enqueue paths), so a reverted/absent dispatcher fence
+    //      still fires the observer rather than degrading the witness to a timing-only sleep window.
+    // A paused witness either blocks the demote behind the read hold or expires its tryLock budget,
+    // exercising the demote race deterministically. Null in production (the default): every fire-site is
+    // a single static volatile read with no side effect when no test installed a hook.
     @TestOnly
     private static volatile Runnable roleSwitchMintObserver;
     private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
@@ -838,9 +844,12 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Fires the parse-time DDL mint hook when a test installed one. A strict no-op (single static
-     * volatile read) in production where the field is null. Called by the parse-time DDL fences inside
-     * their role-switch read-lock hold so a witness can pause the externalization there.
+     * Fires the role-switch mint hook when a test installed one. A strict no-op (single static volatile
+     * read) in production where the field is null. Called both inside the parse-time DDL / replicated-write
+     * fences (within their role-switch read-lock hold) and at the OperationDispatcher externalization site
+     * before its read-lock acquire, so the one hook fires on both the fenced and the unfenced tree and a
+     * witness can pause the externalization and interleave a demote deterministically regardless of whether
+     * the fence wraps it.
      */
     public void fireRoleSwitchMintObserver() {
         final Runnable observer = roleSwitchMintObserver;
@@ -1898,10 +1907,12 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Test seam: installs a hook fired at a parse-time DDL externalization (inside the role-switch
-     * read-lock hold once the parse-time fences are in place). Pass null to uninstall. The hook is
-     * shared across engines, so an installer must scope its own pause to the statement under test.
-     * Never set outside tests -- the field defaults to null and the fire-site is a no-op then.
+     * Test seam: installs a hook fired at the replicated-state externalization sites on both the fenced
+     * and the unfenced tree -- inside the parse-time DDL / replicated-write fences (within their
+     * role-switch read-lock hold) and at the OperationDispatcher externalization site before its
+     * read-lock acquire. Pass null to uninstall. The hook is shared across engines, so an installer must
+     * scope its own pause to the statement under test. Never set outside tests -- the field defaults to
+     * null and the fire-site is a no-op then.
      */
     @TestOnly
     public static void setRoleSwitchMintObserver(Runnable observer) {

@@ -104,6 +104,14 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
         try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
+            // Both-trees pre-externalization fire-point: fire the role-switch mint observer here, before
+            // applyFenced acquires the role-switch read lock. The post-fence preApplyObserver below
+            // fires only inside the fence, so a reverted/absent dispatcher fence would fire nothing and
+            // a demote-race witness would degrade to a timing-only sleep window. Firing the shared mint
+            // observer before the fence lets a witness arm one seam that trips whether or not the fence
+            // wraps the externalization. A strict no-op in production (the observer field is null) and on
+            // the existing fenced path (the post-fence preApplyObserver still fires).
+            engine.fireRoleSwitchMintObserver();
             final long result = applyFenced(operation, writer);
             isDone = true;
             return doneFuture.of(result);
@@ -136,6 +144,11 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             if (engine.isReadOnlyMode()) {
                 throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
+            // Both-trees pre-externalization fire-point for the async-enqueue fallback, mirroring the
+            // inline-apply path above: fire the shared role-switch mint observer before acquiring the
+            // role-switch read lock so a reverted/absent fence here still trips a witness. A strict
+            // no-op in production (the observer field is null).
+            engine.fireRoleSwitchMintObserver();
             final Lock lock = engine.getRoleSwitchReadLock();
             lock.lock();
             try {
