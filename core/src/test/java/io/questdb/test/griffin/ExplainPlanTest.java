@@ -10825,7 +10825,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x, * from xx where str is not null order by str desc limit 10, 20")
                 .ddl("create table xx ( x long, str varchar ) ")
                 .assertsPlan("""
-                        Sort light lo: 10 hi: 20
+                        Encode sort light lo: 10 hi: 20
                           keys: [str desc]
                             SelectedRecord
                                 Async JIT Filter workers: 1

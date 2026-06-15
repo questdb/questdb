@@ -127,12 +127,14 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 this.perWorkerComparators = null;
                 this.perWorkerChains = null;
                 this.ownerEncoder = new SortKeyEncoder(orderByMetadata, orderByFilter);
-                this.ownerTopK = new EncodedTopKBuffer(configuration);
+                // Reduce runs on the shared worker pool; keep buffer sort/compaction
+                // single-threaded so it does not nest parallelism onto those workers.
+                this.ownerTopK = new EncodedTopKBuffer(configuration, false);
                 this.perWorkerEncoders = new ObjList<>(workerCount);
                 this.perWorkerTopK = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
                     perWorkerEncoders.extendAndSet(i, new SortKeyEncoder(orderByMetadata, orderByFilter, ownerEncoder));
-                    perWorkerTopK.extendAndSet(i, new EncodedTopKBuffer(configuration));
+                    perWorkerTopK.extendAndSet(i, new EncodedTopKBuffer(configuration, false));
                 }
                 this.sortKeyColumnIndexes = SortKeyEncoder.extractSortKeyColumnIndexes(orderByFilter);
                 if (filterUsedColumnIndexes != null) {

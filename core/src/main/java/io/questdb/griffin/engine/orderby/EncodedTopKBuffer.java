@@ -62,6 +62,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     private static final long VAR_ENTRY_KEY_OFFSET = 24;
     private static final long VAR_ENTRY_LEN_OFFSET = 16;
     private static final long VAR_ENTRY_ROWID_OFFSET = 32;
+    private static final long VAR_PREFIX6_MASK = 0xFFFFFFFFFFFFFF00L;
     private final DirectLongList entryMem;
     private final long keyCapBytes;
     private final long keyHeapPageSize;
@@ -91,11 +92,11 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     private MemoryCARW scratchHeap;
     private DirectLongList thresholdTailMem;
 
-    public EncodedTopKBuffer(CairoConfiguration configuration) {
+    public EncodedTopKBuffer(CairoConfiguration configuration, boolean parallelSort) {
         this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true);
         this.keyCapBytes = configuration.getSqlSortKeyMaxBytes();
         this.valueCapBytes = configuration.getSqlSortLightValueMaxBytes();
-        this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
+        this.parallelThreshold = parallelSort ? configuration.getSqlSortEncodedParallelThreshold() : Long.MAX_VALUE;
         this.keyHeapPageSize = configuration.getSqlSortKeyPageSize();
     }
 
@@ -161,6 +162,73 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         return Long.compareUnsigned(key, fastRejectKeyThreshold) > 0;
     }
 
+    /**
+     * Pre-encode reject for a variable-length key given only its leading word, total
+     * length and rowId - no key-heap write. Mirrors {@link #isVarBeyondThreshold(long)}
+     * for the cases it can settle without the second word or the heap tail:
+     * <ul>
+     *   <li>leading words differ -> decided on the leading word alone;</li>
+     *   <li>leading words tie and either key fits the leading word ({@code len <= 8})
+     *       -> the leading word is the whole key, so the tie is a true value tie and
+     *       the rowId tie-break settles it;</li>
+     *   <li>leading words tie and both keys spill past the leading word -> returns
+     *       false so the caller encodes in full and {@link #endAppend()} compares the
+     *       second word and heap tail.</li>
+     * </ul>
+     * Rejecting ties here is what keeps a low-cardinality ORDER BY (e.g. a column
+     * that is mostly one value) from encoding and appending every tied row.
+     */
+    public boolean fastRejectsVarEntry(long k1, long len, long rowId) {
+        if (!hasThreshold) {
+            return false;
+        }
+        int cmp = Long.compareUnsigned(k1, thresholdEntry[0]);
+        if (cmp == 0) {
+            final long thresholdLen = thresholdEntry[2];
+            if (len > Long.BYTES && thresholdLen > Long.BYTES) {
+                // Both keys extend past the leading word; the full compare needs the
+                // second word and heap tail, so let the full encode + endAppend decide.
+                return false;
+            }
+            cmp = Long.compare(len, thresholdLen);
+            if (cmp == 0) {
+                cmp = Long.compareUnsigned(rowId, thresholdEntry[4]);
+            }
+        }
+        if (cmp == 0) {
+            return true;
+        }
+        return isFirstN ? cmp > 0 : cmp < 0;
+    }
+
+    /**
+     * Six-byte-prefix variant of {@link #fastRejectsVarEntry(long, long, long)} for the
+     * split-VARCHAR batch path, where {@code k1} carries only the six inline-prefix value
+     * bytes. Masking the seventh value byte off both sides keeps the compare consistent;
+     * a six-byte tie between two keys that both spill past the prefix defers to the full
+     * encode, exactly as the eight-byte tie does in the base method.
+     */
+    public boolean fastRejectsVarEntryPrefix6(long k1, long len, long rowId) {
+        if (!hasThreshold) {
+            return false;
+        }
+        int cmp = Long.compareUnsigned(k1 & VAR_PREFIX6_MASK, thresholdEntry[0] & VAR_PREFIX6_MASK);
+        if (cmp == 0) {
+            final long thresholdLen = thresholdEntry[2];
+            if (len > Long.BYTES && thresholdLen > Long.BYTES) {
+                return false;
+            }
+            cmp = Long.compare(len, thresholdLen);
+            if (cmp == 0) {
+                cmp = Long.compareUnsigned(rowId, thresholdEntry[4]);
+            }
+        }
+        if (cmp == 0) {
+            return true;
+        }
+        return isFirstN ? cmp > 0 : cmp < 0;
+    }
+
     public long getAddress() {
         return entryMem.getAddress();
     }
@@ -207,14 +275,11 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         if (isVariable && keyHeap == null) {
             keyHeap = newKeyHeap();
         }
-        // The trigger stays within maxEntries so compaction fires before the overflow check can.
+
         compactionTrigger = limit > 0 && limit < maxEntries
                 ? Math.min(Math.max(limit << 1, MIN_COMPACTION_TRIGGER), maxEntries)
                 : Long.MAX_VALUE;
         if (compactionTrigger != Long.MAX_VALUE) {
-            // Compaction bounds the buffer at the trigger, so allocate the working
-            // set once: growing through doubled reallocs costs a large native
-            // realloc (and copy) per step, on every worker, on every execution.
             entryMem.setCapacity(Math.min(compactionTrigger, MAX_PRESIZE_ENTRIES) * longsPerEntry);
         }
         clear();

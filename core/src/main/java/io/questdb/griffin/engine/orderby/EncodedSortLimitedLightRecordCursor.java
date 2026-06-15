@@ -86,7 +86,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         EncodedTopKBuffer entriesInit = null;
         try {
             encoderInit = new SortKeyEncoder(metadata, sortColumnFilter);
-            entriesInit = new EncodedTopKBuffer(configuration);
+            entriesInit = new EncodedTopKBuffer(configuration, true);
         } catch (Throwable th) {
             Misc.free(encoderInit);
             Misc.free(entriesInit);

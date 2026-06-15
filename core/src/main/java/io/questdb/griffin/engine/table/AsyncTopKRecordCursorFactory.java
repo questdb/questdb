@@ -245,12 +245,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 final SortKeyEncoder encoder = atom.getEncoder(slotId);
                 final EncodedTopKBuffer topK = atom.getTopK(slotId);
-                if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, rows, topK)) {
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        record.setRowIndex(rows.get(p));
-                        encoder.encodeTopK(record, record.getRowId(), topK);
-                    }
-                }
+                encoder.encodeFrame(frameMemory, frameIndex, rows, frameRowCount, topK, record);
             } else {
                 if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
@@ -300,12 +295,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 record.init(frameMemory);
                 final SortKeyEncoder encoder = atom.getEncoder(slotId);
                 final EncodedTopKBuffer topK = atom.getTopK(slotId);
-                if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, frameRowCount, topK)) {
-                    for (long r = 0; r < frameRowCount; r++) {
-                        record.setRowIndex(r);
-                        encoder.encodeTopK(record, record.getRowId(), topK);
-                    }
-                }
+                encoder.encodeFrame(frameMemory, frameIndex, null, frameRowCount, topK, record);
             } else {
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 record.init(frameMemory);

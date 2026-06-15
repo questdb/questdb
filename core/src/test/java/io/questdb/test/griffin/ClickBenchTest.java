@@ -521,7 +521,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "SELECT SearchPhrase FROM hits WHERE SearchPhrase IS NOT NULL ORDER BY EventTime, SearchPhrase LIMIT 10;",
                         """
                                 SelectedRecord
-                                    Sort light lo: 10 partiallySorted: true
+                                    Encode sort light lo: 10 partiallySorted: true
                                       keys: [EventTime, SearchPhrase]
                                         Async JIT Filter workers: 1
                                           filter: SearchPhrase is not null
