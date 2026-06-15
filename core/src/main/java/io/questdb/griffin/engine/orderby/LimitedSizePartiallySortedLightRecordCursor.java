@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -107,6 +108,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
@@ -123,6 +125,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         this.baseCursor = baseCursor;
         baseCursor.expectLimitedIteration();
         baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
             chain.reopen();
@@ -145,6 +148,12 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(record, atRowId);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        // We emit out of order, so of() pins the base to SCATTERED. An outer MONOTONIC push
+        // (e.g. an ASOF light join slave) must not downgrade it and force base re-decodes.
     }
 
     @Override
@@ -197,7 +206,9 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                     rowsInGroup++;
                 } else {
                     rowsSoFar += rowsInGroup;
-                    if (rowsSoFar > limit) {
+                    // A negative limit (e.g. lo >= 0, hi < 0 re-bound on a cached plan) disables the
+                    // early stop: every timestamp group must be scanned so toTop() can apply the skips.
+                    if (limit >= 0 && rowsSoFar > limit) {
                         break;
                     }
 

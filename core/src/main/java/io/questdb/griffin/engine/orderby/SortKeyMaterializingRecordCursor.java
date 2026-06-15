@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -203,6 +204,11 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         baseCursor.recordAt(((MaterializedRecord) record).getBaseRecord(), atRowId);
         final long ordinal = rowIdToOrdinal.get(atRowId);
         ((MaterializedRecord) record).setOrdinal(ordinal);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        baseCursor.setParquetDecodeHint(hint);
     }
 
     @Override

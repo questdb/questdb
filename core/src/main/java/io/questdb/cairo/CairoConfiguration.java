@@ -500,26 +500,6 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
-    default double getPostingIndexAlignedBitWidthThreshold() {
-        return 0.0;
-    }
-
-    /**
-     * Maximum bytes the posting index writer's per-key spill buffers may hold
-     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
-     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
-     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
-     * negative value disables the back-pressure entirely (legacy behaviour:
-     * accumulate until {@code seal()}). Default is 256 MiB.
-     */
-    default long getPostingIndexerSpillBytesMax() {
-        return 256L << 20;
-    }
-
-    default byte getPostingIndexRowIdEncoding() {
-        return PostingIndexUtils.ENCODING_ADAPTIVE;
-    }
-
     /**
      * Threshold at which the adaptive posting-index row-id encoder forces
      * DELTA instead of running the size-only EF-vs-DELTA race. When a key has
@@ -538,6 +518,26 @@ public interface CairoConfiguration {
      */
     default int getPostingIndexAdaptiveDeltaAtOrAbove() {
         return 2000;
+    }
+
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Maximum bytes the posting index writer's per-key spill buffers may hold
+     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
+     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
+     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
+     * negative value disables the back-pressure entirely (legacy behaviour:
+     * accumulate until {@code seal()}). Default is 256 MiB.
+     */
+    default long getPostingIndexerSpillBytesMax() {
+        return 256L << 20;
     }
 
     int getPostingSealGenThreshold();
@@ -775,7 +775,7 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
-    int getSqlParquetFrameCacheCapacity();
+    long getSqlParquetCacheMemorySize();
 
     int getSqlPivotMaxProducedColumns();
 
@@ -1055,6 +1055,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
+
+    boolean isSqlWindowCachedLightEnabled();
 
     boolean isTableTypeConversionEnabled();
 

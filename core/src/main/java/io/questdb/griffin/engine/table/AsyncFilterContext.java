@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -78,8 +79,8 @@ public class AsyncFilterContext implements Closeable {
             @Nullable ObjList<Function> perWorkerFilters,
             int slotCount,
             int filteredMemoryRecordCount,
-            int ownerMemoryPoolCapacity,
-            int perWorkerMemoryPoolCapacity
+            long ownerMemoryPoolMaxBytes,
+            long perWorkerMemoryPoolMaxBytes
     ) {
         this.compiledFilter = compiledFilter;
         this.bindVarMemory = bindVarMemory;
@@ -89,7 +90,7 @@ public class AsyncFilterContext implements Closeable {
         this.perWorkerFilters = perWorkerFilters;
 
         try {
-            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolCapacity);
+            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolMaxBytes);
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -105,7 +106,7 @@ public class AsyncFilterContext implements Closeable {
             perWorkerAuxAddresses = new ObjList<>(slotCount);
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolCapacity));
+                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolMaxBytes));
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 if (compiledFilter != null) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
@@ -251,9 +252,13 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache) {
-        ownerMemoryPool.of(pageFrameAddressCache);
+        initMemoryPools(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
+    }
+
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, ParquetDecodeHint ownerHint) {
+        ownerMemoryPool.of(pageFrameAddressCache, ownerHint);
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
-            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache);
+            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
     }
 

@@ -87,6 +87,8 @@ public interface SecurityContext extends Mutable {
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeAlterTableSetFormat(TableToken tableToken);
+
     void authorizeAlterTableSetParam(TableToken tableToken);
 
     void authorizeAlterTableSetParquetSettings(TableToken tableToken);
