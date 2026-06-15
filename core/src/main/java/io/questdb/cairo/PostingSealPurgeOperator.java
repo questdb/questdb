@@ -165,6 +165,36 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         );
         int pathPartitionLen = path.size();
 
+        // Liveness guard against sealTxn reuse -- the C1 endgame the publish-time
+        // head guard cannot cover. A staged-but-never-published sealTxn whose
+        // [0, MAX) orphan purge was queued can be REUSED after the failing writer
+        // is freed and reopened: peekNextSealTxn() returns the same value because
+        // genCounter only advances on a successful publish, so a later seal then
+        // publishes a live chain head at that sealTxn. The publish-time guard
+        // could not catch it because the chain head was still the OLD sealTxn when
+        // this orphan entry drained. Re-read the on-disk .pk head sealTxn now, at
+        // delete time: if it equals this task's sealTxn the .pv is live again, so
+        // abandon the orphan purge instead of deleting a chain-referenced file
+        // (recovery would otherwise need a REINDEX). The reused file's own later
+        // supersession queues a fresh purge with a correct reader window, so
+        // abandoning loses nothing. readSealTxnFromKeyFile returns -1 when the .pk
+        // is missing or unreadable -- treat that as "cannot prove live" and fall
+        // through to the scoreboard-gated delete so a genuine orphan (no live .pk)
+        // stays reclaimable.
+        path.trimTo(pathPartitionLen);
+        long liveHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
+        path.trimTo(pathPartitionLen);
+        if (liveHeadSealTxn == task.getSealTxn()) {
+            LOG.critical().$("posting seal purge: target sealTxn is the live chain head (reused), abandoning orphan purge to avoid deleting a live file [table=")
+                    .$(liveToken.getTableName())
+                    .$(", column=").$(task.getIndexColumnName())
+                    .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                    .$(", sealTxn=").$(task.getSealTxn())
+                    .I$();
+            return true;
+        }
+
         boolean allRemoved = true;
         path.trimTo(pathPartitionLen);
         LPSZ pv = PostingIndexUtils.valueFileName(path, task.getIndexColumnName(),

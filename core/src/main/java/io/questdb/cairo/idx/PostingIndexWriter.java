@@ -399,6 +399,7 @@ public class PostingIndexWriter implements IndexWriter {
                 maxValue = 0;
                 hasPendingData = false;
                 isPoisoned = false;
+                isLastSealStreaming = false;
                 activeKeyCount = 0;
                 coverCount = 0;
                 // Drop the cover-extent cache so a pooled reopen for a different
@@ -738,9 +739,11 @@ public class PostingIndexWriter implements IndexWriter {
             // The OLD .pv stays on disk until the deferred purge in
             // flushAllPending fires. If flushAllPending never runs (caller
             // closes without commit -- not a production path), the OLD .pv
-            // is still chain-referenced by the OLD entry and the new (empty)
-            // .pv.{newSealTxn} will be re-discovered as an orphan on the
-            // next reopen.
+            // is still chain-referenced by the OLD entry, while the new (empty)
+            // .pv.{newSealTxn} was never published to the chain and so leaks
+            // (bounded): no writer-open scan reclaims never-published sealTxn
+            // files -- only the global purge job reclaims published-then-
+            // superseded versions.
             pendingDiscardOldSealTxn = oldSealTxn;
         }
         allocateNativeBuffers();
@@ -939,6 +942,11 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public int getTimestampColumnIndex() {
         return timestampColumnIndex;
+    }
+
+    @TestOnly
+    public long getValueMemSizeForTesting() {
+        return valueMemSize;
     }
 
     /**
@@ -1333,6 +1341,16 @@ public class PostingIndexWriter implements IndexWriter {
         rollbackToMaxValue(maxValue);
     }
 
+    /**
+     * Plants a pending purge whose sealTxn IS the current chain head, so a test
+     * can drive publishPendingPurges' head-guard (which must drop the entry
+     * rather than publish a purge for the live generation).
+     */
+    @TestOnly
+    public void scheduleHeadPurgeForTesting() {
+        scheduleOrphanPurge(chain.getHeadSealTxn());
+    }
+
     public void seal() {
         checkNotPoisoned();
         if (!keyMem.isOpen()) {
@@ -1364,6 +1382,12 @@ public class PostingIndexWriter implements IndexWriter {
         // sealTxn would race the still-pending .pv purge.
         final long oldSealTxn = sealTxn;
         final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+        // Captured for the pre-switch catch below: every encode path sets
+        // valueMemSize to the staged compacted size before its failable sync/
+        // switch, so a continuable pre-switch failure must restore it (else the
+        // next gen would write at genOffset = valueMemSize into live sealed
+        // bytes). Mirrors the rollback's not-switched branch.
+        final long oldValueMemSize = valueMemSize;
 
         // Incremental seal: gen 0 dense covering every current key, all later
         // gens sparse. sealIncremental writes a fresh .pv via sealValueMem.
@@ -1502,19 +1526,28 @@ public class PostingIndexWriter implements IndexWriter {
             // already at newSealTxn) leaves the live files and the consistent
             // writer alone. Mirrors the rollback / rebuildSidecarsByCopy catches.
             if (sealTxn == newSealTxn && chain.getHeadSealTxn() != newSealTxn) {
+                // Poisoning is a loud event -- log it with the same severity as
+                // the rollback / rebuildSidecarsByCopy post-switch catches.
+                LOG.error().$("posting index seal post-switch failure, poisoning writer and scheduling orphan purge [")
+                        .$("indexName=").$(indexName)
+                        .$(", newSealTxn=").$(newSealTxn)
+                        .$(']').$();
                 scheduleOrphanPurge(newSealTxn);
                 isPoisoned = true;
             } else if (sealTxn != newSealTxn) {
-                // Pre-switch failure: the switch never happened, so the writer is
-                // still consistent (chain + valueMem at oldSealTxn). Free the staging
-                // map, unlink the staged .pv/.pc directly (nothing references them
-                // yet), and drop sealTarget -- mirrors the rollback's not-switched
-                // branch. Without this the staged files leak permanently: the caller
-                // close()s a failed-seal writer and no writer-open scan reclaims
-                // never-published sealTxn files.
+                // Pre-switch failure: the switch never happened, so the chain and
+                // valueMem still reference oldSealTxn. Free the staging map, unlink
+                // the staged .pv/.pc directly (nothing references them yet), restore
+                // valueMemSize (an encode path may have already advanced it to the
+                // staged compacted size before throwing -- leaving it would corrupt
+                // the next gen's append offset), and drop sealTarget -- mirrors the
+                // rollback's not-switched branch. Without the unlink the staged files
+                // leak permanently: the caller close()s a failed-seal writer and no
+                // writer-open scan reclaims never-published sealTxn files.
                 Misc.free(sealValueMem);
                 closeSidecarMems();
                 unlinkOrphanSealFiles(newSealTxn);
+                valueMemSize = oldValueMemSize;
                 sealTarget = null;
             }
             throw th;
@@ -2072,7 +2105,7 @@ public class PostingIndexWriter implements IndexWriter {
     private void checkNotPoisoned() {
         if (isPoisoned) {
             throw CairoException.critical(0)
-                    .put("posting index writer is poisoned by a seal or rollback that failed after the value file switch; reopen the partition [index=")
+                    .put("posting index writer is poisoned by a seal, rollback or sidecar rebuild that failed after the value file switch; close and reopen the writer [index=")
                     .put(indexName).put(']');
         }
     }
@@ -2212,7 +2245,7 @@ public class PostingIndexWriter implements IndexWriter {
      * for the whole stride.
      */
     private int decodeDenseGenSingleKey(
-            long genBase, int genKeyCount, int stride, int j, long dstAddr
+            long genBase, int genKeyCount, int stride, int j, long dstAddr, int capacity
     ) {
         int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
         long strideOff = Unsafe.getLong(genBase + (long) stride * Long.BYTES);
@@ -2237,6 +2270,11 @@ public class PostingIndexWriter implements IndexWriter {
             if (count == 0) {
                 return 0;
             }
+            if (count < 0 || count > capacity) {
+                throw CairoException.critical(0)
+                        .put("corrupt posting index: dense FLAT key count exceeds buffer [count=").put(count)
+                        .put(", capacity=").put(capacity).put(']');
+            }
             BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, dstAddr);
             return count;
         } else {
@@ -2249,7 +2287,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             long dataOff = Unsafe.getLong(genOffsetsBase + (long) j * Long.BYTES);
             long encodedAddr = strideAddr + deltaHeaderSize + dataOff;
-            PostingIndexUtils.decodeKeyToNative(encodedAddr, dstAddr, decodeCtx);
+            PostingIndexUtils.decodeKeyToNative(encodedAddr, dstAddr, decodeCtx, capacity);
             return count;
         }
     }
@@ -2323,7 +2361,7 @@ public class PostingIndexWriter implements IndexWriter {
      * layout, isolated to one key.
      */
     private int decodeSparseGenSingleKey(
-            long genBase, int activeKeyCount, int key, long dstAddr
+            long genBase, int activeKeyCount, int key, long dstAddr, int capacity
     ) {
         long countsBase = genBase + (long) activeKeyCount * Integer.BYTES;
         long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
@@ -2345,7 +2383,7 @@ public class PostingIndexWriter implements IndexWriter {
                 }
                 long dataOffset = Unsafe.getLong(offsetsBase + (long) mid * Long.BYTES);
                 long encodedAddr = genBase + headerSize + dataOffset;
-                PostingIndexUtils.decodeKeyToNative(encodedAddr, dstAddr, decodeCtx);
+                PostingIndexUtils.decodeKeyToNative(encodedAddr, dstAddr, decodeCtx, capacity);
                 return count;
             }
         }
@@ -2765,15 +2803,34 @@ public class PostingIndexWriter implements IndexWriter {
      * workspaces are unchanged from the fast path.
      */
     private long estimateStreamingPathPeakBytes(int maxKeyCount, long maxColValueSize) {
+        return estimateStreamingPathPeakBytes(maxKeyCount, maxColValueSize, true);
+    }
+
+    /**
+     * @param isSidecarWritten whether this encode actually rebuilds cover
+     *                         sidecars. The seal always does (when covers
+     *                         exist); the rollback only does for path-based
+     *                         covers -- an addr-based-cover or non-covered
+     *                         rollback skips the sidecar write entirely
+     *                         (sidecarMems is empty), so it allocates none of
+     *                         the per-stride sidecarBuf, ALP compressBuf, FSST
+     *                         batch floor or the per-key long/exception
+     *                         workspaces. Charging them over-states the rollback
+     *                         peak 2-4x and spuriously rejects a rollback that
+     *                         actually fits.
+     */
+    private long estimateStreamingPathPeakBytes(int maxKeyCount, long maxColValueSize, boolean isSidecarWritten) {
         long peak = (long) maxKeyCount * Long.BYTES;                   // keyBuffer
         peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs + fixed scratch
         peak += sealAuxiliaryBufferBytes();                            // localHeaderBuf + strideIndexBuf
-        if (coverCount > 0 && maxColValueSize > 0) {
-            peak += (long) maxKeyCount * maxColValueSize;              // streaming sidecarBuf
-            peak += peakCoverColumnCompressBufBytes(maxKeyCount);      // ALP compressBuf for the worst cover col
+        if (isSidecarWritten) {
+            if (coverCount > 0 && maxColValueSize > 0) {
+                peak += (long) maxKeyCount * maxColValueSize;          // streaming sidecarBuf
+                peak += peakCoverColumnCompressBufBytes(maxKeyCount);  // ALP compressBuf for the worst cover col
+            }
+            peak += peakVarCoverFsstScratchBytes();                   // streaming FSST scratch for var-size covers
+            peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);    // longWorkspace + exceptionWorkspace
         }
-        peak += peakVarCoverFsstScratchBytes();                       // streaming FSST scratch for var-size covers
-        peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);        // longWorkspace + exceptionWorkspace
         peak += (long) keyCount * Integer.BYTES;                       // totalCountsAddr
         return peak;
     }
@@ -2820,10 +2877,11 @@ public class PostingIndexWriter implements IndexWriter {
             for (int gen = 0; gen < genCount; gen++) {
                 int genKeyCount = genKeyCounts[gen];
                 long appendAddr = keyBuffer + (long) decodedTotal * Long.BYTES;
+                int capacity = maxKeyCount - decodedTotal;
                 if (genKeyCount < 0) {
-                    decodedTotal += decodeSparseGenSingleKey(genBases[gen], -genKeyCount, key, appendAddr);
+                    decodedTotal += decodeSparseGenSingleKey(genBases[gen], -genKeyCount, key, appendAddr, capacity);
                 } else if (stride < PostingIndexUtils.strideCount(genKeyCount)) {
-                    decodedTotal += decodeDenseGenSingleKey(genBases[gen], genKeyCount, stride, j, appendAddr);
+                    decodedTotal += decodeDenseGenSingleKey(genBases[gen], genKeyCount, stride, j, appendAddr, capacity);
                 }
             }
             // decodedTotal is the full per-key count totalCountsAddr held before this
@@ -4158,12 +4216,16 @@ public class PostingIndexWriter implements IndexWriter {
                 if (isSwitched) {
                     // Pre-publish, post-switch: valueMem / sidecarMems are mapped to
                     // .{newSealTxn} but the chain still references oldSealTxn, so no
-                    // reader can pin them. Defer cleanup to the seal-purge job with
-                    // the widest safe window (the next publishPendingPurges drain).
-                    // The chain head is on the old .pv but valueMem on the staged
-                    // one, so poison the writer rather than risk a later op
-                    // publishing a chain entry at newSealTxn and letting the
-                    // deferred purge delete the live file.
+                    // reader can pin them yet. Defer cleanup to the seal-purge job
+                    // with the widest safe window (the next publishPendingPurges
+                    // drain). The chain head is on the old .pv but valueMem on the
+                    // staged one, so poison the writer rather than risk a later op
+                    // publishing a chain entry at newSealTxn and letting the deferred
+                    // purge delete the live file. The orphan .pv.{newSealTxn} only
+                    // becomes reachable later if a freed+reopened writer REUSES
+                    // newSealTxn and publishes it live; PostingSealPurgeOperator
+                    // re-reads the .pk head at delete time and abandons the purge
+                    // when the file is live again, so the deferral is safe past reuse.
                     LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, poisoning writer and scheduling orphan purge [")
                             .$("indexName=").$(indexName)
                             .$(", newSealTxn=").$(newSealTxn)
@@ -4294,6 +4356,9 @@ public class PostingIndexWriter implements IndexWriter {
                     long countsBase = keyIdsBase + (long) activeKeyCount * Integer.BYTES;
                     for (int i = 0; i < activeKeyCount; i++) {
                         int key = Unsafe.getInt(keyIdsBase + (long) i * Integer.BYTES);
+                        if (key < 0 || key >= keyCount) {
+                            continue; // corrupt sparse gen: key out of range; skip the OOB totalCountsAddr write
+                        }
                         int count = Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
                         int existing = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
                         Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
@@ -4363,6 +4428,11 @@ public class PostingIndexWriter implements IndexWriter {
             long maxStrideTotalL = 0L;
             int maxKeyCount = 0;
             long maxStrideTrialSize = 0L;
+            // maxStrideTrialSize sizes the fast seal path's bpTrialBuf and is read
+            // only by the seal branch; skip the per-key computeMaxEncodedSize work
+            // on the rollback path (maxValueCutoff < MAX), which streams and never
+            // consults it.
+            final boolean isSealSizing = maxValueCutoff == Long.MAX_VALUE;
             {
                 int sc0 = PostingIndexUtils.strideCount(keyCount);
                 for (int s0 = 0; s0 < sc0; s0++) {
@@ -4374,7 +4444,7 @@ public class PostingIndexWriter implements IndexWriter {
                         int c = Unsafe.getInt(totalCountsAddr + (long) key0 * Integer.BYTES);
                         strideTotal += c;
                         if (c > maxKeyCount) maxKeyCount = c;
-                        if (c > 0) {
+                        if (isSealSizing && c > 0) {
                             strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(c);
                         }
                     }
@@ -4408,13 +4478,24 @@ public class PostingIndexWriter implements IndexWriter {
                 // Pre-flight: the rollback re-encode streams one key at a time, so
                 // its peak is the same streaming estimate the seal path uses
                 // (keyBuffer + encodeCtx + sidecar workspaces), sized to the
-                // pre-filter hottest key. If even that breaches the RSS limit,
-                // throw an operator-actionable diagnostic BEFORE allocating
-                // keyBuffer or switching the value file, rather than OOM mid-encode
-                // with a generic allocation message.
+                // pre-filter hottest key. Only a path-based-cover rollback rebuilds
+                // sidecars; an addr-based-cover or non-covered rollback skips the
+                // sidecar write (sidecarMems stays empty below), so it allocates
+                // none of the sidecarBuf / FSST floor / per-key workspaces -- pass
+                // isSidecarWritten so the estimate does not over-charge them and
+                // spuriously reject a rollback that fits. If even the right-sized
+                // peak breaches the RSS limit, throw an operator-actionable
+                // diagnostic BEFORE allocating keyBuffer or switching the value
+                // file, rather than OOM mid-encode with a generic allocation message.
+                final boolean rollbackWritesSidecars = coverCount > 0
+                        && coveredColumnNames.size() > 0
+                        && coveredPartitionPath.size() > 0;
                 final long rollbackRssLimit = Unsafe.getRssMemLimit();
                 if (rollbackRssLimit > 0) {
-                    final long rollbackPeak = estimateStreamingPathPeakBytes(maxKeyCount, peakCoverColumnValueSize());
+                    final long rollbackPeak = estimateStreamingPathPeakBytes(
+                            maxKeyCount,
+                            rollbackWritesSidecars ? peakCoverColumnValueSize() : 0L,
+                            rollbackWritesSidecars);
                     final long rollbackHeadroom = Math.max(0L, rollbackRssLimit - Unsafe.getRssMemUsed());
                     if (rollbackPeak > rollbackHeadroom) {
                         throw CairoException.critical(0)
@@ -4497,14 +4578,18 @@ public class PostingIndexWriter implements IndexWriter {
                             // old .pv. The staged files cannot be unlinked here
                             // (Windows refuses to unlink an open map), so defer them
                             // to the purge job with the widest safe window, matching
-                            // rebuildSidecarsByCopy -- no reader can pin them because
-                            // the chain never referenced newSealTxn. The writer is
-                            // now internally inconsistent (chain head at the old
-                            // sealTxn, valueMem at newSealTxn): poison it so a later
-                            // rollback/seal/commit throws instead of re-driving the
-                            // poisoned state, which could append a chain entry at
+                            // rebuildSidecarsByCopy -- no reader can pin them yet
+                            // because the chain never referenced newSealTxn. The
+                            // writer is now internally inconsistent (chain head at the
+                            // old sealTxn, valueMem at newSealTxn): poison it so a
+                            // later rollback/seal/commit throws instead of re-driving
+                            // the poisoned state, which could append a chain entry at
                             // newSealTxn and let the deferred [0, MAX) purge delete
-                            // the now-live .pv.{newSealTxn}.
+                            // the now-live .pv.{newSealTxn}. The remaining route --
+                            // a freed+reopened writer REUSING newSealTxn and
+                            // publishing it live -- is closed at delete time:
+                            // PostingSealPurgeOperator re-reads the .pk head and
+                            // abandons the purge when the file is live again.
                             LOG.error().$("posting index rollback post-switch failure, poisoning writer and scheduling orphan purge [")
                                     .$("indexName=").$(indexName)
                                     .$(", newSealTxn=").$(newSealTxn)
@@ -4653,6 +4738,20 @@ public class PostingIndexWriter implements IndexWriter {
         int[] bpKeySizes = strideBpKeySizes;
         int[] keyCounts = strideKeyCounts;
 
+        // Resolve per-gen metadata once. valueMem is the read-only source until
+        // switchToSealedValueFile below (the per-key loop writes only to
+        // sealTarget), so the base addresses stay stable. The inner loop would
+        // otherwise re-resolve genDirOffset + read two gen-dir fields + recompute
+        // the gen base per (key, gen), i.e. O(keyCount * genCount) where
+        // O(genCount) suffices. Mirrors filterCountsForRollback's hoist.
+        long[] genBases = new long[genCount];
+        int[] genKeyCounts = new int[genCount];
+        for (int gen = 0; gen < genCount; gen++) {
+            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+            genBases[gen] = valueMem.addressOf(keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET));
+            genKeyCounts[gen] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        }
+
         try {
             localHeaderBuf = Unsafe.malloc(maxDeltaHeaderSize, MemoryTag.NATIVE_INDEX_READER);
             for (int s = 0; s < sc; s++) {
@@ -4714,15 +4813,13 @@ public class PostingIndexWriter implements IndexWriter {
                     // gen production preserves the same invariant.
                     int decodedTotal = 0;
                     for (int gen = 0; gen < genCount; gen++) {
-                        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
-                        long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                        int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                        long genBase = valueMem.addressOf(genFileOffset);
+                        int genKeyCount = genKeyCounts[gen];
                         long appendAddr = keyBuffer + (long) decodedTotal * Long.BYTES;
+                        int capacity = maxKeyCount - decodedTotal;
                         if (genKeyCount < 0) {
-                            decodedTotal += decodeSparseGenSingleKey(genBase, -genKeyCount, strideStart + j, appendAddr);
+                            decodedTotal += decodeSparseGenSingleKey(genBases[gen], -genKeyCount, strideStart + j, appendAddr, capacity);
                         } else if (s < PostingIndexUtils.strideCount(genKeyCount)) {
-                            decodedTotal += decodeDenseGenSingleKey(genBase, genKeyCount, s, j, appendAddr);
+                            decodedTotal += decodeDenseGenSingleKey(genBases[gen], genKeyCount, s, j, appendAddr, capacity);
                         }
                     }
                     // Seal (isRollback=false): decodedTotal must equal count (the
@@ -6160,7 +6257,7 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void writeSidecarFixedStreamingForColumn(
             MemoryMARW mem, int c, long colTop, int colType, int shift,
-            int ks, int strideStart, int[] keyCounts, long keyBuffer,
+            int ks, int strideStart, int[] keyCounts, long keyBuffer, int maxKeyCount,
             long sidecarBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr,
             long compressBuf
     ) {
@@ -6172,6 +6269,11 @@ public class PostingIndexWriter implements IndexWriter {
             mem.putLong(0L); // placeholder
         }
 
+        // valueMem (the freshly sealed gen 0) is the read-only decode source, so
+        // its base address and the stride index are invariant across the per-key
+        // decodes below -- resolve them once rather than per key.
+        long gen0Base = valueMem.addressOf(0);
+        int s = strideStart / PostingIndexUtils.DENSE_STRIDE;
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
             long currentPos = mem.getAppendOffset();
@@ -6185,7 +6287,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             // Decode this key's row IDs from the freshly-sealed dense gen 0
             // directly into the shared keyBuffer.
-            int decoded = decodeDenseGenSingleKey(valueMem.addressOf(0), keyCount, strideStart / PostingIndexUtils.DENSE_STRIDE, j, keyBuffer);
+            int decoded = decodeDenseGenSingleKey(gen0Base, keyCount, s, j, keyBuffer, maxKeyCount);
             if (decoded != count) {
                 throw CairoException.critical(0)
                         .put("posting index streaming sidecar decode mismatch [key=").put(strideStart + j)
@@ -6461,10 +6563,10 @@ public class PostingIndexWriter implements IndexWriter {
 
                 if (isVarSize) {
                     writeSidecarVarStreamingForColumn(mem, c, colTop, colType,
-                            ks, strideStart, keyCounts, keyBuffer);
+                            ks, strideStart, keyCounts, keyBuffer, maxKeyCount);
                 } else {
                     writeSidecarFixedStreamingForColumn(mem, c, colTop, colType, shift,
-                            ks, strideStart, keyCounts, keyBuffer,
+                            ks, strideStart, keyCounts, keyBuffer, maxKeyCount,
                             sidecarBuf, longWorkspaceAddr, exceptionWorkspaceAddr, compressBuf);
                 }
             }
@@ -6662,7 +6764,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (totalValues >= PostingIndexUtils.LONG_OFFSETS_FLAG) {
             throw CairoException.critical(0)
                     .put("posting index var cover gen block exceeds 2^30 values [totalValues=").put(totalValues)
-                    .put("]; the 4-byte count field shares bit 30/31 with the long-offset and FSST flags. Split the partition into smaller commits");
+                    .put("]; the 4-byte count field shares bits 30 and 31 with the long-offset and FSST flags. Split the partition into smaller commits");
         }
         mem.putInt(longOffsets ? totalValues | PostingIndexUtils.LONG_OFFSETS_FLAG : totalValues);
         long offsetsStart = mem.getAppendOffset();
@@ -6719,7 +6821,7 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void writeSidecarVarStreamingForColumn(
             MemoryMARW mem, int c, long colTop, int colType,
-            int ks, int strideStart, int[] keyCounts, long keyBuffer
+            int ks, int strideStart, int[] keyCounts, long keyBuffer, int maxKeyCount
     ) {
         int totalCount = 0;
         for (int j = 0; j < ks; j++) {
@@ -6727,10 +6829,10 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final long blockStart = mem.getAppendOffset();
         boolean longOffsets = false;
-        if (!writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, totalCount, false)) {
+        if (!writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, maxKeyCount, totalCount, false)) {
             mem.jumpTo(blockStart);
             longOffsets = true;
-            boolean isWritten = writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, totalCount, true);
+            boolean isWritten = writeVarStreamingAttempt(mem, c, colTop, colType, ks, strideStart, keyCounts, keyBuffer, maxKeyCount, totalCount, true);
             assert isWritten : "long offsets must not overflow";
         }
         final int offsetWidth = longOffsets ? Long.BYTES : Integer.BYTES;
@@ -6909,13 +7011,13 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private boolean writeVarStreamingAttempt(
             MemoryMARW mem, int c, long colTop, int colType,
-            int ks, int strideStart, int[] keyCounts, long keyBuffer,
+            int ks, int strideStart, int[] keyCounts, long keyBuffer, int maxKeyCount,
             int totalCount, boolean longOffsets
     ) {
         if (totalCount >= PostingIndexUtils.LONG_OFFSETS_FLAG) {
             throw CairoException.critical(0)
                     .put("posting index var cover stride exceeds 2^30 values [totalCount=").put(totalCount)
-                    .put("]; the 4-byte count field shares bit 30/31 with the long-offset and FSST flags. Split the partition into smaller commits");
+                    .put("]; the 4-byte count field shares bits 30 and 31 with the long-offset and FSST flags. Split the partition into smaller commits");
         }
         mem.putInt(longOffsets ? totalCount | PostingIndexUtils.LONG_OFFSETS_FLAG : totalCount);
         long offsetsStart = mem.getAppendOffset();
@@ -6925,6 +7027,10 @@ public class PostingIndexWriter implements IndexWriter {
         long dataStart = mem.getAppendOffset();
 
         int s = strideStart / PostingIndexUtils.DENSE_STRIDE;
+        // valueMem (the freshly sealed gen 0) is the read-only decode source, so
+        // its base address is invariant across the per-key decodes below -- resolve
+        // it once rather than per key.
+        long gen0Base = valueMem.addressOf(0);
         int valueOrdinal = 0;
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
@@ -6933,7 +7039,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             // gen 0 post-reseal holds exactly the surviving rows for this key,
             // so decoded == count; read the covered var value at each row id.
-            int decoded = decodeDenseGenSingleKey(valueMem.addressOf(0), keyCount, s, j, keyBuffer);
+            int decoded = decodeDenseGenSingleKey(gen0Base, keyCount, s, j, keyBuffer, maxKeyCount);
             if (decoded != count) {
                 throw CairoException.critical(0)
                         .put("posting index streaming var sidecar decode mismatch [key=").put(strideStart + j)
@@ -6967,7 +7073,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (totalCount >= PostingIndexUtils.LONG_OFFSETS_FLAG) {
             throw CairoException.critical(0)
                     .put("posting index var cover stride exceeds 2^30 values [totalCount=").put(totalCount)
-                    .put("]; the 4-byte count field shares bit 30/31 with the long-offset and FSST flags. Split the partition into smaller commits");
+                    .put("]; the 4-byte count field shares bits 30 and 31 with the long-offset and FSST flags. Split the partition into smaller commits");
         }
         mem.putInt(longOffsets ? totalCount | PostingIndexUtils.LONG_OFFSETS_FLAG : totalCount);
         long offsetsStart = mem.getAppendOffset();

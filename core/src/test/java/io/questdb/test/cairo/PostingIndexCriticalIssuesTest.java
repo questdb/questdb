@@ -4956,16 +4956,19 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     Assert.assertEquals("orphan purge must span the full txn window",
                             Long.MAX_VALUE, writer.getPendingPurgeToTxnForTesting(0));
 
-                    // Every mutating entry point now rejects the poisoned writer
+                    // All eleven mutating entry points reject the poisoned writer
                     // (checkNotPoisoned runs before commitDense's covers assert).
                     assertPoisonedRejects("add", () -> writer.add(0, 100));
                     assertPoisonedRejects("commit", writer::commit);
                     assertPoisonedRejects("commitDense", writer::commitDense);
+                    assertPoisonedRejects("discardForRebuild", writer::discardForRebuild);
                     assertPoisonedRejects("rebuildSidecars", writer::rebuildSidecars);
+                    assertPoisonedRejects("rollbackConditionally", () -> writer.rollbackConditionally(0));
                     assertPoisonedRejects("rollbackValues", () -> writer.rollbackValues(0));
                     assertPoisonedRejects("seal", writer::seal);
                     assertPoisonedRejects("setMaxValue", () -> writer.setMaxValue(100));
                     assertPoisonedRejects("sync", () -> writer.sync(false));
+                    assertPoisonedRejects("truncate", writer::truncate);
                 }
             } finally {
                 Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
@@ -4988,7 +4991,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         ff = pvSync;
         assertMemoryLeak(ff, () -> {
             final String name = "seal_pre_switch_pv_fail";
-            final long fakeColBytes = 32L << 3;
+            final long fakeColBytes = 64L << 3; // 64 rows (32 indexed + room for the post-failure append)
             long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final int plen = path.size();
@@ -5014,6 +5017,12 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     writer.configureCovering(addrs, tops, shifts, indices, types, 1);
                     writer.setNextTxnAtSeal(1L);
 
+                    // The encode advances valueMemSize to the staged compacted size
+                    // before the pre-switch .pv sync; the catch must restore it
+                    // (else the next gen appends at a stale genOffset = valueMemSize
+                    // into live bytes).
+                    final long valueMemSizeBefore = writer.getValueMemSizeForTesting();
+
                     pvSync.arm();
                     try {
                         writer.seal();
@@ -5036,8 +5045,36 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     Assert.assertEquals("pre-switch seal failure must queue no purge",
                             0, writer.getPendingPurgesSizeForTesting());
 
-                    // Not poisoned (nothing switched): the retried seal succeeds.
+                    // valueMemSize must be back to its pre-seal value: the encode
+                    // advanced it to the staged compacted size before the throw, and
+                    // a continued writer appends its next gen at this offset.
+                    Assert.assertEquals("pre-switch seal failure must restore valueMemSize",
+                            valueMemSizeBefore, writer.getValueMemSizeForTesting());
+
+                    // Consume valueMemSize to prove the restore: commit appends a new
+                    // gen at genOffset = valueMemSize, so a stale value would write
+                    // into live bytes and corrupt the read-back. Re-sealing alone
+                    // cannot catch this (seal() recomputes valueMemSize before
+                    // consuming it). Key 0 held rowids 0,4,...,28 (8 rows); append a
+                    // 9th (row 32 -- globally ascending, in the cover's 64-row range).
+                    writer.add(0, 32);
+                    writer.setMaxValue(32);
+                    writer.commit();
                     writer.seal();
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name,
+                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                        long iterated = 0;
+                        try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                            while (cursor.hasNext()) {
+                                cursor.next();
+                                iterated++;
+                            }
+                        }
+                        Assert.assertEquals("key 0 must read back its 8 original rows plus the appended one",
+                                9, iterated);
+                    }
                 }
             } finally {
                 Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);

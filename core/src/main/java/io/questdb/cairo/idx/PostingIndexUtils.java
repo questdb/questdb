@@ -491,8 +491,23 @@ public final class PostingIndexUtils {
      * Two-pass: (1) SIMD bulk-unpack low bits, (2) scan high bits and merge.
      */
     public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
+        decodeKeyEFToNative(srcAddr, destAddr, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Bounded variant: {@code maxValues} caps the values written to
+     * {@code destAddr}. The encoded count is read from the block itself, so a
+     * corrupt block could otherwise overflow a buffer the caller sized to the
+     * gen-dir count; validate it before any write.
+     */
+    public static void decodeKeyEFToNative(long srcAddr, long destAddr, int maxValues) {
         long pos = srcAddr + 4; // skip sentinel
         int n = Unsafe.getInt(pos);
+        if (n < 0 || n > maxValues) {
+            throw CairoException.critical(0)
+                    .put("corrupt posting index: EF value count out of range [count=").put(n)
+                    .put(", capacity=").put(maxValues).put(']');
+        }
         pos += 4;
         int L = Unsafe.getByte(pos) & 0xFF;
         pos += 1;
@@ -541,9 +556,21 @@ public final class PostingIndexUtils {
      * @param ctx      reusable decode context (call ensureCapacity first)
      */
     public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx) {
+        decodeKeyToNative(srcAddr, destAddr, ctx, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Bounded variant: {@code maxValues} caps the number of longs written to
+     * {@code destAddr}. Each block carries its own value count, so a corrupt or
+     * mismatched gen whose block-internal counts exceed the gen-dir count the
+     * caller sized its buffer to would otherwise overflow {@code destAddr}.
+     * This sums the block-internal counts and throws before any value is
+     * written when the total exceeds {@code maxValues}.
+     */
+    public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx, int maxValues) {
         int firstWord = Unsafe.getInt(srcAddr);
         if (firstWord == EF_FORMAT_SENTINEL) {
-            decodeKeyEFToNative(srcAddr, destAddr);
+            decodeKeyEFToNative(srcAddr, destAddr, maxValues);
             return;
         }
         if (firstWord < 0 || firstWord > MAX_BLOCK_COUNT) {
@@ -558,8 +585,16 @@ public final class PostingIndexUtils {
         long bitWidthsAddr = ctx.bitWidthsAddr;
         long blockDeltasAddr = ctx.blockDeltasAddr;
 
+        long blockInternalTotal = 0;
         for (int b = 0; b < firstWord; b++) {
-            Unsafe.putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getByte(pos + b) & 0xFF);
+            int c = Unsafe.getByte(pos + b) & 0xFF;
+            Unsafe.putInt(valueCountsAddr + (long) b * Integer.BYTES, c);
+            blockInternalTotal += c;
+        }
+        if (blockInternalTotal > maxValues) {
+            throw CairoException.critical(0)
+                    .put("corrupt posting index: decoded value count exceeds buffer [decoded=").put(blockInternalTotal)
+                    .put(", capacity=").put(maxValues).put(']');
         }
         pos += firstWord;
 

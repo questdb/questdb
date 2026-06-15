@@ -360,6 +360,94 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPublishPendingPurgesDropsLiveHeadEntry() throws Exception {
+        // publishPendingPurges' head-guard must drop an outbox entry whose
+        // sealTxn equals the current chain head (the live generation) rather than
+        // publish a purge that would later delete the live .pv. This backstops C1
+        // on the writer side; PostingSealPurgeOperator backstops it on the delete
+        // side. No prior test plants a head-matching entry, so the drop branch
+        // was uncovered.
+        assertMemoryLeak(() -> {
+            TableToken tok = createPostingTable("ps_purge_headguard");
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingIndexWriter writer = new PostingIndexWriter(
+                         configuration, partitionPath, "c_hg", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < 8; i++) {
+                    writer.add(i % BATCH_KEYS, i);
+                }
+                writer.setMaxValue(7);
+                writer.commit();
+                writer.seal();
+                int pLen = partitionPath.size();
+                long headSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), "c_hg", COLUMN_NAME_TXN_NONE));
+                assertTrue("seal must produce a positive head sealTxn", headSealTxn > 0);
+
+                // Plant a pending purge whose sealTxn IS the live chain head.
+                // (seal() may also have queued a purge for the prior empty
+                // sealTxn=0; that one is not the head and is irrelevant here.)
+                writer.scheduleHeadPurgeForTesting();
+                writer.publishPendingPurges(
+                        engine.getMessageBus(), tok, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO, 1000L);
+
+                // The head-guard must have dropped the head-matching entry: scan
+                // everything published and assert the head sealTxn is not among it.
+                MessageBus bus = engine.getMessageBus();
+                RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+                boolean headEnqueued = false;
+                long cursor;
+                while ((cursor = bus.getPostingSealPurgeSubSeq().next()) >= 0) {
+                    if (queue.get(cursor).getSealTxn() == headSealTxn) {
+                        headEnqueued = true;
+                    }
+                    bus.getPostingSealPurgeSubSeq().done(cursor);
+                }
+                assertFalse("publishPendingPurges must drop a purge whose sealTxn is the live chain head",
+                        headEnqueued);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeAbandonsWhenTargetSealTxnIsLiveChainHead() throws Exception {
+        // C1 reuse guard: a purge task whose sealTxn is the LIVE chain head (the
+        // state a reused-then-republished orphan sealTxn lands in) must be
+        // abandoned, never delete the live .pv. The publish-time head guard
+        // cannot catch this -- the chain head was the OLD sealTxn when the orphan
+        // entry drained -- so the operator re-reads the .pk head at delete time.
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_live_head");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                String col = "c_live";
+                // writeAndSeal advances the head past the value it returns; read
+                // the LIVE head and target a purge directly at it.
+                writeAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                long liveHead = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE));
+                assertTrue("live head sealTxn must be positive", liveHead > 0);
+                assertTrue("live .pv must exist after seal", ff.exists(
+                        PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, liveHead)));
+
+                // Tiny window so the scoreboard reports the range available --
+                // only the operator's .pk head-read can save the live file.
+                publishPurgeTask(tok, col, liveHead, 1L);
+                runPurgeJob(job, 3);
+
+                assertTrue("operator must abandon a purge targeting the live chain head and keep the .pv",
+                        ff.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, liveHead)));
+            }
+        });
+    }
+
+    @Test
     public void testRecoveryFromLogTable() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -892,9 +980,19 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         ff.close(fd);
     }
 
+    /**
+     * Writes data and seals TWICE, returning the SUPERSEDED first sealTxn (its
+     * .pv is purge-eligible) while the chain head advances to a newer, live
+     * sealTxn. PostingSealPurgeOperator refuses to delete the live head -- it
+     * re-reads the .pk head sealTxn at delete time to guard the C1 reuse hazard
+     * -- so a purge test must target a superseded sealTxn, which is also what
+     * production schedules (recordPostingSealPurge fires on the OLD sealTxn once
+     * a new head supersedes it).
+     */
     private long writeAndSeal(Path partitionPath, String colName) {
         FilesFacade ff = configuration.getFilesFacade();
         int pLen = partitionPath.size();
+        long supersededSealTxn;
         try (PostingIndexWriter writer = new PostingIndexWriter(
                 configuration, partitionPath, colName, COLUMN_NAME_TXN_NONE)) {
             for (int i = 0; i < 8; i++) {
@@ -903,21 +1001,36 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             writer.setMaxValue(8 - 1);
             writer.commit();
             writer.seal();
+            supersededSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                    ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, COLUMN_NAME_TXN_NONE));
+            partitionPath.trimTo(pLen);
+            // Second seal advances the chain head, leaving supersededSealTxn's
+            // .pv on disk pending purge while a newer sealTxn becomes live.
+            for (int i = 8; i < 16; i++) {
+                writer.add(i % BATCH_KEYS, i);
+            }
+            writer.setMaxValue(16 - 1);
+            writer.commit();
+            writer.seal();
         }
-        long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                ff,
-                PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, COLUMN_NAME_TXN_NONE)
-        );
         partitionPath.trimTo(pLen);
-        return sealTxn;
+        return supersededSealTxn;
     }
 
+    /**
+     * Covering analogue of {@link #writeAndSeal}: seals TWICE and returns the
+     * superseded first sealTxn (with its .pv/.pc{c} purge-eligible) while a newer
+     * sealTxn becomes the live head. See {@link #writeAndSeal} for why a purge
+     * test must target a superseded, not the live-head, sealTxn.
+     */
     private long writeCoveringAndSeal(Path partitionPath, String colName) {
         FilesFacade ff = configuration.getFilesFacade();
         int pLen = partitionPath.size();
-        long colAddr = Unsafe.malloc((long) 8 * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        final long colRows = 16;
+        long colAddr = Unsafe.malloc(colRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long supersededSealTxn;
         try {
-            Unsafe.setMemory(colAddr, (long) 8 * Integer.BYTES, (byte) 0);
+            Unsafe.setMemory(colAddr, colRows * Integer.BYTES, (byte) 0);
             try (PostingIndexWriter writer = new PostingIndexWriter(
                     configuration, partitionPath, colName, COLUMN_NAME_TXN_NONE)) {
                 writer.configureCovering(
@@ -931,16 +1044,22 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 writer.setMaxValue(8 - 1);
                 writer.commit();
                 writer.seal();
+                supersededSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, COLUMN_NAME_TXN_NONE));
+                partitionPath.trimTo(pLen);
+                // Second seal advances the chain head past supersededSealTxn.
+                for (int i = 8; i < 16; i++) {
+                    writer.add(i % BATCH_KEYS, i);
+                }
+                writer.setMaxValue(16 - 1);
+                writer.commit();
+                writer.seal();
             }
         } finally {
-            Unsafe.free(colAddr, (long) 8 * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(colAddr, colRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
-        long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                ff,
-                PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, COLUMN_NAME_TXN_NONE)
-        );
         partitionPath.trimTo(pLen);
-        return sealTxn;
+        return supersededSealTxn;
     }
 
 }
