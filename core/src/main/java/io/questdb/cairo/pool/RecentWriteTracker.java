@@ -605,6 +605,7 @@ public class RecentWriteTracker {
         if (timestamp == Numbers.LONG_NULL && walTimestamp == Numbers.LONG_NULL) {
             return MicrosecondClockImpl.INSTANCE.getTicks();
         }
+        // Hydration has no live activity time, so seed activity from persisted data timestamps.
         return Math.max(timestamp, walTimestamp);
     }
 
