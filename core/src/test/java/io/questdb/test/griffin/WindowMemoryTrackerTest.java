@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
@@ -76,13 +77,74 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
         // doublings, while a small input stays comfortably under it. The default is
         // 1 MiB, which would breach on the first allocation.
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024L);
+        // Route the cached-window release tests below through CachedWindowRecordCursorFactory
+        // (record store + encoded sort buffers + partition map). The encode-eligible,
+        // fixed-width-output queries here would otherwise default to the LIGHT factory; the
+        // dedicated testCachedLight* tests re-enable it to cover that path explicitly.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "false");
+    }
+
+    @Test
+    public void testCachedLightPartitionFailsOnHighCardinality() throws Exception {
+        // rank() over (partition by k order by v) on the LIGHT path. A high-cardinality key
+        // plus the narrow store and row-id list materializing every row breach the per-query
+        // limit; without the tracker bound on the light cursor this query would never breach.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            execute("CREATE TABLE tab AS (SELECT x AS k, x::double AS v FROM long_sequence(200_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT k, rank() OVER (PARTITION BY k ORDER BY v) FROM tab",
+                        sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    assertInTree(factory, CachedWindowLightRecordCursorFactory.class);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedLightPartitionReleasesAllocations() throws Exception {
+        // rank() over (partition by k order by v) on the LIGHT path. The light cursor binds
+        // the tracker on its narrow store, row-id list, sort buffers and map before reopen();
+        // repeated getCursor/close cycles must release every byte (assertMemoryLeak checks it).
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            execute("CREATE TABLE tab AS (SELECT (x % 50) AS k, x::double AS v FROM long_sequence(2_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT k, rank() OVER (PARTITION BY k ORDER BY v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowLightRecordCursorFactory.class);
+                for (int i = 0; i < 10; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 2_000, rows);
+                    }
+                }
+            }
+        });
     }
 
     @Test
     public void testCachedPartitionWindowReleasesAllocations() throws Exception {
         // rank() over (partition by k order by v) routes through the cached window
-        // cursor, which binds the tracker on the partition map (and the ordered tree
-        // chains) before reopen(). A small input fits the limit; repeated
+        // cursor, which binds the tracker on the partition map (and the encoded sort
+        // buffers) before reopen(). A small input fits the limit; repeated
         // getCursor/close cycles must release every byte the lazy map allocates.
         // assertMemoryLeak around the loop is the load-bearing check - the
         // constructor's eager-backing free plus the per-cursor reopen/reset must net
