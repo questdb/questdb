@@ -373,6 +373,13 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             try (Path partitionPath = partitionPathFor(tok);
                  PostingIndexWriter writer = new PostingIndexWriter(
                          configuration, partitionPath, "c_hg", COLUMN_NAME_TXN_NONE)) {
+                // publishPendingPurges skips a recycled outbox entry whose
+                // partitionTimestamp == Long.MIN_VALUE (the path-based open default)
+                // BEFORE the head-guard, so give the writer the partition context a
+                // real TableWriter-owned writer carries -- matching partitionPathFor
+                // (timestamp 0, nameTxn -1). Without this the planted entry is
+                // skipped and the head-guard is never exercised.
+                writer.setPartitionContext(0L, -1L);
                 for (int i = 0; i < 8; i++) {
                     writer.add(i % BATCH_KEYS, i);
                 }

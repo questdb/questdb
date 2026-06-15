@@ -4725,6 +4725,23 @@ public class PostingIndexWriter implements IndexWriter {
         int sc = PostingIndexUtils.strideCount(keyCount);
         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
 
+        // Resolve per-gen metadata once, BEFORE any native allocation or
+        // openSealValueFile in this method, so a fault in these reads cannot leak
+        // strideIndexBuf/localHeaderBuf. valueMem is the read-only source until
+        // switchToSealedValueFile below (the per-key loop writes only to
+        // sealTarget, a distinct mapping), so the base addresses stay stable. The
+        // inner loop would otherwise re-resolve genDirOffset + read two gen-dir
+        // fields + recompute the gen base per (key, gen), i.e.
+        // O(keyCount * genCount) where O(genCount) suffices. Mirrors
+        // filterCountsForRollback's hoist.
+        long[] genBases = new long[genCount];
+        int[] genKeyCounts = new int[genCount];
+        for (int gen = 0; gen < genCount; gen++) {
+            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+            genBases[gen] = valueMem.addressOf(keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET));
+            genKeyCounts[gen] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        }
+
         openSealValueFile(newSealTxn);
         long sealOffset = sealTarget.getAppendOffset();
         // Reserve the stride index region; we patch it at the end of the loop.
@@ -4737,20 +4754,6 @@ public class PostingIndexWriter implements IndexWriter {
         long localHeaderBuf = 0;
         int[] bpKeySizes = strideBpKeySizes;
         int[] keyCounts = strideKeyCounts;
-
-        // Resolve per-gen metadata once. valueMem is the read-only source until
-        // switchToSealedValueFile below (the per-key loop writes only to
-        // sealTarget), so the base addresses stay stable. The inner loop would
-        // otherwise re-resolve genDirOffset + read two gen-dir fields + recompute
-        // the gen base per (key, gen), i.e. O(keyCount * genCount) where
-        // O(genCount) suffices. Mirrors filterCountsForRollback's hoist.
-        long[] genBases = new long[genCount];
-        int[] genKeyCounts = new int[genCount];
-        for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
-            genBases[gen] = valueMem.addressOf(keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET));
-            genKeyCounts[gen] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        }
 
         try {
             localHeaderBuf = Unsafe.malloc(maxDeltaHeaderSize, MemoryTag.NATIVE_INDEX_READER);
