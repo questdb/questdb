@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -1780,6 +1782,145 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBarrierJoinedMasterFilterStaysPostJoin() throws Exception {
+        // The filter references a single table (u1), but u1 is itself the slave of a LEFT join, so
+        // assignFilters cannot push it into u1's sub-query and routes it to the multi-reference
+        // else-branch. A later RIGHT join NULL-extends both u0 and u1 for the unmatched u2 key 2;
+        // the predicate must be held back past it. Anchoring at the LEFT join (where u1 arrives)
+        // leaked that NULL-master row, returning 2 rows instead of 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u0 (k INT)");
+            execute("INSERT INTO u0 VALUES (1)");
+            execute("CREATE TABLE u1 (k INT, x INT)");
+            execute("INSERT INTO u1 VALUES (1, 1)");
+            execute("CREATE TABLE u2 (k INT)");
+            execute("INSERT INTO u2 VALUES (1), (2)");
+
+            final String expected = "k\tx\tk1\n1\t1\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT u0.k, u1.x, u2.k FROM u0 LEFT JOIN u1 ON u0.k = u1.k " + joinType + " JOIN u2 ON u2.k = u0.k WHERE u1.x = 1";
+                bindVariableService.clear();
+                assertQuery(literal)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: u1.x=1")
+                        .returns(expected);
+
+                final String bind = "SELECT u0.k, u1.x, u2.k FROM u0 LEFT JOIN u1 ON u0.k = u1.k " + joinType + " JOIN u2 ON u2.k = u0.k WHERE u1.x = :v::INT";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnMasterFilterStaysPostJoin() throws Exception {
+        // A same-table column comparison (a.c1 = a.c2) is single-table, so it used to be pushed
+        // into the master sub-query. RIGHT/FULL OUTER NULL-extend the master: pushing it emptied
+        // the master (its only row fails c1=c2), pairing each slave row with a NULL master and
+        // leaking 2 rows. As a post-join filter the full join keeps the matched (1,2) row, which
+        // c1=c2 drops, and the unmatched NULL-master row, which c1=c2 keeps because NULL=NULL is
+        // true here, leaving exactly one (null,null) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, c2 INT, k INT)");
+            execute("INSERT INTO m VALUES (1, 2, 10)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (10), (20)");
+
+            final String expected = "c1\tc2\nnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.c1, m.c2 FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.c1 = m.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.c1=m.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnOuterJoinedTableStaysPostJoin() throws Exception {
+        // Variant of testColumnEqColumnMasterFilterStaysPostJoin where the table the predicate
+        // references (a) is itself reached via an outer join, then NULL-extended by a SECOND outer
+        // join. analyseEquals routes a same-table equality whose table is barrier-joined to a
+        // model-order post-join anchor at that table's own join -- below the later FULL/RIGHT OUTER,
+        // which then synthesizes NULL-master rows that bypass the filter, leaking (null,null,1) on
+        // top of the legitimate (null,null,3). Held above the outer join, the matched (1,2) row is
+        // dropped by c1=c2 and only the (null,null,3) row survives because null=null is true for INT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (k INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE a (c1 INT, c2 INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 2, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (3)");
+
+            final String expected = "c1\tc2\tk\nnull\tnull\t3\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.c1, a.c2, t2.k FROM t0 RIGHT JOIN a ON t0.k = a.k " + joinType + " JOIN t2 ON a.k = t2.k WHERE a.c1 = a.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: a.c1=a.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnReorderedFilterStaysPostJoin() throws Exception {
+        // Companion to testColumnEqColumnMasterFilterStaysPostJoin: there the col=col WHERE sits on the
+        // directly NULL-extended master; here it sits on an INNER-joined table (c) whose NULL-extension
+        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so
+        // it homogenizes to a CROSS variant reorderTables appends last -- after c joins -- and NULL-
+        // extends c. masterNullingJoinIndex scans only higher model indexes and misses the reorder, so
+        // analyseEquals defers via hasNonEquiNullingJoin to the exec-order-aware assignFilters, keeping
+        // c.c1 = c.c2 post-join. Pushing it into c emptied c (7 != 8), so the join paired the slave row
+        // with a NULL c and leaked (null,50,null,null) -- 1 row for 0. The matched (100,50,7,8) row fails
+        // c1=c2, so the correct result is empty.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (100, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (50)");
+            execute("CREATE TABLE c (k INT, c1 INT, c2 INT)");
+            execute("INSERT INTO c VALUES (1, 7, 8)");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.c1, c.c2 FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.c1 = c.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: c.c1=c.c2")
+                        .returns("x\ty\tc1\tc2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnReorderedFilterStaysPostJoinSymbol() throws Exception {
+        // SYMBOL variant of testColumnEqColumnReorderedFilterStaysPostJoin. Unlike INT, SYMBOL null=null
+        // is not unconditionally true, so the mechanism is the match-set change, not the null-row's own
+        // verdict: pushing c.v = c.w into c changes which rows the reordered join NULL-extends and leaked
+        // a (null,100,,) row. Held post-join, the full join keeps only the matched (10,5,foo,foo) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c (k INT, v SYMBOL, w SYMBOL)");
+            execute("INSERT INTO c VALUES (1, 'foo', 'foo')");
+
+            final String expected = "x\ty\tv\tw\n10\t5\tfoo\tfoo\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = c.w ORDER BY b.y")
+                        .noLeakCheck()
+                        .withPlanContaining("Filter filter: c.v=c.w")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2109,6 +2250,30 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinedMasterFilterPushesDownWhenNotNulled() throws Exception {
+        // t0 is cross-joined and, after reordering, executes AFTER the RIGHT join, so that join never
+        // NULL-extends t0. WHERE t0.c = 1 must push down into t0's scan. Anchoring the post-join filter by
+        // model index (where the RIGHT join precedes t0) compiled it against metadata lacking t0 -
+        // "Invalid column: t0.c". Choosing the anchor in execution order fixes the failure and keeps the
+        // pushdown.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (c INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+            assertQuery("SELECT t0.c, t1.k, t2.k FROM t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c = 1 ORDER BY t2.k")
+                    .noLeakCheck()
+                    // A non-pushed master filter would render alias-qualified as a post-join
+                    // "Filter filter: t0.c=1" node (cf. testMasterFilterAnchorsAtLastNullingJoinInOrder);
+                    // its absence proves t0.c=1 pushed into t0's scan instead.
+                    .withPlanNotContaining("Filter filter: t0.c")
+                    .returns("c\tk\tk1\n1\t1\t1\n1\tnull\t2\n");
+        });
+    }
+
+    @Test
     public void testCrossTripleOverflow() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
@@ -2124,6 +2289,65 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardRefOuterJoinColumnEqColumnFilterStaysPostJoin() throws Exception {
+        // col=col counterpart of testForwardRefOuterJoinConstFilterStaysPostJoin: the RIGHT/FULL OUTER
+        // ON b.k = c.k forward-references c (joined later), so no JoinContext attaches at the join's own
+        // model index and it homogenizes to a CROSS variant reordered last, NULL-extending c. With
+        // c1 != c2 the matched row fails, leaving only the b row that the join NULL-extends; held
+        // post-join, NULL=NULL keeps that (null,9,29,null,null) row. Pushing c.c1 = c.c2 into c emptied c
+        // and leaked a second NULL-master row (2 rows for 1). Needs both the predictor fix (so
+        // hasNonEquiNullingJoin sees the forward-ref join) and the col=col deferral.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, k2 INT, av INT)");
+            execute("INSERT INTO a VALUES (1, 100, 11)");
+            execute("CREATE TABLE b (k INT, bv INT)");
+            execute("INSERT INTO b VALUES (1, 21), (9, 29)");
+            execute("CREATE TABLE c (k INT, k2 INT, c1 INT, c2 INT)");
+            execute("INSERT INTO c VALUES (1, 100, 7, 8)");
+
+            final String expected = "av\tbk\tbv\tc1\tc2\nnull\t9\t29\tnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.av, b.k bk, b.bv, c.c1, c.c2 FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.c1 = c.c2 ORDER BY bk")
+                        .noLeakCheck()
+                        .withPlanContaining("Filter filter: c.c1=c.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testForwardRefOuterJoinConstFilterStaysPostJoin() throws Exception {
+        // The RIGHT/FULL OUTER ON b.k = c.k forward-references c, which is joined later, so analyseEquals
+        // builds no JoinContext at this join's own model index. homogenizeCrossJoins therefore rewrites it
+        // to a CROSS variant reorderTables appends last, NULL-extending c. criteriaHasCrossTableEquality
+        // used to count the forward-ref equality as context-building and leave hasNonEquiNullingJoin
+        // false, so the col=CONST WHERE c.v = 1 pushed into c and leaked a (null,9,29,null) row (2 rows
+        // for 1). Requiring the equality's higher index to equal the join's own index fixes the predictor;
+        // the filter stays post-join. literal == bind (a bind variable cannot fold, so this divergence is
+        // invisible to the fuzzer).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, k2 INT, av INT)");
+            execute("INSERT INTO a VALUES (1, 100, 11)");
+            execute("CREATE TABLE b (k INT, bv INT)");
+            execute("INSERT INTO b VALUES (1, 21), (9, 29)");
+            execute("CREATE TABLE c (k INT, k2 INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 100, 1)");
+
+            final String expected = "av\tbk\tbv\tcv\n11\t1\t21\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.av, b.k bk, b.bv, c.v cv FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.v = 1 ORDER BY bk";
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: c.v=1").returns(expected);
+
+                final String bind = "SELECT a.av, b.k bk, b.bv, c.v cv FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.v = :v::INT ORDER BY bk";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinLightdNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select * from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
     }
@@ -2131,6 +2355,332 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testHashJoinRecordNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
+    }
+
+    @Test
+    public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
+        // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
+        // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends
+        // the master. It must push down into the master scan, not stay as a post-join filter - otherwise
+        // the unmatched (NULL-master) slave rows the outer join synthesizes get dropped. Regression: the
+        // master-nulling guard used to intercept these ON conjuncts as if they were WHERE predicates.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, c INT)");
+            execute("INSERT INTO m VALUES (1, 1)");
+            execute("CREATE TABLE x (k INT)");
+            execute("INSERT INTO x VALUES (1)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (1), (2), (3)");
+
+            final String expected = "sk\tmk\tmc\n1\t1\t1\n2\tnull\tnull\n3\tnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                for (String onConjunct : new String[]{"m.c = 1", "m.c > 0", "abs(m.c) = 1"}) {
+                    assertQuery("SELECT s.k sk, m.k mk, m.c mc FROM m JOIN x ON x.k = m.k AND " + onConjunct
+                            + " " + joinType + " JOIN s ON s.k = x.k ORDER BY sk")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInSubQueryWithJoinOnClause() throws Exception {
+        // A JOIN nested in a lambda IN sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)",
+        // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
+        // the IN operand, crashing with an NPE in WhereClauseParser.analyzeIn. The sub-query must
+        // compile and filter correctly regardless of join type or how the ON clause is written.
+        // ON-clause sub-queries are unsupported and must reject with "query is not allowed here"
+        // at every nesting depth: the top level already did, while on master the nested case
+        // returned a misleading "Column name expected" (the ON drain consumed the enclosing operand).
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into trades values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z'), ('C', '2020-01-03T00:00:00.000000Z')");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\tts\n" +
+                    "A\t2020-01-01T00:00:00.000000Z\n" +
+                    "B\t2020-01-02T00:00:00.000000Z\n";
+
+            // HORIZON JOIN with shorthand ON (col) -- the exact shape from the bug report
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // explicit equality ON -- used to fail with "Column name expected"
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on s.symbol = r.symbol range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // a second join type with shorthand ON, to cover the shared ON-clause parse path
+            // (ASOF and the INNER/LEFT/... family share the same ON-drain code in parseJoin)
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // INNER join is the common real-world shape and enters the ON case via the direct arm
+            // (not the ASOF/HORIZON fall-through). The hash join in the lambda still filters trades
+            // down to A, B, but its slave row chain (eagerly sized to the join page size, >64 KiB) is
+            // held by the IN sub-query factory until factory close, past the outer cursor close, so
+            // skip assertQuery's post-close memory-usage check (which flags the still-owned RSS as a leak).
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
+
+            // multi-column shorthand ON (a, b) inside the lambda exercises the list-of-columns drain
+            // arm (parseJoin's default case), distinct from the single-column ON (col) above; the same
+            // hash-join slave-chain retention applies, hence noMemoryUsageCheck()
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on (symbol, ts))"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
+
+            // NOT IN exercises the same parse path with a negated operator -- expect only C
+            assertQuery(
+                    "select * from trades where symbol not in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
+
+            // A scalar sub-query operand (not just IN/NOT IN) hits the same shared arg stack: the "="
+            // left-hand side stays on the stack while the inner join's ON clause is parsed. ASOF is a
+            // merge join (<64 KiB RSS), so assertQuery works here -- max(s.ts) over the join is the
+            // last src timestamp, 2020-01-02, matching trades row B.
+            assertQuery(
+                    "select * from trades where ts = " +
+                            "(select max(s.ts) from src s asof join ref r on (symbol))"
+            ).noLeakCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n"
+            );
+
+            // the same for a scalar ">" with an INNER (hash) join; skip the memory-usage check for the
+            // >64 KiB RSS reason above. min(s.ts) over the join is 2020-01-01, so trades after it is B, C.
+            assertQuery(
+                    "select * from trades where ts > " +
+                            "(select min(s.ts) from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
+
+            // ON-clause sub-queries stay unsupported when nested, just like at top level. On master
+            // the nested "IN sub-query in ON" form returned a misleading "Column name expected" ...
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                    92,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // ... and a bare sub-query as the ON criteria returned the same "Column name expected".
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on (select symbol from trades))",
+                    80,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // The same rejection must hold two lambda levels deep. The ON-clause reject fires inside
+            // a parseExpr frame whose scope-stack bottom was raised by the outer lambdas; without the
+            // scope-stack clamp this fix adds, the error-unwind would restore that stale bottom over an
+            // already-cleared stack and surface an internal "Tried to set bottom beyond the top of the
+            // stack" IllegalStateException instead of the positioned SqlException.
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on x.symbol in (select symbol from trades)))",
+                    132,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on (select symbol from trades)))",
+                    120,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A rejected ON-clause sub-query must leave the shared parser state clean: the error
+            // path unwinds through reset() and popArgStackBottom(), so the SAME pooled compiler
+            // compiles the next, valid query without carrying over corrupted arg-stack state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "select * from trades where symbol in " +
+                                    "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("nested ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+                ).withCompiler(compiler).noLeakCheck().timestamp("ts").returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseRejectsDeclaredSubQuery() throws Exception {
+        // ON-clause sub-queries are unsupported and rejected during expression parsing. A declared
+        // variable is a literal at parse time and only expands to its definition later, in
+        // rewriteKnownStatements, so a variable bound to a sub-query (e.g. "@q := (SELECT ...)" used
+        // as "ON x IN @q") used to slip past the parse-time block and compile to surprising cross-join
+        // semantics -- the very footgun the literal rejection prevents. The declared form must now
+        // reject with "query is not allowed here", just like the literal one, at every nesting depth
+        // and in every ON-clause position: operator forms, single-column shorthand "ON (@q)", and
+        // multi-column shorthand "ON (@q, ts)" alike.
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            // declared sub-query in the ON clause of a join nested in an IN sub-query
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q)",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // the same shape at the top level (a pre-existing bypass, now also rejected)
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // a scalar operator with a declared sub-query operand hits the same rewrite path
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select max(symbol) from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol = @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand "ON (@q)" -- declared var expands to a sub-query and is
+            // rejected, instead of leaking a raw "@q" literal as "Invalid column: s.@q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand without parentheses "ON @q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // multi-column shorthand "ON (@q, ts)" -- the column-list branch rejects the sub-query too
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q, ts)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // single-column shorthand nested in an IN sub-query, to prove the reject holds at depth
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q))",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A declared variable bound to a column (not a sub-query) in the ON clause is valid and
+            // must still compile and run -- the reject only fires on sub-query nodes.
+            assertQuery(
+                    "declare @x := s.symbol, @y := r.symbol " +
+                            "select s.symbol from src s join ref r on @x = @y"
+            ).noLeakCheck().noRandomAccess().returns(
+                    "symbol\n" +
+                            "A\n" +
+                            "B\n"
+            );
+
+            // A rejected declared ON-clause sub-query must leave the shared parser state clean: the
+            // SAME pooled compiler compiles the next, valid query without carrying over corrupted state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "declare @q := (select symbol from trades) " +
+                                    "select s.symbol from src s join ref r on s.symbol in @q",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("declared ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select s.symbol from src s join ref r on s.symbol = r.symbol"
+                ).withCompiler(compiler).noLeakCheck().noRandomAccess().returns(
+                        "symbol\n" +
+                                "A\n" +
+                                "B\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseDeclaredColumnShorthand() throws Exception {
+        // A declared variable bound to a bare column may be used as a shorthand join column, exactly
+        // like the inline column it expands to. "ON (@c)" with "@c := symbol" behaves like
+        // "ON (symbol)" -> "src.symbol = ref.symbol"; the variable is expanded before the join-column
+        // dispatch instead of leaking a raw "@c" literal as "Invalid column: s.@c".
+        assertMemoryLeak(() -> {
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\n" +
+                    "A\n" +
+                    "B\n";
+
+            // single-column shorthand with parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // single-column shorthand without parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on @c order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // multi-column shorthand mixing a declared column var with a plain column
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c, ts) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // baseline: the equivalent inline shorthand must produce the same result
+            assertQuery(
+                    "select s.symbol from src s join ref r on (symbol) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+        });
     }
 
     @Test
@@ -5803,6 +6353,172 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMasterFilterAnchorsAtLastNullingJoinInOrder() throws Exception {
+        // wm is NULL-extended by two joins: a homogenized CROSS_RIGHT (non-equi ON) and a RIGHT join.
+        // doReorderTables appends the context-less CROSS_RIGHT last, so it executes AFTER the RIGHT join.
+        // The master WHERE wm.c = 1 must anchor at that last-executing nulling join; anchoring by model
+        // index placed it below the CROSS_RIGHT, which then re-synthesized a NULL-master row that leaked.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wm (x INT, q INT, c INT)");
+            execute("INSERT INTO wm VALUES (1, 1, 9)");
+            execute("CREATE TABLE ws1 (y INT)");
+            execute("INSERT INTO ws1 VALUES (100)");
+            execute("CREATE TABLE ws2 (q INT)");
+            execute("INSERT INTO ws2 VALUES (2)");
+            assertQuery("SELECT * FROM wm RIGHT JOIN ws1 ON wm.x > ws1.y RIGHT JOIN ws2 ON ws2.q = wm.q WHERE wm.c = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: wm.c=1")
+                    .returns("x\tq\tc\ty\tq1\n");
+        });
+    }
+
+    @Test
+    public void testMasterFilterPushesTransitiveSlaveConstForLiteral() throws Exception {
+        // Parity with the regex path: a master-side equality predicate on a NULL-extending join
+        // stays a post-join filter (removing NULL-master rows), but a non-null literal constant is
+        // still propagated to the slave through the join key, so the slave is pre-filtered. The
+        // push is result-neutral (matched rows have b.sym = a.sym, and the post-join filter already
+        // drops the NULL-master rows). A bind variable is deliberately NOT propagated, because it can
+        // be NULL at runtime and `null = null` is TRUE; the literal and bind forms must still agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT)");
+            execute("INSERT INTO m VALUES ('s2', 100), ('x', 200)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT)");
+            execute("INSERT INTO s VALUES ('s2', 10), ('x', 50), ('zz', 99)");
+
+            final String expected = "e0\te1\ns2\t100\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+
+                // Literal: the post-join filter (a.sym) stays, and the transitive slave filter (sym)
+                // is pushed into the slave sub-query.
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().noRandomAccess().withPlanContaining("filter: sym='s2'").returns(expected);
+
+                // Bind: no transitive push, but the result must match the literal form.
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableEqualityMasterFilterStaysPostJoin() throws Exception {
+        // Companion to testMultiTableMasterFilterStaysPostJoin, which uses an INEQUALITY (t0.a < t1.b)
+        // that analyseEquals routes straight to assignFilters. An EQUALITY across two master tables
+        // (t0.a = t1.b) instead folds into the inner join's keys, so it was applied BEFORE the later
+        // RIGHT/FULL OUTER NULL-extends t0 and t1 for the unmatched t2 key 2. With the equality folded,
+        // the inner t0/t1 join is empty (1 != 5), so every t2 row became a NULL-master row and the
+        // filter never ran -- leaking (null,null,1) on top of the legitimate (null,null,2), 2 rows for
+        // 1. Held post-join the inner join keeps (1,5,1), which t0.a=t1.b drops, and the outer join's
+        // (null,null,2) survives because null=null is true for INT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\nnull\tnull\t2\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k WHERE t0.a = t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a=t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableEqualityOuterJoinedTableStaysPostJoin() throws Exception {
+        // Variant of testMultiTableEqualityMasterFilterStaysPostJoin where the HIGHER table of the
+        // equality (t1) is itself reached via an outer join, then NULL-extended by a SECOND outer
+        // join. analyseEquals routes a two-table equality whose higher table is barrier-joined to a
+        // model-order post-join anchor at that table's own join -- below the later FULL/RIGHT OUTER,
+        // leaking (null,null,1) on top of the legitimate (null,null,3). Held above the outer join,
+        // the matched (1,5) row fails 1=5 and only (null,null,3) survives because null=null is true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1), (9, 2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (3)");
+
+            final String expected = "a\tb\tk\nnull\tnull\t3\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 RIGHT JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t1.k = t2.k WHERE t0.a = t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a=t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableEqualityReorderedFilterStaysPostJoin() throws Exception {
+        // Covers the hasNonEquiNullingJoin arm of the two-table equality deferral;
+        // testMultiTableEqualityMasterFilterStaysPostJoin covers the masterNullingJoinIndex arm.
+        // The WHERE equality (c.c1 = d.d1) is across two INNER-joined tables whose NULL-extension
+        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext,
+        // so homogenizeCrossJoins rewrites it to a CROSS variant reorderTables appends last -- after
+        // c and d join -- and NULL-extends them. masterNullingJoinIndex scans only higher model
+        // indexes and misses the reorder, so analyseEquals defers via hasNonEquiNullingJoin to the
+        // exec-order-aware assignFilters, keeping c.c1 = d.d1 post-join. Folding it into the c/d inner
+        // join applies it before the reordered outer join, emptying that subtree (7 != 8) so the join
+        // pairs the slave row with NULL c/d and leaks (null,50,null,null) -- 1 row for 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (100, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (50)");
+            execute("CREATE TABLE c (k INT, c1 INT)");
+            execute("INSERT INTO c VALUES (1, 7)");
+            execute("CREATE TABLE d (k INT, d1 INT)");
+            execute("INSERT INTO d VALUES (1, 8)");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.c1, d.d1 FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k JOIN d ON d.k = a.k WHERE c.c1 = d.d1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: c.c1=d.d1")
+                        .returns("x\ty\tc1\td1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableMasterFilterStaysPostJoin() throws Exception {
+        // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches assignFilters'
+        // multi-reference else-branch, which anchored it at the inner join where both tables arrive.
+        // A later RIGHT/FULL OUTER join NULL-extends t0 and t1 for the unmatched t2 key 2; the filter
+        // must stay above that join. Anchoring below it leaked the (null,null,2) row -- 2 rows for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\n1\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k WHERE t0.a < t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a<t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testMultipleJoinsWithTopLevelSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -5874,6 +6590,185 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
+        // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
+        // homogenizeCrossJoins (which runs before assignFilters) rewrites it to
+        // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL. Those CROSS variants still NULL-extend the
+        // master (NestedLoopRight/FullJoin), so a master-only WHERE must stay a post-join
+        // filter. With the predicate pushed into the master sub-query the unmatched
+        // (NULL-master) slave rows leaked. i=5 is a non-NULL predicate, so the result must
+        // equal the INNER ground truth (5|-5, 5|-4).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (i INT)");
+            execute("INSERT INTO t1 VALUES (1),(2),(3),(4),(5)");
+            execute("CREATE TABLE t2 (j INT)");
+            execute("INSERT INTO t2 VALUES (-5),(-4),(-3),(-2),(-1)");
+
+            final String expected = "i\tj\n5\t-5\n5\t-4\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT i, j FROM t1 " + joinType + " JOIN t2 ON i > 4 AND j < -3 WHERE i = 5 ORDER BY j";
+
+                // i=5 must stay above the join as a post-join Filter, not be pushed into t1.
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: t1.i=5").returns(expected);
+
+                final String bind = "SELECT i, j FROM t1 " + joinType + " JOIN t2 ON i > 4 AND j < -3 WHERE i = :v::INT ORDER BY j";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 5);
+                // Bind-variable form must produce the identical result under the full assertion battery.
+                assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinReorderedFilterStaysPostJoin() throws Exception {
+        // Companion to testNonEquiOuterJoinMasterFilterStaysPostJoin, which filters the directly
+        // NULL-extended master that masterNullingJoinIndex catches in model order. Here the WHERE
+        // predicate (c.v = 1) is on an INNER-joined table whose NULL-extension comes from a lower-
+        // model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so it homogenizes
+        // to JOIN_CROSS_RIGHT/JOIN_CROSS_FULL and reorderTables appends it last -- after c joins, so
+        // it NULL-extends c. masterNullingJoinIndex only scans higher model indexes and misses the
+        // reorder, so analyseEquals (hasNonEquiNullingJoin) defers the predicate to the exec-order-
+        // aware assignFilters, which keeps it post-join. Pushing it into c leaked the (null,100,null)
+        // row -- 2 rows for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c (k INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 1)");
+
+            final String expected = "x\ty\tv\n10\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = 1 ORDER BY b.y";
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: c.v=1").returns(expected);
+
+                final String bind = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = :v::INT ORDER BY b.y";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testNullLiteralMasterFilterStaysPostJoin() throws Exception {
+        // A NULL-literal master predicate (m.x = null, which QuestDB evaluates as IS NULL) keeps the
+        // NULL-master rows instead of dropping them, the opposite of the operator/equality tests. It
+        // still must stay a post-join filter: pushing it into the master sub-query strips it from the
+        // post-join stage, so the NULL-master rows that the join synthesizes afterwards bypass it. The
+        // matched master row (x=5) fails IS NULL and is dropped; the single NULL-master row passes and
+        // is the only survivor under RIGHT/FULL/SPLICE. Pushing the predicate left the matched row in
+        // and re-leaked the NULL-master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (5, 1, 2)");
+            execute("CREATE TABLE s (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES (1, 1), (2, 3)");
+
+            final String expected = "x\nnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.x FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.x = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.x=null")
+                        .returns(expected);
+            }
+
+            // SPLICE NULL-extends the master for the pre-master timestamp; only that NULL-master row
+            // passes IS NULL, the prevailing-master rows (x=5) are dropped.
+            assertQuery("SELECT m.x FROM m SPLICE JOIN s WHERE m.x = null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.x=null")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testOperatorMasterFilterStaysPostJoin() throws Exception {
+        // assignFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
+        // master to a post-join filter; the existing folded-FALSE splice test only exercises that
+        // path for a constant-FALSE predicate. The master row (c1=50) matches the slave and passes
+        // the filter; the slave's unmatched row becomes a NULL-master row that c1<100 drops
+        // (NULL<100 is NULL/false). Pushing the predicate into the master would leak that
+        // NULL-master row, so RIGHT/FULL must return only the matched row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, k INT)");
+            execute("INSERT INTO m VALUES (50, 10)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (10), (20)");
+
+            final String expected = "c1\n50\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.c1 FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.c1 < 100")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.c1<100")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testOuterConstFilterDoesNotLeakIntoNestedNullingJoin() throws Exception {
+        // The outer query filters tc.k = 2 and the nested subquery RIGHT JOINs ta a to tb b under a
+        // master-only WHERE a.k = 1. That WHERE references the NULL-extended master, so the
+        // master-nulling guard keeps it post-join and skips registering a's constant in the
+        // constNameTo* maps. Those maps are instance state keyed by bare column name; without a clear
+        // between join-model levels the outer query's stale "k -> 2" entry survived into the nested
+        // model, and addTransitiveFilters injected b.k = 2 into the nested slave, dropping the matching
+        // row (0 rows instead of 1). optimiseJoins now clears the maps before recursing into nested
+        // and union models, so the foreign constant no longer leaks.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (q INT, k INT)");
+            execute("INSERT INTO tc VALUES (1, 2)");
+            execute("CREATE TABLE ta (k INT)");
+            execute("INSERT INTO ta VALUES (1)");
+            execute("CREATE TABLE tb (k INT, v INT)");
+            execute("INSERT INTO tb VALUES (1, 10)");
+
+            assertQuery("SELECT * FROM tc " +
+                    "JOIN (SELECT a.k k1, b.v FROM ta a RIGHT JOIN tb b ON a.k = b.k WHERE a.k = 1) x " +
+                    "  ON tc.q = x.k1 " +
+                    "WHERE tc.k = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("q\tk\tk1\tv\n1\t2\t1\t10\n");
+        });
+    }
+
+    @Test
+    public void testOuterConstFilterDoesNotLeakIntoNestedNullingJoinDifferentColumn() throws Exception {
+        // Keeps the per-level clearConstNameMaps() load-bearing: unlike the sibling test where the
+        // nested WHERE a.k = 1 re-registers "k" and masks a missing clear, here the nested master
+        // WHERE filters a DIFFERENT column (a.j = 1) while the join key still reuses "k". Without the
+        // clear the outer "k -> 2" survives and addTransitiveFilters injects a foreign b.k = 2 into
+        // the nested slave, dropping the matching row (0 rows instead of 1).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (q INT, k INT)");
+            execute("INSERT INTO tc VALUES (1, 2)");
+            execute("CREATE TABLE ta (j INT, k INT)");
+            execute("INSERT INTO ta VALUES (1, 1)");
+            execute("CREATE TABLE tb (k INT, v INT)");
+            execute("INSERT INTO tb VALUES (1, 10)");
+
+            assertQuery("SELECT * FROM tc " +
+                    "JOIN (SELECT a.k k1, b.v FROM ta a RIGHT JOIN tb b ON a.k = b.k WHERE a.j = 1) x " +
+                    "  ON tc.q = x.k1 " +
+                    "WHERE tc.k = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("q\tk\tk1\tv\n1\t2\t1\t10\n");
+        });
+    }
+
+    @Test
     public void testOuterHashJoinOnFunctionCondition12() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int, s1 string)");
@@ -5921,6 +6816,76 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """
             );
+        });
+    }
+
+    @Test
+    public void testOuterJoinMasterFilterKeepsMatchedRow() throws Exception {
+        // Companion to testOuterJoinMasterFilterStaysPostJoin: that test proves the NULL-master
+        // rows are removed; this one proves a genuine master match survives, so the post-join
+        // filter does not over-filter. The master holds a matching 's2' row (joined to the
+        // slave's 's2') plus an unrelated 'x' row, and the slave holds an unmatched 'zzz' row
+        // that becomes a NULL-master row. WHERE a.sym = 's2' must keep the matched (s2, 300)
+        // row and drop the NULL-master 'zzz' row for both RIGHT and FULL OUTER, with the
+        // constant on either side of the equality (the two analyseEquals branches). The
+        // predicate stays a post-join Filter; pushing it into the master sub-query would also
+        // propagate 's2' to the slave for the literal form, so its leak is only visible in the
+        // bind-variable form, which the plan assertion and the bind arm both guard against.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 4), ('s2', 300, 6)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('zzz', 99, 7)");
+
+            final String expected = "e0\te1\ns2\t300\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                // Constant on the RHS of the equality (a.sym = 's2').
+                final String rhs = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                bindVariableService.clear();
+                assertQuery(rhs).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: a.sym='s2'").returns(expected);
+
+                // Constant on the LHS of the equality ('s2' = a.sym), the mirror analyseEquals branch.
+                final String lhs = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE 's2' = a.sym";
+                bindVariableService.clear();
+                assertQuery(lhs).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: a.sym='s2'").returns(expected);
+
+                // Bind-variable form must produce the identical result under the full assertion battery.
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinMasterFilterStaysPostJoin() throws Exception {
+        // Regression for a query-fuzzer bind-variable divergence. RIGHT and FULL OUTER joins
+        // NULL-extend the master (left) table, so a WHERE predicate that references only the
+        // master used to be pushed into the master sub-query, leaving the unmatched right
+        // rows (with a NULL master) unfiltered. Here the master has no 's2' row, so the
+        // slave's 's2' row has no match; WHERE a.sym = 's2' must return no rows because the
+        // master symbol is NULL. The literal form leaked one such row and the bind-variable
+        // form two; both now correctly return nothing because the predicate stays post-join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 5)");
+
+            final String empty = "e0\te1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().noRandomAccess().returns(empty);
+
+                // Bind-variable form must produce the identical result under the full assertion battery.
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(empty);
+            }
         });
     }
 
@@ -6124,6 +7089,74 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery(fullJoinQuery)
                     .noLeakCheck()
                     .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSpliceColumnEqColumnMasterFilterStaysPostJoin() throws Exception {
+        // SPLICE variant of testColumnEqColumnMasterFilterStaysPostJoin: a same-table column
+        // comparison (m.c1 = m.c2) is single-table, so it used to be pushed into the master
+        // sub-query. SPLICE NULL-extends the master (slave-only timestamps emit NULL-master rows),
+        // so pushing it emptied the master and paired each slave timestamp with a NULL master,
+        // leaking a row per slave-only timestamp. Held post-join the splice keeps the prevailing
+        // master row, which c1=c2 drops, and the single pre-master NULL-master row, which c1=c2
+        // keeps because null=null is true for INT, leaving exactly one (null,null) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, c2 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (1, 2, 2)");
+            execute("CREATE TABLE s (sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s leads (ts=1) and trails (ts=3) the single master row at ts=2; the ts=1 row is a
+            // pre-master NULL-master splice row, the ts=2/ts=3 rows carry the prevailing (1,2) master.
+            execute("INSERT INTO s VALUES (10, 1), (20, 3)");
+
+            assertQuery("SELECT m.c1, m.c2 FROM m SPLICE JOIN s WHERE m.c1 = m.c2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.c1=m.c2")
+                    .returns("c1\tc2\nnull\tnull\n");
+        });
+    }
+
+    @Test
+    public void testSpliceConstOnLhsMasterFilterStaysPostJoin() throws Exception {
+        // Const-on-LHS variant of testSpliceJoinMasterFilterProjectsSlaveColumn: the equality is
+        // written 'A' = m.k, so analyseEquals routes it through the case-0 (constant on the left)
+        // branch rather than case-1. That branch registers the literal const for the transitive
+        // slave prune, but addTransitiveFilters must still skip the push for SPLICE: SPLICE is a
+        // temporal prevailing join, so pruning the slave to key 'A' shifts which slave row prevails
+        // at each master timestamp and diverges the literal from the bind form. The master-side
+        // predicate stays a post-join filter and the slave column is projected to surface a diverging
+        // prevailing value if the const were wrongly pushed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, mv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('A',1,1),('B',2,2),('A',3,5)");
+            execute("CREATE TABLE s (k SYMBOL, sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The B-key slave rows (99@1, 88@4) prevail at master timestamps for key A; pruning them
+            // would change the prevailing slave value, so the literal and bind forms would diverge.
+            execute("INSERT INTO s VALUES ('A',10,0),('B',99,1),('A',20,3),('B',88,4),('A',30,6)");
+
+            final String expected = """
+                    k\tmv\tsv
+                    A\t1\tnull
+                    A\t1\t20
+                    A\t3\t20
+                    A\t3\t30
+                    """;
+
+            // Literal form: the predicate stays a post-join Filter over a full slave scan (no
+            // 'A'=k pushed into the slave sub-query). The plan normalizes 'A'=m.k to m.k='A'.
+            bindVariableService.clear();
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE 'A' = m.k ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: m.k='A'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result.
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "A");
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE :v::SYMBOL = m.k ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
                     .returns(expected);
         });
     }
@@ -6430,6 +7463,37 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinAsMasterOfSecondJoin() throws Exception {
+        // A splice join as the left (master) side of a following join used to leak the root
+        // table alias into the second join's metadata, crashing on a fully qualified column
+        // name. The splice result already carries qualified names, so the alias must be cleared.
+        assertMemoryLeak(() -> {
+            execute("create table m (k symbol, mv int, ts timestamp) timestamp(ts) partition by day");
+            execute("create table s (k symbol, sv int, ts timestamp) timestamp(ts) partition by day");
+            execute("create table r (k symbol, rv int, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into m values ('a', 1, '2020-01-01T00:00:00.000000Z')");
+            execute("insert into s values ('a', 2, '2020-01-01T00:00:00.000000Z')");
+            execute("insert into r values ('a', 3, '2020-01-01T00:00:00.000000Z'), ('b', 4, '2020-01-01T00:00:01.000000Z')");
+
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k right join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n\tnull\t4\n");
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k full join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n\tnull\t4\n");
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k inner join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n");
+        });
+    }
+
+    @Test
     public void testSpliceJoinFailsBecauseSubqueryDoesntSupportRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -6486,6 +7550,44 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinFoldedFalseMasterFilterProducesNoRows() throws Exception {
+        // A master-only WHERE on a SPLICE join that folds to FALSE: ((a.c0 + null))::TIMESTAMP
+        // is NULL for every row (AddIntFunctionFactory short-circuits the null), so the
+        // comparison is NULL, hence FALSE, throughout. SPLICE NULL-extends the master, so the
+        // predicate stays a post-join Filter rather than being pushed into the master
+        // sub-query (which would empty the master and pair each slave row with a NULL master,
+        // leaking one row per slave). A WHERE that is always FALSE therefore produces no rows,
+        // and the literal and bind-variable forms must agree. The literal folds to a post-join
+        // "Filter filter: false" over a full Splice Join (no Empty table substitution).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t0 (c0 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t1 VALUES (1::SHORT, '2024-01-01T00:00:00.000000Z'), " +
+                    "(2::SHORT, '2024-01-02T00:00:00.000000Z'), " +
+                    "(3::SHORT, '2024-01-03T00:00:00.000000Z')");
+            execute("INSERT INTO t0 VALUES (10, '2024-01-01T00:00:00.000000Z'), " +
+                    "(20, '2024-01-02T00:00:00.000000Z'), " +
+                    "(30, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expected = "e0\te1\n";
+            final String literalSql = "SELECT (a.c0)::STRING AS e0, true AS e1 " +
+                    "FROM t1 a SPLICE JOIN t0 b " +
+                    "WHERE ((a.c0 + null))::TIMESTAMP < '2024-03-06T20:54:00.000000Z'::TIMESTAMP";
+            bindVariableService.clear();
+            assertQuery(literalSql).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: false").returns(expected);
+
+            // Bind-variable form evaluates the same NULL/FALSE predicate per row and must agree.
+            bindVariableService.clear();
+            bindVariableService.setStr("b1", "2024-03-06T20:54:00.000000Z");
+            assertQuery("SELECT (a.c0)::STRING AS e0, true AS e1 " +
+                    "FROM t1 a SPLICE JOIN t0 b " +
+                    "WHERE ((a.c0 + null))::TIMESTAMP < :b1::TIMESTAMP")
+                    .noLeakCheck().noRandomAccess().returns(expected);
+        });
+    }
+
+    @Test
     public void testSpliceJoinIndexedSymbolMasterWithOrderByPreservesTimestamp() throws Exception {
         // Regression for a query-fuzzer divergence: a SPLICE JOIN whose master
         // table has an indexed SYMBOL column and an interval WHERE on ts, with
@@ -6522,6 +7624,89 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym")
                     .noLeakCheck()
                     .fails(93, "left");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinMasterFilterProjectsSlaveColumn() throws Exception {
+        // Regression: the transitive slave-const prune that is result-neutral for RIGHT/FULL OUTER
+        // set joins is NOT neutral for SPLICE. SPLICE is a temporal prevailing join, so removing
+        // slave rows of other keys (pushing s.k = 'A' into the slave) shifts which slave row
+        // prevails at a master timestamp. The master-side literal predicate stays a post-join filter,
+        // but the const must NOT be pushed into the slave; addTransitiveFilters skips SPLICE. The
+        // bug only surfaces when a SLAVE column is projected: testSpliceJoinMasterFilterStaysPostJoin
+        // projects master columns only, hiding the diverging slave value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, mv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('A',1,1),('B',2,2),('A',3,5)");
+            execute("CREATE TABLE s (k SYMBOL, sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The B-key slave rows (99@1, 88@4) prevail at master timestamps for key A; pruning them
+            // would change the prevailing slave value, so the literal and bind forms would diverge.
+            execute("INSERT INTO s VALUES ('A',10,0),('B',99,1),('A',20,3),('B',88,4),('A',30,6)");
+
+            final String expected = """
+                    k\tmv\tsv
+                    A\t1\tnull
+                    A\t1\t20
+                    A\t3\t20
+                    A\t3\t30
+                    """;
+
+            // Literal form: the predicate stays a post-join Filter over a full slave scan (no
+            // filter: k='A' pushed into the slave sub-query).
+            bindVariableService.clear();
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE m.k = 'A' ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: m.k='A'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result.
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "A");
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE m.k = :v::SYMBOL ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinMasterFilterStaysPostJoin() throws Exception {
+        // Regression for a query-fuzzer bind-variable divergence. A WHERE predicate that
+        // references only the master (left) table of a SPLICE join used to be pushed into
+        // the master sub-query. SPLICE is a full outer temporal join, so it emits rows in
+        // which the master columns are all NULL (slave-only timestamps); pushing the
+        // predicate left those NULL-master rows unfiltered, and for the literal form it was
+        // also propagated to the slave through the join key, so the literal and
+        // bind-variable forms of the same query diverged (here 3 vs 4 rows). The predicate
+        // now stays a post-join filter, so both forms agree and NULL-master rows are removed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s2@1 leads the first master row (would be a NULL-master splice row); x@3 never
+            // has a master match (another NULL-master splice row). Both must be filtered out.
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 3)");
+
+            final String query = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = 's2' ORDER BY e1";
+            final String expected = """
+                    e0\te1
+                    s2\t100
+                    s2\t200
+                    """;
+
+            // Literal form: correct result and a post-join Filter over a full master scan
+            // (no predicate pushed into the master sub-query).
+            bindVariableService.clear();
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: a.sym='s2'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result under the full assertion battery.
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "s2");
+            assertQuery("SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = :sym::SYMBOL ORDER BY e1")
+                    .noLeakCheck().returns(expected);
         });
     }
 
@@ -6863,6 +8048,73 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceOperatorMasterFilterStaysPostJoin() throws Exception {
+        // SPLICE variant of testOperatorMasterFilterStaysPostJoin: assignFilters routes a non-folded
+        // operator predicate (m.c1 < 100) on a NULL-extending master to a post-join filter; the only
+        // existing SPLICE master-filter test for a live operator is the folded-FALSE case. The master
+        // row (c1=50) passes the filter, so pushing the predicate into the master leaves it unchanged,
+        // but it also strips the post-join filter, leaking the pre-master NULL-master splice row that
+        // c1<100 must drop (NULL<100 is NULL/false). Held post-join, only the two prevailing-master
+        // rows survive.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (50, 2)");
+            execute("CREATE TABLE s (sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s@1 leads the single master row (a NULL-master splice row); s@3 trails it (prevailing
+            // master 50). The leading row must be filtered out, the two prevailing rows kept.
+            execute("INSERT INTO s VALUES (10, 1), (20, 3)");
+
+            assertQuery("SELECT m.c1 FROM m SPLICE JOIN s WHERE m.c1 < 100")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.c1<100")
+                    .returns("c1\n50\n50\n");
+        });
+    }
+
+    @Test
+    public void testStackedNullingJoinsMasterFilterStaysPostJoin() throws Exception {
+        // Two stacked nulling joins both NULL-extend the master mm. masterNullingJoinIndex must
+        // anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not the inner
+        // one: a filter applied after only the inner join would be re-exposed to the NULL-master rows
+        // synthesized by the outer join. Here the inner join (mm..s1) matches on k=1, so mm.col
+        // survives it; the outer join (..s2) then NULL-extends the master for the unmatched s2 key 2.
+        // WHERE mm.col = 1 must drop that NULL-master row, leaving exactly one row. Anchoring to the
+        // inner join instead would leak it (two rows). Both RIGHT and FULL OUTER null the master, so
+        // every combination of the two join slots must behave the same, for literal and bind forms.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mm (k INT, col INT)");
+            execute("INSERT INTO mm VALUES (1, 1)");
+            execute("CREATE TABLE s1 (k INT)");
+            execute("INSERT INTO s1 VALUES (1)");
+            execute("CREATE TABLE s2 (k INT)");
+            execute("INSERT INTO s2 VALUES (1), (2)");
+
+            final String expected = "col\n1\n";
+            for (String inner : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                for (String outer : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    final String from = " FROM mm " + inner + " s1 ON mm.k = s1.k " + outer + " s2 ON s1.k = s2.k WHERE mm.col ";
+
+                    bindVariableService.clear();
+                    assertQuery("SELECT mm.col" + from + "= 1")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .withPlanContaining("Filter filter: mm.col=1")
+                            .returns(expected);
+
+                    // Bind-variable form must produce the identical result under the full battery.
+                    bindVariableService.clear();
+                    bindVariableService.setInt("v", 1);
+                    assertQuery("SELECT mm.col" + from + "= :v::INT")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStringSymbolVarcharJoins() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int, s string, b symbol)");
@@ -7034,6 +8286,39 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testThreeTableMasterFilterStaysPostJoin() throws Exception {
+        // A WHERE predicate that references THREE master tables (t0.a + t1.b + t2.c > 0), wrapped in a
+        // sub-query so moveWhereInsideSubQueries re-anchors it. The multi-table branch there routes
+        // through lastNullingJoinAfterReferencedTables, whose loop over the referenced indexes only
+        // iterated over two entries in every other test. A later RIGHT/FULL join NULL-extends t0, t1
+        // and t2 for the unmatched t3 key 2; the predicate must stay above that join. Anchoring at the
+        // highest referenced model index (t2's inner join) would leak the (null,null,null,2) row -- 2
+        // rows for 1. The matched row (1+2+3=6 > 0) survives; the NULL-master row (null+...>0 is
+        // NULL/false) is dropped.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (2, 1)");
+            execute("CREATE TABLE t2 (c INT, k INT)");
+            execute("INSERT INTO t2 VALUES (3, 1)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2)");
+
+            final String expected = "a\tb\tc\tk\n1\t2\t3\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a, b, c, k FROM (SELECT t0.a a, t1.b b, t2.c c, t3.k k " +
+                        "FROM t0 JOIN t1 ON t0.k = t1.k JOIN t2 ON t1.k = t2.k " + joinType + " JOIN t3 ON t3.k = t2.k) " +
+                        "WHERE a + b + c > 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: 0<t0.a+t1.b+t2.c")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testTypeMismatch() throws Exception {
         testTypeMismatch0(false);
     }
@@ -7124,6 +8409,87 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testUnionCursorLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj", false);
+    }
+
+    @Test
+    public void testWrappedBarrierSlaveMasterFilterStaysPostJoin() throws Exception {
+        // LEAK-B: a single-table predicate (b.w + b.m > 0) references only b, which is the SLAVE of
+        // the inner RIGHT join AND is NULL-extended by the later c RIGHT join. Because the join is
+        // wrapped in a sub-query, the predicate routes through moveWhereInsideSubQueries' barrier
+        // branch, which anchored it at b's own join -- below the c nulling join. The unmatched c key
+        // 2 produces a NULL-master row that the predicate must drop; anchoring below the c join leaked
+        // it (2 rows for 1). The non-wrapped form already stays post-join via assignFilters.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("INSERT INTO a VALUES (1)");
+            execute("CREATE TABLE b (k INT, w INT, m INT)");
+            execute("INSERT INTO b VALUES (1, 5, 5)");
+            execute("CREATE TABLE c (k INT, x INT)");
+            execute("INSERT INTO c VALUES (1, 9), (2, 99)");
+
+            final String expected = "ak\tbk\tbw\tbm\tck\tcx\n1\t1\t5\t5\t1\t9\n";
+            assertQuery("SELECT * FROM (SELECT a.k ak, b.k bk, b.w bw, b.m bm, c.k ck, c.x cx " +
+                    "FROM a RIGHT JOIN b ON a.k = b.k RIGHT JOIN c ON b.k = c.k) WHERE bw + bm > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: 0<b.w+b.m")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testWrappedMultiTableMasterFilterStaysPostJoin() throws Exception {
+        // LEAK-A: companion to testMultiTableMasterFilterStaysPostJoin, but the join is wrapped in a
+        // sub-query. After moveWhereInsideSubQueries inlines the outer predicate into the join model,
+        // the rewritten t0.a < t1.b references two master tables and routes through the
+        // distinctIndexes>1 branch instead of assignFilters. A later RIGHT/FULL join NULL-extends t0
+        // and t1 for the unmatched t2 key 2; the filter must stay above that join. Anchoring at the
+        // highest referenced model index (t1's inner join) leaked the (null,null,2) row -- 2 for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\n1\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a, b, k FROM (SELECT t0.a a, t1.b b, t2.k k " +
+                        "FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k) WHERE a < b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a<t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testWrappedSubQueryMasterFilterStaysPostJoin() throws Exception {
+        // The join is wrapped in a sub-query and the master predicate sits on the outer model, so
+        // it reaches moveWhereInsideSubQueries instead of analyseEquals. The same master-nulling
+        // guard must apply: RIGHT/FULL/SPLICE all NULL-extend the master, and the master has no
+        // 's2' row, so every output row is NULL-master and WHERE a = 's2' must return nothing.
+        // Pushing the predicate into the master sub-query emptied it and leaked 2 NULL-master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 1)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 2), ('s3', 50, 3)");
+
+            final String empty = "a\tb\n";
+            for (String join : new String[]{
+                    "m RIGHT JOIN s ON m.sym = s.sym",
+                    "m FULL JOIN s ON m.sym = s.sym",
+                    "m SPLICE JOIN s ON (sym)"}) {
+                assertQuery("SELECT a, b FROM (SELECT m.sym a, m.c1 b FROM " + join + ") WHERE a = 's2'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.sym='s2'")
+                        .returns(empty);
+            }
+        });
     }
 
     private void assertFailure(String query, String expectedMessage, int position) {
