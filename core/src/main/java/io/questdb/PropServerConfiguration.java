@@ -147,6 +147,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
+    private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = 24L * 60 * 60 * 1000;
     // Minimum heap page sizes: a page must hold one fixed-size block or it corrupts the heap.
     // sort.key also feeds RecordTreeChain's MemoryPages (41-byte node -> 64-byte page); window.tree
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
@@ -873,10 +874,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
+        final boolean memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
+        final long memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
+        if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
+                    Long.toString(memoryUsageLogInterval)
+            );
+        }
 
         this.memoryConfiguration = new MemoryConfigurationImpl(
                 getLongSize(properties, env, PropertyKey.RAM_USAGE_LIMIT_BYTES, 0),
-                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90)
+                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90),
+                memoryUsageLogEnabled,
+                memoryUsageLogInterval
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);

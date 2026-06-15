@@ -5526,20 +5526,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .assertsPlan("Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
-                // push down predicate to the 'left' table of left join
+                // Push the predicate down to the 'left' table for joins that keep every left
+                // row (LEFT OUTER, LT, ASOF). RIGHT and FULL OUTER NULL-extend the left table,
+                // so the predicate must stay a post-join filter there instead.
+                boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T1.value=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
+                        .assertsPlan(isLeftNulled
+                                ? "Count\n" + "    Filter filter: T1.value!=1\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n"
+                                : "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
             }
 
             // two joins
             for (int i = 0; i < 3; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
+                // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
+                boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                        .assertsPlan(isLeftNulled
+                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
+                                : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1")
                         .noLeakCheck()
@@ -5554,9 +5563,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .assertsPlan("Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
+                // value is T1 (the master): RIGHT/FULL OUTER NULL-extend it, so the tautological
+                // not value<>value (T1.value=T1.value) stays a post-join filter instead of pushing
+                // into the master sub-query. The count is unchanged; only the plan moves.
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value<>value")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
+                        .assertsPlan(isLeftNulled
+                                ? "Count\n" + "    SelectedRecord\n" + "        Filter filter: T1.value=T1.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n"
+                                : "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
             }
         });
     }

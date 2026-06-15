@@ -130,6 +130,7 @@ public class SqlParser {
     // Map of view definitions encountered during query compilation.
     // Using a map ensures consistent view definitions even if views are modified concurrently.
     private final LowerCaseCharSequenceObjHashMap<ViewDefinition> recordedViews = new LowerCaseCharSequenceObjHashMap<>();
+    private final PostOrderTreeTraversalAlgo.Visitor rejectJoinSubQueryRef = this::rejectJoinSubQuery;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
@@ -3545,6 +3546,10 @@ public class SqlParser {
             case IQueryModel.JOIN_FULL_OUTER:
                 expectTok(lexer, tok, "on");
                 onClauseObserved = true;
+                // A join nested in a lambda sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)")
+                // leaves the outer operand on the shared arg stack; raise the floor so the drain
+                // cannot consume it, and reject unsupported ON-clause sub-queries at any depth.
+                expressionTreeBuilder.pushArgStackBottom();
                 try {
                     expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
                     ExpressionNode expr;
@@ -3554,17 +3559,32 @@ public class SqlParser {
                         case 1:
                             expr = expressionTreeBuilder.poll();
                             assert expr != null;
+                            // Expand declared variables (and other known rewrites) up front, before the
+                            // literal/criteria dispatch. A variable bound to a bare column then behaves
+                            // exactly like an inline shorthand join column; one bound to a sub-query or
+                            // expression flows into the criteria branch below, where the sub-query reject
+                            // fires. So the declared form matches its inline expansion in every ON-clause
+                            // position -- shorthand column and criteria alike -- not just operator forms.
+                            expr = rewriteKnownStatements(expr, decls, null);
                             if (expr.type == ExpressionNode.LITERAL) {
                                 do {
                                     joinModel.addJoinColumn(expr);
                                 } while ((expr = expressionTreeBuilder.poll()) != null);
                             } else {
-                                joinModel.setJoinCriteria(rewriteKnownStatements(expr, decls, null));
+                                traversalAlgo.traverse(expr, rejectJoinSubQueryRef);
+                                joinModel.setJoinCriteria(expr);
                             }
                             break;
                         default:
-                            // this code handles "join on (a,b,c)", e.g. list of columns
+                            // "join on (a,b,c)", a list of shorthand join columns. Declared variables
+                            // expand here too: one bound to a column joins like the inline column, while
+                            // one bound to a sub-query is rejected (sub-queries are unsupported in ON
+                            // clauses), matching the inline forms instead of leaking a raw "@q" literal.
                             while ((expr = expressionTreeBuilder.poll()) != null) {
+                                expr = rewriteKnownStatements(expr, decls, null);
+                                if (expr.type == ExpressionNode.QUERY) {
+                                    throw SqlException.$(expr.position, "query is not allowed here");
+                                }
                                 if (expr.type != ExpressionNode.LITERAL) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "Column name expected");
                                 }
@@ -3575,6 +3595,8 @@ public class SqlParser {
                 } catch (SqlException e) {
                     expressionTreeBuilder.reset();
                     throw e;
+                } finally {
+                    expressionTreeBuilder.popArgStackBottom();
                 }
                 break;
             default:
@@ -4718,6 +4740,21 @@ public class SqlParser {
         model.setSampleByOffset(isZeroOffsetToken(offsetExpr.token) ? ZERO_OFFSET : offsetExpr);
         tok = optTok(lexer);
         return tok;
+    }
+
+    // Join ON-clause sub-queries are unsupported and rejected during expression parsing, but
+    // declared variables are literals at parse time and only expand to their definition later, in
+    // rewriteKnownStatements. A variable bound to a sub-query (e.g. "@q := (SELECT ...)" used as
+    // "ON x IN @q") would therefore slip past the parse-time block and compile to surprising
+    // cross-join semantics. parseJoin now expands declared variables before dispatching the ON
+    // clause, then uses this visitor to walk the rewritten criteria and reject any sub-query node;
+    // the shorthand column branches reject expanded QUERY nodes directly. So a declared sub-query
+    // errors the same as the literal one at every nesting depth and in every ON-clause position --
+    // criteria, single-column shorthand, and multi-column lists alike.
+    private void rejectJoinSubQuery(ExpressionNode node) throws SqlException {
+        if (node.type == ExpressionNode.QUERY) {
+            throw SqlException.$(node.position, "query is not allowed here");
+        }
     }
 
     private void rewriteCase(ExpressionNode node) {
