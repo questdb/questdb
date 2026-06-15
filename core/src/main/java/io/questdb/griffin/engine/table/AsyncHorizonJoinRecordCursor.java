@@ -196,7 +196,6 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                     messageBus,
                     frameSequence.getWorkStealingStrategy(),
                     circuitBreaker,
-                    frameSequence.getMemoryTracker(),
                     postAggregationCircuitBreaker,
                     postAggregationDoneLatch,
                     postAggregationStartedCounter

@@ -212,7 +212,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     messageBus,
                     frameSequence.getWorkStealingStrategy(),
                     circuitBreaker,
-                    frameSequence.getMemoryTracker(),
                     postAggregationCircuitBreaker,
                     postAggregationDoneLatch,
                     postAggregationStartedCounter
@@ -268,7 +267,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
-                                frameSequence.getMemoryTracker(),
                                 postAggregationStartedCounter,
                                 postAggregationDoneLatch,
                                 atom,

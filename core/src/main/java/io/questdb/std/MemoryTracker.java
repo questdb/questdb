@@ -81,9 +81,12 @@ public abstract class MemoryTracker implements Closeable {
     /**
      * Releases every per-tag Rust-side QdbAllocator block this tracker has
      * handed out. Called by the owning provider when the tracker is finally
-     * disposed (not on pool return).
+     * disposed (not on pool return). Synchronized for parity with
+     * {@link #getOrCreateNativeAllocator}: disposal happens after the tracker
+     * leaves circulation today, but the lock keeps a future early-dispose
+     * provider from racing a concurrent first allocation into a double free.
      */
-    protected final void freeNativeAllocators() {
+    protected final synchronized void freeNativeAllocators() {
         for (int i = 0; i < nativeAllocators.length; i++) {
             if (nativeAllocators[i] != 0) {
                 Unsafe.freeTrackerNativeAllocator(nativeAllocators[i]);

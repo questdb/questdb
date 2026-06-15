@@ -362,7 +362,6 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             MessageBus messageBus,
             WorkStealingStrategy workStealingStrategy,
             SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable MemoryTracker memoryTracker,
             AtomicBooleanCircuitBreaker postAggregationCircuitBreaker,
             SOUnboundedCountDownLatch postAggregationDoneLatch,
             AtomicInteger postAggregationStartedCounter
@@ -404,7 +403,6 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
-                                memoryTracker,
                                 postAggregationStartedCounter,
                                 postAggregationDoneLatch,
                                 this,

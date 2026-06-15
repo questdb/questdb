@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.PageFrameSequence;
@@ -34,25 +33,18 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerProvider;
 import io.questdb.std.MemoryTrackerWorkload;
-import io.questdb.tasks.GroupByLongTopKTask;
-import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 /**
- * Exercises the per-query {@code MemoryTracker} plumbing wired into parallel
- * task structs for the per-query memory limit. The tracker itself
- * does not yet drive any allocation site, so the asserts focus on
- * propagation: a tracker bound on {@code SqlExecutionContext} at workload
- * start must surface on every parallel struct that workers read off the task,
- * and must clear when the workload ends.
+ * Exercises the per-query {@code MemoryTracker} propagation into the parallel
+ * page-frame plumbing: a tracker bound on {@code SqlExecutionContext} at
+ * workload start must surface on the {@code PageFrameSequence} and its atom
+ * that workers read, and must clear when the workload ends.
  */
 public class AsyncTrackerPropagationTest extends AbstractCairoTest {
 
@@ -131,64 +123,6 @@ public class AsyncTrackerPropagationTest extends AbstractCairoTest {
                         fs.reset();
                     }
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testGroupByLongTopKTaskCarriesTracker() throws Exception {
-        assertMemoryLeak(() -> {
-            final MemoryTrackerProvider provider = engine.getMemoryTrackerProvider();
-            final MemoryTracker tracker = provider.acquire(sqlExecutionContext.getSecurityContext(), 5L, MemoryTrackerWorkload.QUERY);
-            try {
-                final GroupByLongTopKTask task = new GroupByLongTopKTask();
-                final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
-                final AtomicInteger started = new AtomicInteger();
-                final SOUnboundedCountDownLatch latch = new SOUnboundedCountDownLatch();
-
-                // The atom and the function are not exercised here; null is safe
-                // because the task is never dispatched to a worker.
-                task.of(breaker, tracker, started, latch, null, null, 0, 0, 1);
-                Assert.assertSame(tracker, task.getMemoryTracker());
-
-                task.clear();
-                Assert.assertNull(task.getMemoryTracker());
-
-                // null is a valid input (degrades to the no-per-query-limit case).
-                task.of(breaker, null, started, latch, null, null, 0, 0, 1);
-                Assert.assertNull(task.getMemoryTracker());
-                task.clear();
-            } finally {
-                tracker.close();
-            }
-        });
-    }
-
-    @Test
-    public void testGroupByMergeShardTaskCarriesTracker() throws Exception {
-        assertMemoryLeak(() -> {
-            final MemoryTrackerProvider provider = engine.getMemoryTrackerProvider();
-            final MemoryTracker tracker = provider.acquire(sqlExecutionContext.getSecurityContext(), 3L, MemoryTrackerWorkload.QUERY);
-            try {
-                final GroupByMergeShardTask task = new GroupByMergeShardTask();
-                final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
-                final AtomicInteger started = new AtomicInteger();
-                final SOUnboundedCountDownLatch latch = new SOUnboundedCountDownLatch();
-
-                // The sharding context is not exercised here; null is safe
-                // because the task is never dispatched to a worker.
-                task.of(breaker, tracker, started, latch, null, 0);
-                Assert.assertSame(tracker, task.getMemoryTracker());
-
-                task.clear();
-                Assert.assertNull(task.getMemoryTracker());
-
-                // null is a valid input (degrades to the no-per-query-limit case).
-                task.of(breaker, null, started, latch, null, 0);
-                Assert.assertNull(task.getMemoryTracker());
-                task.clear();
-            } finally {
-                tracker.close();
             }
         });
     }
