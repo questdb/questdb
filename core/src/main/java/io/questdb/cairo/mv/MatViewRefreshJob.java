@@ -354,7 +354,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // with the new lastPeriodHi, but the same base txn and cached txn intervals.
             // If we did a mat view data commit, we'd unintentionally reset the cached intervals.
             if (refreshContext.periodHi != Numbers.LONG_NULL) {
-                walWriter.resetMatViewState(
+                fencedMatViewCommit(() -> walWriter.resetMatViewState(
                         viewState.getLastRefreshBaseTxn(),
                         refreshFinishTimestampUs,
                         false,
@@ -362,7 +362,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         commitPeriodHi,
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                );
+                ));
             }
             viewState.rangeRefreshSuccess(
                     factory,
@@ -396,18 +396,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     // The automatic refresh job runs on a worker pool an in-place primary-to-replica demote never halts:
-    // it acquires the view WalWriter while PRIMARY, runs a long SELECT pump, then commits with no
-    // read-only re-check, and the demote drain rendezvouses only with the refresh task queue, never with
-    // the in-flight worker. A commit that lands after the demote flips the read-only flag mints a
-    // local-only seqTxn on the replicated view table the closing uploader never ships, so the new primary
-    // never sees it. Hold the role-switch READ lock across an authoritative in-lock isReadOnlyMode()
-    // re-check and the commit, so the commit is atomic against the role flip: either the flip ran first
-    // (refuse -- the refresh is abandoned, and a materialized view is derived state so the new primary
-    // recomputes forward) or the commit lands fully as PRIMARY while the flip's WRITE acquire waits for
-    // this read hold and replicates. This fences the COMMIT only -- the MatViewState.closed flag, the
-    // refresh latch and the state-store redirect that defend the native cursor are untouched. The fence
-    // is a strict no-op for non-replicating deployments: the read lock is uncontended and the read-only
-    // flag is static.
+    // it acquires the view WalWriter while PRIMARY, runs a long SELECT pump, then externalizes a replicated
+    // seqTxn with no read-only re-check, and the demote drain rendezvouses only with the refresh task queue,
+    // never with the in-flight worker. Two replicated-WAL mint families ride the held writer: the row-data
+    // commit (commitWithParams / commitMatView) and the view-state mint (truncateSoft on a full refresh,
+    // resetMatViewState for every refresh-state persist / invalidate). Either one that lands after the demote
+    // flips the read-only flag mints a local-only seqTxn on the replicated view table the closing uploader
+    // never ships, so the new primary never sees it. Route both families through this fence: hold the
+    // role-switch READ lock across an authoritative in-lock isReadOnlyMode() re-check and the mint, so the
+    // mint is atomic against the role flip: either the flip ran first (refuse -- the refresh is abandoned,
+    // and a materialized view is derived state so the new primary recomputes forward) or the mint lands fully
+    // as PRIMARY while the flip's WRITE acquire waits for this read hold and replicates. This fences the WAL
+    // externalization only -- the MatViewState.closed flag, the refresh latch and the state-store redirect
+    // that defend the native cursor are untouched. The fence is a strict no-op for non-replicating
+    // deployments: the read lock is uncontended and the read-only flag is static.
     private void fencedMatViewCommit(Runnable commit) {
         if (engine.isReadOnlyMode()) {
             throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
@@ -742,7 +744,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
-                    walWriter.truncateSoft();
+                    fencedMatViewCommit(walWriter::truncateSoft);
                     resetInvalidState(viewState, walWriter);
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
@@ -1548,16 +1550,31 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             CharSequence errorMessage
     ) {
         viewState.refreshFail(microsecondClock.getTicks(), errorMessage);
-        if (walWriter != null) {
-            walWriter.resetMatViewState(
-                    viewState.getLastRefreshBaseTxn(),
-                    viewState.getLastRefreshFinishTimestampUs(),
-                    true,
-                    errorMessage,
-                    viewState.getLastPeriodHi(),
-                    viewState.getRefreshIntervals(),
-                    viewState.getRefreshIntervalsBaseTxn()
-            );
+        // Skip the WAL state reset when the node is already read-only: a demote that landed mid-refresh
+        // refuses the data commit and routes here, and minting the invalid-state reset on a held pre-flip
+        // writer would externalize a local-only seqTxn the closing uploader never ships -- the peer would
+        // never see the invalidation, so the demoting node's view state would silently diverge. The
+        // in-memory fail state above is enough to stop the refresh on this node; a materialized view is
+        // derived state, so the new primary recomputes it forward.
+        if (walWriter != null && !engine.isReadOnlyMode()) {
+            try {
+                fencedMatViewCommit(() -> walWriter.resetMatViewState(
+                        viewState.getLastRefreshBaseTxn(),
+                        viewState.getLastRefreshFinishTimestampUs(),
+                        true,
+                        errorMessage,
+                        viewState.getLastPeriodHi(),
+                        viewState.getRefreshIntervals(),
+                        viewState.getRefreshIntervalsBaseTxn()
+                ));
+            } catch (CairoException refused) {
+                // A demote landed between the eager check above and the fence's in-lock re-check, so the
+                // fence refused the mint. This is the abandon-on-demote outcome -- swallow it here (this is
+                // already the failure path) so the refresh ends cleanly on the now-read-only node.
+                if (!refused.isAuthorizationError()) {
+                    throw refused;
+                }
+            }
         }
         // Invalidate dependent views recursively.
         enqueueInvalidateDependentViews(viewDefinition.getMatViewToken(), "base materialized view refresh failed");
@@ -1704,7 +1721,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 periodHi
         );
         if (walWriter != null) {
-            walWriter.resetMatViewState(
+            fencedMatViewCommit(() -> walWriter.resetMatViewState(
                     baseTableTxn,
                     refreshFinishedTimestamp,
                     false,
@@ -1712,7 +1729,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     periodHi,
                     null,
                     -1
-            );
+            ));
         }
     }
 
@@ -1723,7 +1740,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.getRefreshIntervals().clear();
         viewState.setLastRefreshTimestampUs(Numbers.LONG_NULL);
         viewState.setLastPeriodHi(Numbers.LONG_NULL);
-        walWriter.resetMatViewState(
+        fencedMatViewCommit(() -> walWriter.resetMatViewState(
                 viewState.getLastRefreshBaseTxn(),
                 viewState.getLastRefreshFinishTimestampUs(),
                 false,
@@ -1731,14 +1748,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastPeriodHi(),
                 null,
                 -1
-        );
+        ));
     }
 
     private void setInvalidState(MatViewState viewState, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         viewState.markAsInvalid(invalidationReason);
         viewState.setLastRefreshTimestampUs(invalidationTimestamp);
         viewState.setLastRefreshStartTimestampUs(invalidationTimestamp);
-        walWriter.resetMatViewState(
+        fencedMatViewCommit(() -> walWriter.resetMatViewState(
                 viewState.getLastRefreshBaseTxn(),
                 viewState.getLastRefreshFinishTimestampUs(),
                 true,
@@ -1746,7 +1763,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getLastPeriodHi(),
                 viewState.getRefreshIntervals(),
                 viewState.getRefreshIntervalsBaseTxn()
-        );
+        ));
     }
 
     private void updateRefreshIntervals(@NotNull MatViewRefreshTask refreshTask) {
@@ -1825,7 +1842,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 viewState.setRefreshIntervalsBaseTxn(lastBaseTxn);
 
-                walWriter.resetMatViewState(
+                fencedMatViewCommit(() -> walWriter.resetMatViewState(
                         viewState.getLastRefreshBaseTxn(),
                         viewState.getLastRefreshFinishTimestampUs(),
                         false,
@@ -1833,7 +1850,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         viewState.getLastPeriodHi(),
                         viewState.getRefreshIntervals(),
                         viewState.getRefreshIntervalsBaseTxn()
-                );
+                ));
 
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
