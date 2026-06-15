@@ -6911,7 +6911,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                 for (int i = 0; i < size + 2; i++) {
                     cursor.toTop();
                     counter.set(i);
-                    cursor.skipRows(counter);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                     Assert.assertEquals(Math.max(i - size, 0), counter.get());
                     counter.clear();
                     cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);

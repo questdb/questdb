@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.RecentWriteTracker;
@@ -42,6 +43,52 @@ import org.junit.Test;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TablesFunctionFactoryTest extends AbstractCairoTest {
+    @Test
+    public void testCatalogueIsCompleteBeforeStartupHydration() throws Exception {
+        // Regression: tables() and all_tables() snapshot the MetadataCache, which is
+        // populated lazily by the background onStartupAsyncHydrator(). A catalogue
+        // query that runs before hydration completes (e.g. right after a restart or a
+        // backup restore) used to observe an empty/partial list and silently miss
+        // tables. The catalogue functions must reconcile against the table registry
+        // and hydrate on demand so they always return the complete set.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bravo (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE charlie (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Simulate the post-restart window before the async hydrator has run:
+            // the registry knows the tables, but the metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            // tables() must still return every table without onStartupAsyncHydrator().
+            assertQuery("select table_name from tables() order by table_name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            table_name
+                            alpha
+                            bravo
+                            charlie
+                            """);
+
+            // Clear again and verify the sibling all_tables() function too.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+            assertQuery("select table_name from all_tables() order by table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name
+                            alpha
+                            bravo
+                            charlie
+                            """);
+        });
+    }
+
     @Test
     public void testMemoryPressureColumn() throws Exception {
         assertMemoryLeak(() -> {

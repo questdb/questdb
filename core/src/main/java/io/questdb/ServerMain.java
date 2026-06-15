@@ -309,6 +309,12 @@ public class ServerMain implements Closeable {
                     if (engineMaintenanceJob != null) {
                         sharedPoolWrite.assign(engineMaintenanceJob);
                     }
+                    final MemoryConfiguration memoryConfig = config.getMemoryConfiguration();
+                    sharedPoolWrite.assign(new MemoryUsageLogJob(
+                            cairoConfig.getMicrosecondClock(),
+                            memoryConfig::isMemoryUsageLogEnabled,
+                            memoryConfig::getMemoryUsageLogInterval
+                    ));
                     WorkerPoolUtils.setupAsyncMunmapJob(sharedPoolQuery, engine);
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 

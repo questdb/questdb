@@ -869,14 +869,14 @@ public class LimitTest extends AbstractCairoTest {
                                             AsOf Join
                                                 Encode sort light
                                                   keys: [ts, a]
-                                                    Sort light lo: 10 partiallySorted: true
+                                                    Encode sort light lo: 10 partiallySorted: true
                                                       keys: [ts desc, a desc]
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: y
                                                 Encode sort light
                                                   keys: [ts, a desc]
-                                                    Sort light lo: 4 partiallySorted: true
+                                                    Encode sort light lo: 4 partiallySorted: true
                                                       keys: [ts desc, a]
                                                         PageFrame
                                                             Row backward scan
@@ -894,14 +894,14 @@ public class LimitTest extends AbstractCairoTest {
                                             Lt Join
                                                 Encode sort light
                                                   keys: [ts, a]
-                                                    Sort light lo: 10 partiallySorted: true
+                                                    Encode sort light lo: 10 partiallySorted: true
                                                       keys: [ts desc, a desc]
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: y
                                                 Encode sort light
                                                   keys: [ts, a desc]
-                                                    Sort light lo: 4 partiallySorted: true
+                                                    Encode sort light lo: 4 partiallySorted: true
                                                       keys: [ts desc, a]
                                                         PageFrame
                                                             Row backward scan
@@ -918,14 +918,14 @@ public class LimitTest extends AbstractCairoTest {
                                         AsOf Join
                                             Encode sort light
                                               keys: [ts, a]
-                                                Sort light lo: 10 partiallySorted: true
+                                                Encode sort light lo: 10 partiallySorted: true
                                                   keys: [ts desc, a desc]
                                                     PageFrame
                                                         Row backward scan
                                                         Frame backward scan on: y
                                             Encode sort light
                                               keys: [ts, a desc]
-                                                Sort light lo: 4 partiallySorted: true
+                                                Encode sort light lo: 4 partiallySorted: true
                                                   keys: [ts desc, a]
                                                     PageFrame
                                                         Row backward scan
@@ -975,14 +975,14 @@ public class LimitTest extends AbstractCairoTest {
                                     Union All
                                         Encode sort light
                                           keys: [ts, a desc]
-                                            Sort light lo: 4 partiallySorted: true
+                                            Encode sort light lo: 4 partiallySorted: true
                                               keys: [ts desc, a]
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: x
                                         Encode sort light
                                           keys: [ts, a]
-                                            Sort light lo: 10 partiallySorted: true
+                                            Encode sort light lo: 10 partiallySorted: true
                                               keys: [ts desc, a desc]
                                                 PageFrame
                                                     Row backward scan
