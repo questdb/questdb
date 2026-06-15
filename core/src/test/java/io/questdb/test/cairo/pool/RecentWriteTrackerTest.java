@@ -421,6 +421,24 @@ public class RecentWriteTrackerTest {
         RecentWriteTracker.WriteStats stats = tracker.getWriteStats(fresh);
         Assert.assertNotNull("WAL processed entry should survive the eviction that follows insertion", stats);
         Assert.assertEquals(1L, stats.getDedupRowCount());
+        Assert.assertEquals(0L, stats.getWalRowCount());
+    }
+
+    @Test
+    public void testWalWriteWithOldDataTimestampSurvivesEviction() {
+        RecentWriteTracker tracker = new RecentWriteTracker(2);
+
+        for (int i = 0; i < 4; i++) {
+            tracker.recordWrite(createTableToken("old" + i, i), i + 1L, 10L, 1L);
+        }
+
+        TableToken fresh = createTableToken("fresh", 100);
+        tracker.recordWalWrite(fresh, 10L, 0L, 5L);
+
+        RecentWriteTracker.WriteStats stats = tracker.getWriteStats(fresh);
+        Assert.assertNotNull("fresh WAL activity must not be evicted because its data timestamp is old", stats);
+        Assert.assertEquals(0L, stats.getLastWalTimestamp());
+        Assert.assertEquals(5L, stats.getWalRowCount());
     }
 
     @Test
