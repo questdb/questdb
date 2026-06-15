@@ -462,6 +462,23 @@ public class ServerMain implements Closeable {
                 // Banner, DataID log, System.gc, 'enjoy' advisory all emit from the network-services envelope tail
                 // (W4 -- moved verbatim from this method's :263-:272 region).
             } catch (Throwable th) {
+                // Deregister the shutdown hook this attempt added before resetting the running flag.
+                // A retry start(true) calls addShutdownHook() again, registering a fresh hook and
+                // overwriting shutdownHookThread; without this deregistration the first hook stays in
+                // the JVM's ApplicationShutdownHooks registry until JVM exit, and its closure pins this
+                // ServerMain and the whole engine graph for the life of the process. close() can only
+                // ever deregister the latest hook, so a long-lived JVM that retries boots (a reused
+                // test fork) would orphan one engine graph per failed attempt. Skip when the hook is
+                // the current thread (close() running inside the hook), where removeShutdownHook throws.
+                final Thread hook = shutdownHookThread;
+                if (hook != null && hook != Thread.currentThread()) {
+                    shutdownHookThread = null;
+                    try {
+                        Runtime.getRuntime().removeShutdownHook(hook);
+                    } catch (IllegalStateException ignore) {
+                        // JVM shutdown already in progress; the hook is running or about to run.
+                    }
+                }
                 // Reset the running flag on a startup failure so a caller (embedded host or test)
                 // can legitimately retry start(); without this reset the CAS above stays latched at
                 // true and every retry is a silent no-op that never re-runs the orchestrator.

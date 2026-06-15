@@ -80,6 +80,119 @@ public class ServerMainStartRetryAfterFailureTest extends AbstractBootstrapTest 
         dbPath.parent().$();
     }
 
+    /**
+     * A {@code start(true)} that fails its boot adds a JVM shutdown hook before running the DAG,
+     * then resets the {@code running} flag so a retry can re-run the boot. The retry calls
+     * {@code start(true)} again and adds a second hook. Unless the first failed boot deregisters
+     * the hook it added, the first hook is orphaned in the JVM's shutdown-hook registry: the
+     * second {@code addShutdownHook()} overwrites {@code shutdownHookThread} so {@code close()}
+     * can only ever deregister the second hook, and the first stays registered until JVM exit,
+     * pinning the whole {@code ServerMain}/engine graph through its closure for the life of the
+     * process (a leak in a long-lived JVM that retries boots, such as a reused test fork).
+     *
+     * <p>The oracle is {@code Runtime.removeShutdownHook(hook)}: it returns {@code true} when the
+     * hook is still registered (the leak) and {@code false} when it was already removed. The failer
+     * component captures the live hook reference at the moment of the boot throw (when
+     * {@code shutdownHookThread} is set and the field has not yet been cleared by the failure
+     * catch). After the failed boot, {@code removeShutdownHook(thatHook)} must return {@code false}
+     * because the catch already deregistered it. On the unfixed tree the catch leaves the hook
+     * registered, so the same call returns {@code true} and the assertion below reds.
+     */
+    @Test
+    public void startTrueRetryDeregistersTheHookItAddedSoTheFirstIsNotOrphaned() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger startInvocations = new AtomicInteger();
+            // Captures the live shutdown-hook thread of the boot attempt currently failing, read
+            // inside the failer's start() right before the throw. At that point start(true) has
+            // already added the hook and set shutdownHookThread, but the failure catch (which both
+            // deregisters and nulls the field) has not run yet -- so this is the only point where
+            // the test can hold the exact hook reference to probe for an orphan afterwards.
+            final ServerMain[] serverMainRef = new ServerMain[1];
+            final ObjList<Thread> capturedHooks = new ObjList<>();
+            final Component failer = new Component() {
+                @Override
+                public ObjList<String> hardRequiredDependencies() {
+                    return EMPTY_DEPS;
+                }
+
+                @Override
+                public String name() {
+                    return "test-boot-failer";
+                }
+
+                @Override
+                public ObjList<String> softDependencies() {
+                    return EMPTY_DEPS;
+                }
+
+                @Override
+                public void start(LifecycleContext ctx) {
+                    startInvocations.incrementAndGet();
+                    capturedHooks.add(serverMainRef[0].testGetShutdownHookThread());
+                    throw new RuntimeException("forced boot failure [start-true-retry hook test]");
+                }
+
+                @Override
+                public void stop() {
+                }
+            };
+
+            try (ServerMain serverMain = new ServerMain(getServerMainArgs()) {
+                @Override
+                protected void registerComponents(LifecycleOrchestrator orch) {
+                    orch.register(failer);
+                }
+            }) {
+                serverMainRef[0] = serverMain;
+
+                // First boot with addShutdownHook=true: the failer captures the live hook then throws.
+                boolean firstThrew = false;
+                try {
+                    serverMain.start(true);
+                } catch (Throwable t) {
+                    firstThrew = true;
+                }
+                Assert.assertTrue("first start(true) must propagate the forced boot failure", firstThrew);
+                Assert.assertEquals("the failing component must have been started once on the first boot",
+                        1, startInvocations.get());
+
+                final Thread firstHook = capturedHooks.getQuick(0);
+                Assert.assertNotNull("the first failed start(true) must have added a shutdown hook", firstHook);
+
+                // The failed boot must have deregistered the hook it added so the retry's second
+                // addShutdownHook() cannot orphan it. removeShutdownHook returns false because the
+                // hook was already removed; on the unfixed tree the catch leaves it registered and
+                // the call returns true.
+                Assert.assertFalse(
+                        "the first failed start(true) must deregister the hook it added so the retry cannot orphan it",
+                        Runtime.getRuntime().removeShutdownHook(firstHook));
+
+                // Retry with addShutdownHook=true: the DAG re-runs (running flag was reset) and a
+                // fresh hook is added. The failer captures it then throws again.
+                boolean secondThrew = false;
+                try {
+                    serverMain.start(true);
+                } catch (Throwable t) {
+                    secondThrew = true;
+                }
+                Assert.assertTrue(
+                        "the retry must actually re-run the DAG and propagate the failure again, not silently no-op",
+                        secondThrew);
+                Assert.assertEquals(
+                        "the failing component's start() must have been invoked a second time by the retry",
+                        2, startInvocations.get());
+
+                final Thread secondHook = capturedHooks.getQuick(1);
+                Assert.assertNotNull("the retry must add a fresh shutdown hook", secondHook);
+                Assert.assertNotSame("the retry must add a fresh hook, not reuse the deregistered first one",
+                        firstHook, secondHook);
+                Assert.assertFalse(
+                        "the second failed start(true) must deregister its own hook too, leaving a clean registry",
+                        Runtime.getRuntime().removeShutdownHook(secondHook));
+            }
+        });
+    }
+
     @Test
     public void startResetsRunningFlagSoRetryReRunsTheDag() throws Exception {
         assertMemoryLeak(() -> {
