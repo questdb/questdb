@@ -846,7 +846,7 @@ public class RecentWriteTracker {
         /**
          * Returns the maximum of writer timestamp and WAL timestamp.
          * Used for sorting - considers both writer and WAL data timestamps.
-         * Falls back to the entry creation time when both timestamps are {@link Numbers#LONG_NULL}.
+         * Returns {@link Numbers#LONG_NULL} when neither timestamp is available.
          *
          * @return max timestamp in microseconds
          */
@@ -854,7 +854,7 @@ public class RecentWriteTracker {
             long ts = timestamp;
             long walTs = walTimestamp.get();
             if (ts == Numbers.LONG_NULL && walTs == Numbers.LONG_NULL) {
-                return lastActivityTimestamp;
+                return Numbers.LONG_NULL;
             }
             return Math.max(ts, walTs);
         }

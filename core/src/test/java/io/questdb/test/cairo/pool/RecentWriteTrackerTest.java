@@ -407,6 +407,18 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
+    public void testGetMaxTimestampWithBothNulls() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+
+        TableToken table1 = createTableToken("table1", 1);
+        RecentWriteTracker.WriteStats stats = tracker.getOrCreateStats(table1);
+
+        Assert.assertEquals(Numbers.LONG_NULL, stats.getTimestamp());
+        Assert.assertEquals(Numbers.LONG_NULL, stats.getLastWalTimestamp());
+        Assert.assertEquals(Numbers.LONG_NULL, stats.getMaxTimestamp());
+    }
+
+    @Test
     public void testRecordWalProcessedCreatesEntryThatSurvivesEviction() {
         RecentWriteTracker tracker = new RecentWriteTracker(2);
 
