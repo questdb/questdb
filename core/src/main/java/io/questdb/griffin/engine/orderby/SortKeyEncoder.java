@@ -117,25 +117,32 @@ public class SortKeyEncoder implements QuietCloseable {
         this.hasBorrowedRankMaps = rankMapOwner != null;
         this.rankMaps = hasBorrowedRankMaps ? rankMapOwner.rankMaps : new ObjList<>(n);
 
-        for (int i = 0; i < n; i++) {
-            int encoded = sortColumnFilter.getQuick(i);
-            isDesc[i] = encoded < 0;
-            columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
-            columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
-            hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
-            hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
-            if (ColumnType.isSymbol(columnTypes[i]) && metadata.isSymbolTableStatic(columnIndices[i])) {
-                isStaticSymbol[i] = true;
-                columnByteWidths[i] = 4;
-                if (!hasBorrowedRankMaps) {
-                    rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
-                }
-            } else {
-                columnByteWidths[i] = fixedColumnByteWidth(columnTypes[i]);
-                if (!hasBorrowedRankMaps) {
-                    rankMaps.add(null);
+        try {
+            for (int i = 0; i < n; i++) {
+                int encoded = sortColumnFilter.getQuick(i);
+                isDesc[i] = encoded < 0;
+                columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
+                columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
+                hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
+                hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
+                if (ColumnType.isSymbol(columnTypes[i]) && metadata.isSymbolTableStatic(columnIndices[i])) {
+                    isStaticSymbol[i] = true;
+                    columnByteWidths[i] = 4;
+                    if (!hasBorrowedRankMaps) {
+                        rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
+                    }
+                } else {
+                    columnByteWidths[i] = fixedColumnByteWidth(columnTypes[i]);
+                    if (!hasBorrowedRankMaps) {
+                        rankMaps.add(null);
+                    }
                 }
             }
+        } catch (Throwable th) {
+            if (!hasBorrowedRankMaps) {
+                Misc.freeObjList(rankMaps);
+            }
+            throw th;
         }
         // A static SYMBOL has columnByteWidths[0] == 4 and lands in FIXED8; only a
         // non-static SYMBOL reaches KeyShape.SYMBOL.

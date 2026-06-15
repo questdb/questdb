@@ -328,6 +328,7 @@ import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -9823,21 +9824,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // after all columns are processed we can re-insert deferred metadata
+            boolean isAllWindowOutputFixedWidth = true;
             for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
                 TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
                 if (m != null) {
                     chainTypes.add(i, m.getColumnType());
                     factoryMetadata.add(i, m);
+                    isAllWindowOutputFixedWidth &= !isVarSize(m.getColumnType());
                 }
             }
 
             final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
+            final boolean isSortEnabled = configuration.isSqlOrderBySortEnabled();
+            boolean isAllGroupsEncodedEligible = isSortEnabled;
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.newInstance(chainMetadata, e.key));
+                final boolean isEncodedEligible = isSortEnabled && SortKeyEncoder.isSupported(chainMetadata, e.key);
+                final RecordComparator comparator = isEncodedEligible
+                        ? null
+                        : recordComparatorCompiler.newInstance(chainMetadata, e.key);
+                windowComparators.add(comparator);
                 functionGroups.add(e.value);
                 keys.add(e.key);
+                isAllGroupsEncodedEligible &= isEncodedEligible;
+            }
+
+            // LIGHT path is restricted to queries where every ordered group can use the encoded
+            // sort buffer. Tree-fallback in LIGHT would do O(N log N) random base reads per
+            // compare, which can regress 10-100x on cold/partitioned bases.
+            // It also requires every window-output column to be fixed-width: the narrow chain
+            // never initializes var-size aux pointers, so a var-size output column would read
+            // uninitialized offsets and crash. No window function returns a var-size type today;
+            // this guard keeps the path safe if one is ever added.
+            if (configuration.isSqlWindowCachedLightEnabled()
+                    && base.recordCursorSupportsRandomAccess()
+                    && isAllGroupsEncodedEligible
+                    && isAllWindowOutputFixedWidth) {
+                final IntList sourceMap = new IntList();
+                final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
+                int narrowIdx = 0;
+                for (int c = 0, chainColCount = chainTypes.getColumnCount(); c < chainColCount; c++) {
+                    final TableColumnMetadata m = deferredWindowMetadata.getQuiet(c);
+                    if (m != null) {
+                        sourceMap.add(-narrowIdx - 1);
+                        narrowChainTypes.add(m.getColumnType());
+                        narrowIdx++;
+                    } else {
+                        sourceMap.add(columnIndexes.getQuick(c));
+                    }
+                }
+                return new CachedWindowLightRecordCursorFactory(
+                        configuration,
+                        base,
+                        factoryMetadata,
+                        narrowChainTypes,
+                        functionGroups,
+                        naturalOrderFunctions,
+                        columnIndexes,
+                        keys,
+                        chainMetadata,
+                        sourceMap
+                );
             }
 
             final RecordSink recordSink = RecordSinkFactory.getInstance(
