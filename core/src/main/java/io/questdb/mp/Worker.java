@@ -78,9 +78,11 @@ public class Worker extends Thread {
     private final long sleepThreshold;
     // Per-worker pool of recycled job-generation snapshots. Touched only by
     // this worker's outer driver, so no synchronization is needed. A snapshot
-    // is pushed here by recycleSnapshot() after a cont becomes done and
-    // popped by mintNextGen() on the next suspend. Pool size converges to the
-    // workload's concurrent-suspend high-water mark; empty on cold start.
+    // is pushed here by recycleJobList() once its cont is spent -- either the
+    // cont became done (halt) or it handoff-suspended and was abandoned during
+    // RUNNING -- and popped by mintNextGen() on the next suspend. Pool size
+    // converges to the workload's concurrent-suspend high-water mark; empty on
+    // cold start.
     private final ObjList<ObjList<Job>> snapshotPool = new ObjList<>();
     private final int workerId;
     private final long yieldThreshold;
@@ -252,15 +254,21 @@ public class Worker extends Thread {
                         WorkerContinuation handoff = cont.takeHandoff();
                         if (handoff == null) {
                             // Body parked deep inside a job (no dequeue this turn).
-                            // Our cont retains the current generation in its snapshot;
-                            // mint a fresh generation so the next outer iteration's
-                            // cont runs on instances that share no state with the
-                            // parked one. Stateless slots return the same singleton
-                            // from cloneInstance(); stateful slots return fresh or
-                            // pooled instances.
-                            currentJobsGen = mintNextGen(currentJobsGen);
+                            // Our cont retains the current generation in its snapshot
+                            // and will be resumed by a peer, so we must NOT recycle it
+                            // here. The fresh generation for the next outer cont is
+                            // minted after this loop.
                             break;
                         }
+                        // cont suspended only to surrender the dequeued handoff cont;
+                        // its handoff slot is non-null only after a successful handoff
+                        // suspend (loopBody resets it to null on a refused one). Such a
+                        // cont is never re-enqueued and never resumed -- it is spent --
+                        // and it parked between job iterations, so its stateful clones
+                        // (e.g. the HTTP selector + handler set) are idle. Recycle its
+                        // generation now, during RUNNING, returning those clones to the
+                        // pool instead of leaking them in ownedJobClones until halt.
+                        recycleJobList(cont);
                         cont = handoff;
                         mountForeignCont(cont);
                         if (cont.isDone()) {
@@ -268,6 +276,13 @@ public class Worker extends Thread {
                             break;
                         }
                     }
+                    // The next outer cont always runs on a freshly minted generation.
+                    // Either the deep-parked cont still owns currentJobsGen (cold path
+                    // clones it), or the chain above recycled currentJobsGen into the
+                    // snapshot pool (mintNextGen pops it back out, removing it from the
+                    // pool so it is owned by nobody else). Either way the generation the
+                    // next cont runs shares no live state with any parked or spent cont.
+                    currentJobsGen = mintNextGen(currentJobsGen);
                 }
             }
         } catch (Throwable e) {
