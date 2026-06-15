@@ -68,6 +68,8 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.locks.Lock;
+
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
@@ -343,11 +345,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             //   2. Period range refresh triggered by period timer
 
             // First, do a range replace commit.
-            walWriter.commitWithParams(
+            fencedMatViewCommit(() -> walWriter.commitWithParams(
                     replacementTimestampLo,
                     replacementTimestampHi,
                     WAL_DEDUP_MODE_REPLACE_RANGE
-            );
+            ));
             // Second, if it's a period range refresh, we need to persist state
             // with the new lastPeriodHi, but the same base txn and cached txn intervals.
             // If we did a mat view data commit, we'd unintentionally reset the cached intervals.
@@ -374,13 +376,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // It's an incremental/full refresh.
             // Easy job: first commit data along with the mat view state and then update the in-memory state.
             // The mat view data commit will reset cached txn intervals since we want to evict them.
-            walWriter.commitMatView(
+            fencedMatViewCommit(() -> walWriter.commitMatView(
                     refreshContext.toBaseTxn,
                     refreshFinishTimestampUs,
                     commitPeriodHi,
                     replacementTimestampLo,
                     replacementTimestampHi
-            );
+            ));
             viewState.refreshSuccess(
                     factory,
                     copier,
@@ -390,6 +392,36 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshContext.toBaseTxn,
                     commitPeriodHi
             );
+        }
+    }
+
+    // The automatic refresh job runs on a worker pool an in-place primary-to-replica demote never halts:
+    // it acquires the view WalWriter while PRIMARY, runs a long SELECT pump, then commits with no
+    // read-only re-check, and the demote drain rendezvouses only with the refresh task queue, never with
+    // the in-flight worker. A commit that lands after the demote flips the read-only flag mints a
+    // local-only seqTxn on the replicated view table the closing uploader never ships, so the new primary
+    // never sees it. Hold the role-switch READ lock across an authoritative in-lock isReadOnlyMode()
+    // re-check and the commit, so the commit is atomic against the role flip: either the flip ran first
+    // (refuse -- the refresh is abandoned, and a materialized view is derived state so the new primary
+    // recomputes forward) or the commit lands fully as PRIMARY while the flip's WRITE acquire waits for
+    // this read hold and replicates. This fences the COMMIT only -- the MatViewState.closed flag, the
+    // refresh latch and the state-store redirect that defend the native cursor are untouched. The fence
+    // is a strict no-op for non-replicating deployments: the read lock is uncontended and the read-only
+    // flag is static.
+    private void fencedMatViewCommit(Runnable commit) {
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            engine.fireRoleSwitchMintObserver();
+            commit.run();
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -958,11 +990,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // Gap in the refresh intervals, commit the previous batch
                                 // so that the replacement interval does not span across the gap.
                                 final long commitStart = System.nanoTime();
-                                walWriter.commitWithParams(
-                                        replacementTimestampLo,
-                                        replacementTimestampHi,
+                                final long lo = replacementTimestampLo;
+                                final long hi = replacementTimestampHi;
+                                fencedMatViewCommit(() -> walWriter.commitWithParams(
+                                        lo,
+                                        hi,
                                         WAL_DEDUP_MODE_REPLACE_RANGE
-                                );
+                                ));
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 if (pendingScanRangeTsUnits > 0) {
                                     viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
@@ -1042,11 +1076,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             replacementTimestampHi
                                     );
                                 } else {
-                                    walWriter.commitWithParams(
-                                            replacementTimestampLo,
-                                            replacementTimestampHi,
+                                    final long lo = replacementTimestampLo;
+                                    final long hi = replacementTimestampHi;
+                                    fencedMatViewCommit(() -> walWriter.commitWithParams(
+                                            lo,
+                                            hi,
                                             WAL_DEDUP_MODE_REPLACE_RANGE
-                                    );
+                                    ));
                                 }
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
