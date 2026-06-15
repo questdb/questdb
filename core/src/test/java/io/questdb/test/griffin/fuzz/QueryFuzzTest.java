@@ -26,9 +26,11 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
@@ -192,6 +194,52 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitTimestampLimitTolerated() throws Exception {
+        // Bug from fault-injection fuzzing: SELECT max(ts) FROM t WHERE test_fault()
+        // swallowed the injected fault under parallel execution and was reported as a
+        // swallowed-error failure. The optimiser
+        // (SqlOptimiser.rewriteSingleFirstLastGroupBy) rewrites a lone
+        // min/max/first/last over the designated timestamp into an
+        // ORDER BY ts [DESC] LIMIT 1 scan, so a fault that fires on a frame past the
+        // single-row cutoff is legitimately discarded -- the same early termination
+        // an explicit LIMIT gives -- yet the SQL text carries no "limit" keyword. The
+        // swallow oracle keys off the rewritten plan's pushed-down limit marker
+        // instead. Pin that the rewrite still produces the marker for the four
+        // timestamp aggregates, and that aggregates which do not get the rewrite
+        // (and so must surface a fired fault) do not carry it.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT x::int, timestamp_sequence('2024-01-01', 1_000_000_000L) " +
+                    "FROM long_sequence(100)");
+
+            // The timestamp min/max/first/last rewrite pushes LIMIT 1 into the scan.
+            String[] pushed = {
+                    "SELECT max(ts) AS a0 FROM t WHERE test_fault() ORDER BY a0",
+                    "SELECT min(ts) AS a0 FROM t WHERE test_fault() ORDER BY a0",
+                    "SELECT first(ts) AS a0 FROM t WHERE test_fault()",
+                    "SELECT last(ts) AS a0 FROM t WHERE test_fault()",
+            };
+            for (String sql : pushed) {
+                Assert.assertTrue("expected pushed-down limit in plan: " + sql,
+                        QueryRunner.planHasPushedLimit(planOf(sql)));
+            }
+
+            // Aggregates that keep a real aggregation step have no pushed limit, so a
+            // fired fault must surface and the oracle must not be relaxed for them.
+            String[] notPushed = {
+                    "SELECT max(c0) AS a0 FROM t WHERE test_fault() ORDER BY a0",
+                    "SELECT max(ts) AS a0, count() AS a1 FROM t WHERE test_fault()",
+                    "SELECT count() AS a0 FROM t WHERE test_fault()",
+            };
+            for (String sql : notPushed) {
+                Assert.assertFalse("unexpected pushed-down limit in plan: " + sql,
+                        QueryRunner.planHasPushedLimit(planOf(sql)));
+            }
+        });
+    }
+
+    @Test
     public void testQueryFuzz() throws Exception {
         // Enable dev mode so the test_fault() function the FUNCTION fault relies on
         // is active; it folds to the constant true otherwise.
@@ -264,6 +312,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         // Chain the first cause so the stack trace still points at real source.
         return new AssertionError(sb.toString(), failures.getQuick(0).getFailure());
+    }
+
+    private static String planOf(String sql) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            TextPlanSink sink = new TextPlanSink();
+            sink.of(factory, sqlExecutionContext);
+            return sink.getSink().toString();
+        }
     }
 
     private static void haltQuietly(WorkerPool pool) {

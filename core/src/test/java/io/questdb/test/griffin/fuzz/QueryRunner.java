@@ -313,14 +313,18 @@ public final class QueryRunner {
      * {@code parallel} reports whether the query runs with parallel SQL execution
      * enabled (all fault types do when the parallel-fault knob is on). For a FILE
      * fault it also selects the query-execution scope so the fault can fire on a
-     * reduce worker. It relaxes oracle 1 for a LIMIT query: under the eager
-     * parallel reduce, a fired
-     * {@code test_fault()} can land on a page frame whose rows fall past the LIMIT
+     * reduce worker. It relaxes oracle 1 for a query with a row-limited scan: under
+     * the eager parallel reduce, a fired
+     * {@code test_fault()} can land on a page frame whose rows fall past the limit
      * cutoff, so its throw is discarded on a worker and the query still returns a
      * result. Whether the throw propagates or gets discarded depends on worker
      * timing, so both outcomes must reach the same verdict for replay to be
      * stable; the relaxed oracle lets the discarded case fall through to the same
-     * leak / fd / recovery checks the propagating case runs.
+     * leak / fd / recovery checks the propagating case runs. The limit can be an
+     * explicit {@code LIMIT} or one the optimiser pushes into the scan -- notably
+     * the implicit {@code LIMIT 1} of {@code SELECT max(ts) ...} and its
+     * min/first/last siblings over the designated timestamp (see
+     * {@link #planHasPushedLimit}).
      */
     public Result runFault(GeneratedQuery query, FaultType type, Rnd rnd, boolean parallel) {
         String sql = query.sql();
@@ -399,7 +403,12 @@ public final class QueryRunner {
             // That is legitimate early-termination, not a swallowed error, so let it
             // fall through to the leak / fd / recovery checks below (which the
             // propagating case runs too, keeping the verdict timing-independent).
-            boolean discardedPastLimit = parallel && Chars.containsLowerCase(sql, "limit");
+            // The cutoff can be an explicit LIMIT (matched on the SQL text) or one
+            // the optimiser pushes into the page-frame scan, including the implicit
+            // LIMIT 1 of the min/max/first/last(designated timestamp) rewrite, which
+            // leaves no "limit" keyword in the SQL (see planHasPushedLimit).
+            boolean discardedPastLimit = parallel
+                    && (Chars.containsLowerCase(sql, "limit") || outcome.hasPushedLimit);
             if (faultFired && type != FaultType.FILE && !discardedPastLimit) {
                 return Result.failed(sql, new AssertionError(
                         "fault " + type + " fired but the query returned a result (swallowed): " + sql));
@@ -771,6 +780,26 @@ public final class QueryRunner {
                 || Chars.indexOf(plan, 0, n, "Async index") >= 0
                 || Chars.indexOf(plan, 0, n, "PostingIndex") >= 0
                 || Chars.indexOf(plan, 0, n, "CoveringIndex") >= 0;
+    }
+
+    /**
+     * Detects whether a rendered plan pushes a row limit down into the page-frame
+     * scan, letting it terminate before every frame is consumed. The marker is the
+     * {@code limit: N} attribute emitted by {@code AsyncFilteredRecordCursorFactory}
+     * / {@code AsyncJitFilteredRecordCursorFactory} when a {@code LIMIT} is pushed
+     * into the async filter (those two factories are the only ones that render it).
+     * <p>
+     * The optimiser introduces this limit not only for an explicit {@code LIMIT}
+     * but also implicitly: {@code SqlOptimiser.rewriteSingleFirstLastGroupBy}
+     * rewrites a lone {@code min} / {@code max} / {@code first} / {@code last} over
+     * the designated timestamp (e.g. {@code SELECT max(ts) FROM t WHERE ...}) into
+     * an {@code ORDER BY ts [DESC] LIMIT 1} scan, whose SQL text carries no
+     * {@code limit} keyword. Either way the pushed limit gives the same legitimate
+     * early termination the swallow oracle must tolerate: under the eager parallel
+     * reduce a fired fault can land on a frame past the cutoff and be discarded.
+     */
+    static boolean planHasPushedLimit(CharSequence plan) {
+        return Chars.indexOf(plan, 0, plan.length(), "limit: ") >= 0;
     }
 
     private static String renderOutcome(Outcome outcome, CharSequence rows) {
@@ -1452,7 +1481,9 @@ public final class QueryRunner {
                 }
             }
             planSink.of(factory, executionContext);
-            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), usesParquet);
+            // hasPushedLimit only feeds the fault oracle's swallow check (runFault),
+            // which runs runRaw / runRawMallocFault, not this differential path.
+            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, usesParquet);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1539,12 +1570,18 @@ public final class QueryRunner {
     private Outcome runRaw(String sql, StringSink rows) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            // Render the plan before opening the cursor: the marker is read by the
+            // swallow check in runFault, and rendering early keeps it out of the
+            // armed-fault window (it walks the factory tree without doing file I/O,
+            // evaluating test_fault(), or allocating native memory).
+            planSink.of(factory, executionContext);
+            boolean hasPushedLimit = planHasPushedLimit(planSink.getSink());
             int rowsRead;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 rowsRead = materialize(cursor, metadata, metadata.getColumnCount(), rows);
             }
-            return Outcome.ok(rowsRead, false, false);
+            return Outcome.ok(rowsRead, false, hasPushedLimit, false);
         } catch (SqlException e) {
             return Outcome.error(e, e.getFlyweightMessage().toString(), false);
         } catch (ImplicitCastException e) {
@@ -1575,13 +1612,17 @@ public final class QueryRunner {
     private Outcome runRawMallocFault(String sql, StringSink rows, long slack) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            // Render the plan before arming the RSS limit so the swallow check's
+            // marker is captured outside the fault window (see runRaw).
+            planSink.of(factory, executionContext);
+            boolean hasPushedLimit = planHasPushedLimit(planSink.getSink());
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
             int rowsRead;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 rowsRead = materialize(cursor, metadata, metadata.getColumnCount(), rows);
             }
-            return Outcome.ok(rowsRead, false, false);
+            return Outcome.ok(rowsRead, false, hasPushedLimit, false);
         } catch (SqlException e) {
             return Outcome.error(e, e.getFlyweightMessage().toString(), false);
         } catch (ImplicitCastException e) {
@@ -1618,6 +1659,7 @@ public final class QueryRunner {
     private record Outcome(
             int rowsRead,
             boolean hasIndex,
+            boolean hasPushedLimit,
             boolean usesParquet,
             Throwable failure,
             String exceptionClass,
@@ -1625,11 +1667,11 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, usesParquet, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, usesParquet, t, t.getClass().getSimpleName(), message);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, usesParquet, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean usesParquet) {
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, usesParquet, null, null, null);
         }
     }
 
