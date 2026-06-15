@@ -434,7 +434,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      * stays on the incremental branch up to the pre-flight decision.
      */
     @Test
-    public void testSealIncrementalFallsBackToFullSealWhenStrideTooLarge() throws Exception {
+    public void testSealIncrementalFallsBackToFullSealWhenStrideExceedsRssHeadroom() throws Exception {
         final int strideKeys = 256;     // keys 0..255 -> all of stride 0
         final int cleanKeys = 44;       // keys 256..299 -> stride 1, kept clean
         final int numKeys = strideKeys + cleanKeys;

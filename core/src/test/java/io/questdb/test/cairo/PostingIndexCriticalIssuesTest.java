@@ -198,6 +198,114 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The bounded {@code decodeKeyEFToNative(maxValues)} overload must reject an
+     * EF block whose encoded value count exceeds the caller's buffer capacity (a
+     * corrupt or mismatched generation whose block count disagrees with the
+     * gen-dir count the buffer was sized to) BEFORE writing past the buffer, and
+     * must pass a valid block whose count fits exactly. This is the shared guard
+     * the streaming-seal / rollback decode paths
+     * ({@code decodeDenseGenSingleKey}, {@code filterCountsForRollback}) rely on
+     * to bound writes against the gen-dir count -- without coverage an off-by-one
+     * in the {@code maxKeyCount - decodedTotal} capacity math would go unnoticed.
+     */
+    @Test
+    public void testDecodeKeyEFToNativeRejectsValueCountAboveCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 200;
+            final long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long encMaxBytes = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long blockAddr = Unsafe.malloc(encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+            final long destAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
+                long acc = 0;
+                for (int i = 0; i < count; i++) {
+                    acc += 1L + (i & 7); // strictly ascending, distinct -> valid EF input
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, acc);
+                }
+                ctx.ensureCapacity(count);
+                int size = PostingIndexUtils.encodeKeyEF(srcAddr, count, blockAddr, ctx);
+                Assert.assertTrue(size > 0);
+                Assert.assertEquals("expected an EF block",
+                        PostingIndexUtils.EF_FORMAT_SENTINEL, Unsafe.getInt(blockAddr));
+
+                // Valid: capacity == the encoded count -> decodes and round-trips.
+                PostingIndexUtils.decodeKeyEFToNative(blockAddr, destAddr, count);
+                for (int i = 0; i < count; i++) {
+                    Assert.assertEquals("round-trip mismatch at " + i,
+                            Unsafe.getLong(srcAddr + (long) i * Long.BYTES),
+                            Unsafe.getLong(destAddr + (long) i * Long.BYTES));
+                }
+
+                // Corruption: the block's count (200) exceeds the buffer capacity
+                // (199) -> must throw BEFORE writing rather than overflow destAddr.
+                try {
+                    PostingIndexUtils.decodeKeyEFToNative(blockAddr, destAddr, count - 1);
+                    Assert.fail("decodeKeyEFToNative must reject a count above capacity");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "EF value count out of range");
+                }
+            } finally {
+                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(blockAddr, encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * The bounded {@code decodeKeyToNative(maxValues)} overload must reject a
+     * DELTA (delta+FoR) block whose summed block-internal counts exceed the
+     * caller's buffer capacity BEFORE writing any value, and pass a valid block
+     * whose total fits. Same shared corruption guard as the EF variant, exercised
+     * on the non-EF decode path (the path {@code decodeDenseGenSingleKey} takes
+     * for delta-encoded strides).
+     */
+    @Test
+    public void testDecodeKeyToNativeRejectsValueCountAboveCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 200; // > BLOCK_CAPACITY (64) -> several internal blocks
+            final long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long encMaxBytes = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long blockAddr = Unsafe.malloc(encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+            final long destAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext ectx = new PostingIndexUtils.EncodeContext();
+                 PostingIndexUtils.DecodeContext dctx = new PostingIndexUtils.DecodeContext()) {
+                long acc = 0;
+                for (int i = 0; i < count; i++) {
+                    acc += 1L + (i & 15);
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, acc);
+                }
+                ectx.ensureCapacity(count);
+                int size = PostingIndexUtils.encodeKeyNativeDeltaFoR(srcAddr, count, blockAddr, ectx);
+                Assert.assertTrue(size > 0);
+                Assert.assertTrue("expected a non-EF (delta) block",
+                        Unsafe.getInt(blockAddr) != PostingIndexUtils.EF_FORMAT_SENTINEL);
+
+                // Valid: capacity == the encoded total -> decodes and round-trips.
+                PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, count);
+                for (int i = 0; i < count; i++) {
+                    Assert.assertEquals("round-trip mismatch at " + i,
+                            Unsafe.getLong(srcAddr + (long) i * Long.BYTES),
+                            Unsafe.getLong(destAddr + (long) i * Long.BYTES));
+                }
+
+                // Corruption: the summed block counts (200) exceed the buffer
+                // capacity (199) -> must throw BEFORE writing rather than overflow.
+                try {
+                    PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, count - 1);
+                    Assert.fail("decodeKeyToNative must reject a count above capacity");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "decoded value count exceeds buffer");
+                }
+            } finally {
+                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(blockAddr, encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
      * Critical #8: ExpressionNode.deepClone restoration in the covering
      * DISTINCT path leaves the original mutated nodes in expressionNodePool.
      * If the optimization is rejected, downstream compilation must still
