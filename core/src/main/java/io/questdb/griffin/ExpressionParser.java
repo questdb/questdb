@@ -2013,10 +2013,17 @@ public class ExpressionParser {
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
-                            } else {
+                            } else if (en.token instanceof GenericLexer.FloatingSequence) {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
+                            } else {
+                                // 'en' is not a valid qualifier for a dotted name. This happens for
+                                // malformed input such as "tables()/.env", where the top of the stack
+                                // is a pending operator ('/') rather than an identifier. Reject it
+                                // cleanly instead of letting the cast above fail with an internal
+                                // ClassCastException (which would surface as a 500/critical error).
+                                throw SqlException.$(lastPos, "'.' is unexpected here");
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
