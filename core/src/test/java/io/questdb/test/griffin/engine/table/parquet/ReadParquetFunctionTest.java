@@ -246,10 +246,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         parquet file sequential scan
                           columns: a_ts,a_long
                         """;
-                assertPlanNoLeakCheck(
-                        sink,
-                        expectedPlan
-                );
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
 
                 assertSqlCursors0("select a_ts, a_long from x");
             }
@@ -284,10 +283,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         """;
                 sink.clear();
                 sink.put("select an_int, a_long, a_str from read_parquet('x.parquet')");
-                assertPlanNoLeakCheck(
-                        sink,
-                        expectedPlan
-                );
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
                 assertSqlCursors0("select an_int, a_long, a_str from x");
             }
         });
@@ -321,10 +319,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         parquet file sequential scan
                           columns: a_long
                         """;
-                assertPlanNoLeakCheck(
-                        sink,
-                        expectedPlan
-                );
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
                 assertSqlCursors0("select a_long from x");
             }
         });
@@ -360,10 +357,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                             parquet file sequential scan
                               columns: a_long
                         """;
-                assertPlanNoLeakCheck(
-                        "select a_long + 1 from read_parquet('x.parquet')",
-                        expectedPlan
-                );
+                assertQuery("select a_long + 1 from read_parquet('x.parquet')")
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
             }
         });
     }
@@ -457,10 +453,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         parquet file sequential scan
                           columns: id,ts
                         """;
-                assertPlanNoLeakCheck(
-                        query,
-                        expectedPlan
-                );
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
                 assertQuery(query + " limit 10")
                         .noLeakCheck()
                         .timestamp("ts")
@@ -479,6 +474,56 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 9\t1970-01-01T00:00:09.000000Z
                                 10\t1970-01-01T00:00:10.000000Z
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testDictionaryNumValuesOverBuffer() throws Exception {
+        // A foreign parquet whose dictionary page header declares more values than its
+        // buffer can hold (each var-width value needs at least a 4-byte length prefix)
+        // must surface a clean SQL error, not abort the JVM. Before the guard,
+        // BaseVarDictDecoder reserved a Vec sized by the attacker-controlled num_values
+        // (up to ~2.1 billion entries), and the allocator refusing that multi-gigabyte
+        // request aborts the process over JNI. The committed fixture is a valid
+        // dictionary-encoded VARCHAR column ("v") with only the dict header's
+        // num_values patched over the buffer size; the
+        // generate_dict_num_values_over_buffer_fixture Rust test (core/rust/qdbr)
+        // builds and verifies it. Draining the cursor forces the dictionary decode
+        // that trips the guard. This is a distinct crash class and decode path from
+        // testRleDictionaryIndexBitWidthOver32 (the bit-width unreachable!()), so it
+        // pins JNI propagation for the dictionary-construction guard too.
+        assertMemoryLeak(() -> {
+            final String fixture = "dict_num_values_over_buffer.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/broken/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            sink.clear();
+            sink.put("SELECT v FROM read_parquet('").put(fixture).put("')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain to force the dictionary decode
+                        }
+                        Assert.fail("expected a decode error for an oversized dictionary num_values");
+                    }
+                } catch (CairoException e) {
+                    // Reaching a clean CairoException here -- rather than a JVM abort
+                    // when the allocator refuses the oversized reservation -- is the
+                    // contract. Both readers must surface the guard's specific "too
+                    // short to hold" message: the parallel reader reports it directly,
+                    // and the non-parallel ReadParquetRecordCursor now appends the
+                    // underlying cause to its "likely corrupted" wrapper instead of
+                    // discarding it (without that, this assertion fails for parallel=false).
+                    TestUtils.assertContains(e.getMessage(), "too short to hold");
+                }
             }
         });
     }
@@ -649,6 +694,61 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOffsetWithVarLenColumns() throws Exception {
+        // A LIMIT query decodes only a prefix of each row group. For var-len
+        // columns on DELTA_LENGTH_BYTE_ARRAY pages the value bytes start after
+        // the FULL delta-encoded lengths block; the decoder used to compute
+        // their offset from the partially consumed block and served length
+        // bytes as values (garbage strings of the right length).
+        assertMemoryLeak(() -> {
+            final long rows = 5000;
+            execute("create table x as (select" +
+                    " x as id," +
+                    " rnd_str(1, 16, 4) as a_str," +
+                    " rnd_varchar(1, 16, 4) as a_varchar," +
+                    " rnd_bin(1, 24, 4) as a_bin" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 1");
+                assertSqlCursors0("select * from x limit 1");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 100, 500");
+                assertSqlCursors0("select * from x limit 100, 500");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 999, 2501");
+                assertSqlCursors0("select * from x limit 999, 2501");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit -2, -1999");
+                assertSqlCursors0("select * from x limit -2, -1999");
+            }
+        });
+    }
+
+    @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;
@@ -684,16 +784,19 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.put("select * from read_parquet('x.parquet')");
 
                 if (parallel) {
-                    assertPlanNoLeakCheck(sink, """ 
-                            parquet page frame scan
-                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
-                            """
-                    );
+                    assertQuery(sink)
+                            .noLeakCheck()
+                            .assertsPlan(""" 
+                                    parquet page frame scan
+                                      columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                                    """);
                 } else {
-                    assertPlanNoLeakCheck(sink, """ 
-                            parquet file sequential scan
-                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
-                            """);
+                    assertQuery(sink)
+                            .noLeakCheck()
+                            .assertsPlan(""" 
+                                    parquet file sequential scan
+                                      columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                                    """);
                 }
 
                 sink.put(" where 1 = 2");
@@ -1180,6 +1283,52 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
                 assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testRleDictionaryIndexBitWidthOver32() throws Exception {
+        // A foreign parquet whose RLE_DICTIONARY data page declares a dictionary
+        // index bit width > 32 must surface a clean SQL error, not abort the JVM
+        // via an unreachable!() in the bitpacked decoder. The committed fixture is
+        // a valid dictionary-encoded INT32 column ("v") with only that single page
+        // byte patched to 40; the generate_rle_dict_index_bitwidth_fixture Rust
+        // test (core/rust/qdbr) builds and verifies it. Draining the cursor forces
+        // the page decode that trips the guard.
+        assertMemoryLeak(() -> {
+            final String fixture = "rle_dict_index_bitwidth_over_32.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/broken/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            sink.clear();
+            sink.put("SELECT v FROM read_parquet('").put(fixture).put("')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain to force page decode
+                        }
+                        Assert.fail("expected a decode error for an oversized dictionary index bit width");
+                    }
+                } catch (CairoException e) {
+                    // Reaching a clean CairoException here -- rather than a JVM abort
+                    // via the bitpacked decoder's unreachable!() -- is the contract.
+                    // Both readers must surface the guard's specific "exceeds" detail:
+                    // the parallel reader reports it directly, and the non-parallel
+                    // ReadParquetRecordCursor now appends the underlying cause to its
+                    // "likely corrupted" wrapper instead of discarding it, so a
+                    // regression in either reader's path can no longer hide behind the
+                    // other's wording. The Rust generate_rle_dict_index_bitwidth_fixture
+                    // test pins the exact guard message.
+                    TestUtils.assertContains(e.getMessage(), "exceeds");
+                }
             }
         });
     }

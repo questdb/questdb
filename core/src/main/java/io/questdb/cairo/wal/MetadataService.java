@@ -167,6 +167,8 @@ public interface MetadataService {
 
     int getMetaMaxUncommittedRows();
 
+    int getMetaTableFormat();
+
     TableRecordMetadata getMetadata();
 
     int getPartitionBy();
@@ -248,6 +250,13 @@ public interface MetadataService {
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
+
+    /**
+     * Sets the default storage format for new partitions of this table.
+     * See {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_NATIVE} and
+     * {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_PARQUET}.
+     */
+    void setMetaTableFormat(int tableFormat);
 
     /**
      * Sets the time-to-live (TTL) of the data in this table:

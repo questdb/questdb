@@ -1528,9 +1528,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 7_200_000_000) ts " +
                     "FROM long_sequence(3)) TIMESTAMP(ts)");
             // Verify the plan shows fast path (Sample By Fill, not Sample By)
-            assertPlanNoLeakCheck(
-                    "SELECT ts, sum(val), first(sym) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
-                    """
+            assertQuery("SELECT ts, sum(val), first(sym) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               stride: '1h'
                               fill: mixed
@@ -1544,8 +1544,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -1675,9 +1674,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             3.0\t2024-01-01T04:00:00.000000Z
                             """);
             // Verify fast path plan (Sample By Fill, not Sample By)
-            assertPlanNoLeakCheck(
-                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
-                    """
+            assertQuery("SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               stride: '1h'
                               fill: prev
@@ -1691,8 +1690,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -2126,21 +2124,20 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
         try {
             for (String strategy : strategies) {
                 setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
-                assertMemoryLeak(() -> {
-                    execute("DROP TABLE IF EXISTS t");
-                    execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) " +
-                            "TIMESTAMP(ts) PARTITION BY DAY");
-                    execute("INSERT INTO t VALUES " +
-                            "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                            "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
-                            "('A', 3.0, '2024-01-01T02:00:00.000000Z')");
-                    try (RecordCursorFactory factory = select(
-                            "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
-                                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")) {
-                        assertCursor(expected, factory, true, false, false, sqlExecutionContext);
-                        assertCursor(expected, factory, true, false, false, sqlExecutionContext);
-                    }
-                });
+                // returns() re-reads the same factory, covering each sort cursor's of() reuse path.
+                assertQuery(
+                        "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
+                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")
+                        .ddl(
+                                "DROP TABLE IF EXISTS t",
+                                "CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                                "INSERT INTO t VALUES " +
+                                        "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('A', 3.0, '2024-01-01T02:00:00.000000Z')"
+                        )
+                        .timestamp("ts")
+                        .returns(expected);
             }
         } finally {
             setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "light_encoded");

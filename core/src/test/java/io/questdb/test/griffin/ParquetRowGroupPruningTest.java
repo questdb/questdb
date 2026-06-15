@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
@@ -39,6 +40,56 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void setUp() {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         super.setUp();
+    }
+
+    @Test
+    public void testRowGroupPruningSurvivesEmptyMetadataCacheWindow() throws Exception {
+        // Regression for the parquet pruning probe
+        // (AbstractPartitionFrameCursorFactory#hasParquetFormatPartitions). The table
+        // token is resolved from the synchronously loaded registry, but the metadata
+        // cache hydrates lazily (async at startup, or after a clearCache()). The probe
+        // must hydrate the table on demand before reading the cache; otherwise it sees
+        // the table as missing, returns false, and row-group pruning is silently skipped
+        // during the hydration window. Pruning is an optimization, not a correctness
+        // feature, so the regression does NOT change query results - it can only be
+        // caught by asserting on the pruning signal (rowGroupsSkipped).
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("""
+                    INSERT INTO x VALUES
+                    (8000, '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // Reproduce the registered-but-not-yet-cached window: evict the table from
+            // the metadata cache so the query below is the first reader to need it.
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.clearCache();
+            }
+            // Precondition: the table really is absent from the cache. getTable() reads
+            // the map without hydrating, so it stays null until the pruning probe
+            // hydrates on demand.
+            final TableToken token = engine.getTableTokenIfExists("x");
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                Assert.assertNull(metadataRO.getTable(token));
+            }
+
+            // The filtered query must still skip row groups: hasParquetFormatPartitions()
+            // hydrates the table on demand, so pruning is applied even though the cache
+            // started empty. Without the on-demand hydrate this assertion fails (0 skipped).
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -991 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+        });
     }
 
     @Test
@@ -1407,6 +1458,84 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             val
                             
                             world
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalScanStringMultiBlockPage() throws Exception {
+        // Force a large row-group size so all 300 rows land in one row group (one
+        // data page) regardless of execution order. The property is a static
+        // override that persists across test methods (reset only in @AfterClass),
+        // and many sibling tests lower it to 100; a value below 128 would split the
+        // rows into single-block row groups whose length stream never spans multiple
+        // blocks, silently bypassing the partial multi-block read path this guards.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        // A STRING column read over a partial row-group range. 300 rows land in a
+        // single row group whose one data page holds a DELTA_LENGTH_BYTE_ARRAY
+        // length stream that spans several 128-value blocks. An interval ending
+        // inside the row group makes the column read stop before the later blocks
+        // (rowGroupHi < the page's value count). The data offset must still skip
+        // the whole length stream; it used to under-count the unread blocks and
+        // return shifted values (e.g. "v1" decoded as a string with leading NULs).
+        // Existing STRING tests miss this: they filter on the value column (a
+        // different, immune decode path) and use only a handful of rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT 'v' || x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(300)
+                    """);
+            // A row in the next partition so 2024-01-01 is not the active partition
+            // and CONVERT actually rewrites it to parquet.
+            execute("INSERT INTO x VALUES ('tail', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE ts < '2024-01-01T00:05:00.000000Z'")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            v1
+                            v2
+                            v3
+                            v4
+                            v5
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalScanStringMultiBlockPageBackward() throws Exception {
+        // Force a large row-group size for the same reason as
+        // testIntervalScanStringMultiBlockPage: keep all 300 rows in one multi-block
+        // page so a sibling test's lowered override cannot mask the partial-read path.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        // As testIntervalScanStringMultiBlockPage but with descending timestamp
+        // order, which drives the backward page-frame cursor. It computes the same
+        // partial (rowGroupHi < value count) frame and reads the STRING column over
+        // it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT 'v' || x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(300)
+                    """);
+            // A row in the next partition so 2024-01-01 is not the active partition
+            // and CONVERT actually rewrites it to parquet.
+            execute("INSERT INTO x VALUES ('tail', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE ts < '2024-01-01T00:05:00.000000Z' ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            v5
+                            v4
+                            v3
+                            v2
+                            v1
                             """);
         });
     }

@@ -53,6 +53,12 @@ import org.junit.Test;
  */
 public class RowExpiryWindowTest extends AbstractCairoTest {
 
+    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
+    // builder (OSS #7195). Drive the builder via returnsOnce() so the suite's calls keep working.
+    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
+        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+    }
+
     @Before
     public void setUp() {
         super.setUp();

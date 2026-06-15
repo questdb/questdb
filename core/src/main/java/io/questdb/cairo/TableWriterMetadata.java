@@ -43,6 +43,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private long o3MaxLag;
     private int partitionBy;
     private int symbolMapCount;
+    private int tableFormat;
     private int tableId;
     private TableToken tableToken;
     private int ttlHoursOrMonths;
@@ -127,6 +128,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getTableFormat() {
+        return tableFormat;
+    }
+
+    @Override
     public int getTableId() {
         return tableId;
     }
@@ -171,6 +177,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.expiryPredicate = null;
         this.expiryCleanupIntervalMicros = 0;
+        this.tableFormat = TableUtils.getTableFormat(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -257,8 +264,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = o3MaxLagUs;
     }
 
-    public void setTxReader(TxReader txReader) {
-        this.txReader = txReader;
+    public void setTableFormat(int tableFormat) {
+        this.tableFormat = tableFormat;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
@@ -268,6 +275,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     public void setExpiry(String predicate, long cleanupIntervalMicros) {
         this.expiryPredicate = predicate;
         this.expiryCleanupIntervalMicros = cleanupIntervalMicros;
+    }
+
+    public void setTxReader(TxReader txReader) {
+        this.txReader = txReader;
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -348,6 +359,13 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 oldMeta.isSymbolCacheFlag()
         );
         newColumnMetadata.setParquetEncodingConfig(oldMeta.getParquetEncodingConfig());
+        // Preserve the covering-index schema across a symbol-capacity change.
+        // The covering column indices (and, derived from them, the column's
+        // covering flag) live on the column metadata; rebuilding the column to
+        // change its capacity must carry them over, otherwise the next
+        // rewriteAndSwapMetadata() persists a _meta with no covering flag/section
+        // and every reader thereafter sees the posting index as non-covering.
+        newColumnMetadata.setCoveringColumnIndices(oldMeta.getCoveringColumnIndices());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 

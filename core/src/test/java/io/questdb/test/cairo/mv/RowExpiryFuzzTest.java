@@ -50,6 +50,12 @@ import java.util.Random;
  */
 public class RowExpiryFuzzTest extends AbstractCairoTest {
 
+    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
+    // builder (OSS #7195). Drive the builder via returnsOnce() so the suite's calls keep working.
+    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
+        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+    }
+
     private static final long BASE_TS = 1704067200000000L;   // 2024-01-01T00:00:00Z
     private static final int NUM_KEYS = 4;
     private static final int ROWS = 40;

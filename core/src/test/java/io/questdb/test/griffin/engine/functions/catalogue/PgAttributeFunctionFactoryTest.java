@@ -40,17 +40,17 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     " from y b " +
                     "order by b.b";
 
-            assertPlanNoLeakCheck(query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [b1]
-                                    CachedWindow
-                                      orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]
-                                        SelectedRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: y
+                                    CachedWindowLight
+                                      orderedFunctions: [[b desc] => [row_number() over (partition by [a])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: y
                             """);
 
             assertQuery(query)

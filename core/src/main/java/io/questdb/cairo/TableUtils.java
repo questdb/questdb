@@ -114,13 +114,17 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     // Trustworthy inline symbol capacity in _meta was introduced at minor version 1 (#5242); gate the fast
     // hydration read on THIS, not LATEST, so a later LATEST bump never forces v1 tables onto the slow path.
     public static final short META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY = 1;
+    public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
-    public static final short META_FORMAT_MINOR_VERSION_EXPIRE_ROWS = 2;
+    // EXPIRE ROWS trailing section was added after TABLE_FORMAT (v2). It lives at v3 so a master-written
+    // v2 _meta (table_format, no policy) is read as "no policy" by version gate rather than relying on
+    // EOF-bounds handling of the absent trailing section.
+    public static final short META_FORMAT_MINOR_VERSION_EXPIRE_ROWS = 3;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -135,6 +139,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
+    public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -149,6 +154,8 @@ public final class TableUtils {
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    public static final int TABLE_FORMAT_NATIVE = 0;
+    public static final int TABLE_FORMAT_PARQUET = 1;
     // Regular data table kind
     public static final int TABLE_KIND_REGULAR_TABLE = 0;
     // Parquet export table kind - allows table creation in read-only mode for parquet exports
@@ -780,6 +787,40 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    /**
+     * Derives the dense descriptor indexes of columns carrying the bloom-filter flag
+     * (bit 25, set by {@link #packParquetConfig}) in their per-column parquet encoding
+     * config, appending them to {@code indexes}.
+     * <p>
+     * The index space is the parquet encoder's dense column list: deleted columns are
+     * skipped, so the produced indexes line up with the columns added to the
+     * {@link io.questdb.griffin.engine.table.parquet.PartitionDescriptor PartitionDescriptor}
+     * by both {@link #produceParquetFromNative} (CONVERT) and
+     * {@code O3PartitionJob.writeFreshParquetFromO3} (fresh O3 partitions). The Rust encoder
+     * reads bloom columns solely from this explicit list, never from the per-column config,
+     * so every encoder path that wants config-driven bloom filters must build the list here.
+     * <p>
+     * Like {@link #parseBloomFilterColumnIndexes}, this method only appends; the caller clears
+     * {@code indexes} first when a fresh result is required.
+     *
+     * @param metadata table metadata whose per-column parquet encoding config flags are inspected
+     * @param indexes  reusable DirectIntList that receives the flagged columns' dense indexes
+     */
+    public static void deriveBloomFilterColumnIndexes(RecordMetadata metadata, DirectIntList indexes) {
+        final int columnCount = metadata.getColumnCount();
+        int descriptorIndex = 0;
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType <= 0) {
+                continue; // skip deleted columns
+            }
+            if (isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
+                indexes.add(descriptorIndex);
+            }
+            descriptorIndex++;
+        }
     }
 
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
@@ -1970,17 +2011,7 @@ public final class TableUtils {
                 bloomFilterIndexes.clear();
                 if (useMetadataBloomFilters) {
                     // Derive bloom filter columns from per-column metadata flags
-                    int metaDescriptorIndex = 0;
-                    for (int i = 0; i < columnCount; i++) {
-                        final int colType = metadata.getColumnType(i);
-                        if (colType <= 0) {
-                            continue;
-                        }
-                        if (TableUtils.isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
-                            bloomFilterIndexes.add(metaDescriptorIndex);
-                        }
-                        metaDescriptorIndex++;
-                    }
+                    deriveBloomFilterColumnIndexes(metadata, bloomFilterIndexes);
                 } else {
                     // Explicit bloom_filter_columns override from CONVERT PARTITION WITH clause
                     parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
@@ -2598,6 +2629,7 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
+        mem.putInt(tableStruct.getTableFormat());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2815,6 +2847,12 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static int getTableFormat(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TABLE_FORMAT)
+                ? metaMem.getInt(TableUtils.META_OFFSET_TABLE_FORMAT)
+                : TABLE_FORMAT_NATIVE;
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {

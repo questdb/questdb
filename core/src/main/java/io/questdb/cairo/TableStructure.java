@@ -57,6 +57,15 @@ public interface TableStructure {
 
     int getSymbolCapacity(int columnIndex);
 
+    /**
+     * Returns the default storage format for new partitions.
+     * {@link TableUtils#TABLE_FORMAT_NATIVE} (default) or
+     * {@link TableUtils#TABLE_FORMAT_PARQUET}.
+     */
+    default int getTableFormat() {
+        return TableUtils.TABLE_FORMAT_NATIVE;
+    }
+
     CharSequence getTableName();
 
     int getTimestampIndex();

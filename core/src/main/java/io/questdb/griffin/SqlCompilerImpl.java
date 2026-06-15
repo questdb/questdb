@@ -1200,28 +1200,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
 
-        // Auto-append the designated timestamp on POSTING indexes, even
-        // when the user gave no INCLUDE clause. This is the bare
-        // ALTER TABLE ... ADD INDEX TYPE POSTING case; without the
-        // append the default config's covering benefit silently
-        // disappears.
-        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()) {
+        // Auto-append the designated timestamp on POSTING indexes, but only
+        // when the user gave an INCLUDE clause with at least one column. A bare
+        // ALTER TABLE ... ADD INDEX TYPE POSTING (no INCLUDE) is a plain,
+        // non-covering posting index; the timestamp is auto-added only to round
+        // out an explicit covering set, never to turn a non-covering index into
+        // a covering one on its own.
+        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()
+                && coveringColumnNames != null && coveringColumnNames.size() > 0) {
             int tsIndex = metadata.getTimestampIndex();
             if (tsIndex >= 0 && tsIndex != columnIndex) {
                 CharSequence tsName = metadata.getColumnName(tsIndex);
                 boolean isTimestampAlreadyIncluded = false;
-                if (coveringColumnNames != null) {
-                    for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
-                        if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
-                            isTimestampAlreadyIncluded = true;
-                            break;
-                        }
+                for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                        isTimestampAlreadyIncluded = true;
+                        break;
                     }
                 }
                 if (!isTimestampAlreadyIncluded) {
-                    if (coveringColumnNames == null) {
-                        coveringColumnNames = new ObjList<>(1);
-                    }
                     coveringColumnNames.add(tsName);
                 }
             }
@@ -1662,6 +1659,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void alterTableSetFormat(
+            TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        final int formatPos = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "'parquet' or 'native'");
+        final int format;
+        if (isParquetKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_PARQUET;
+        } else if (isNativeKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_NATIVE;
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
+        }
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                if (!PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on partitioned tables");
+                }
+                if (!metadata.isWalEnabled()) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on WAL tables");
+                }
+            }
+            if (tableToken.isMatView()) {
+                throw SqlException.$(formatPos, "FORMAT PARQUET is not supported on materialized views");
+            }
+        }
+        final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetTableFormat(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                format
+        );
+        compiledQuery.ofAlter(setFormat.build());
+    }
+
     private void alterTableSetParam(
             CharSequence paramName, CharSequence value, int paramNamePosition,
             TableToken tableToken, int tableNamePosition, int tableId
@@ -1730,6 +1762,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
                 }
+                // Converting a WAL table to non-WAL is intentionally allowed even when the
+                // table is FORMAT PARQUET or has parquet partitions. This is a very useful
+                // operational workaround for a "poison pill" WAL transaction (one that keeps
+                // failing to apply and suspends the whole table): convert the table to non-WAL
+                // to discard the WAL and its sequencer, then convert it back to WAL. Blocking
+                // the conversion would take that escape hatch away. Parquet partitions stay
+                // parquet and remain readable; converting back to WAL restores normal parquet
+                // ingestion.
             }
 
             if (!executionContext.isValidationOnly()) {
@@ -2541,7 +2581,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isExpireKeyword(tok))) {
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isExpireKeyword(tok) && !isFormatKeyword(tok))) {
                     compileAlterTableSetExt(executionContext, tok, tableToken, tableNamePosition);
                     return;
                 }
@@ -2561,6 +2601,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
                 } else if (isExpireKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
+                } else if (isFormatKeyword(tok)) {
+                    alterTableSetFormat(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -5753,9 +5795,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 .$(", tableNamePosition=").$(tableNamePosition)
                 .$(']').$();
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl', 'format' or 'type' expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl', 'format' or 'type' expected");
     }
 
     protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {

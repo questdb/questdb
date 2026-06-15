@@ -90,6 +90,12 @@ import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class MatViewTest extends AbstractCairoTest {
     private final int rowsPerQuery;
+
+    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
+    // builder (OSS #7195). Drive the builder via returnsOnce() so the row-expiry passthrough tests work.
+    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
+        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+    }
     private final TestTimestampType timestampType;
 
     public MatViewTest() {
@@ -3441,10 +3447,9 @@ public class MatViewTest extends AbstractCairoTest {
                             2
                             """);
 
-            assertQuery("explain " + sql)
+            assertQuery(sql)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2
@@ -3465,10 +3470,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             if (JitUtil.isJitSupported()) {
-                assertQuery("explain " + sql)
+                assertQuery(sql)
                         .noLeakCheck()
-                        .returnsOnce("""
-                                QUERY PLAN
+                        .assertsPlan("""
                                 Async JIT Filter workers: 1
                                   filter: sym='eurusd'
                                     PageFrame
@@ -3476,10 +3480,9 @@ public class MatViewTest extends AbstractCairoTest {
                                         Frame forward scan on: price_1h
                                 """);
             } else {
-                assertQuery("explain " + sql)
+                assertQuery(sql)
                         .noLeakCheck()
-                        .returnsOnce("""
-                                QUERY PLAN
+                        .assertsPlan("""
                                 Async Filter workers: 1
                                   filter: sym='eurusd'
                                     PageFrame
@@ -3492,10 +3495,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            assertQuery("explain " + sql)
+            assertQuery(sql)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2
@@ -3551,10 +3553,9 @@ public class MatViewTest extends AbstractCairoTest {
                             eurusd\t1.314\t2024-09-14T13:00:00.000000Z
                             """);
 
-            assertQuery("explain " + sql)
+            assertQuery(sql)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2

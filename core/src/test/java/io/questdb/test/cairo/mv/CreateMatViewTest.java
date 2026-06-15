@@ -2173,6 +2173,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateMatViewFailView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            execute("create view " + VIEW1 + " as (select ts, avg(v) as v from " + TABLE1 + " sample by 1m)");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create materialized view " + VIEW1,
+                    30,
+                    "materialized view name expected, got view name"
+            );
+        });
+    }
+
+    @Test
     public void testShowCreatePeriodMatView() throws Exception {
         final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
         final DdlSerializationTest[] tests = new DdlSerializationTest[]{

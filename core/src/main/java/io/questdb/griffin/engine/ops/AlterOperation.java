@@ -77,7 +77,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
-    public final static short SET_EXPIRE = SET_PARQUET_ENCODING + 1; // 27
+    public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    public final static short SET_EXPIRE = SET_TABLE_FORMAT + 1; // 28
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -114,14 +115,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
-    public static long getFlags(byte indexType, boolean dedupKey) {
-        long flags = FLAGS_FORMAT_V_CURRENT | (indexType & INDEX_TYPE_MASK);
-        if (dedupKey) {
-            flags |= BIT_DEDUP_KEY;
-        }
-        return flags;
-    }
-
     /**
      * Decodes the index-type byte from a serialized ALTER ADD_COLUMN /
      * CHANGE_COLUMN_TYPE flags long. Detects the layout version via the
@@ -146,6 +139,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             return (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
         }
         return (flags & FLAGS_V1_BIT_DEDUP_KEY) == FLAGS_V1_BIT_DEDUP_KEY;
+    }
+
+    public static long getFlags(byte indexType, boolean dedupKey) {
+        long flags = FLAGS_FORMAT_V_CURRENT | (indexType & INDEX_TYPE_MASK);
+        if (dedupKey) {
+            flags |= BIT_DEDUP_KEY;
+        }
+        return flags;
     }
 
     // todo: supply bitset to indicate which ops are supported and which arent
@@ -210,6 +211,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
             case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL, SET_EXPIRE ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
+            case SET_TABLE_FORMAT -> securityContext.authorizeAlterTableSetFormat(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
             case CONVERT_PARTITION_TO_PARQUET ->
@@ -652,6 +654,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    private void applyTableFormat(MetadataService svc) {
+        final int tableFormat = (int) extraInfo.get(0);
+        try {
+            svc.setMetaTableFormat(tableFormat);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void applyTtl(MetadataService svc) {
         final int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
@@ -799,6 +811,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case SET_PARQUET_ENCODING:
                 setParquetEncoding(svc);
+                break;
+            case SET_TABLE_FORMAT:
+                applyTableFormat(svc);
                 break;
             default:
                 LOG.error()

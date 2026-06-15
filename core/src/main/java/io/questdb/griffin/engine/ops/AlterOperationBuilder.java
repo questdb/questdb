@@ -332,6 +332,15 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetTableFormat(int tableNamePosition, TableToken tableToken, int tableId, int tableFormat) {
+        this.command = SET_TABLE_FORMAT;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(tableFormat);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetTtl(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
         this.command = SET_TTL;
         this.tableNamePosition = tableNamePosition;

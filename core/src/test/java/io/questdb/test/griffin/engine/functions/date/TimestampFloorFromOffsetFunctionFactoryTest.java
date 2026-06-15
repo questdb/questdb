@@ -229,234 +229,215 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp);");
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '00:00', null) from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '00:00', null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '00:00', 'UTC+01:00') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '00:00', 'UTC+01:00') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,null,'00:00','UTC+01:00')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000001Z', null, 'UTC+12:00') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000001Z', null, 'UTC+12:00') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,'1980-01-01T16:00:00.000Z','00:00','UTC+12:00')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000Z', '00:15', null) from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000Z', '00:15', null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,'1980-01-01T16:15:00.000Z')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '00:00', 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '00:00', 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,null,'00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, '1980-01-01T00:00:00.000000Z', null, 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, '1980-01-01T00:00:00.000000Z', null, 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,'1980-01-01T00:00:00.000Z','00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('33m', ts, '1980-01-01T16:00:00.000000Z', null, 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('33m', ts, '1980-01-01T16:00:00.000000Z', null, 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('33m',ts,'1980-01-01T16:00:00.000Z','00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('33m', ts, null, '00:00', 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('33m', ts, null, '00:00', 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('33m',ts,null,'00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '12:00', 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '12:00', 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,null,'12:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('1d', ts, null, '00:01', null) from x",
-                    """
+            assertQuery("select timestamp_floor('1d', ts, null, '00:01', null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'1970-01-01T00:01:00.000Z')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, :offset, null) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, :offset, null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,:offset::string,null)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, '2016-02-10T16:00:00.000Z', :offset, 'UTC+00:00') from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, '2016-02-10T16:00:00.000Z', :offset, 'UTC+00:00') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'2016-02-10T16:00:00.000Z',:offset::string,'UTC+00:00')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, :offset, 'Europe/London') from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, :offset, 'Europe/London') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,:offset::string,'Europe/London')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, '2022-02-02T01:00:00.000Z', :offset, 'Europe/London') from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, '2022-02-02T01:00:00.000Z', :offset, 'Europe/London') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'2022-02-02T01:00:00.000Z',:offset::string,'Europe/London')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, '00:00', :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, '00:00', :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,'00:00',:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, '1980-01-01T00:00:00.000000Z', null, :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, '1980-01-01T00:00:00.000000Z', null, :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'1980-01-01T00:00:00.000Z','00:00',:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Paris");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, '03:00', :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, '03:00', :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,'03:00',:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('1d', ts, null, :offset, :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('1d', ts, null, :offset, :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,:offset::string,:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('1d', ts, '2016-02-10T16:18:22.862Z', :offset, :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('1d', ts, '2016-02-10T16:18:22.862Z', :offset, :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'2016-02-10T16:18:22.862Z',:offset::string,:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -465,234 +446,215 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp_ns);");
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '00:00', null) from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '00:00', null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '00:00', 'UTC+01:00') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '00:00', 'UTC+01:00') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,null,'00:00','UTC+01:00')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000123Z', null, 'UTC+12:00') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000123Z', null, 'UTC+12:00') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,'1980-01-01T16:00:00.000Z','00:00','UTC+12:00')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000Z', '00:15', null) from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, '1980-01-01T16:00:00.000000Z', '00:15', null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,'1980-01-01T16:15:00.000Z')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '00:00', 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '00:00', 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,null,'00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, '1980-01-01T00:00:00.000000000Z', null, 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, '1980-01-01T00:00:00.000000000Z', null, 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,'1980-01-01T00:00:00.000Z','00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('33m', ts, '1980-01-01T16:00:00.000000098Z', null, 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('33m', ts, '1980-01-01T16:00:00.000000098Z', null, 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('33m',ts,'1980-01-01T16:00:00.000Z','00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('33m', ts, null, '00:00', 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('33m', ts, null, '00:00', 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('33m',ts,null,'00:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('3d', ts, null, '12:00', 'Europe/Berlin') from x",
-                    """
+            assertQuery("select timestamp_floor('3d', ts, null, '12:00', 'Europe/Berlin') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('3d',ts,null,'12:00','Europe/Berlin')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('1d', ts, null, '00:01', null) from x",
-                    """
+            assertQuery("select timestamp_floor('1d', ts, null, '00:01', null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'1970-01-01T00:01:00.000Z')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, :offset, null) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, :offset, null) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,:offset::string,null)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, '2016-02-10T16:00:00.000000Z', :offset, 'UTC+00:00') from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, '2016-02-10T16:00:00.000000Z', :offset, 'UTC+00:00') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'2016-02-10T16:00:00.000Z',:offset::string,'UTC+00:00')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, :offset, 'Europe/London') from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, :offset, 'Europe/London') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,:offset::string,'Europe/London')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, '2022-02-02T01:00:00.000Z', :offset, 'Europe/London') from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, '2022-02-02T01:00:00.000Z', :offset, 'Europe/London') from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'2022-02-02T01:00:00.000Z',:offset::string,'Europe/London')]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, '00:00', :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, '00:00', :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,'00:00',:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, '1980-01-01T00:00:00.000000Z', null, :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, '1980-01-01T00:00:00.000000Z', null, :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'1980-01-01T00:00:00.000Z','00:00',:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Paris");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('d', ts, null, '03:00', :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('d', ts, null, '03:00', :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,'03:00',:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('1d', ts, null, :offset, :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('1d', ts, null, :offset, :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,null,:offset::string,:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "UTC");
-            assertPlanNoLeakCheck(
-                    "select timestamp_floor('1d', ts, '2016-02-10T16:18:22.862123123Z', :offset, :tz) from x",
-                    """
+            assertQuery("select timestamp_floor('1d', ts, '2016-02-10T16:18:22.862123123Z', :offset, :tz) from x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [timestamp_floor('1d',ts,'2016-02-10T16:18:22.862Z',:offset::string,:tz::string)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 

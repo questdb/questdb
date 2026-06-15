@@ -330,7 +330,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCastLongString() throws Exception {
         assertQuery("select typeOf(1L::string), 1L::string")
-                .returnsOnce("""
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns("""
                         typeOf\tcast
                         STRING\t1
                         """);
@@ -366,7 +369,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCastLongVarchar() throws Exception {
         assertQuery("select typeOf(1L::varchar), 1L::varchar")
-                .returnsOnce("""
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns("""
                         typeOf\tcast
                         VARCHAR\t1
                         """);
@@ -1642,7 +1648,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testComentOnlyQuery() throws Exception {
         assertQuery("/* comment */")
                 .noLeakCheck()
-                .returnsOnce("\n");
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns("\n");
     }
 
     @Test
@@ -1681,27 +1690,48 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             // constant
             assertQuery("select 'ab' > 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select 'ab' = 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select 'ab' != 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select 'ab' < 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
 
             // non-constant
             assertQuery("select x < 'd' from (select 'a' x union all select 'cd')")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\ntrue\n");
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('be', 'cd') < 'd' ")
                     .noLeakCheck()
                     .returnsOnce("column\ntrue\n");
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('ac', 'be', 'cd') != 'd'")
                     .noLeakCheck()
                     .returnsOnce("column\ntrue\n");
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd') != 'd' from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -1715,49 +1745,94 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("select cast('ab' as char) <= 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('ab' as string) <= 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('a' as string) <= 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('a' as char) <= 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('a' as char) <= 'a'::string")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as char) = null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as char) < null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as char) > null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as char) <= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as char) >= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as string) = null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as string) <= null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast(null as string) = null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast(null as string) <= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast(null as string) >= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select datediff('ma', 0::timestamp, 1::timestamp) ")
                     .noLeakCheck()
                     .fails(16, "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING");
@@ -2357,29 +2432,50 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             // constant
             assertQuery("select cast('ab' as varchar) > 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('ab' as varchar) = 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('ab' as varchar) != 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('ab' as varchar) < 'a'")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
 
             // non-constant
             assertQuery("select x < 'd' from (select cast('a' as varchar) x union all select cast('cd' as varchar))")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\ntrue\n");
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('be', 'cd') < 'd' ")
                     .noLeakCheck()
                     .returnsOnce("column\ntrue\n");
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('ac', 'be', 'cd') != 'd'")
                     .noLeakCheck()
                     .returnsOnce("column\ntrue\n");
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) != 'd' from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2392,6 +2488,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) != 'd'::varchar from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2404,6 +2502,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) < 'd' from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2416,6 +2516,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) < 'd'::varchar from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2428,6 +2530,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', null, null) <= 'd' from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2440,6 +2544,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', null, null) <= 'd'::varchar from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2452,6 +2558,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) > 'd' from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2464,6 +2572,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) > 'd'::varchar from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2476,6 +2586,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) >= 'd' from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2488,6 +2600,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) >= 'd'::varchar from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2500,6 +2614,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) >= rnd_str('d', 'cd', null) from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2512,6 +2628,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null) from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2528,7 +2646,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("create table x as (select rnd_str('d', 'cd', null) rnd_str, rnd_varchar('d', 'cd', null) rnd_varchar from long_sequence(5))");
             assertQuery("x")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             rnd_str\trnd_varchar
                             d\td
                             cd\t
@@ -2538,6 +2659,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select \"rnd_str\" > \"rnd_varchar\" from x")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2550,6 +2673,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select \"rnd_str\" < \"rnd_varchar\" from x")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2563,6 +2688,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) < rnd_varchar('d', 'cd', null) from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2575,6 +2702,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) < null from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2587,6 +2716,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) > null from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2599,6 +2730,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) > cast(null as varchar) from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2611,6 +2744,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_str('d', 'cd', null) < cast(null as varchar) from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2623,6 +2758,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) > cast(null as varchar) from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2635,6 +2772,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             SharedRandom.RANDOM.set(new Rnd());
+            // returnsOnce(): the query evaluates rnd_*() inline, so its values differ across the
+            // re-reads returns() performs; the single cursor pass keeps the result stable.
             assertQuery("select rnd_varchar('d', 'cd', null) < cast(null as varchar) from long_sequence(5)")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2648,49 +2787,94 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("select cast('ab' as char) <= cast('a' as varchar)")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('ab' as string) <= cast('a' as varchar)")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('a' as string) <= cast('a' as varchar)")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('a' as char) <= cast('a' as varchar)")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('a' as char) <= 'a'::varchar")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as char) = null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as char) < null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as char) > null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as char) <= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as char) >= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast('' as string) = null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as string) <= null")
                     .noLeakCheck()
-                    .returnsOnce("column\nfalse\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nfalse\n");
             assertQuery("select cast(null as string) = null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast(null as string) <= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select cast(null as string) >= null")
                     .noLeakCheck()
-                    .returnsOnce("column\ntrue\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\ntrue\n");
             assertQuery("select datediff('ma', 0::timestamp, 1::timestamp) ")
                     .noLeakCheck()
                     .fails(16, "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING");
@@ -2720,7 +2904,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     ")");
             assertQuery("x")
                     .noLeakCheck()
-                    .returnsOnce(expected);
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
         });
     }
 
@@ -2735,7 +2922,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("insert into geohash values(#sp052w92p18)");
             assertQuery("geohash")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             geohash
                             sp052w
                             """);
@@ -2745,77 +2935,69 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCompareVarcharAndStrPlan() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "select 'd' < rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' < rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: ['d'<rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select 'd' <= rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' <= rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])>='d']
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select 'd' > rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' > rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])<'d']
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select 'd' >= rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' >= rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: ['d'>=rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) > 'd'::varchar from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) > 'd'::varchar from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: ['d'<rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) >= 'd'::varchar  from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) >= 'd'::varchar  from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])>='d']
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) > rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) > rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])<rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null)  from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null)  from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])>=rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
         });
     }
 
@@ -3277,7 +3459,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     ")");
             assertQuery("x")
                     .noLeakCheck()
-                    .returnsOnce(expected);
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
         });
     }
 
@@ -3361,7 +3546,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testEmptyQuery() throws Exception {
         assertQuery("                        ")
                 .noLeakCheck()
-                .returnsOnce("\n");
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns("\n");
     }
 
     @Test
@@ -3420,7 +3608,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             column
                             null
                             """);
@@ -3436,7 +3627,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("create table tab as (select 1::int x) ");
             assertQuery(query)
                     .noLeakCheck()
-                    .returnsOnce("column\n101\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\n101\n");
         });
     }
 
@@ -4277,75 +4471,138 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             // INT: all four operators, left and right positions.
             assertQuery("SELECT (null + i) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (i + null) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (null - i) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (i - null) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (null * i) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (i * null) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (null / i) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (i / null) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
 
             // LONG: all four operators.
             assertQuery("SELECT (null::LONG + l) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (l - null::LONG) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (null::LONG * l) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (l / null::LONG) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
 
             // FLOAT: add, mul, div (no sub float factory exists).
             assertQuery("SELECT (null::FLOAT + f) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (f * null::FLOAT) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (null::FLOAT / f) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
 
             // DOUBLE: all four operators.
             assertQuery("SELECT (null::DOUBLE + d) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (d - null::DOUBLE) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (null::DOUBLE * d) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
             assertQuery("SELECT (d / null::DOUBLE) FROM t")
                     .noLeakCheck()
-                    .returnsOnce("column\nnull\nnull\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("column\nnull\nnull\n");
 
             // Usage inside a WHERE clause: compile and return zero rows (null comparison).
             assertQuery("SELECT i FROM t WHERE i >= (null + i)")
                     .noLeakCheck()
-                    .returnsOnce("i\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("i\n");
             assertQuery("SELECT i FROM t WHERE i >= ((null + b) + i)")
                     .noLeakCheck()
-                    .returnsOnce("i\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("i\n");
         });
     }
 
@@ -4360,7 +4617,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')
                     """)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             timestamp\tcol\tid
                             1970-01-01T00:00:00.000003Z\tdee\tC
                             """);
@@ -4370,7 +4630,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             WHERE substring(col, 1, 3) NOT IN ('foo', 'bah')
                     LATEST ON timestamp PARTITION BY id""")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             timestamp\tcol\tid
                             1970-01-01T00:00:00.000003Z\tdee\tC
                             """);
@@ -4383,7 +4646,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
             assertQuery("select * from x where \"#0101a\" = '#1234'")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             #0101a
                             #1234
                             #1234
@@ -4488,13 +4754,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "FULL OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // T2 is NULL-extended by the T2-T3 FULL OUTER JOIN, so the WHERE on T2.created must stay
+            // post-join (pushing it below leaks NULL-T2 rows); no 1970 ts equals now(), so count 0.
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Count
-                                Hash Full Outer Join Light
-                                  condition: T3.created=T2.created
-                                    Filter filter: T2.created in [now(),now()]
+                                Filter filter: T2.created in [now(),now()]
+                                    Hash Full Outer Join Light
+                                      condition: T3.created=T2.created
                                         Nested Loop Full Join
                                           filter: T1.created<T2.created
                                             Limit value: 0 skip-rows-max: 0 take-rows-max: 0
@@ -4504,12 +4772,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                            """
-            );
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                            """);
 
             assertQuery(query)
                     .noRandomAccess()
@@ -4517,7 +4784,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             count
-                            2
+                            0
                             """);
         });
     }
@@ -4528,7 +4795,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )");
             assertQuery("select * from x where #1234 = \"#0101a\"")
                     .noLeakCheck()
-                    .returnsOnce("#0101a\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("#0101a\n");
         });
     }
 
@@ -4539,7 +4809,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             bitString.put(Chars.repeat("0", 59)).put('1');
             assertQuery("select ##" + bitString + " as geobits")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             geobits
                             000000000001
                             """);
@@ -4557,7 +4830,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "group by id " +
                     "order by id ")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             id
                             -1148479920
                             315515118
@@ -4577,7 +4853,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "group by 1 " +
                     "order by 1 ")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             hour
                             0
                             1
@@ -4633,7 +4912,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "group by id " +
                     "order by id ")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             id
                             A
                             B
@@ -4649,25 +4931,37 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("insert into abc values(1, 1, 1, 1)");
             assertQuery("select * from abc where aa in (1, 2)")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             aa\ta\tb\tc
                             1\t1\t1\t1
                             """);
             assertQuery("select * from abc where a in (1, 2)")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             aa\ta\tb\tc
                             1\t1\t1\t1
                             """);
             assertQuery("select * from abc where b in (1, 2)")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             aa\ta\tb\tc
                             1\t1\t1\t1
                             """);
             assertQuery("select * from abc where c in (1, 2)")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             aa\ta\tb\tc
                             1\t1\t1\t1
                             """);
@@ -4708,7 +5002,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
                         join + " JOIN tab as T3 ON T2.value=T3.value")
                         .noLeakCheck()
-                        .returnsOnce("count\n3\n");
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("count\n3\n");
             }
             assertQuery("SELECT count(T2.created) " +
                     "FROM tab as T1 " +
@@ -4716,7 +5013,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
                     "JOIN tab T4 on T3.created < T4.created")
                     .noLeakCheck()
-                    .returnsOnce("count\n1\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("count\n1\n");
 
             assertQuery("SELECT count(T2.created) " +
                     "FROM tab as T1 " +
@@ -4724,7 +5024,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
                     "LEFT JOIN tab T4 on T3.created < T4.created")
                     .noLeakCheck()
-                    .returnsOnce("count\n3\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("count\n3\n");
 
             assertQuery("SELECT count(T2.created) " +
                     "FROM tab as T1 " +
@@ -4732,7 +5035,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
                     "LEFT JOIN tab T4 on T3.created-T4.created = 0 ")
                     .noLeakCheck()
-                    .returnsOnce("count\n3\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("count\n3\n");
         });
     }
 
@@ -4801,7 +5107,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce(expected);
+                            .inferTimestamp()
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .returns(expected);
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                 }
@@ -4820,72 +5129,138 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("symbolic_index_other")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s = ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s = NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n");
             assertQuery("symbolic_index_other WHERE s IS NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n");
             assertQuery("symbolic_index_other WHERE s != ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n");
             assertQuery("symbolic_index_other WHERE s != NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s IS NOT NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE '' = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE NULL = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n");
             assertQuery("symbolic_index_other WHERE '' != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n");
             assertQuery("symbolic_index_other WHERE NULL != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
 
             execute("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
             assertQuery("symbolic_index_other")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n\n");
             assertQuery("symbolic_index_other WHERE s = ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s = NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s IS NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s != ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s != NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s IS NOT NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE '' = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE NULL = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE '' != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE NULL != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
         });
     }
 
@@ -5593,37 +5968,70 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("symbolic_index")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n\n");
             assertQuery("symbolic_index WHERE s = ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE s = NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE s IS NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE s != ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE s != NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE s IS NOT NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE '' = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE NULL = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE '' != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE NULL != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
         });
     }
 
@@ -5904,37 +6312,70 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("symbolic_index_other")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n\n");
             assertQuery("symbolic_index_other WHERE s = ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s = NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s IS NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s != ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s != NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s IS NOT NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE '' = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE NULL = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE '' != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE NULL != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
         });
     }
 
@@ -5949,37 +6390,70 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("symbolic_index")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n\n");
             assertQuery("symbolic_index WHERE s = ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE s = NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE s IS NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE s != ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE s != NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE s IS NOT NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE '' = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE NULL = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index WHERE '' != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index WHERE NULL != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
         });
     }
 
@@ -5995,37 +6469,70 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("symbolic_index_other")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n\n");
             assertQuery("symbolic_index_other WHERE s = ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s = NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s IS NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE s != ''")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s != NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE s IS NOT NULL")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE '' = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE NULL = s")
                     .noLeakCheck()
-                    .returnsOnce("s\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n\n");
             assertQuery("symbolic_index_other WHERE '' != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
             assertQuery("symbolic_index_other WHERE NULL != s")
                     .noLeakCheck()
-                    .returnsOnce("s\n123456\n1\n\n");
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("s\n123456\n1\n\n");
         });
     }
 
@@ -6063,7 +6570,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("xy")
                     .noLeakCheck()
-                    .returnsOnce(expected);
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
         });
     }
 
@@ -6092,35 +6602,50 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertQuery("select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts2\tts1
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z
                             """);
 
             assertQuery("select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tts2\tx\tts3\tx1
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2
                             """);
 
             assertQuery("select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tx\tts11
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                             """);
 
             assertQuery("select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tx\tts11
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                             """);
 
             assertQuery("select t2.ts as TS, t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             TS\tts1\tx\tts11
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                             """);
@@ -6136,6 +6661,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "X AS (SELECT * FROM ((Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol))  " +
                     "WHERE date_trunc('day', timestamp) = date_trunc('day', timestamp111111111111111111111111111111111111111111))\n" +
                     "SELECT * FROM X")
+                    // returnsOnce(): this 42-way LT self-join is a recursion-limit smoke test whose factory
+                    // keeps >64 KiB of buffers after close, so the full returns() battery's factory-memory
+                    // check fails. returnsOnce() does a single pass and frees the factory at once.
                     .noLeakCheck()
                     .returnsOnce("symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n");
         });
@@ -6150,7 +6678,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("reindex table rebuild_index column sym lock exclusive");
             assertQuery("select * from rebuild_index where sym = '1'")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             sym\tx
                             1\t1
                             1\t10
@@ -6172,7 +6703,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
             assertQuery("select * from rebuild_index where sym = '1'")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             sym\tx\tts
                             1\t1\t1970-01-01T00:00:00.000000Z
                             1\t10\t1970-01-05T12:00:00.000000Z
@@ -6196,9 +6730,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Count
                                 Hash Left Outer Join Light
                                   condition: T3.created=T2.created
@@ -6216,8 +6750,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .noRandomAccess()
@@ -6243,9 +6776,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T2 ON T1.created<T2.created " +
                     "WHERE T2.created is null or T2.created::long > 0";
 
-            assertPlanNoLeakCheck(
-                    query1,
-                    """
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Left Join
@@ -6257,8 +6790,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query1)
                     .timestamp("created")
@@ -6390,9 +6922,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
                     "WHERE T4.created is null";
 
-            assertPlanNoLeakCheck(
-                    query3,
-                    """
+            assertQuery(query3)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: null=T4.created
                                     Nested Loop Left Join
@@ -6417,8 +6949,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query3)
                     .noRandomAccess()
@@ -6672,7 +7203,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         execute(alterSql);
         assertQuery("SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'")
                 .noLeakCheck()
-                .returnsOnce("indexType\n" + expectedIndexType + "\n");
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns("indexType\n" + expectedIndexType + "\n");
     }
 
     private void addIndexAndAssertType(String alterSql, String expectedIndexType) throws Exception {
@@ -6681,7 +7215,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         execute(alterSql);
         assertQuery("SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'")
                 .noLeakCheck()
-                .returnsOnce("indexType\n" + expectedIndexType + "\n");
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns("indexType\n" + expectedIndexType + "\n");
     }
 
     @Test
@@ -6862,13 +7399,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "RIGHT OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // T2 is NULL-extended by the T2-T3 RIGHT OUTER JOIN, so the WHERE on T2.created must stay
+            // post-join (pushing it below leaks NULL-T2 rows); no 1970 ts equals now(), so count 0.
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Count
-                                Hash Right Outer Join Light
-                                  condition: T3.created=T2.created
-                                    Filter filter: T2.created in [now(),now()]
+                                Filter filter: T2.created in [now(),now()]
+                                    Hash Right Outer Join Light
+                                      condition: T3.created=T2.created
                                         Nested Loop Right Join
                                           filter: T1.created<T2.created
                                             Limit value: 0 skip-rows-max: 0 take-rows-max: 0
@@ -6878,12 +7417,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                            """
-            );
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                            """);
 
             assertQuery(query)
                     .noRandomAccess()
@@ -6891,7 +7429,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             count
-                            2
+                            0
                             """);
         });
     }
@@ -6909,9 +7447,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "RIGHT OUTER JOIN tab as T2 ON T1.created<T2.created " +
                     "WHERE T2.created is null or T2.created::long > 0";
 
-            assertPlanNoLeakCheck(
-                    query1,
-                    """
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Right Join
@@ -6923,8 +7461,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query1)
                     .noRandomAccess()
@@ -6958,10 +7495,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "WHERE T2.created::long > 0")
                     .noRandomAccess()
                     .noLeakCheck()
+                    // T2 is NULL-extended by the T2-T3 RIGHT JOIN; the post-join WHERE drops the
+                    // NULL-T2 rows (null::long > 0 is false), leaving only the matched row.
                     .returns("""
                             value\tvalue1\tvalue2
-                            null\tnull\t0
-                            null\tnull\t1
                             0\t1\t2
                             """);
 
@@ -7062,9 +7599,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "RIGHT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
                     "WHERE T4.created is null";
 
-            assertPlanNoLeakCheck(
-                    query3,
-                    """
+            assertQuery(query3)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: null=T4.created
                                     Nested Loop Right Join
@@ -7089,8 +7626,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query3)
                     .noRandomAccess()
@@ -7983,10 +8519,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     private void assertWithReorder(String expected, String setOperation) throws Exception {
         assertQuery("select avg(event) from ict " + " " + setOperation + " " + "select distinct avg(event) from ict")
                 .noLeakCheck()
-                .returnsOnce(expected);
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns(expected);
         assertQuery("select distinct avg(event) from ict" + " " + setOperation + " " + "select avg(event) from ict ")
                 .noLeakCheck()
-                .returnsOnce(expected);
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns(expected);
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {
@@ -8012,7 +8554,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute(String.format("insert into geohash values(%s)", geoHash));
             assertQuery("geohash")
                     .noLeakCheck()
-                    .returnsOnce(expected);
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
         });
     }
 
@@ -8021,7 +8566,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         execute(insert);
         assertQuery(select)
                 .noLeakCheck()
-                .returnsOnce(expectedData);
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns(expectedData);
     }
 
     private void testInsertAsSelectError(

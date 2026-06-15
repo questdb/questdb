@@ -1142,16 +1142,16 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTablePostingIndexShowCreate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            // The default cairo.posting.index.auto.include.timestamp=true
-            // appends the designated timestamp to the covering list, so
-            // SHOW CREATE TABLE renders an explicit INCLUDE (ts) clause.
+            // A bare INDEX TYPE POSTING (no INCLUDE) is non-covering, so SHOW
+            // CREATE TABLE renders no INCLUDE clause. The timestamp auto-include
+            // only rounds out an explicit INCLUDE set.
             assertQuery("SHOW CREATE TABLE tab")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
                             ddl
                             CREATE TABLE 'tab' (\s
-                            \ts SYMBOL INDEX TYPE POSTING INCLUDE (ts),
+                            \ts SYMBOL INDEX TYPE POSTING,
                             \tts TIMESTAMP
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -1511,12 +1511,13 @@ public class CreateTableTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            // Query BEFORE releaseAllWriters (unsealed sparse gens)
+            // Query BEFORE releaseAllWriters (unsealed sparse gens). A bare
+            // INDEX TYPE POSTING is non-covering, so SELECT * takes the plain
+            // posting-filter cursor: it supports random access and reports a
+            // lazy size (size() == -1), unlike the covering cursor.
             assertQuery("SELECT * FROM t WHERE s = 'A'")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\ts
                             2024-01-01T00:00:00.000000Z\tA
@@ -1530,9 +1531,7 @@ public class CreateTableTest extends AbstractCairoTest {
             // Query AFTER seal (dense gen, stride-indexed)
             assertQuery("SELECT * FROM t WHERE s = 'A'")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\ts
                             2024-01-01T00:00:00.000000Z\tA
@@ -1542,9 +1541,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
             assertQuery("SELECT * FROM t WHERE s = 'B'")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\ts
                             2024-01-01T01:00:00.000000Z\tB
@@ -1553,9 +1550,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
             assertQuery("SELECT * FROM t WHERE s = 'C'")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\ts
                             2024-01-01T03:00:00.000000Z\tC
@@ -1565,7 +1560,6 @@ public class CreateTableTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM t WHERE s = 'Z'")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\ts
                             """);
@@ -1591,9 +1585,7 @@ public class CreateTableTest extends AbstractCairoTest {
             // readers can see it without waiting for close/seal.
             assertQuery("SELECT * FROM t WHERE s = 'A'")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\ts
                             2024-01-01T00:00:00.000000Z\tA

@@ -116,7 +116,9 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year bypass wal;");
-            assertPlanNoLeakCheck("show create table foo", "show_create_table of: foo\n");
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .assertsPlan("show_create_table of: foo\n");
         });
     }
 
@@ -191,6 +193,115 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             ) timestamp(timestamp) PARTITION BY NONE BYPASS WAL;
                             """);
         });
+    }
+
+    @Test
+    public void testMatViewRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create table base_1h",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewRejectedCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            // the keyword casing must not change the outcome - the position still points at the name
+            assertExceptionNoLeakCheck(
+                    "ShOw CrEaTe TaBlE base_1h",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewRejectedQuotedName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view 'base 1h' as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            // the position points at the opening quote of the quoted identifier
+            assertExceptionNoLeakCheck(
+                    "show create table 'base 1h'",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewStillAccessibleViaShowCreateMatView() throws Exception {
+        // a materialized view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            printSql("show create materialized view base_1h");
+            TestUtils.assertContains(sink.toString(), "CREATE MATERIALIZED VIEW 'base_1h'");
+        });
+    }
+
+    @Test
+    public void testShowCreateMatViewBeforeStartupHydration() throws Exception {
+        // Regression (M3): SHOW CREATE MATERIALIZED VIEW resolves the token from the
+        // synchronously loaded registry but reads the lazily hydrated metadata cache.
+        // In the post-restart window (cache not yet hydrated) it must hydrate the matview
+        // on demand rather than report a registered matview as non-existent.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+
+            // Simulate the window: registry knows the matview, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            printSql("show create materialized view base_1h");
+            TestUtils.assertContains(sink.toString(), "CREATE MATERIALIZED VIEW 'base_1h'");
+        });
+    }
+
+    @Test
+    public void testShowCreateTableBeforeStartupHydration() throws Exception {
+        // Regression (M3): SHOW CREATE TABLE resolves the token from the synchronously
+        // loaded registry but reads the lazily hydrated metadata cache. In the
+        // post-restart window (or for an embedded engine before any catalogue query has
+        // warmed the cache) the table is not cached yet, and the command used to report
+        // a registered table as non-existent. It must hydrate the table on demand.
+        assertMemoryLeak(() -> {
+            execute("create table foo (ts timestamp, a int) timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            // Simulate the window: registry knows the table, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            printSql("show create table foo");
+            TestUtils.assertContains(sink.toString(), "CREATE TABLE 'foo'");
+        });
+    }
+
+    @Test
+    public void testMissingNameReportsDoesNotExist() throws Exception {
+        // the existence check must run before the view/matview check, so an unknown
+        // name reports "does not exist" rather than the "got view" message
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "show create table nope",
+                18,
+                "table does not exist"
+        ));
     }
 
     @Test
@@ -686,6 +797,46 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP
                             ) timestamp(ts) PARTITION BY HOUR TTL 2 YEARS BYPASS WAL;
                             """);
+        });
+    }
+
+    @Test
+    public void testViewRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create view base_view as (select ts, max(v) from base sample by 1h)");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create table base_view",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testViewRejectedQuotedName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create view 'base view' as (select ts, max(v) from base sample by 1h)");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create table 'base view'",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testViewStillAccessibleViaShowCreateView() throws Exception {
+        // a view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create view base_view as (select ts, max(v) from base sample by 1h)");
+            drainWalAndViewQueues();
+            printSql("show create view base_view");
+            TestUtils.assertContains(sink.toString(), "CREATE VIEW 'base_view'");
         });
     }
 

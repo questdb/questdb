@@ -316,9 +316,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
+        Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
-        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
@@ -432,6 +432,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
 
         Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
@@ -862,6 +864,33 @@ public class PropServerConfigurationTest {
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
 
         Assert.assertEquals(128L * 1024 * -1, cairo.getSqlSortKeyMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedParquetFrameCacheCapacityAcceptedButIgnored() throws Exception {
+        // cairo.sql.parquet.frame.cache.capacity is deprecated in favour of the byte budget
+        // cairo.sql.parquet.cache.memory.size. Supplying the old key alone must parse without a
+        // ServerConfigurationException, even under strict validation, yet no longer affect
+        // behaviour: the byte budget stays at its 256 MB default.
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("http.min.bind.to", "0.0.0.0:0");
+        properties.setProperty("cairo.sql.parquet.frame.cache.capacity", "8");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(256L * Numbers.SIZE_1MB, cairo.getSqlParquetCacheMemorySize());
+    }
+
+    @Test
+    public void testDeprecatedParquetFrameCacheCapacityYieldsToByteBudget() throws Exception {
+        // The deprecated count key and the new byte-budget key may both be present; the new key
+        // controls behaviour and the old one is silently ignored.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parquet.frame.cache.capacity", "8");
+        properties.setProperty("cairo.sql.parquet.cache.memory.size", "64m");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(64L * Numbers.SIZE_1MB, cairo.getSqlParquetCacheMemorySize());
     }
 
     @Test
@@ -1728,6 +1757,47 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMemoryUsageLogConfiguration() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "5s");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(5_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalAcceptsMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(86_400_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsAboveMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_001");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testMemoryUsageLogIntervalRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "-1");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
     public void testQwpUdpCommitIntervalRejectsZero() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "0");
@@ -2590,10 +2660,10 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
+        Assert.assertEquals(128L * Numbers.SIZE_1MB, configuration.getSqlParquetCacheMemorySize());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(100_000, configuration.getSqlParallelWorkStealingSpinTimeout());
-        Assert.assertEquals(42, configuration.getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());
         Assert.assertEquals(128, configuration.getPageFrameReduceShardCount());

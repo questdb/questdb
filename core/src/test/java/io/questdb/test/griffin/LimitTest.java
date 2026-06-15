@@ -103,12 +103,14 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit -6,-2";
         testLimit(expected, expected2, query);
-        assertPlanNoLeakCheck(query, """
-                Limit left: -6 right: -2 skip-rows: 54 take-rows: 4
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: y
-                """);
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
+                        Limit left: -6 right: -2 skip-rows: 54 take-rows: 4
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: y
+                        """);
     }
 
     @Test
@@ -124,12 +126,14 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit -33,-31";
         testLimit(expected, expected2, query);
-        assertPlanNoLeakCheck(query, """
-                Limit left: -33 right: -31 skip-rows: 27 take-rows: 2
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: y
-                """);
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
+                        Limit left: -33 right: -31 skip-rows: 27 take-rows: 2
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: y
+                        """);
     }
 
     @Test
@@ -359,20 +363,20 @@ public class LimitTest extends AbstractCairoTest {
                     SELECT ts, v_max FROM (
                         SELECT ts, k, max(v) AS v_max FROM table1 LIMIT -2
                     ) LIMIT 1""";
-            assertPlanNoLeakCheck(query, """
-                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                        SelectedRecord
-                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
-                                Async Group By workers: 1
-                                  keys: [ts,k]
-                                  values: [max(v)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table1
-                    """);
             assertQuery(query)
                     .noLeakCheck()
+                    .withPlan("""
+                            Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                                SelectedRecord
+                                    Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                                        Async Group By workers: 1
+                                          keys: [ts,k]
+                                          values: [max(v)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
+                            """)
                     .returns("""
                             ts\tv_max
                             1970-01-01T00:01:10.000000Z\t7
@@ -467,17 +471,18 @@ public class LimitTest extends AbstractCairoTest {
                     """);
             String query = "SELECT DISTINCT (t0.k + t0.k) AS kk FROM tab t0 WHERE t0.k > 0 LIMIT 30";
             sqlExecutionContext.setParallelGroupByEnabled(false);
-            assertPlanNoLeakCheck(query, """
-                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
-                        GroupBy vectorized: false
-                          keys: [kk]
-                            SelectedRecord
-                                Async JIT Filter workers: 1
-                                  filter: 0<k
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                                GroupBy vectorized: false
+                                  keys: [kk]
+                                    Async JIT Filter workers: 1
+                                      filter: 0<k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """);
             try (
                     RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -509,20 +514,21 @@ public class LimitTest extends AbstractCairoTest {
                     """);
             String query = "SELECT (t0.k + t0.k) AS kk, -1.0::DECIMAL(38, 5) AS lit, first(true) AS a0 FROM tab t0 WHERE t0.k > 0 LIMIT 30";
             sqlExecutionContext.setParallelGroupByEnabled(false);
-            assertPlanNoLeakCheck(query, """
-                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
-                        VirtualRecord
-                          functions: [kk,-1.00000,a0]
-                            GroupBy vectorized: false
-                              keys: [kk]
-                              values: [first(true)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: 0<k
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                                VirtualRecord
+                                  functions: [kk,-1.00000,a0]
+                                    GroupBy vectorized: false
+                                      keys: [kk]
+                                      values: [first(true)]
+                                        Async JIT Filter workers: 1
+                                          filter: 0<k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                            """);
             try (
                     RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -623,16 +629,18 @@ public class LimitTest extends AbstractCairoTest {
                     FROM long_sequence(100)
                     """);
             String query = "SELECT k, row_number() OVER (ORDER BY ts) AS rn FROM tab WHERE k > 0 LIMIT 30";
-            assertPlanNoLeakCheck(query, """
-                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
-                        Window
-                          functions: [row_number()]
-                            Async JIT Filter workers: 1
-                              filter: 0<k
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                                Window
+                                  functions: [row_number()]
+                                    Async JIT Filter workers: 1
+                                      filter: 0<k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """);
             try (
                     RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -661,48 +669,39 @@ public class LimitTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .expectSize()
+                    .withPlan("""
+                            Limit left: $0::long[0] right: $1::long[2] skip-rows: 0 take-rows: 2
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
                     .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072372\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ
                             2\tgoogl\t0.423\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.5298405941762054\tnull\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t
                             """);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Limit left: $0::long[0] right: $1::long[2] skip-rows: 0 take-rows: 2
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select * from y limit -2",
-                    """
+            assertQuery("select * from y limit -2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: -2 skip-rows: 58 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
+                            """);
 
             bindVariableService.setLong(0, -2L);
             bindVariableService.setLong(1, 0L);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             Limit left: $0::long[-2] right: $1::long[0] skip-rows: 58 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
-
-            assertQuery(query)
-                    .timestamp("timestamp")
-                    .expectSize()
+                            """)
                     .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             59\tgoogl\t0.778\t2018-01-01T01:58:00.000000Z\tfalse\tKZZ\t0.7741801422529707\t0.18701869\t586\t2015-05-27T15:12:16.295Z\t\t-7715437488835448247\t1970-01-01T07:46:40.000000Z\t10\t\tEPLWDUWIWJTLCP
@@ -870,14 +869,14 @@ public class LimitTest extends AbstractCairoTest {
                                             AsOf Join
                                                 Encode sort light
                                                   keys: [ts, a]
-                                                    Sort light lo: 10 partiallySorted: true
+                                                    Encode sort light lo: 10 partiallySorted: true
                                                       keys: [ts desc, a desc]
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: y
                                                 Encode sort light
                                                   keys: [ts, a desc]
-                                                    Sort light lo: 4 partiallySorted: true
+                                                    Encode sort light lo: 4 partiallySorted: true
                                                       keys: [ts desc, a]
                                                         PageFrame
                                                             Row backward scan
@@ -895,14 +894,14 @@ public class LimitTest extends AbstractCairoTest {
                                             Lt Join
                                                 Encode sort light
                                                   keys: [ts, a]
-                                                    Sort light lo: 10 partiallySorted: true
+                                                    Encode sort light lo: 10 partiallySorted: true
                                                       keys: [ts desc, a desc]
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: y
                                                 Encode sort light
                                                   keys: [ts, a desc]
-                                                    Sort light lo: 4 partiallySorted: true
+                                                    Encode sort light lo: 4 partiallySorted: true
                                                       keys: [ts desc, a]
                                                         PageFrame
                                                             Row backward scan
@@ -919,14 +918,14 @@ public class LimitTest extends AbstractCairoTest {
                                         AsOf Join
                                             Encode sort light
                                               keys: [ts, a]
-                                                Sort light lo: 10 partiallySorted: true
+                                                Encode sort light lo: 10 partiallySorted: true
                                                   keys: [ts desc, a desc]
                                                     PageFrame
                                                         Row backward scan
                                                         Frame backward scan on: y
                                             Encode sort light
                                               keys: [ts, a desc]
-                                                Sort light lo: 4 partiallySorted: true
+                                                Encode sort light lo: 4 partiallySorted: true
                                                   keys: [ts desc, a]
                                                     PageFrame
                                                         Row backward scan
@@ -952,7 +951,7 @@ public class LimitTest extends AbstractCairoTest {
                                     """);
 
                     assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts desc, y.a ")
-                            .timestamp("ts###desc")
+                            .timestampDesc("ts")
                             .expectSize()
                             .returns("""
                                     a\tts\ta1\tts1
@@ -976,14 +975,14 @@ public class LimitTest extends AbstractCairoTest {
                                     Union All
                                         Encode sort light
                                           keys: [ts, a desc]
-                                            Sort light lo: 4 partiallySorted: true
+                                            Encode sort light lo: 4 partiallySorted: true
                                               keys: [ts desc, a]
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: x
                                         Encode sort light
                                           keys: [ts, a]
-                                            Sort light lo: 10 partiallySorted: true
+                                            Encode sort light lo: 10 partiallySorted: true
                                               keys: [ts desc, a desc]
                                                 PageFrame
                                                     Row backward scan
@@ -1058,7 +1057,7 @@ public class LimitTest extends AbstractCairoTest {
                     "FROM long_sequence(100);");
 
             assertQuery("SELECT * FROM trades WHERE timestamp < '2025-01-01' ORDER BY timestamp DESC LIMIT 10")
-                    .timestamp("timestamp###desc")
+                    .timestampDesc("timestamp")
                     .returns("""
                             id\tprice\ttimestamp
                             100\t150.0\t2024-01-05T03:00:00.000000Z
@@ -1087,23 +1086,27 @@ public class LimitTest extends AbstractCairoTest {
     public void testPlanUnresolvedBounds() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (name VARCHAR)");
-            assertPlanNoLeakCheck("tango WHERE name <> 'a' LIMIT 2, -3", """
-                    Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
-                        Async Filter workers: 1
-                          filter: name!='a'
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tango
-                    """);
-            assertPlanNoLeakCheck("(tango WHERE name <> 'a' LIMIT 2, -3) LIMIT 2, -3", """
-                    Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
-                        Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
-                            Async Filter workers: 1
-                              filter: name!='a'
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tango
-                    """);
+            assertQuery("tango WHERE name <> 'a' LIMIT 2, -3")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                                Async Filter workers: 1
+                                  filter: name!='a'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """);
+            assertQuery("(tango WHERE name <> 'a' LIMIT 2, -3) LIMIT 2, -3")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                                Limit left: 2 right: -3 skip-rows-max: 2 take-rows: baseRows-5
+                                    Async Filter workers: 1
+                                      filter: name!='a'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tango
+                            """);
             assertQuery("(tango WHERE name <> 'a' LIMIT 2, 5) LIMIT 2, 5")
                     .noLeakCheck()
                     .returns("""
@@ -1122,16 +1125,16 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (name VARCHAR)");
             String query = "tango WHERE name <> 'a' LIMIT 2, 2";
-            assertPlanNoLeakCheck(query, """
-                    Limit left: 2 right: 2 skip-rows-max: 0 take-rows-max: 0
-                        Async Filter workers: 1
-                          filter: name!='a'
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tango
-                    """);
             assertQuery(query)
                     .noLeakCheck()
+                    .withPlan("""
+                            Limit left: 2 right: 2 skip-rows-max: 0 take-rows-max: 0
+                                Async Filter workers: 1
+                                  filter: name!='a'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """)
                     .returns("""
                             name
                             """);
@@ -1238,19 +1241,15 @@ public class LimitTest extends AbstractCairoTest {
                     ORDER BY ts DESC
                     LIMIT 10""";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .timestampDesc("ts")
+                    .withPlan("""
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 PageFrame
                                     Row backward scan
                                     Interval backward scan on: intervaltest
                                       intervals: [("2023-04-06T00:09:59.000001Z","MAX")]
-                            """
-            );
-
-            assertQuery(query)
-                    .timestampDesc("ts")
+                            """)
                     .returns("""
                             id\tts
                             600000\t2023-04-06T00:10:00.000000Z
@@ -1282,6 +1281,13 @@ public class LimitTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestampDesc("timestamp")
                     .expectSize()
+                    .withPlan("""
+                            Sort light lo: $0::long hi: $1::long
+                              keys: [timestamp desc, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
                     .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             58\tibm\t0.445\t2018-01-01T01:56:00.000000Z\ttrue\tCDE\t0.7613115945849444\tnull\t118\t\tHGKR\t-5065534156372441821\t1970-01-01T07:30:00.000000Z\t4\t00000000 cd 98 7d ba 9d 68 2a 79 76 fc\tBGCKOSB
@@ -1290,34 +1296,19 @@ public class LimitTest extends AbstractCairoTest {
                             56\tmsft\t0.061\t2018-01-01T01:52:00.000000Z\ttrue\tCDE\t0.7792511437604662\t0.39658612\t341\t2015-03-04T08:18:06.265Z\tLVSY\t5320837171213814710\t1970-01-01T06:56:40.000000Z\t16\t\tJCUBBMQSRHLWSX
                             """);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Sort light lo: $0::long hi: $1::long
-                              keys: [timestamp desc, c]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
-                            """
-            );
-
             bindVariableService.setLong(0, 8L);
             bindVariableService.setLong(1, 13L);
-
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Sort light lo: $0::long hi: $1::long
-                              keys: [timestamp desc, c]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
-                            """
-            );
 
             assertQuery(query)
                     .timestampDesc("timestamp")
                     .expectSize()
+                    .withPlan("""
+                            Sort light lo: $0::long hi: $1::long
+                              keys: [timestamp desc, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
                     .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             52\tgoogl\t0.512\t2018-01-01T01:44:00.000000Z\tfalse\tABC\t0.4112208369860437\t0.27559507\t740\t2015-02-23T09:03:19.389Z\tHGKR\t1930705357282501293\t1970-01-01T05:50:00.000000Z\t19\t\t
@@ -1332,6 +1323,13 @@ public class LimitTest extends AbstractCairoTest {
             assertQuery("select * from y order by timestamp desc, c limit -10, -3")
                     .timestampDesc("timestamp")
                     .expectSize()
+                    .withPlan("""
+                            Sort light lo: -10 hi: -3
+                              keys: [timestamp desc, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
                     .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             10\tmsft\t0.509\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.49153268154777974\t0.0024457574\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t
@@ -1344,34 +1342,19 @@ public class LimitTest extends AbstractCairoTest {
                             00000010 e7 0c 89\tLJUMLGLHMLLEO
                             """);
 
-            assertPlanNoLeakCheck(
-                    "select * from y order by timestamp desc, c limit -10, -3",
-                    """
-                            Sort light lo: -10 hi: -3
-                              keys: [timestamp desc, c]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
-                            """
-            );
-
             bindVariableService.setLong(0, -10);
             bindVariableService.setLong(1, -3);
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .timestampDesc("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             Sort light lo: $0::long hi: $1::long
                               keys: [timestamp desc, c]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
-                            """
-            );
-
-            assertQuery(query)
-                    .timestampDesc("timestamp")
-                    .expectSize()
+                            """)
                     .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             10\tmsft\t0.509\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.49153268154777974\t0.0024457574\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t
@@ -1401,6 +1384,13 @@ public class LimitTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .expectSize()
+                    .withPlan("""
+                            Sort light lo: :lo::long hi: :hi::long partiallySorted: true
+                              keys: [timestamp, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
                     .returns("""
                             i	sym2	price	timestamp	b	c	d	e	f	g	ik	j	k	l	m	n
                             3	googl	0.17400000000000002	2018-01-01T00:06:00.000000Z	false	W	0.8828228366697741	0.72300154	845	2015-08-26T10:57:26.275Z	VTJW	9029468389542245059	1970-01-01T00:33:20.000000Z	46	00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47	DSWUGSHOLNV
@@ -1409,28 +1399,19 @@ public class LimitTest extends AbstractCairoTest {
                             5	googl	0.868	2018-01-01T00:10:00.000000Z	true	Z	0.4274704286353759	0.021189213	179			5746626297238459939	1970-01-01T01:06:40.000000Z	35	00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb	RGIIH
                             """);
 
-            assertPlanNoLeakCheck(query, """
-                    Sort light lo: :lo::long hi: :hi::long partiallySorted: true
-                      keys: [timestamp, c]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: y
-                    """);
-
             bindVariableService.setLong("lo", 8L);
             bindVariableService.setLong("hi", 13L);
-
-            assertPlanNoLeakCheck(query, """
-                    Sort light lo: :lo::long hi: :hi::long partiallySorted: true
-                      keys: [timestamp, c]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: y
-                    """);
 
             assertQuery(query)
                     .timestamp("timestamp")
                     .expectSize()
+                    .withPlan("""
+                            Sort light lo: :lo::long hi: :hi::long partiallySorted: true
+                              keys: [timestamp, c]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
+                            """)
                     .returns("""
                             i	sym2	price	timestamp	b	c	d	e	f	g	ik	j	k	l	m	n
                             9	msft	0.623	2018-01-01T00:18:00.000000Z	false	I	0.8786111112537701	0.9966377	403	2015-08-19T00:36:24.375Z	CPSW	-8506266080452644687	1970-01-01T02:13:20.000000Z	6	00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t
@@ -1646,13 +1627,13 @@ public class LimitTest extends AbstractCairoTest {
                     """;
             assertQuery("select x, * from tab where ts2 in '1970' order by ts2 desc limit 5")
                     .noLeakCheck()
-                    .timestamp("ts2###desc")
+                    .timestampDesc("ts2")
                     .expectSize()
                     .returns(expected);
 
             assertQuery("select x, * from tab where ts2 in '2099' order by ts2 desc limit 5")
                     .noLeakCheck()
-                    .timestamp("ts2###desc")
+                    .timestampDesc("ts2")
                     .expectSize()
                     .returns("x\tx1\tts\tts2\n");
         });
