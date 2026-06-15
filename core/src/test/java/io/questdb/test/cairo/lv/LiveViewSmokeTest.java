@@ -50,6 +50,7 @@ import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -71,6 +72,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1722,6 +1724,65 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     cursor.close();
                 }
             }
+        });
+    }
+
+    @Test
+    public void testReadClonedSymbolTableResolvesSymbols() throws Exception {
+        // newSymbolTable(int) on the LV read cursor must return a usable
+        // symbol-table clone (the contract a parallel cursor consumer relies
+        // on), not the throwing default. The cursor delegates the clone to the
+        // disk cursor, which holds the LV table's symbol map; the same map also
+        // resolves the in-mem tier's raw symbol ids (see getSymA), so a clone
+        // is valid for either tier.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 'aapl', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 'msft', 2), " +
+                    "('2026-04-01T00:00:02.000000Z', 'aapl', 3), " +
+                    "('2026-04-01T00:00:03.000000Z', 'goog', 4)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            final int symCol = 1;
+            try (
+                    RecordCursorFactory factory = select("SELECT ts, sym, x, rn FROM lv ORDER BY ts");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final SymbolTable clone = cursor.newSymbolTable(symCol);
+                Assert.assertNotNull("newSymbolTable must return a clone, not null", clone);
+
+                final SymbolTable live = cursor.getSymbolTable(symCol);
+                final Record record = cursor.getRecord();
+                int probeKey = SymbolTable.VALUE_NOT_FOUND;
+                String probeValue = null;
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    final int key = record.getInt(symCol);
+                    // The clone resolves the same value the record reports and
+                    // the cursor's own (live) symbol table reports.
+                    TestUtils.assertEquals(record.getSymA(symCol), clone.valueOf(key));
+                    TestUtils.assertEquals(live.valueOf(key), clone.valueOf(key));
+                    if (probeValue == null) {
+                        probeKey = key;
+                        probeValue = Chars.toString(record.getSymA(symCol));
+                    }
+                    rows++;
+                }
+                Assert.assertEquals(4, rows);
+
+                // The clone is independent of the cursor's iteration state: it
+                // still resolves keys after the cursor is exhausted, which is
+                // exactly what a concurrent consumer relies on.
+                TestUtils.assertEquals(probeValue, clone.valueOf(probeKey));
+            }
+            execute("DROP LIVE VIEW lv");
         });
     }
 
