@@ -274,23 +274,17 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         @Override
         public void refresh(ResourcePoolSupervisor<R> supervisor) {
             this.supervisor = supervisor;
-            try {
-                goActive();
-            } catch (Throwable ex) {
-                close();
-                throw ex;
-            }
+            // Do NOT close() here on failure: get0() owns disposal via goodbye()+close().
+            // Closing here returnToPool()'s the reader (slot released, tenant still assigned)
+            // before get0() disposes it, letting a concurrent get() acquire a torn-down reader.
+            goActive();
         }
 
         @Override
         public void refreshAt(@Nullable ResourcePoolSupervisor<R> supervisor, R srcReader) {
             this.supervisor = supervisor;
-            try {
-                goActiveAtTxn(srcReader);
-            } catch (Throwable ex) {
-                close();
-                throw ex;
-            }
+            // See refresh(): get0() owns disposal on failure; closing here re-publishes the reader.
+            goActiveAtTxn(srcReader);
         }
 
         @Override

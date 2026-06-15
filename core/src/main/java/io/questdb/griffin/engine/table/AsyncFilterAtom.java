@@ -58,6 +58,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    private IntHashSet lateMatSkipColumnIndexes;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
@@ -90,6 +91,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public void clear() {
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        lateMatSkipColumnIndexes = null;
     }
 
     @Override
@@ -106,6 +108,11 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     public @Nullable IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
+    }
+
+    public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
+        final IntHashSet skipSet = lateMatSkipColumnIndexes;
+        return skipSet != null ? skipSet : filterUsedColumnIndexes;
     }
 
     public SelectivityStats getSelectivityStats(int slotId) {
@@ -244,6 +251,26 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         if (perWorkerLocks != null) {
             perWorkerLocks.releaseSlot(filterId);
         }
+    }
+
+    /**
+     * Must run before the frame sequence dispatches any reduce task: workers read
+     * {@link #getLateMaterializationSkipColumnIndexes()} without synchronization and
+     * rely on the happens-before edge the reduce queue provides after dispatch.
+     */
+    public void setParentUsedColumns(@Nullable IntHashSet columns) {
+        if (columns == null || filterUsedColumnIndexes == null) {
+            lateMatSkipColumnIndexes = null;
+            return;
+        }
+        // Always a fresh set: a previously published one may still be visible to workers.
+        final IntHashSet skipSet = new IntHashSet();
+        for (int i = 0, n = columnTypes.size(); i < n; i++) {
+            if (!columns.contains(i) || filterUsedColumnIndexes.contains(i)) {
+                skipSet.add(i);
+            }
+        }
+        lateMatSkipColumnIndexes = skipSet;
     }
 
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {

@@ -138,6 +138,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // is not, so one '=' padding byte lands in slot 27). The exact 28 matches both.
     private static final int SHA1_DIGEST_SIZE = 20;
     private static final CarrierLocal<byte[]> HASH_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
+    // Precomputed X-QWP-Version digit bytes indexed by version number. Lets the
+    // handshake response writer skip per-call Integer.toString + getBytes
+    // allocations. QWP runs at a single version today; the table stays indexed by
+    // version so a future bump can re-introduce a range.
     private static final byte[][] VERSION_BYTES = buildVersionBytes();
     private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     private final QwpIngressUpgradeProcessor processor;
@@ -501,10 +505,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     private static byte[][] buildVersionBytes() {
-        byte[][] table = new byte[QwpConstants.MAX_SUPPORTED_VERSION + 1][];
-        for (int v = QwpConstants.VERSION_1; v <= QwpConstants.MAX_SUPPORTED_VERSION; v++) {
-            table[v] = Integer.toString(v).getBytes(StandardCharsets.US_ASCII);
-        }
+        byte[][] table = new byte[QwpConstants.VERSION + 1][];
+        table[QwpConstants.VERSION] = Integer.toString(QwpConstants.VERSION).getBytes(StandardCharsets.US_ASCII);
         return table;
     }
 

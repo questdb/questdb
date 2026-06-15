@@ -147,6 +147,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
+    private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = 24L * 60 * 60 * 1000;
     // Minimum heap page sizes: a page must hold one fixed-size block or it corrupts the heap.
     // sort.key also feeds RecordTreeChain's MemoryPages (41-byte node -> 64-byte page); window.tree
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
@@ -429,7 +430,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
-    private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
     private final long qwpUdpCommitInterval;
@@ -529,7 +529,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowJoinEnabled;
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
-    private final int sqlParquetFrameCacheCapacity;
+    private final long sqlParquetCacheMemorySize;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -875,10 +875,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
+        final boolean memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
+        final long memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
+        if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
+                    Long.toString(memoryUsageLogInterval)
+            );
+        }
 
         this.memoryConfiguration = new MemoryConfigurationImpl(
                 getLongSize(properties, env, PropertyKey.RAM_USAGE_LIMIT_BYTES, 0),
-                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90)
+                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90),
+                memoryUsageLogEnabled,
+                memoryUsageLogInterval
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
@@ -1884,18 +1894,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
-            this.qwpMaxSchemasPerConnection = getInt(
-                    properties,
-                    env,
-                    PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION,
-                    QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
-            );
-            if (qwpMaxSchemasPerConnection < 1) {
-                throw new ServerConfigurationException(
-                        PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION.getPropertyPath()
-                                + " must be at least 1"
-                );
-            }
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -2217,7 +2215,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewCoveringIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED, false);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
-            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
+            this.sqlParquetCacheMemorySize = Math.max(getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256L * Numbers.SIZE_1MB), 0L);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -2434,6 +2432,38 @@ public class PropServerConfiguration implements ServerConfiguration {
         return httpContextWebConsole;
     }
 
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
+        // Frame-relative row indexes are packed into the 24-bit slot of every
+        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
+        // rows. Reject misconfigurations that would silently truncate.
+        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxRows) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
+        }
+    }
+
+    // A page.size below the operator's block size can never fit one entry and corrupts the heap (or
+    // trips an assertion) at query time, so reject it at startup naming the key. See MIN_*_PAGE_SIZE.
+    private static void validatePageSizeAtLeast(ConfigPropertyKey key, long pageSize, long minPageSize) throws ServerConfigurationException {
+        if (pageSize < minPageSize) {
+            throw ServerConfigurationException.forInvalidKey(
+                    key.getPropertyPath(),
+                    "page size " + pageSize + " is below the minimum of " + minPageSize + " bytes"
+            );
+        }
+    }
+
     private int configureSharedThreadPool(
             Properties properties,
             Map<String, String> env,
@@ -2532,26 +2562,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
     }
 
-    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
-        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
-
-        assert jitMode != null;
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
-            return SqlJitMode.JIT_MODE_DISABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
-            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
-        }
-
-        return SqlJitMode.JIT_MODE_ENABLED;
-    }
-
     private int getSampleByFillSortStrategy(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
         final ConfigPropertyKey key = PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY;
         final String strategy = getString(properties, env, key, "light_encoded");
@@ -2582,6 +2592,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), strategy);
+    }
+
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
+        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
+
+        assert jitMode != null;
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
+            return SqlJitMode.JIT_MODE_ENABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
+            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
+        }
+
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     private int getWalWriterMadviseMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) throws ServerConfigurationException {
@@ -2692,38 +2722,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
-        }
-    }
-
-    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
-        // A non-positive batch size would turn the reducer loop
-        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
-        // into an infinite loop. Cap at the same 24-bit row index bound as
-        // page frames since the batch cannot exceed a single page frame.
-        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxBatchSize) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
-        }
-    }
-
-    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
-        // Frame-relative row indexes are packed into the 24-bit slot of every
-        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
-        // rows. Reject misconfigurations that would silently truncate.
-        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxRows) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
-        }
-    }
-
-    // A page.size below the operator's block size can never fit one entry and corrupts the heap (or
-    // trips an assertion) at query time, so reject it at startup naming the key. See MIN_*_PAGE_SIZE.
-    private static void validatePageSizeAtLeast(ConfigPropertyKey key, long pageSize, long minPageSize) throws ServerConfigurationException {
-        if (pageSize < minPageSize) {
-            throw ServerConfigurationException.forInvalidKey(
-                    key.getPropertyPath(),
-                    "page size " + pageSize + " is below the minimum of " + minPageSize + " bytes"
-            );
         }
     }
 
@@ -3464,6 +3462,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES,
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY,
+                    PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE
             );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
@@ -4388,8 +4390,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPostingIndexerSpillBytesMax() {
-            return postingIndexerSpillBytesMax;
+        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+            return postingIndexAdaptiveDeltaAtOrAbove;
         }
 
         @Override
@@ -4398,8 +4400,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
-            return postingIndexAdaptiveDeltaAtOrAbove;
+        public long getPostingIndexerSpillBytesMax() {
+            return postingIndexerSpillBytesMax;
         }
 
         @Override
@@ -4758,8 +4760,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlParquetFrameCacheCapacity() {
-            return sqlParquetFrameCacheCapacity;
+        public long getSqlParquetCacheMemorySize() {
+            return sqlParquetCacheMemorySize;
         }
 
         @Override
@@ -5989,11 +5991,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpMaxRowsPerTable() {
             return qwpMaxRowsPerTable;
-        }
-
-        @Override
-        public int getQwpMaxSchemasPerConnection() {
-            return qwpMaxSchemasPerConnection;
         }
 
         @Override

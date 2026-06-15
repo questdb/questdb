@@ -93,7 +93,7 @@ public class QwpSymbolDecoderTest {
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION);
                 Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
                 Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
                 Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
@@ -105,7 +105,7 @@ public class QwpSymbolDecoderTest {
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 ObjList<String> connectionDict = new ObjList<>();
                 try {
-                    cursor.of(address, totalSize, null, connectionDict);
+                    cursor.of(address, totalSize, connectionDict);
                     Assert.fail("Expected QwpParseException for excessive delta symbol dictionary size");
                 } catch (QwpParseException e) {
                     Assert.assertTrue(e.getMessage().contains("delta symbol dictionary"));
@@ -131,7 +131,7 @@ public class QwpSymbolDecoderTest {
             long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
-                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION);
                 Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
                 Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
                 Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
@@ -147,7 +147,7 @@ public class QwpSymbolDecoderTest {
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 ObjList<String> connectionDict = new ObjList<>();
                 try {
-                    cursor.of(address, totalSize, null, connectionDict);
+                    cursor.of(address, totalSize, connectionDict);
                     Assert.fail("Expected QwpParseException for integer overflow in delta symbol dictionary");
                 } catch (QwpParseException e) {
                     Assert.assertTrue(e.getMessage().contains("delta symbol dictionary"));
@@ -156,6 +156,81 @@ public class QwpSymbolDecoderTest {
                 Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testSymbolDictRedefinitionDetected() throws Exception {
+        // Guards the orphan-adoption symbol-corruption fix: when a connection's
+        // delta symbol dictionary remaps an already-defined client symbol ID to
+        // a different string (a different sender's dict-from-0 replayed into the
+        // connection), QwpMessageCursor must flag it so the clientSymbolId ->
+        // tableSymbolId cache is dropped. An identical re-send or a pure append
+        // must NOT be flagged, so the cache stays warm in the common case.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+
+            // First definition of ids 0..2 — every entry is new, not a remap.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b", "sym_c"));
+
+            // Identical dict-from-0 re-send (the steady-state case within one
+            // sender): entries overwritten with equal values, not a remap.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b", "sym_c"));
+
+            // Pure append of a fresh id (a true incremental delta) — not a remap.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 3, "sym_d"));
+
+            // Orphan-adoption shape: a different sender's dict-from-0 remaps id 0
+            // (sym_a -> sym_x). This MUST be flagged.
+            Assert.assertTrue(decodeDeltaDict(cursor, dict, 0, "sym_x", "sym_b", "sym_c"));
+
+            // Once the remap is absorbed, an identical re-send is stable again.
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_x", "sym_b", "sym_c"));
+        });
+    }
+
+    // Builds a delta-symbol-dictionary-only QWP message (no table blocks),
+    // decodes it through the supplied cursor against the accumulating
+    // connection dictionary, and returns whether the decode flagged a
+    // client-symbol-ID remap. The cursor and dict are reused across calls to
+    // model one connection receiving successive messages.
+    private static boolean decodeDeltaDict(
+            QwpMessageCursor cursor,
+            ObjList<String> connectionDict,
+            int deltaStartId,
+            String... symbols
+    ) throws Exception {
+        int deltaCount = symbols.length;
+        byte[][] symbolBytes = new byte[deltaCount][];
+        int payloadSize = QwpVarint.encodedLength(deltaStartId) + QwpVarint.encodedLength(deltaCount);
+        for (int i = 0; i < deltaCount; i++) {
+            symbolBytes[i] = symbols[i].getBytes(StandardCharsets.UTF_8);
+            payloadSize += QwpVarint.encodedLength(symbolBytes[i].length) + symbolBytes[i].length;
+        }
+        int totalSize = HEADER_SIZE + payloadSize;
+        long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+            Unsafe.putByte(address + HEADER_OFFSET_VERSION, VERSION);
+            Unsafe.putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
+            Unsafe.putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
+            Unsafe.putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+
+            long pos = address + HEADER_SIZE;
+            pos = QwpVarint.encode(pos, deltaStartId);
+            pos = QwpVarint.encode(pos, deltaCount);
+            for (int i = 0; i < deltaCount; i++) {
+                pos = QwpVarint.encode(pos, symbolBytes[i].length);
+                for (byte b : symbolBytes[i]) {
+                    Unsafe.putByte(pos++, b);
+                }
+            }
+
+            cursor.of(address, totalSize, connectionDict);
+            return cursor.isSymbolDictRedefined();
+        } finally {
+            Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -495,7 +570,7 @@ public class QwpSymbolDecoderTest {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(values, nulls, useNullBitmap);
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
                 try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {

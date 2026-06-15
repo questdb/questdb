@@ -15,6 +15,20 @@ use parquet2::schema::types::{
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 
+/// Bit 30 of the JNI `column_type` integer marks the designated-timestamp column
+/// as carrying a 16-byte-strided merge index (`(i64 ts, i64 rowId)` per entry)
+/// rather than a contiguous `[i64]`. Set by the Java O3 merge path; consumed by
+/// `Column::from_raw_data`.
+///
+/// Mirrored on the Java side as
+/// `io.questdb.cairo.O3PartitionJob.PARQUET_TIMESTAMP_STRIDED_16` — keep in sync.
+pub const COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT: i32 = 0x4000_0000;
+
+/// Mask of the low 30 bits of the JNI `column_type` integer that hold the
+/// actual QuestDB column type id. Bit 31 carries the `not_null_hint` flag and
+/// bit 30 carries [`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`].
+pub const COLUMN_TYPE_ID_MASK: i32 = 0x3FFF_FFFF;
+
 pub fn column_type_to_parquet_type(
     column_id: i32,
     column_name: &str,
@@ -339,8 +353,29 @@ pub struct Column {
     /// fast path that writes an all-ones RLE run for definition levels instead of
     /// computing per-row values.
     pub not_null_hint: bool,
+    /// When true, `primary_data` is a 16-byte-strided merge index where each
+    /// entry is `(i64 timestamp, i64 rowId)` and only the timestamp at offset 0
+    /// is consumed. Set only on the designated timestamp column when QuestDB
+    /// hands its O3 merge index directly to the encoder. Lets the encoder read
+    /// timestamps in place without a Java-side malloc + scatter pass.
+    /// Respected by the Plain, DeltaBinaryPacked, and RleDictionary encode paths.
+    pub strided_timestamp_16: bool,
     pub designated_timestamp_ascending: bool,
     pub parquet_encoding_config: ParquetEncodingConfig,
+}
+
+/// Tagged container that tells an encoder which physical layout backs the
+/// designated-timestamp column's primary data. Used purely as a dispatch
+/// label at the encoder entry: `match` once at the top, then call the
+/// generic inner encoder with a concrete (monomorphized) iterator type.
+#[derive(Clone, Copy, Debug)]
+pub enum TimestampValues<'a> {
+    /// `primary_data` reinterpreted as a contiguous `[i64; N]`.
+    Contiguous(&'a [i64]),
+    /// `primary_data` reinterpreted as `[(i64 ts, i64 rowId); N]`. The encoder
+    /// iterates `.iter().map(|p| p[0])` to pull timestamps; the second i64 is
+    /// the original O3 row id, irrelevant to encoding.
+    Strided16(&'a [[i64; 2]]),
 }
 
 impl Column {
@@ -384,7 +419,10 @@ impl Column {
         }
 
         let not_null_hint = column_type < 0;
-        let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;
+        // Bit 30: strided-timestamp flag (set by Java when handing the O3 merge
+        // index in place — primary_data is N * 16 bytes, ts at offset 0).
+        let strided_timestamp_16 = (column_type & COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT) != 0;
+        let column_type: ColumnType = (column_type & COLUMN_TYPE_ID_MASK).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
             &[]
@@ -416,9 +454,57 @@ impl Column {
             symbol_offsets,
             designated_timestamp,
             not_null_hint,
+            strided_timestamp_16,
             designated_timestamp_ascending,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(parquet_encoding_config),
         })
+    }
+
+    /// Narrow a single-partition strided merge-index timestamp column to the
+    /// row-group window `[first, last)` selected by `write_chunk`.
+    ///
+    /// The strided timestamp encoder iterates its entire `primary_data`, so
+    /// when a partition is split across multiple row groups each row group must
+    /// receive only its own slice of the merge index; otherwise every row group
+    /// re-emits the whole timestamp column. The strided layout is always
+    /// single-partition with no column top, so the window is a plain sub-slice.
+    pub fn strided_row_group_slice(&self, first: usize, last: usize) -> ParquetResult<Column> {
+        debug_assert!(self.strided_timestamp_16);
+        const ENTRY_BYTES: usize = std::mem::size_of::<[i64; 2]>();
+        let row_count = self.primary_data.len() / ENTRY_BYTES;
+        if first > last || last > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "strided timestamp row-group bounds [{}, {}) out of range for {} rows",
+                first,
+                last,
+                row_count
+            ));
+        }
+        let mut sliced = *self;
+        sliced.primary_data = &self.primary_data[first * ENTRY_BYTES..last * ENTRY_BYTES];
+        sliced.row_count = last - first;
+        Ok(sliced)
+    }
+
+    /// Returns the timestamp values backing this column. Cheap O(1) — just a
+    /// reinterpret of `primary_data`. Callers gate on `data_type` being a
+    /// timestamp-shaped i64 column.
+    pub fn timestamp_values(&self) -> TimestampValues<'_> {
+        // SAFETY: Data originates from JNI/Java memory-mapped column data,
+        // which is page-aligned. The byte content represents valid `i64`s
+        // (or `[i64; 2]` entries when the strided flag is set).
+        unsafe {
+            if self.strided_timestamp_16 {
+                TimestampValues::Strided16(crate::parquet_write::util::transmute_slice(
+                    self.primary_data,
+                ))
+            } else {
+                TimestampValues::Contiguous(crate::parquet_write::util::transmute_slice(
+                    self.primary_data,
+                ))
+            }
+        }
     }
 }
 
@@ -498,6 +584,8 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
         .map(|c| {
             if let Some(enc) = c.parquet_encoding_config.encoding() {
                 validate_encoding(c.data_type, enc)
+            } else if c.designated_timestamp {
+                validate_encoding(c.data_type, Encoding::DeltaBinaryPacked)
             } else {
                 encoding_map(c.data_type)
             }
@@ -757,6 +845,54 @@ mod tests {
     fn test_encoding_zero_explicit() {
         // explicit flag set but encoding is 0 -> use default
         assert_eq!(ParquetEncodingConfig::new(0, 0, -1).encoding(), None);
+    }
+
+    #[test]
+    fn strided_row_group_slice_narrows_to_window() {
+        // 10 merge-index entries (ts, rowId). Slicing must preserve the ts of
+        // exactly the requested window and update row_count, so write_chunk's
+        // per-row-group window is honored instead of re-emitting the column.
+        let pairs: Vec<[i64; 2]> = (0..10i64).map(|i| [1_000 + i, i]).collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Timestamp, 0).code()
+            | COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT;
+        let col = Column::from_raw_data(
+            0,
+            "ts",
+            column_type,
+            0,
+            pairs.len(),
+            pairs.as_ptr() as *const u8,
+            std::mem::size_of_val(pairs.as_slice()),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            true,
+            true,
+            0,
+        )
+        .expect("ts column");
+
+        let second_group = col.strided_row_group_slice(3, 7).expect("slice");
+        assert_eq!(second_group.row_count, 4);
+        match second_group.timestamp_values() {
+            TimestampValues::Strided16(s) => {
+                assert_eq!(s.len(), 4);
+                assert_eq!(s[0][0], 1_003);
+                assert_eq!(s[3][0], 1_006);
+            }
+            TimestampValues::Contiguous(_) => panic!("expected strided layout"),
+        }
+
+        // Full range keeps every row.
+        assert_eq!(
+            col.strided_row_group_slice(0, 10).expect("full").row_count,
+            10
+        );
+
+        // Out-of-range or inverted bounds are rejected, never a panic under JNI.
+        assert!(col.strided_row_group_slice(5, 11).is_err());
+        assert!(col.strided_row_group_slice(7, 3).is_err());
     }
 
     #[test]

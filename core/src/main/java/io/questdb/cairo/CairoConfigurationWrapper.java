@@ -1178,8 +1178,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return getDelegate().getSqlParquetFrameCacheCapacity();
+    public long getSqlParquetCacheMemorySize() {
+        return getDelegate().getSqlParquetCacheMemorySize();
     }
 
     @Override

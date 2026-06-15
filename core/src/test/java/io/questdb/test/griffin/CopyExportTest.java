@@ -333,7 +333,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("""
                                 path\tdiskSizeHuman
-                                test_table.parquet\t586.0 B
+                                test_table.parquet\t583.0 B
                                 """);
             };
             testCopyExport(stmt, test);
@@ -711,8 +711,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2023-01.parquet\t610.0 B\n" +
-                                        "test_table" + File.separator + "2023-02.parquet\t610.0 B\n");
+                                        "test_table" + File.separator + "2023-01.parquet\t614.0 B\n" +
+                                        "test_table" + File.separator + "2023-02.parquet\t614.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -796,7 +796,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
                                         "test_table" + File.separator + "2020-01-01.parquet\t501.0 B\n" +
-                                        "test_table" + File.separator + "2020-01-02.parquet\t586.0 B\n");
+                                        "test_table" + File.separator + "2020-01-02.parquet\t590.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -903,8 +903,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t913.0 B\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t918.0 B\n");
+                                        "price_1h" + File.separator + "2023-09.parquet\t922.0 B\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t927.0 B\n");
                     });
 
             testCopyExport(stmt, test);

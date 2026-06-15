@@ -109,8 +109,14 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     hi = timestampFinder.findTimestamp(intervalHi, 0, partitionLimit1 == -1 ? rowCount - 1 : partitionLimit1);
                 }
 
-                // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
-                long lo = intervalLo > Long.MIN_VALUE ? timestampFinder.findTimestamp(intervalLo - 1, 0, hi) : 0;
+                // lo is the exclusive lower index (the last row below the interval); this frame spans
+                // (lo, hi], so its size is hi - lo. An unbounded-low interval ("ts < X", intervalLo ==
+                // Long.MIN_VALUE) reaches below row 0, so lo must be -1 here -- the same value
+                // findTimestamp returns when intervalLo falls below the partition. Using 0 would drop
+                // row 0 and undercount the frame by one. next() counts the same rows correctly via its
+                // own inclusive-low convention (its start index is 0, not -1); this -1 is specific to
+                // calculateSize's exclusive-lo accounting and must not be copied there.
+                long lo = intervalLo > Long.MIN_VALUE ? timestampFinder.findTimestamp(intervalLo - 1, 0, hi) : -1;
                 if (hi > lo) {
                     size += (hi - lo);
 
