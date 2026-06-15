@@ -136,14 +136,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // Initial loop condition, as if the previous transaction was skipped
         for (long seqTxn = initialSeqTxn; seqTxn < lastSeqTxn; seqTxn++) {
             int walId = walTxnDetails.getWalId(seqTxn);
-            if (walId < 1 || !isDataType(walTxnDetails.getWalTxnType(seqTxn))) {
+            // Read the packed type+flags slot once when present: both the txn type and the dedup mode
+            // (checked further below) decode from it, mirroring the inner scan. NONE for structural
+            // (walId < 1) transactions, which carry no data txn type and short-circuit the data check below.
+            long typeAndFlags = walId > 0 ? walTxnDetails.getWalTxnTypeAndFlags(seqTxn) : 0L;
+            if (walId < 1 || !isDataType(walTxnTypeOf(typeAndFlags))) {
                 // This is not a data transaction
                 return seqTxn - initialSeqTxn;
             }
 
             long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
             long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1; // Max is inclusive, make txnTsHi exclusive
-            if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (dedupModeOf(typeAndFlags) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
                 txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
                 txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
             }
