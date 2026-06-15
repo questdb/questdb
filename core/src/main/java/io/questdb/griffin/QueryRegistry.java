@@ -186,11 +186,30 @@ public class QueryRegistry {
             e.memoryTracker = tracker;
         }
 
-        registry.put(queryId, e);
+        try {
+            registry.put(queryId, e);
 
-        Listener listener = this.listener;
-        if (listener != null) {
-            listener.onRegister(query, queryId, executionContext);
+            Listener listener = this.listener;
+            if (listener != null) {
+                listener.onRegister(query, queryId, executionContext);
+            }
+        } catch (Throwable th) {
+            // registry.put() can OOM mid-rehash. register() runs outside the
+            // caller's try/finally, so unregister() never fires here -- release the
+            // just-acquired tracker (else its native blocks leak during the very OOM
+            // the feature bounds), drop the partial entry, and recycle the Entry.
+            registry.remove(queryId);
+            if (e.memoryTracker != null) {
+                // Restore the prior tracker only if the slot is still ours; a
+                // concurrently-suspended sibling portal may have rebound it.
+                if (executionContext.getMemoryTracker() == e.memoryTracker) {
+                    executionContext.setMemoryTracker(outerTracker);
+                }
+                e.memoryTracker.close();
+                e.memoryTracker = null;
+            }
+            tlQueryPool.get().push(e);
+            throw th;
         }
 
         executionContext.setCancelledFlag(e.cancelled);

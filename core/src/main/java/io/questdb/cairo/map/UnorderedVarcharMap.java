@@ -125,8 +125,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     private long memStart; // Hash table memory start pointer.
     // Per-query native memory tracker bound by the owning factory at cursor start.
     // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
-    // degrade to the global-only overloads in that case. The internal varchar key
-    // arena (allocator, keySink) is not tracker-aware in this PR.
+    // degrade to the global-only overloads in that case. setMemoryTracker() also
+    // binds the key-byte arena (allocator); only the tiny keySink scratch buffer is not.
     @Nullable
     private MemoryTracker memoryTracker;
     private int nResizes;
@@ -557,6 +557,10 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
+        // Bind the key-byte arena too -- for a high-cardinality GROUP BY <varchar>
+        // it holds the dominant allocation. setMemoryTracker() precedes reopen(), so
+        // its malloc/free accounting stays symmetric.
+        allocator.setMemoryTracker(tracker);
     }
 
     @Override

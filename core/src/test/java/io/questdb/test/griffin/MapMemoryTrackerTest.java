@@ -173,6 +173,37 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByVarcharKeyArenaCountsAgainstLimit() throws Exception {
+        // High-cardinality GROUP BY over a wide, computed varchar key. The key is
+        // rpad(k, 512), a function result with an unstable pointer, so
+        // UnorderedVarcharMap copies each ~512-byte key into its key-byte arena
+        // (a stored column would have a stable pointer and skip the arena). The
+        // arena dominates the footprint -- the hash table holds only a few
+        // thousand entries, well under the limit. Binding the arena to the tracker
+        // is what makes this breach; left unbound it escapes the limit and the
+        // query completes.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            execute("CREATE TABLE tab AS (SELECT x::varchar AS k, x AS v FROM long_sequence(1_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("SELECT rpad(k, 512) kk, sum(v) FROM tab GROUP BY kk", sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        // drain until breach
+                    }
+                    Assert.fail("expected per-query memory breach");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinFactoryBuiltButNeverExecutedDoesNotLeak() throws Exception {
         // A light hash join over a varchar key builds its lazy UnorderedVarcharMap
         // when the cursor is constructed at codegen time, but the cursor's close()

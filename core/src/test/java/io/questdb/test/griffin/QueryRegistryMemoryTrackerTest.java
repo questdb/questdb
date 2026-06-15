@@ -153,6 +153,47 @@ public class QueryRegistryMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRegisterReleasesTrackerWhenRegistrationThrows() throws Exception {
+        // register() binds the QUERY tracker before registry.put() and the
+        // listener run. registry.put() can OOM while rehashing, and the caller
+        // invokes register() outside its try/finally, so unregister() never runs
+        // on a throw -- register() must release the just-acquired tracker itself.
+        // A throwing listener stands in for that post-acquire throw.
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            final MemoryTracker[] boundDuringRegister = new MemoryTracker[1];
+            registry.setListener((query, queryId, ctx) -> {
+                // Runs after the tracker is acquired and bound on the context.
+                boundDuringRegister[0] = ctx.getMemoryTracker();
+                throw new OutOfMemoryError("simulated rehash OOM");
+            });
+            try {
+                registry.register("SELECT 1", sqlExecutionContext);
+                Assert.fail("expected the registration to throw");
+            } catch (OutOfMemoryError expected) {
+                // expected
+            } finally {
+                registry.setListener(null);
+            }
+
+            Assert.assertNotNull(boundDuringRegister[0]);
+            // The acquired tracker must be unbound from the context (and closed
+            // back to the provider pool); without the release the slot would still
+            // hold it.
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+
+            // The registry and tracker pool are not poisoned: a normal statement
+            // still acquires a tracker and clears it cleanly.
+            final long queryId = registry.register("SELECT 2", sqlExecutionContext);
+            Assert.assertNotNull(sqlExecutionContext.getMemoryTracker());
+            registry.unregister(queryId, sqlExecutionContext);
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+        });
+    }
+
+    @Test
     public void testRegisterUnregisterBindsAndClearsTracker() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
