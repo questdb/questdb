@@ -319,7 +319,7 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
-    public void testEvictionUsesMaxTimestamp() {
+    public void testEvictionUsesActivityTimestamp() {
         // Capacity 2, eviction at 4 (2x)
         RecentWriteTracker tracker = new RecentWriteTracker(2);
 
@@ -338,15 +338,15 @@ public class RecentWriteTrackerTest {
         // table4: writer timestamp 4000
         tracker.recordWrite(table4, 4000L, 400L, 4L);
 
-        // Now give table1 a recent WAL write - this should protect it from eviction
+        // Now give table1 recent WAL activity. Eviction uses activity time, not WAL data time.
         tracker.recordWalWrite(table1, 10L, 10000L, 0L);
 
         // Add table5 to trigger eviction (size becomes 5, exceeds 2*2=4)
         tracker.recordWrite(table5, 5000L, 500L, 5L);
 
         // After eviction, should have 2 entries
-        // table2 should be evicted (oldest maxTimestamp without WAL activity)
-        // table1 should survive due to recent WAL timestamp
+        // table2 should be evicted because it has the oldest activity timestamp
+        // table1 should survive because recordWalWrite refreshed tracker activity
         Assert.assertEquals(2, tracker.size());
         Assert.assertNotNull("table1 should survive (recent WAL activity)", tracker.getWriteStats(table1));
         Assert.assertNull("table2 should be evicted (oldest)", tracker.getWriteStats(table2));
