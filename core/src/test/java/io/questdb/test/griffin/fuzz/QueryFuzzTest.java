@@ -30,6 +30,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -90,13 +92,14 @@ import java.nio.file.Paths;
  *         memory limit, or a thrown {@code test_fault()} woven into the query.
  *         The runner then asserts the factory frees its resources on the error
  *         path and that the same query runs cleanly once the fault is removed.
- *         Fault queries bypass the differential oracle. The {@code test_fault()}
- *         (FUNCTION) faults run with parallel SQL execution enabled by default
+ *         Fault queries bypass the differential oracle. All three fault types
+ *         run with parallel SQL execution enabled by default
  *         ({@code -Dquestdb.fuzz.fault.parallel}, default true), so the parallel
- *         filter / GROUP BY / top-K reduce error paths get a throw mid-reduce;
- *         pass false to run them serially. FILE and MALLOC faults always run
- *         serially because they would fire on background-job file ops or trip
- *         the process-global RSS ceiling on a background thread.</li>
+ *         filter / GROUP BY / top-K reduce error paths get exercised; pass false
+ *         to run them serially. The writer pool is halted for the whole query
+ *         loop, so no background job competes with the armed FILE / MALLOC fault
+ *         (which would otherwise fire on a background-job file op or trip the
+ *         process-global RSS ceiling on a background thread).</li>
  *     <li>{@code -Dquestdb.fuzz.window=true|false} &mdash; generate
  *         window-function shapes ({@code fn(...) OVER (PARTITION BY ...
  *         ORDER BY ts [frame])}) on a fraction of queries (default true).
@@ -135,6 +138,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
     private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
     // Per-query chance, in percent, of generating a bind-variable variant.
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
+    // Name of the query (SQL) worker pool. Its worker threads are named
+    // QUERY_POOL_NAME + '_' + workerId, which the FILE fault's query-execution
+    // scope matches to admit reduce workers alongside the test thread.
+    private static final String QUERY_POOL_NAME = "fuzzQuery";
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
 
@@ -158,7 +165,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, true, new ObjList<>());
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -194,28 +201,53 @@ public class QueryFuzzTest extends AbstractCairoTest {
         final FailureFileFacade faultFf = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
         engine.clear();
         assertMemoryLeak(faultFf, () -> {
-            // Run queries through a 4-thread shared worker pool so parallel filter,
-            // GROUP BY, top-K, window/horizon join and parquet read paths are exercised.
-            // The default test sqlExecutionContext reports getSharedQueryWorkerCount()=1,
-            // so build a fresh one that advertises the actual pool width to the planner.
+            // Query (SQL) jobs and writer (O3 / purge / index) jobs run on two
+            // separate pools so runFuzz can halt the writer pool once the tables are
+            // built, leaving the query loop with no background file ops or native
+            // allocations on the shared workers. That quiesced query phase lets FILE
+            // and MALLOC faults run under parallel SQL execution. The fresh
+            // SqlExecutionContext advertises the real pool width to the planner (the
+            // default test context reports getSharedQueryWorkerCount()=1).
             final int workerCount = Integer.getInteger("questdb.fuzz.workers", 4);
-            final WorkerPool pool = new WorkerPool(() -> workerCount);
-            TestUtils.setupWorkerPool(pool, engine);
-            pool.start(LOG);
+            final WorkerPool queryPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return QUERY_POOL_NAME;
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return workerCount;
+                }
+            });
+            WorkerPoolUtils.setupQueryJobs(queryPool, engine);
+            final WorkerPool writerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return "fuzzWriter";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return workerCount;
+                }
+            });
+            WorkerPoolUtils.setupWriterJobs(writerPool, engine);
+            queryPool.start(LOG);
+            writerPool.start(LOG);
             try (
                     SqlExecutionContext parallelCtx = new SqlExecutionContextImpl(engine, workerCount)
                             .with(securityContext, bindVariableService, null, -1, circuitBreaker)
             ) {
                 parallelCtx.initNow();
-                runFuzz(parallelCtx);
+                runFuzz(parallelCtx, writerPool, QUERY_POOL_NAME + '_');
             } finally {
                 // Suppress halt-time failures so they don't mask the original
-                // assertion or test exception that's already on its way out.
-                try {
-                    pool.halt();
-                } catch (Throwable t) {
-                    LOG.error().$("worker pool halt failed: ").$(t).$();
-                }
+                // assertion or test exception that's already on its way out. halt()
+                // is idempotent, so halting the writer pool here is a no-op once
+                // runFuzz has already halted it after the build phase.
+                haltQuietly(writerPool);
+                haltQuietly(queryPool);
             }
         });
     }
@@ -232,6 +264,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         // Chain the first cause so the stack trace still points at real source.
         return new AssertionError(sb.toString(), failures.getQuick(0).getFailure());
+    }
+
+    private static void haltQuietly(WorkerPool pool) {
+        try {
+            pool.halt();
+        } catch (Throwable t) {
+            LOG.error().$("worker pool halt failed: ").$(t).$();
+        }
     }
 
     private static void logSchema(FuzzTable t) {
@@ -258,7 +298,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return new BufferedWriter(new FileWriter(Paths.get(path).toFile(), true));
     }
 
-    private static void runFuzz(SqlExecutionContext sqlExecutionContext) throws Exception {
+    private static void runFuzz(SqlExecutionContext sqlExecutionContext, WorkerPool writerPool, String queryWorkerNamePrefix) throws Exception {
         Long s0 = Long.getLong("questdb.fuzz.s0");
         Long s1 = Long.getLong("questdb.fuzz.s1");
         Rnd rnd = (s0 != null && s1 != null)
@@ -294,7 +334,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
         }
 
-        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isVerifyCursorEnabled(), tables);
+        // Writes are done: close the build-phase writers and halt the writer pool
+        // so the query loop runs background-silent (see testQueryFuzz). A column
+        // purge scheduled by the writer close is abandoned -- it only touches
+        // on-disk files, which the leak oracle does not measure.
+        engine.releaseInactive();
+        writerPool.halt();
+
+        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
         // Snapshot the four parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
@@ -328,26 +375,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         dump.write(query.sql());
                         dump.newLine();
                     }
-                    // FUNCTION faults can run with parallel execution enabled when
-                    // the parallel-fault knob is on, so the parallel filter / GROUP
-                    // BY / top-K reduce error paths get a test_fault() throw
-                    // mid-reduce. FUNCTION is data-scoped -- test_fault() fires only
-                    // inside queries we generate, never in a background job -- so a
-                    // worker throw can only come from the query under test. FILE and
-                    // MALLOC stay serial: FILE would fire on background-job file ops
-                    // and MALLOC's RSS ceiling is process-global, so both would
-                    // contaminate the leak oracle under parallel (that is Step 2).
-                    boolean runFaultParallel = config.isParallelFaultEnabled() && faultType == FaultType.FUNCTION;
+                    // With the knob on, all fault types run under parallel SQL
+                    // execution so the parallel filter / GROUP BY / top-K reduce
+                    // error paths get exercised. The writer pool is halted for the
+                    // whole query loop, so no background job competes: FUNCTION is
+                    // data-scoped, FILE is scoped to the query execution, and
+                    // MALLOC's process-global RSS ceiling can only be tripped by the
+                    // query's own allocations.
+                    boolean runFaultParallel = config.isParallelFaultEnabled();
                     LOG.info().$("fuzz fault (").$(faultType.name()).$(runFaultParallel ? ", parallel" : ", serial").$("): ").$safe(query.sql()).$();
-                    // A fault thrown mid-parallel-execution can leave a pooled
-                    // page-frame reduce task holding an un-released buffer, which
-                    // then corrupts a later query that reuses the task. Serial
-                    // execution exercises the resource-cleanup path without that
-                    // shared-state hazard; the parallel FUNCTION path accepts it
-                    // because every non-fault query already runs parallel, so the
-                    // engine-global reduce machinery is at steady-state size before
-                    // any fault query and a fault query adds no net pooled growth
-                    // for the leak oracle to misread.
                     if (!runFaultParallel) {
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);

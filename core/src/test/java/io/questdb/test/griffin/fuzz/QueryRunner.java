@@ -193,6 +193,9 @@ public final class QueryRunner {
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
+    // Worker-thread name prefix of the query pool, used to scope a parallel FILE
+    // fault to the query execution (test thread + query workers). See runFault.
+    private final String queryWorkerNamePrefix;
     private final StringSink rowsA = new StringSink();
     private final StringSink rowsB = new StringSink();
     private final StringSink rowsC = new StringSink();
@@ -210,7 +213,8 @@ public final class QueryRunner {
             boolean diffJit,
             boolean diffShadow,
             boolean verifyCursor,
-            ObjList<FuzzTable> tables
+            ObjList<FuzzTable> tables,
+            String queryWorkerNamePrefix
     ) {
         this.engine = engine;
         this.executionContext = executionContext;
@@ -218,6 +222,7 @@ public final class QueryRunner {
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
         this.verifyCursor = verifyCursor;
+        this.queryWorkerNamePrefix = queryWorkerNamePrefix;
         this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
         this.faultTypes = failureFf != null
                 ? new FaultType[]{FaultType.FILE, FaultType.FUNCTION, FaultType.MALLOC}
@@ -306,8 +311,10 @@ public final class QueryRunner {
      * point so replay reproduces the run.
      * <p>
      * {@code parallel} reports whether the query runs with parallel SQL execution
-     * enabled (only FUNCTION faults do, gated by the parallel-fault knob). It
-     * relaxes oracle 1 for a LIMIT query: under the eager parallel reduce, a fired
+     * enabled (all fault types do when the parallel-fault knob is on). For a FILE
+     * fault it also selects the query-execution scope so the fault can fire on a
+     * reduce worker. It relaxes oracle 1 for a LIMIT query: under the eager
+     * parallel reduce, a fired
      * {@code test_fault()} can land on a page frame whose rows fall past the LIMIT
      * cutoff, so its throw is discarded on a worker and the query still returns a
      * result. Whether the throw propagates or gets discarded depends on worker
@@ -334,17 +341,30 @@ public final class QueryRunner {
         // FUNCTION arming draws and keeping the seeded stream replay-stable.
         long mallocSlack = 0;
         switch (type) {
-            case FILE -> failureFf.setToFailAfterOnCurrentThread(1 + rnd.nextInt(FAULT_MAX_FILE_OPS));
+            // One rnd draw whether serial or parallel, keeping the seeded stream
+            // replay-stable. Parallel scopes the fault to the query execution so it
+            // can also fire on a reduce worker; serial keeps the single-thread scope.
+            case FILE -> {
+                int failAfter = 1 + rnd.nextInt(FAULT_MAX_FILE_OPS);
+                if (parallel) {
+                    failureFf.setToFailAfterOnQueryThreads(failAfter, queryWorkerNamePrefix);
+                } else {
+                    failureFf.setToFailAfterOnCurrentThread(failAfter);
+                }
+            }
             case MALLOC -> mallocSlack = FAULT_MALLOC_SLACK_MIN + rnd.nextInt(FAULT_MALLOC_SLACK_RANGE);
             case FUNCTION -> TestFaultFunctionFactory.armToFailAfter(rnd.nextInt(FAULT_MAX_FN_CALLS));
         }
         Outcome outcome;
-        // Read the file-failure count before disarming: clearFailures() resets it.
+        // Read the file-failure count and contamination before disarming:
+        // clearFailures() resets them.
         int fileFiredAfter = fileFailBaseline;
+        String contaminatingThread = null;
         try {
             outcome = type == FaultType.MALLOC ? runRawMallocFault(sql, rowsA, mallocSlack) : runRaw(sql, rowsA);
             if (failureFf != null) {
                 fileFiredAfter = failureFf.failureGenerated();
+                contaminatingThread = failureFf.contaminatingThreadName();
             }
         } finally {
             switch (type) {
@@ -361,6 +381,13 @@ public final class QueryRunner {
         if (faultFired) {
             faultsFired++;
             faultsFiredByType[type.ordinal()]++;
+        }
+        // Premise check: a background thread touching the armed facade means a job
+        // leaked into the quiesced query phase, shifting the trigger point and
+        // polluting the leak oracle. Report it rather than misattribute the result.
+        if (contaminatingThread != null) {
+            return Result.failed(sql, new AssertionError(
+                    "fault " + type + " contaminated by background thread " + contaminatingThread + ": " + sql));
         }
         // Oracle 1: the fault must not be swallowed. A FILE op failure may be
         // handled gracefully (a non-fatal -1 return), so only the deterministic
