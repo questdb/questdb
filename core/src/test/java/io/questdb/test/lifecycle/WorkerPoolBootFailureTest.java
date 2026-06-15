@@ -359,8 +359,8 @@ public class WorkerPoolBootFailureTest {
         // half-built list, so worker 0 keeps ticking. On the un-fixed tree the first pass reads the
         // partial list and signals worker 0, freezing its ticks while still parked: RED.
         Assert.assertTrue("halt()'s first pass must be held off by the add critical section's monitor "
-                + "while start() is parked mid-add (worker 0's ticks froze -- the un-guarded first pass "
-                + "read+signalled the half-built workers list, the safe-publish is missing)",
+                        + "while start() is parked mid-add (worker 0's ticks froze -- the un-guarded first pass "
+                        + "read+signalled the half-built workers list, the safe-publish is missing)",
                 worker0KeptTickingWhileParked);
 
         // freeOnExit must be closed: an escaped torn-read error would have skipped it (native leak).
@@ -372,7 +372,7 @@ public class WorkerPoolBootFailureTest {
         final long afterHalt = jobTicks.get();
         Thread.sleep(200);
         Assert.assertEquals("the worker added before the park must have been halted (the #403 unconditional "
-                + "first-pass signal ran before started.await); a climbing tick count means it was not",
+                        + "first-pass signal ran before started.await); a climbing tick count means it was not",
                 afterHalt, jobTicks.get());
     }
 
