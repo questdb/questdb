@@ -148,6 +148,11 @@ public class LiveViewRecordCursor implements RecordCursor {
         return false;
     }
 
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return diskCursor.newSymbolTable(columnIndex);
+    }
+
     public void of(RecordCursor diskCursor, RecordMetadata baseMetadata, LiveViewInstance instance, int timestampColumnIndex) {
         releaseSlot();
         this.diskCursor = diskCursor;

@@ -281,13 +281,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 );
 
                 StringSink sink = new StringSink();
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        sqlExecutionContext,
-                        "SELECT wait_wal_table('trades')",
-                        sink,
-                        "wait_wal_table('trades')\ntrue\n"
-                );
+                TestUtils.printSql(serverMain.getEngine(), sqlExecutionContext, "SELECT wait_wal_table('trades')", sink);
+                TestUtils.assertEquals("wait_wal_table('trades')\ntrue\n", sink);
 
                 serverMain.getEngine().execute(
                         "CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +

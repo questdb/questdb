@@ -122,10 +122,7 @@ public class LiveViewTest extends AbstractCairoTest {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT val, ts, row_number() OVER () AS rn FROM base");
-            assertSql(
-                    "table_type\nL\n",
-                    "SELECT table_type FROM tables() WHERE table_name = 'lv'"
-            );
+            assertQuery("SELECT table_type FROM tables() WHERE table_name = 'lv'").noLeakCheck().noRandomAccess().returns("table_type\nL\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -136,12 +133,9 @@ public class LiveViewTest extends AbstractCairoTest {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT val, ts, row_number() OVER () AS rn FROM base");
-            assertSql(
-                    "table_type\tis_insertable_into\n" +
-                            "LIVE VIEW\tfalse\n",
-                    "SELECT table_type, is_insertable_into FROM information_schema.tables() " +
-                            "WHERE table_name = 'lv'"
-            );
+            assertQuery("SELECT table_type, is_insertable_into FROM information_schema.tables() " +
+                            "WHERE table_name = 'lv'").noLeakCheck().noRandomAccess().returns("table_type\tis_insertable_into\n" +
+                            "LIVE VIEW\tfalse\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -152,10 +146,7 @@ public class LiveViewTest extends AbstractCairoTest {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT val, ts, row_number() OVER () AS rn FROM base");
-            assertSql(
-                    "relkind\nv\n",
-                    "SELECT relkind FROM pg_class() WHERE relname = 'lv'"
-            );
+            assertQuery("SELECT relkind FROM pg_class() WHERE relname = 'lv'").noLeakCheck().noRandomAccess().returns("relkind\nv\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -365,13 +356,10 @@ public class LiveViewTest extends AbstractCairoTest {
             }
             drainWalQueue();
 
-            assertSql(
-                    "val\tts\trn\n" +
+            assertQuery("SELECT val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("val\tts\trn\n" +
                             "10\t2026-01-01T00:01:00.000000Z\t1\n" +
                             "20\t2026-01-01T00:03:00.000000Z\t2\n" +
-                            "30\t2026-01-01T00:04:00.000000Z\t3\n",
-                    "SELECT val, ts, rn FROM lv ORDER BY ts"
-            );
+                            "30\t2026-01-01T00:04:00.000000Z\t3\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -406,14 +394,11 @@ public class LiveViewTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            assertSql(
-                    "val\tts\trn\n" +
+            assertQuery("SELECT val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("val\tts\trn\n" +
                             "10\t2026-01-01T00:00:00.000000Z\t1\n" +
                             "20\t2026-01-01T00:01:00.000000Z\t2\n" +
                             "30\t2026-01-01T00:02:00.000000Z\t3\n" +
-                            "40\t2026-01-01T00:03:00.000000Z\t4\n",
-                    "SELECT val, ts, rn FROM lv ORDER BY ts"
-            );
+                            "40\t2026-01-01T00:03:00.000000Z\t4\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -430,7 +415,7 @@ public class LiveViewTest extends AbstractCairoTest {
             }
             drainWalQueue();
 
-            assertSql("count\n0\n", "SELECT count() FROM lv");
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -443,14 +428,11 @@ public class LiveViewTest extends AbstractCairoTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
-            assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+            assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
                             "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\n" +
                             "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
                             "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
-                            "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n",
-                    "SHOW COLUMNS FROM lv"
-            );
+                            "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             execute("DROP LIVE VIEW lv");
         });
     }

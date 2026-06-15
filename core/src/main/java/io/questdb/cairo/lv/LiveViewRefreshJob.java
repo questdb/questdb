@@ -1494,7 +1494,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // window functions already hold the state for those rows.
                         if (dataOffset > 0) {
                             backfillSkipCounter.set(dataOffset);
-                            pageCursor.skipRows(backfillSkipCounter);
+                            pageCursor.skipRows(backfillSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
                         }
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
