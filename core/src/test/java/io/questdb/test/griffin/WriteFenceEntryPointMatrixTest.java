@@ -252,6 +252,12 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("TRUNCATE", FENCED);
         http.put("RENAME_TABLE", FENCED);
         http.put("ALTER_VIEW", FENCED);
+        // ALTER_STORAGE_POLICY is ONE CompiledQuery type but FOUR distinct mint sub-routes -- SET, DROP,
+        // ENABLE, DISABLE -- on the enterprise StoragePolicyWriter. SET/DROP go through saveStoragePolicy;
+        // ENABLE/DISABLE go through the standalone sp_links link-row mint. A single type-classification
+        // cell cannot see that one sub-route skips the fence (the enable/disable hole), so the sub-routes
+        // are exercised individually below (testStoragePolicySubRoutesShareTheRoleSwitchFence) and the ENT
+        // EnableDisableStoragePolicyDemoteRaceTest drives the real enable/disable writes across a demote.
         http.put("ALTER_STORAGE_POLICY", FENCED);
         // REFRESH MAT VIEW enqueues an async refresh (no synchronous WAL txn mint); the eager getWalWriter
         // gate plus the demote's mat-view quiesce and the async job's own read-only re-check cover it.
@@ -371,6 +377,9 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         put(pg, "TRUNCATE", FENCED);
         put(pg, "RENAME_TABLE", FENCED);
         put(pg, "ALTER_VIEW", FENCED);
+        // ALTER_STORAGE_POLICY is one type but four mint sub-routes (SET/DROP/ENABLE/DISABLE); the
+        // sub-routes are exercised individually in testStoragePolicySubRoutesShareTheRoleSwitchFence so a
+        // future enable/disable route that skips the fence reds the matrix (see the /exec note above).
         put(pg, "ALTER_STORAGE_POLICY", FENCED);
         put(pg, "REFRESH_MAT_VIEW", ACQUIRE_GATED);
         // INSERT / INSERT_AS_SELECT -> msgExecuteInsert: the in-op InsertOperation fence + a pooled
@@ -415,6 +424,63 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // gate cross-check (which expects FENCED/ACQUIRE_GATED == refused). All other types follow the
         // cross-check.
         assertEveryTypeClassified("pg-wire", pg, "COMMIT");
+    }
+
+    /**
+     * ALTER_STORAGE_POLICY is a SINGLE CompiledQuery type but FOUR distinct enterprise mint sub-routes --
+     * SET, DROP, ENABLE, DISABLE -- on the enterprise StoragePolicyWriter, each writing a replicated WAL
+     * row to the sp_entries / sp_links system tables inside compile() at parse time. The earlier matrix
+     * classified ALTER_STORAGE_POLICY as one type-membership cell, which could not see that the
+     * ENABLE/DISABLE sub-routes reached a standalone link-row mint that skipped the role-switch fence the
+     * SET/DROP sub-routes carried -- the silent acked-loss the enterprise EnableDisableStoragePolicy
+     * demote-race witness now drives RED-first and GREEN. This sweep enumerates the four sub-routes
+     * individually and pins each to the shared role-switch fence seam, so a future enable/disable
+     * storage-policy route that skips the fence reds the matrix (continuation of the matrix-masking fix).
+     *
+     * <p>The storage-policy writer lives in the enterprise module (com.questdb.cairo.cold.storage), which
+     * is not on the OSS test classpath, so the OSS matrix pins the shared fence seam the enterprise
+     * helper uses (CairoEngine.getRoleSwitchReadLock + fireRoleSwitchMintObserver, the same seam the OSS
+     * parse-time TRUNCATE mint fires and the matrix's testParseTimeTruncateDrivesRealWriteAndIsFenced
+     * drives for real) and asserts ALTER_STORAGE_POLICY is in the live gate's refused set; the enterprise
+     * EnableDisableStoragePolicyDemoteRaceTest is the behavioral driver of the real ENABLE and DISABLE
+     * writes across a demote.
+     */
+    @Test
+    public void testStoragePolicySubRoutesShareTheRoleSwitchFence() throws Exception {
+        // The four enterprise storage-policy mint sub-routes, enumerated individually so the matrix no
+        // longer treats ALTER_STORAGE_POLICY as a single classification cell.
+        String[] subRoutes = {"SET", "DROP", "ENABLE", "DISABLE"};
+        Assert.assertEquals(
+                "all four storage-policy sub-routes must be enumerated -- SET/DROP/ENABLE/DISABLE",
+                4, subRoutes.length
+        );
+
+        // Every sub-route mints inside compile() before the per-statement gate, so each must hold the
+        // shared role-switch fence at the mint. Pin the seam the enterprise shared helper uses, so a
+        // rename or removal of the fence reds this matrix for the storage-policy sub-routes too.
+        Assert.assertNotNull(
+                "CairoEngine.getRoleSwitchReadLock must exist -- the lock the storage-policy SET/DROP/"
+                        + "ENABLE/DISABLE sub-routes hold around their parse-time sp_entries / sp_links mint",
+                CairoEngine.class.getDeclaredMethod("getRoleSwitchReadLock")
+        );
+        Assert.assertNotNull(
+                "CairoEngine.fireRoleSwitchMintObserver must exist -- fired inside the read-lock hold by"
+                        + " each storage-policy sub-route's fence (the same seam the parse-time TRUNCATE"
+                        + " mint fires), so the enable/disable demote-race witness can pause the mint",
+                CairoEngine.class.getDeclaredMethod("fireRoleSwitchMintObserver")
+        );
+
+        // The live gate must refuse ALTER_STORAGE_POLICY for every sub-route on a read-only node. A
+        // sub-route that minted without being in the refused set would be a silent write on a replica.
+        CairoConfiguration cfg = new DefaultCairoConfiguration(root);
+        for (String subRoute : subRoutes) {
+            Assert.assertTrue(
+                    "the " + subRoute + " STORAGE POLICY sub-route mints a replicated WAL write, so the"
+                            + " live ReadOnlyStatementGate must refuse ALTER_STORAGE_POLICY on a read-only"
+                            + " node",
+                    ReadOnlyStatementGate.isRefusedOnReadOnly(CompiledQuery.ALTER_STORAGE_POLICY, null, cfg)
+            );
+        }
     }
 
     // --- helpers ---
