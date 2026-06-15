@@ -5022,12 +5022,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
         }
         tok = SqlUtil.fetchNext(lexer);
+        String targetDir = null;
         if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+            // ALTER TABLE <t> REBASE WAL INTO '<dirName>': the replica-side variant. Instead of minting a
+            // fresh dir, it reconstructs the table into the primary's already-chosen rebased dir so the
+            // replica follows the primary's rebase past a poison-pill WAL transaction.
+            if (!isIntoKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
+            }
+            tok = expectToken(lexer, "target directory name");
+            targetDir = unquote(tok).toString();
+            try {
+                TableUtils.getTableIdFromTableDir(targetDir);
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            if (Chars.indexOf(targetDir, '/') != -1 || Chars.indexOf(targetDir, '\\') != -1 || Chars.contains(targetDir, "..")) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+            }
         }
         executionContext.getSecurityContext().authorizeRebaseWal(tableToken);
         if (!executionContext.isValidationOnly()) {
-            engine.rebaseWalTable(tableToken, executionContext.getSecurityContext());
+            if (targetDir == null) {
+                engine.rebaseWalTable(tableToken);
+            } else {
+                engine.rebaseWalTableInto(tableToken, targetDir);
+            }
         }
         compiledQuery.ofRebaseWal();
     }

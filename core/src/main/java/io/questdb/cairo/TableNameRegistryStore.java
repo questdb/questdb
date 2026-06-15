@@ -474,7 +474,18 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             currentOffset += Integer.BYTES;
 
             if (operation == OPERATION_REMOVE) {
-                TableToken token = tableNameToTableTokenMap.remove(tableName);
+                // Only release the logical name if it still resolves to THIS dropped dir. A table rebase
+                // (ALTER TABLE ... REBASE WAL) logs ADD(newDir) before DROP(oldDir) under the SAME logical
+                // name; by the time the DROP(oldDir) record is replayed the name already points at newDir,
+                // so an unconditional remove(tableName) here would clobber the live new dir's mapping and
+                // leave the forward/reverse maps inconsistent (reloadFromRootDirectory then skips the dir
+                // because it is already in the reverse map, so the name is never restored).
+                TableToken token = tableNameToTableTokenMap.get(tableName);
+                if (token != null && Chars.equals(token.getDirName(), dirName)) {
+                    tableNameToTableTokenMap.remove(tableName);
+                } else {
+                    token = null;
+                }
                 if (!ff.exists(path.trimTo(plimit).concat(dirName).$())) {
                     // table already fully removed
                     tableToCompact++;

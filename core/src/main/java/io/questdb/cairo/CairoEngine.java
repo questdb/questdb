@@ -131,6 +131,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -2229,7 +2230,40 @@ public class CairoEngine implements Closeable, WriterSource {
      *
      * @return the new table token
      */
-    public TableToken rebaseWalTable(TableToken oldToken, SecurityContext securityContext) {
+    public TableToken rebaseWalTable(TableToken oldToken) {
+        return rebaseWalTable0(oldToken, null, false);
+    }
+
+    /**
+     * Replica-side variant of {@link #rebaseWalTable(TableToken)}
+     * ({@code ALTER TABLE ... REBASE WAL INTO '<dirName>'}). Instead of minting a fresh tableId/dir it
+     * reconstructs the table into {@code targetDirName} - the dir the primary already chose for its rebase
+     * - so the replica follows the primary's rebase (e.g. past a poison-pill WAL transaction that stalls
+     * apply at the same seqTxn on both nodes) without a full physical copy. It does NOT mark the new table
+     * rebased, so the replica keeps following replication into this dir; the empty seed it commits is
+     * local-only (never uploaded) and only advances the new sequencer to seqTxn 1 so the downloader
+     * resumes from the primary's seqTxn 2 instead of stalling. Valid only on a read-only replica
+     * (enforced by {@link #assertRebaseRole(boolean)}).
+     *
+     * @return the new table token
+     */
+    public TableToken rebaseWalTableInto(TableToken oldToken, String targetDirName) {
+        return rebaseWalTable0(oldToken, targetDirName, true);
+    }
+
+    /**
+     * Role gate for REBASE WAL. OSS has no replica concept, so the {@code INTO} (replica) variant is
+     * rejected here; the enterprise engine overrides this to require a read-only replica for the
+     * {@code INTO} variant and a non-replica for the plain variant.
+     */
+    protected void assertRebaseRole(boolean replicaVariant) {
+        if (replicaVariant) {
+            throw CairoException.nonCritical().put("REBASE WAL INTO is only supported on a read-only replica");
+        }
+    }
+
+    private TableToken rebaseWalTable0(TableToken oldToken, String suppliedDir, boolean replicaVariant) {
+        assertRebaseRole(replicaVariant);
         if (!oldToken.isWal() || oldToken.isView()) {
             throw CairoException.nonCritical().put("REBASE WAL is supported only for WAL tables [table=").put(oldToken.getTableName()).put(']');
         }
@@ -2241,13 +2275,32 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!configuration.isWalApplySuspendedWriteDenied()) {
             throw CairoException.nonCritical().put("REBASE WAL requires cairo.wal.apply.suspended.write.denied=true so that suspension blocks writes [table=").put(oldToken.getTableName()).put(']');
         }
+        // The rebase repoints the name registry (preRegisterDir/rebaseSwap), which a read-only instance
+        // (cairo.read.only=true) refuses. Fail early with a clear message instead of deep in the registry.
+        if (configuration.isReadOnlyInstance()) {
+            throw CairoException.nonCritical().put("REBASE WAL is not supported on a read-only instance [table=").put(oldToken.getTableName()).put(']');
+        }
 
         final FilesFacade ff = configuration.getFilesFacade();
         final int mkDirMode = configuration.getMkDirMode();
         final CharSequence root = configuration.getDbRoot();
         final String tableName = oldToken.getTableName();
-        final int newTableId = (int) tableIdGenerator.getNextId();
-        final String newDirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, newTableId, true);
+        final int newTableId;
+        final String newDirName;
+        if (suppliedDir != null) {
+            // Replica variant: adopt the primary's dir (and the tableId encoded in it) verbatim so both
+            // nodes converge on the same identity. The id generator is not consulted - replicated tables
+            // always take their id from the primary, never from the local generator.
+            try {
+                newTableId = TableUtils.getTableIdFromTableDir(suppliedDir);
+            } catch (NumericException e) {
+                throw CairoException.nonCritical().put("invalid rebase target directory [dir=").put(suppliedDir).put(']');
+            }
+            newDirName = suppliedDir;
+        } else {
+            newTableId = (int) tableIdGenerator.getNextId();
+            newDirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, newTableId, true);
+        }
         final TableToken newToken = new TableToken(
                 tableName, newDirName, configuration.getDbLogName(), newTableId,
                 oldToken.isView(), oldToken.isMatView(), true,
@@ -2306,6 +2359,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 renamed = true;
 
+                // Mark the new table rebased BEFORE it becomes observable to the uploader: registerTable
+                // below creates the sequencer and notifies the uploader, whose very first poll records the
+                // index entry. If the _rebase_new marker is not yet present at that poll, getReplicationStatus
+                // returns ACTIVE and the uploader locks first_txn=0 instead of 2 (the empty seed would then
+                // be uploaded and a replica would build the table from an incomplete baseline). The replica
+                // variant follows the primary's dir, so it must NOT mark rebased (it keeps following).
+                if (!replicaVariant) {
+                    markRebaseNew(newToken);
+                }
+
                 // The final dir is now a complete table not yet in tables.d. ACCEPTED RISK: there is a tiny
                 // window until rebaseSwap commits it in which a crash would let startup reloadFromRootDirectory
                 // adopt it and clash with the still-registered old dir. Microsecond window on a rare admin op,
@@ -2326,10 +2389,10 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableNameRegistry.rebaseSwap(oldToken, newToken);
                 swapped = true;
 
-                // Mark the new table rebased (the uploader records it in the replication index so a
-                // replica stalls instead of building it from empty) and seed an empty first transaction
-                // so real data starts at seqTxn 2 (the uploader skips seqTxn 1).
-                markRebaseNew(newToken);
+                // Seed an empty first transaction so real data starts at seqTxn 2 (the uploader skips
+                // seqTxn 1). On a replica this seed is local-only (never uploaded): it advances the new
+                // sequencer to seqTxn 1 so the downloader resumes from the primary's seqTxn 2 rather than
+                // stalling on the missing baseline below first_txn.
                 try (WalWriter walWriter = getWalWriter(newToken)) {
                     walWriter.commitRebaseSeed();
                 }
