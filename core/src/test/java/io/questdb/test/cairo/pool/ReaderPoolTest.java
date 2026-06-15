@@ -526,7 +526,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     isSymbolFaultEnabled.set(true);
                     // getCopyOf(src) lands on slot 1's R1 (R1.txn T2 > src.txn T1), downgrades via
                     // init() -> openSymbolMaps(), and the faulted .o open throws out of refreshAt().
-                    try (TableReader ignore = pool.getCopyOf(srcRef)) {
+                    try (TableReader ignore = pool.getCopyOf(srcRef, null)) {
                         Assert.fail("getCopyOf refresh should have failed");
                     } catch (Throwable th) {
                         refreshError.set(th);

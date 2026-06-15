@@ -427,10 +427,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    protected T getCopyOf(@NotNull T srcTenant) {
-        return getCopyOf(srcTenant, null);
-    }
-
     protected T getCopyOf(@NotNull T srcTenant, @Nullable ResourcePoolSupervisor<T> supervisor) {
         if (!isCopyOfSupported()) {
             throw new UnsupportedOperationException("getCopyOf is not supported by this pool");
