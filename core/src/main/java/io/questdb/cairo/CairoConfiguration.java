@@ -1031,6 +1031,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParquetRowGroupPruningEnabled();
 
+    boolean isSqlWindowCachedLightEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     /**
