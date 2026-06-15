@@ -134,9 +134,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
 
     /**
      * Drops the entry written at the last {@link #beginAppend()} without committing it,
-     * reclaiming its key-heap bytes for a variable key. The timestamp early-stop scan
-     * encodes one row past the limit only to read its leading word; that row must not
-     * stay in the buffer or keep its key-heap bytes.
+     * reclaiming its key-heap bytes for a variable key.
      */
     public void discardLastAppend() {
         if (isVariable) {

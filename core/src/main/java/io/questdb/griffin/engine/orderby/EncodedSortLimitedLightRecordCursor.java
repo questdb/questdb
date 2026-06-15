@@ -320,8 +320,6 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             } else {
                 rowsSoFar += rowsInGroup;
                 if (rowsSoFar > limit) {
-                    // This row was encoded only to read its leading word; drop it and
-                    // reclaim its key-heap bytes instead of leaving them stranded.
                     entries.discardLastAppend();
                     return;
                 }
