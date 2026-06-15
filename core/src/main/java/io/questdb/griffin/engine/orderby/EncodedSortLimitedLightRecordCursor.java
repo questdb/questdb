@@ -172,6 +172,9 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         // must find baseCursor here to free it instead of leaking it.
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
+        // Bind the tracker before any entry-buffer allocation: the first open grows the buffer
+        // lazily in beginAppend (reopen is skipped as isOpen starts true), a reuse re-allocates via reopen.
+        entries.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entries.reopen();

@@ -28,10 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A flat native buffer of fixed-width {@code (encoded key, rowId)} entries
@@ -170,6 +172,12 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         entryMem.reopen();
+    }
+
+    // Bind before reopen() so the entry buffer's alloc/free is charged to the
+    // active workload's per-query counter. Null when no per-query limit applies.
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        entryMem.setMemoryTracker(tracker);
     }
 
     public void sort() {

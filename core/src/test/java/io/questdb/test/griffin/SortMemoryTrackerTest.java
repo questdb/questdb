@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
@@ -79,12 +80,11 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncTopKFailsOnLargeTopN() throws Exception {
-        // A parallel ORDER BY ... LIMIT N over a large input routes through AsyncTopKRecordCursorFactory,
-        // which builds one LimitedSizeLongTreeChain per worker plus the owner chain. reopen() allocates the
-        // chains' initial heaps (the open-failure test covers a breach there); here the key/value heaps
-        // grow as the dispatch that hasNext() drives feeds records into them, crossing the per-query limit
-        // mid-sort - the runaway a user actually hits while draining. The growth surfaces with
-        // isOutOfMemory() set; without the binding the chains escape the limit and the query completes.
+        // A parallel ORDER BY ... LIMIT N with a fixed-width key (LONG x) takes AsyncTopK's encoded path:
+        // reopen() binds the per-query tracker on the owner plus one EncodedTopKBuffer per worker, whose
+        // combined initial entry heaps cross the per-query limit during the cursor's open. The breach
+        // surfaces with isOutOfMemory() set; without the binding the buffers escape the limit and the
+        // query completes.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT x, x::timestamp ts FROM long_sequence(200_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
@@ -109,16 +109,15 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncTopKOpenFailureReleasesAllocations() throws Exception {
-        // Inflate the sort key page above the limit so AsyncTopKAtom.reopen() breaches on the
-        // owner chain's key heap during the cursor's of(). A parallel execution context routes
-        // ORDER BY ... LIMIT N through the parallel top-K factory, building one tree chain per
-        // worker. Reusing one factory across opens catches the failed-open cleanup: without it
-        // the page frame sequence is never reset and the next open trips a stale-state assertion.
+        // A non-encodable (varchar) key forces AsyncTopK's tree-chain path, whose initial key heap honours
+        // CAIRO_SQL_SORT_KEY_PAGE_SIZE; inflating it past the limit breaches in reopen() at cursor open,
+        // regardless of worker count. Reusing one factory across opens checks the failed-open cleanup:
+        // without it the page frame sequence is never reset and the next open trips a stale-state assertion.
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab AS (SELECT x, x::timestamp ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab AS (SELECT x, cast(x AS varchar) k, x::timestamp ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
-            final String sql = "SELECT * FROM tab WHERE x > 0 ORDER BY x LIMIT 10";
+            final String sql = "SELECT * FROM tab WHERE x > 0 ORDER BY k LIMIT 10";
             try (SqlExecutionContext parallelCtx = TestUtils.createSqlExecutionCtx(engine, 4);
                  SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(sql, parallelCtx).getRecordCursorFactory()) {
@@ -208,6 +207,36 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
                             "3\t3\n" +
                             "4\t4\n" +
                             "5\t5\n");
+        });
+    }
+
+    @Test
+    public void testEncodedSortLimitFailsOnLargeTopN() throws Exception {
+        // A zero-worker context disables parallel top-K, so this ORDER BY ... LIMIT N with a fixed-width
+        // key (LONG x) takes the single-threaded EncodedSortLimitedLightRecordCursor. of() binds the tracker
+        // on its EncodedTopKBuffer; the entry heap then grows past the limit as the build drains the base.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x, x::timestamp ts FROM long_sequence(200_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlExecutionContext singleThreadedCtx = TestUtils.createSqlExecutionCtx(engine, 0);
+                 SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT * FROM tab WHERE x > 0 ORDER BY x LIMIT 50_000",
+                        singleThreadedCtx
+                );
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(singleThreadedCtx)) {
+                    assertInTree(factory, EncodedSortLimitedLightRecordCursorFactory.class);
+                    while (cursor.hasNext()) {
+                        // drain until breach
+                    }
+                    Assert.fail("expected per-query memory breach");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
         });
     }
 

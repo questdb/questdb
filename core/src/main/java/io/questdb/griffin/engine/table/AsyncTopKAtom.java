@@ -361,9 +361,14 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     @Override
     public void reopen() {
         if (isEncoded) {
+            // Bind the tracker captured in init() on every encoded buffer before reopen,
+            // so each buffer's alloc/free is charged symmetrically to the per-query counter.
+            ownerTopK.setMemoryTracker(memoryTracker);
             ownerTopK.reopen();
             for (int i = 0; i < workerCount; i++) {
-                perWorkerTopK.getQuick(i).reopen();
+                final EncodedTopKBuffer topK = perWorkerTopK.getQuick(i);
+                topK.setMemoryTracker(memoryTracker);
+                topK.reopen();
             }
         } else {
             // Propagate the tracker captured in init() to every chain before reopen,
