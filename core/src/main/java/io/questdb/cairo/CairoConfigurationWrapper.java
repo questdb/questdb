@@ -1693,6 +1693,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlWindowCachedLightEnabled() {
+        return getDelegate().isSqlWindowCachedLightEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }
