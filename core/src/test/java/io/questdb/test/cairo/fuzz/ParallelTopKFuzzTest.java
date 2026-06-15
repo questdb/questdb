@@ -222,14 +222,19 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                                 ctx
                         );
                         engine.execute("ALTER TABLE tab_top ADD COLUMN col_top DOUBLE", ctx);
+                        // col_top_v exercises the variable-key column-top fallback: encodeVarcharBatch
+                        // declines the colAddr==0 frames of the original rows, so they take the per-row path.
+                        engine.execute("ALTER TABLE tab_top ADD COLUMN col_top_v VARCHAR", ctx);
                         engine.execute(
-                                "INSERT INTO tab_top(ts, col_top, col_id) SELECT" +
-                                        " ((1_000_000L + x) * 1_000_000L)::timestamp, rnd_double(2), " + rowCount + "L + x" +
+                                "INSERT INTO tab_top(ts, col_top, col_top_v, col_id) SELECT" +
+                                        " ((1_000_000L + x) * 1_000_000L)::timestamp, rnd_double(2), rnd_varchar(1, 24, 2), " + rowCount + "L + x" +
                                         " FROM long_sequence(5_000)",
                                 ctx
                         );
                         assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top LIMIT " + (1 + rnd.nextInt(200)));
                         assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top DESC LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top_v FROM tab_top ORDER BY col_top_v LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top_v FROM tab_top ORDER BY col_top_v DESC LIMIT " + (1 + rnd.nextInt(200)));
 
                         // A volume large enough that each of the 4 workers crosses the 4096-entry
                         // compaction trigger, so per-worker sort-and-truncate plus threshold rejection
@@ -287,6 +292,37 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                         1970-02-10T09:36:00.000000Z\tk0\t4040.0\t4040\t4040.0
                         """
         );
+    }
+
+    @Test
+    public void testParallelTopKVarcharSplitPrefixCollision() throws Exception {
+        // Regression for the prefix-6 reject: 'aaaaaa' (6 bytes, inlined) dominates so each
+        // worker's top-K boundary becomes a 6-byte key once it compacts, while the longer
+        // 'aaaaaazzzzzz' (12 bytes, split storage) shares those six prefix bytes and sorts
+        // above it under DESC. The split-VARCHAR reject only sees the six inline prefix bytes,
+        // so it must defer such a candidate to the full compare rather than drop it on the
+        // masked-prefix tie. The 30k rows make every worker cross the 4096 compaction trigger
+        // and the collisions are spread past it so they hit the reject with the boundary set.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+                        engine.execute(
+                                "CREATE TABLE vt AS (SELECT" +
+                                        " CASE WHEN x % 600 = 0 THEN 'aaaaaazzzzzz' ELSE 'aaaaaa' END v," +
+                                        " (x * 1_000_000L)::timestamp ts" +
+                                        " FROM long_sequence(30_000)) TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+                        assertTopKMatch(engine, ctx, "SELECT v FROM vt ORDER BY v DESC LIMIT 100");
+                        assertTopKMatch(engine, ctx, "SELECT v FROM vt ORDER BY v LIMIT 100");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

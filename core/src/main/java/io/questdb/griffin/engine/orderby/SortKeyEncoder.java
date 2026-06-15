@@ -865,6 +865,9 @@ public class SortKeyEncoder implements QuietCloseable {
         return word;
     }
 
+    // Length of the UTF-16 key encoding, used only by the top-K fast-reject. The reject
+    // never needs the exact length past the leading word - it only distinguishes len <= 8
+    // (whole key fits the word) from len > 8 - so the scan stops as soon as it passes 8.
     private static long utf16Len(CharSequence value) {
         if (value == null) {
             return 1;
@@ -874,6 +877,9 @@ public class SortKeyEncoder implements QuietCloseable {
             final char c = value.charAt(i);
             len += (c >>> 8) <= 1 ? 2 : 1;
             len += (c & 0xFF) <= 1 ? 2 : 1;
+            if (len > Long.BYTES) {
+                return len;
+            }
         }
         return len;
     }
@@ -1336,44 +1342,44 @@ public class SortKeyEncoder implements QuietCloseable {
         if (auxAddr == 0) {
             return false;
         }
-        final boolean parquet = frameMemory.getFrameFormat() == PartitionFormat.PARQUET;
-        final long dataAddr = parquet ? 0 : frameMemory.getPageAddress(columnIndices[0]);
+        final boolean isParquet = frameMemory.getFrameFormat() == PartitionFormat.PARQUET;
+        final long dataAddr = isParquet ? 0 : frameMemory.getPageAddress(columnIndices[0]);
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {
-                encodeVarcharRow(topK, record, auxAddr, dataAddr, parquet, rowIdBase, r);
+                encodeVarcharRow(topK, record, auxAddr, dataAddr, isParquet, rowIdBase, r);
             }
         } else {
             for (long p = 0; p < rowCount; p++) {
-                encodeVarcharRow(topK, record, auxAddr, dataAddr, parquet, rowIdBase, rows.get(p));
+                encodeVarcharRow(topK, record, auxAddr, dataAddr, isParquet, rowIdBase, rows.get(p));
             }
         }
         return true;
     }
 
-    private void encodeVarcharRow(EncodedTopKBuffer topK, PageFrameMemoryRecord record, long auxAddr, long dataAddr, boolean parquet, long rowIdBase, long r) {
+    private void encodeVarcharRow(EncodedTopKBuffer topK, PageFrameMemoryRecord record, long auxAddr, long dataAddr, boolean isParquet, long rowIdBase, long r) {
         final boolean desc = isDesc[0];
         final long auxEntry = auxAddr + r * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
         final int header = Unsafe.getInt(auxEntry);
         final long rowId = rowIdBase + r;
-        final boolean rejected;
+        final boolean isRejected;
         if (VarcharTypeDriver.hasNullFlag(header)) {
             final long k1 = desc ? (0xFFL << 56) : 0L; // matches varcharLeadingWord(null)
-            rejected = topK.fastRejectsVarEntry(k1, 1, rowId);
-        } else if (parquet) {
+            isRejected = topK.fastRejectsVarEntry(k1, 1, rowId);
+        } else if (isParquet) {
             final int size = VarcharTypeDriver.getSliceSize(header);
             final long k1 = varcharLeadingWordFromBytes(VarcharTypeDriver.getSliceByteAddress(auxEntry), size, desc);
-            rejected = topK.fastRejectsVarEntry(k1, size + 2L, rowId);
+            isRejected = topK.fastRejectsVarEntry(k1, size + 2L, rowId);
         } else if (VarcharTypeDriver.hasInlinedFlag(header)) {
             final int size = VarcharTypeDriver.getInlinedOrSplitSize(header);
             final long k1 = varcharLeadingWordFromBytes(VarcharTypeDriver.getValueByteAddress(header, auxEntry, dataAddr), size, desc);
-            rejected = topK.fastRejectsVarEntry(k1, size + 2L, rowId);
+            isRejected = topK.fastRejectsVarEntry(k1, size + 2L, rowId);
         } else {
             final int size = VarcharTypeDriver.getInlinedOrSplitSize(header);
             final long k1 = varcharLeadingWordFromPrefix(auxEntry, desc);
-            rejected = topK.fastRejectsVarEntryPrefix6(k1, size + 2L, rowId);
+            isRejected = topK.fastRejectsVarEntryPrefix6(k1, size + 2L, rowId);
         }
-        if (rejected) {
+        if (isRejected) {
             return;
         }
         record.setRowIndex(r);

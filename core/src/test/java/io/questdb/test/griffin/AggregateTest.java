@@ -1984,7 +1984,7 @@ public class AggregateTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .withPlan("""
-                            Sort light
+                            Encode sort light
                               keys: [skey]
                                 Async Group By workers: 1
                                   keys: [skey]

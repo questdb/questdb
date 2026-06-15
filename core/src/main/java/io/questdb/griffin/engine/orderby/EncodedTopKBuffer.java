@@ -62,6 +62,8 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     private static final long VAR_ENTRY_KEY_OFFSET = 24;
     private static final long VAR_ENTRY_LEN_OFFSET = 16;
     private static final long VAR_ENTRY_ROWID_OFFSET = 32;
+    // Marker byte plus the six inline-prefix value bytes that the prefix-6 reject compares.
+    private static final long VAR_PREFIX6_KEY_BYTES = 7;
     private static final long VAR_PREFIX6_MASK = 0xFFFFFFFFFFFFFF00L;
     private final DirectLongList entryMem;
     private final long keyCapBytes;
@@ -215,7 +217,11 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         int cmp = Long.compareUnsigned(k1 & VAR_PREFIX6_MASK, thresholdEntry[0] & VAR_PREFIX6_MASK);
         if (cmp == 0) {
             final long thresholdLen = thresholdEntry[2];
-            if (len > Long.BYTES && thresholdLen > Long.BYTES) {
+            // The masked compare only settles keys whose whole encoding fits the marker
+            // plus six value bytes (encoded length <= 7); the seventh value byte sits in
+            // the masked-off low byte. A length <= 8 key still has a byte there, so the
+            // length tie-break is valid only once both keys are settled within seven bytes.
+            if (len > VAR_PREFIX6_KEY_BYTES && thresholdLen > VAR_PREFIX6_KEY_BYTES) {
                 return false;
             }
             cmp = Long.compare(len, thresholdLen);
