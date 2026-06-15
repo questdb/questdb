@@ -988,6 +988,90 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReconcileBudgetCountsOnlyZeroProgressRounds() throws Exception {
+        // M2: the give-up budget must count consecutive reconcile rounds that make NO
+        // progress, not every reconcile that still finds something missing - otherwise a
+        // post-restart storm (>=MAX concurrent catalogue queries racing the startup
+        // hydrator) exhausts the 8-budget in one burst and latches cacheComplete with a
+        // transiently-unreadable table still absent. A reconcile that hydrates >=1
+        // previously-missing table is self-healing, so it resets the budget; only rounds
+        // that hydrate nothing spend it. Here we drive several progress rounds (tables
+        // becoming readable one round at a time, as a storm hydrates incrementally) and
+        // assert the budget is not consumed while progress continues - it is spent only by
+        // the genuinely-stuck table once progress stops.
+        final int maxIncompleteReconcilePasses = 8;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bravo (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE gamma (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE stuck (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+
+            final File bravoMeta = metaFile("bravo");
+            final File bravoHidden = new File(bravoMeta.getParentFile(), "_meta.hidden");
+            final File gammaMeta = metaFile("gamma");
+            final File gammaHidden = new File(gammaMeta.getParentFile(), "_meta.hidden");
+            final File stuckMeta = metaFile("stuck");
+            final File stuckHidden = new File(stuckMeta.getParentFile(), "_meta.hidden");
+
+            // Hide bravo, gamma and stuck so only alpha can hydrate initially; reveal
+            // bravo/gamma one round at a time to mimic a storm making incremental progress.
+            java.nio.file.Files.move(bravoMeta.toPath(), bravoHidden.toPath());
+            java.nio.file.Files.move(gammaMeta.toPath(), gammaHidden.toPath());
+            java.nio.file.Files.move(stuckMeta.toPath(), stuckHidden.toPath());
+            try {
+                try (MetadataCacheWriter w = cache.writeLock()) {
+                    w.clearCache();
+                }
+
+                // Round 1: only alpha hydrates (progress) - bravo/gamma/stuck still hidden.
+                cache.hydrateAllTables();
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Round 2: reveal bravo, it hydrates (progress).
+                java.nio.file.Files.move(bravoHidden.toPath(), bravoMeta.toPath());
+                cache.hydrateAllTables();
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Round 3: reveal gamma, it hydrates (progress).
+                java.nio.file.Files.move(gammaHidden.toPath(), gammaMeta.toPath());
+                cache.hydrateAllTables();
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Three progress rounds happened, yet the budget is untouched: now only the
+                // permanently-stuck table is missing, so the next rounds are zero-progress.
+                // MAX_INCOMPLETE_RECONCILE_PASSES - 1 of them must NOT yet latch (proving the
+                // earlier progress rounds were not counted; pre-fix the budget would already
+                // be spent here).
+                for (int i = 0; i < maxIncompleteReconcilePasses - 1; i++) {
+                    cache.hydrateAllTables();
+                    Assert.assertFalse(
+                            "give-up budget exhausted too early - progress rounds were counted",
+                            cache.isCacheComplete());
+                }
+
+                // One more zero-progress round tips the budget over MAX and gives up.
+                cache.hydrateAllTables();
+                Assert.assertTrue(cache.isCacheComplete());
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(3, ro.getTableCount());
+                    Assert.assertNull(ro.getTable(engine.getTableTokenIfExists("stuck")));
+                }
+            } finally {
+                if (bravoHidden.exists()) {
+                    java.nio.file.Files.move(bravoHidden.toPath(), bravoMeta.toPath());
+                }
+                if (gammaHidden.exists()) {
+                    java.nio.file.Files.move(gammaHidden.toPath(), gammaMeta.toPath());
+                }
+                java.nio.file.Files.move(stuckHidden.toPath(), stuckMeta.toPath());
+            }
+        });
+    }
+
+    @Test
     public void testReconcileGivesUpAfterRepeatedHydrationFailures() throws Exception {
         // Mirror of MetadataCache.MAX_INCOMPLETE_RECONCILE_PASSES. A genuinely
         // unhydratable table would otherwise be re-read (and logged CRITICAL) on every
@@ -1012,8 +1096,18 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     w.clearCache();
                 }
 
-                // Each reconcile re-reads charlie's (still missing) _meta and fails.
-                // After maxIncompleteReconcilePasses such passes the flag latches.
+                // First reconcile hydrates alpha+bravo (progress) and leaves charlie
+                // missing. A progress round does not spend the give-up budget, so do it
+                // up front; only the zero-progress rounds below count toward giving up.
+                cache.hydrateAllTables();
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(2, ro.getTableCount());
+                }
+                Assert.assertFalse(cache.isCacheComplete());
+
+                // Now only charlie is missing and unhydratable: each reconcile re-reads
+                // its (still missing) _meta and fails, making zero progress. After
+                // maxIncompleteReconcilePasses such rounds the flag latches.
                 for (int i = 0; i < maxIncompleteReconcilePasses; i++) {
                     cache.hydrateAllTables();
                     try (MetadataCacheReader ro = cache.readLock()) {

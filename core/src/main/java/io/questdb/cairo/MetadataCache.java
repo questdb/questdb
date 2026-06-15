@@ -59,15 +59,18 @@ import java.util.Comparator;
  */
 public class MetadataCache implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MetadataCache.class);
-    // Upper bound on the number of catalogue reconcile passes that may keep finding
-    // a table missing before {@link #hydrateAllTables()} stops retrying and latches
-    // {@code cacheComplete} anyway. Without this cap a table whose {@code _meta}
-    // cannot be read (corrupt, or transiently unavailable at startup) would be
-    // re-read - and logged as CRITICAL - on every single catalogue query, since a
-    // failed hydration never lands in the cache and so always looks "missing". The
-    // cap trades the (already master-equivalent) hiding of a genuinely unhydratable
-    // table for bounded work and log output, while still giving transient failures
-    // several passes to self-heal. A writer touching the table still re-hydrates it,
+    // Upper bound on the number of consecutive zero-progress catalogue reconcile passes
+    // (a pass that still finds a table missing yet hydrates none of the missing tables)
+    // before {@link #hydrateAllTables()} stops retrying and latches {@code cacheComplete}
+    // anyway. Without this cap a table whose {@code _meta} cannot be read (corrupt, or
+    // transiently unavailable at startup) would be re-read - and logged as CRITICAL - on
+    // every single catalogue query, since a failed hydration never lands in the cache and
+    // so always looks "missing". The cap trades the (already master-equivalent) hiding of
+    // a genuinely unhydratable table for bounded work and log output, while still giving
+    // transient failures several passes to self-heal: any pass that hydrates at least one
+    // missing table resets the budget, so a post-restart storm making incremental
+    // progress (e.g. a PG-introspection burst racing the startup hydrator) cannot exhaust
+    // it in a single concurrent burst. A writer touching the table still re-hydrates it,
     // and clearCache() resets the counter so a fresh epoch reconciles again.
     private static final int MAX_INCOMPLETE_RECONCILE_PASSES = 8;
     private static final Comparator<CairoColumn> comparator = Comparator.comparingInt(CairoColumn::getPosition);
@@ -77,11 +80,14 @@ public class MetadataCache implements QuietCloseable {
     private final SimpleReadWriteLock rwLock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
-    // Counts consecutive catalogue reconcile passes that still found at least one
-    // table missing from the cache. Bounded by MAX_INCOMPLETE_RECONCILE_PASSES;
-    // reset by clearCache(). Only mutated under the write lock (by the give-up latch
-    // in hydrateAllTables() and by clearCache()), so it stays in step with
-    // cacheComplete and a concurrent clear cannot race the budgeted latch.
+    // Counts consecutive catalogue reconcile passes that made no progress - i.e. that
+    // still found a table missing AND hydrated none of the previously-missing tables. A
+    // pass that hydrates at least one missing table resets it (the cache is self-healing),
+    // so it counts only genuinely-stuck rounds rather than every concurrent invocation.
+    // Bounded by MAX_INCOMPLETE_RECONCILE_PASSES; reset by clearCache(). Only mutated
+    // under the write lock (by the give-up logic in hydrateAllTables() and by
+    // clearCache()), so it stays in step with cacheComplete and a concurrent clear cannot
+    // race the budgeted latch.
     private int incompleteReconcilePasses;
     private MemoryCMR metaMem = Vm.getCMRInstance();
     // True once the cache is known to hold every registered (non-view) table. Set by
@@ -275,19 +281,40 @@ public class MetadataCache implements QuietCloseable {
         // a transient failure self-heals. But a table whose _meta is genuinely
         // unreadable would otherwise be re-read (and logged CRITICAL) on every
         // catalogue query forever. Bound that: after MAX_INCOMPLETE_RECONCILE_PASSES
-        // passes still find something missing, give up and latch the flag, leaving the
+        // consecutive zero-progress passes, give up and latch the flag, leaving the
         // unhydratable table(s) to be picked up by a writer (hydrateTable/registerName)
         // or the next clearCache() epoch.
         //
-        // Do the budget bump + latch under the write lock, so they are mutually
-        // exclusive with clearCache() (which resets both the counter and the flag under
-        // the same lock). Otherwise a concurrent clear could slip between the budget
+        // The budget counts only zero-progress rounds: if this pass hydrated at least one
+        // previously-missing table the cache is still self-healing, so reset the counter
+        // instead of spending it. This keeps the give-up budget a function of sequential
+        // stuck rounds rather than of the number of concurrent invocations - a burst of
+        // catalogue queries that each make progress (e.g. a post-restart introspection
+        // storm racing the startup hydrator) cannot exhaust it.
+        //
+        // Do the progress check + budget bump + latch under the write lock, so they are
+        // mutually exclusive with clearCache() (which resets both the counter and the flag
+        // under the same lock). Otherwise a concurrent clear could slip between the budget
         // check and the latch and leave an emptied cache marked complete.
         final boolean gaveUp;
         try (MetadataCacheWriter ignore = writeLock()) {
-            gaveUp = ++incompleteReconcilePasses >= MAX_INCOMPLETE_RECONCILE_PASSES;
-            if (gaveUp) {
-                cacheComplete = true;
+            boolean progressed = false;
+            for (int i = 0, n = missing.size(); i < n; i++) {
+                if (tableMap.get(missing.getQuick(i).getTableName()) != null) {
+                    progressed = true;
+                    break;
+                }
+            }
+            if (progressed) {
+                // Progress this round - the cache is self-healing, so do not spend the
+                // give-up budget; the next reconcile re-scans for whatever is still missing.
+                incompleteReconcilePasses = 0;
+                gaveUp = false;
+            } else {
+                gaveUp = ++incompleteReconcilePasses >= MAX_INCOMPLETE_RECONCILE_PASSES;
+                if (gaveUp) {
+                    cacheComplete = true;
+                }
             }
         }
         if (gaveUp) {
