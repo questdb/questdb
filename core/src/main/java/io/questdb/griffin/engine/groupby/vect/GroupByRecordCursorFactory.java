@@ -681,12 +681,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     for (int j = 0; j < vafCount; j++) {
+                        // some wrapUp() methods can increase rosti size (e.g. inserting the null key)
+                        long oldSize = Rosti.getAllocMemory(pRostiBig);
                         if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
                             resetRostiMemorySize();
                             throw CairoException.nonCritical()
                                     .put("could not wrap up rosti hash table")
                                     .setOutOfMemory(true);
                         }
+                        raf.updateMemoryUsage(pRostiBig, oldSize);
                     }
                 }
             } catch (Throwable t) {
