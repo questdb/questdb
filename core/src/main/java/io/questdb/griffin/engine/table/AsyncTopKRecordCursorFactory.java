@@ -248,8 +248,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, rows, topK)) {
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         record.setRowIndex(rows.get(p));
-                        encoder.encode(record, topK.beginAppend(), record.getRowId());
-                        topK.endAppend();
+                        encoder.encodeTopK(record, record.getRowId(), topK);
                     }
                 }
             } else {
@@ -304,8 +303,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, frameRowCount, topK)) {
                     for (long r = 0; r < frameRowCount; r++) {
                         record.setRowIndex(r);
-                        encoder.encode(record, topK.beginAppend(), record.getRowId());
-                        topK.endAppend();
+                        encoder.encodeTopK(record, record.getRowId(), topK);
                     }
                 }
             } else {

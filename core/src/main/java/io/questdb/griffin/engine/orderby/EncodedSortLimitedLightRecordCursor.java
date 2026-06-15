@@ -287,8 +287,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            encodeCurrentRow();
-            entries.endAppend();
+            encoder.encodeTopK(baseRecord, baseRecord.getRowId(), entries);
         }
     }
 

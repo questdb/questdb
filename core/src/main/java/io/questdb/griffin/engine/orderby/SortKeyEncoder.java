@@ -66,7 +66,6 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class SortKeyEncoder implements QuietCloseable {
     public static final int KEY_PREFIX_BYTES = 16;
-    // Vergesort's index space caps a sort at (2^32 - 2) entries of 8 bytes.
     public static final long MAX_ENTRY_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final int[] columnByteWidths;
     private final int[] columnIndices;
@@ -76,6 +75,7 @@ public class SortKeyEncoder implements QuietCloseable {
     private final boolean hasBorrowedRankMaps;
     private final boolean[] isDesc;
     private final boolean isSingleColumnFixed8;
+    private final boolean isSingleColumnVarchar;
     private final boolean[] isStaticSymbol;
     private final int[] offsets;
     private final int[] rankMapSizes;
@@ -131,6 +131,7 @@ public class SortKeyEncoder implements QuietCloseable {
             }
         }
         this.isSingleColumnFixed8 = n == 1 && columnByteWidths[0] >= 0 && columnByteWidths[0] <= 8;
+        this.isSingleColumnVarchar = n == 1 && columnTypes[0] == ColumnType.VARCHAR;
         this.decimal128Sink = hasDecimal128 ? new Decimal128() : null;
         this.decimal256Sink = hasDecimal256 ? new Decimal256() : null;
     }
@@ -298,6 +299,21 @@ public class SortKeyEncoder implements QuietCloseable {
      */
     public boolean encodeFixed8Frame(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, EncodedTopKBuffer topK) {
         return encodeFixed8Batch(frameMemory, frameIndex, rows, rows.size(), topK);
+    }
+
+    /**
+     * Encodes one row into the top-K buffer, dropping it up front when the buffer's
+     * threshold already excludes its leading prefix word. For a variable-length key
+     * this skips the full key encode and key-heap write for the rows that lose,
+     * which is the bulk of a scan once the top-K is warm. Fixed keys encode inline
+     * and cheaply, so they fall straight through to the full encode.
+     */
+    public void encodeTopK(Record record, long rowId, EncodedTopKBuffer topK) {
+        if (keyType.isVariable() && topK.fastRejectsKey(leadingWord(record))) {
+            return;
+        }
+        encode(record, topK.beginAppend(), rowId);
+        topK.endAppend();
     }
 
     public SortKeyType init(SymbolTableSource symbolTableSource) {
@@ -665,7 +681,78 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
-    private void appendUtf16(CharSequence value, boolean desc) {
+    /**
+     * The leading 8-byte comparison word of a single VARCHAR key, computed straight
+     * from the value - bit-identical to the {@code k1} word that
+     * {@link #appendVarchar(Utf8Sequence, boolean, long)} writes (marker, then up to
+     * seven {@code +1}-normalized value bytes, then terminator and zero padding for a
+     * shorter value), but with no key-heap write or rollback. Rejects a 0xFF byte in
+     * the leading word, matching the full encode's invalid-UTF-8 guard; bytes past
+     * the leading word are checked by appendVarchar on the rows that survive.
+     */
+    private static long varcharLeadingWord(Utf8Sequence value, boolean desc) {
+        final long byteMask = desc ? 0xFFL : 0L;
+        if (value == null) {
+            return byteMask << 56;
+        }
+        final int size = value.size();
+        if (size >= Long.BYTES) {
+            final long word = value.longAt(0);
+            if (hasByteFF(word)) {
+                throw invalidVarcharUtf8();
+            }
+            final long normalized = (word + 0x0101010101010101L) ^ (desc ? -1L : 0L);
+            return ((1L ^ byteMask) << 56) | (Long.reverseBytes(normalized) >>> 8);
+        }
+        long word = (1L ^ byteMask) << 56;
+        int shift = 48;
+        for (int i = 0; i < size; i++, shift -= 8) {
+            final byte b = value.byteAt(i);
+            if (b == (byte) 0xFF) {
+                throw invalidVarcharUtf8();
+            }
+            word |= (((b + 1) & 0xFFL) ^ byteMask) << shift;
+        }
+        if (size < 7) {
+            word |= byteMask << shift; // terminator; trailing bytes stay zero-padded
+        }
+        return word;
+    }
+
+    /**
+     * Appends the variable-length key's normalized bytes to the key heap, one
+     * sort column after another, and returns the byte length written. A
+     * {@code budget} below {@link Long#MAX_VALUE} stops once that many bytes are
+     * on the heap, so {@link #leadingWord(Record)} can materialize just the
+     * leading prefix word without encoding the full key. The full encode passes
+     * {@code Long.MAX_VALUE} and writes every byte. The leading bytes the bounded
+     * call produces are a byte-for-byte prefix of the full encode's, so a key
+     * fast-rejected on its leading word never has to be encoded in full.
+     */
+    private long appendKeyBytes(Record record, long budget) {
+        final MemoryCARW heap = keyHeap;
+        final long start = heap.getAppendOffset();
+        for (int i = 0; i < columnIndices.length; i++) {
+            if (heap.getAppendOffset() - start >= budget) {
+                break;
+            }
+            if (columnByteWidths[i] >= 0) {
+                encodeFixedColumn(record, i, heap.appendAddressFor(columnByteWidths[i]));
+            } else {
+                final long remaining = budget - (heap.getAppendOffset() - start);
+                switch (columnTypes[i]) {
+                    case ColumnType.VARCHAR -> appendVarchar(record.getVarcharA(columnIndices[i]), isDesc[i], remaining);
+                    case ColumnType.STRING -> appendUtf16(record.getStrA(columnIndices[i]), isDesc[i], remaining);
+                    case ColumnType.SYMBOL -> appendUtf16(record.getSymA(columnIndices[i]), isDesc[i], remaining);
+                    default ->
+                            throw CairoException.nonCritical().put("unexpected type in encodeVariable: ").put(ColumnType.nameOf(columnTypes[i]));
+                }
+            }
+        }
+        return heap.getAppendOffset() - start;
+    }
+
+    private void appendUtf16(CharSequence value, boolean desc, long maxBytes) {
         final byte mask = desc ? (byte) 0xFF : 0;
         if (value == null) {
             Unsafe.putByte(keyHeap.appendAddressFor(1), mask);
@@ -673,10 +760,14 @@ public class SortKeyEncoder implements QuietCloseable {
         }
         final int n = value.length();
         final long offset = keyHeap.getAppendOffset();
-        long p = keyHeap.appendAddressFor(4L * n + 2);
-        final long base = p;
+        final long full = 4L * n + 2;
+        // Reserve the whole key, or, when bounded, the budget plus one character's
+        // worth of slack for the step that can overrun maxBytes mid-character.
+        final long base = keyHeap.appendAddressFor(maxBytes >= full ? full : maxBytes + 4L);
+        long p = base;
         Unsafe.putByte(p++, (byte) (1 ^ mask));
-        for (int i = 0; i < n; i++) {
+        int i = 0;
+        for (; i < n && (p - base) < maxBytes; i++) {
             final char c = value.charAt(i);
             final int hi = c >>> 8;
             final int lo = c & 0xFF;
@@ -689,22 +780,28 @@ public class SortKeyEncoder implements QuietCloseable {
             }
             Unsafe.putByte(p++, (byte) (lo ^ mask));
         }
-        Unsafe.putByte(p++, mask);
+        if (i >= n) {
+            Unsafe.putByte(p++, mask);
+        }
         keyHeap.jumpTo(offset + (p - base));
     }
 
-    private void appendVarchar(Utf8Sequence value, boolean desc) {
+    private void appendVarchar(Utf8Sequence value, boolean desc, long maxBytes) {
         final byte mask = desc ? (byte) 0xFF : 0;
         if (value == null) {
             Unsafe.putByte(keyHeap.appendAddressFor(1), mask);
             return;
         }
         final int size = value.size();
-        long p = keyHeap.appendAddressFor(size + 2L);
+        // Reserve the whole key, or, when bounded, the budget plus a word of
+        // slack for the 8-byte SWAR step that can overrun maxBytes.
+        final long offset = keyHeap.getAppendOffset();
+        final long base = keyHeap.appendAddressFor(maxBytes >= size + 2L ? size + 2L : maxBytes + Long.BYTES);
+        long p = base;
         Unsafe.putByte(p++, (byte) (1 ^ mask));
         final long wordMask = desc ? -1L : 0;
         int i = 0;
-        for (; i + 8 <= size; i += 8, p += 8) {
+        for (; i + 8 <= size && (p - base) < maxBytes; i += 8, p += 8) {
             final long word = value.longAt(i);
             // The +1 shift reserves 0x00 as the terminator; a 0xFF byte would
             // wrap to 0x00 and break the order. Valid UTF-8 has no 0xFF.
@@ -713,14 +810,17 @@ public class SortKeyEncoder implements QuietCloseable {
             }
             Unsafe.putLong(p, (word + 0x0101010101010101L) ^ wordMask);
         }
-        for (; i < size; i++, p++) {
+        for (; i < size && (p - base) < maxBytes; i++, p++) {
             final byte b = value.byteAt(i);
             if (b == (byte) 0xFF) {
                 throw invalidVarcharUtf8();
             }
             Unsafe.putByte(p, (byte) ((b + 1) ^ mask));
         }
-        Unsafe.putByte(p, mask);
+        if (i >= size) {
+            Unsafe.putByte(p++, mask);
+        }
+        keyHeap.jumpTo(offset + (p - base));
     }
 
     private void batchSymbol(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
@@ -910,20 +1010,7 @@ public class SortKeyEncoder implements QuietCloseable {
     private void encodeVariable(Record record, long destAddr, long rowId) {
         final MemoryCARW heap = keyHeap;
         final long start = heap.getAppendOffset();
-        for (int i = 0; i < columnIndices.length; i++) {
-            if (columnByteWidths[i] >= 0) {
-                encodeFixedColumn(record, i, heap.appendAddressFor(columnByteWidths[i]));
-            } else {
-                switch (columnTypes[i]) {
-                    case ColumnType.VARCHAR -> appendVarchar(record.getVarcharA(columnIndices[i]), isDesc[i]);
-                    case ColumnType.STRING -> appendUtf16(record.getStrA(columnIndices[i]), isDesc[i]);
-                    case ColumnType.SYMBOL -> appendUtf16(record.getSymA(columnIndices[i]), isDesc[i]);
-                    default ->
-                            throw CairoException.nonCritical().put("unexpected type in encodeVariable: ").put(ColumnType.nameOf(columnTypes[i]));
-                }
-            }
-        }
-        final long len = heap.getAppendOffset() - start;
+        final long len = appendKeyBytes(record, Long.MAX_VALUE);
         if (len < KEY_PREFIX_BYTES) {
             long padAddr = heap.appendAddressFor(KEY_PREFIX_BYTES);
             Unsafe.putLong(padAddr, 0);
@@ -936,5 +1023,36 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putLong(destAddr + 24, start);
         Unsafe.putLong(destAddr + 32, rowId);
         heap.jumpTo(len <= KEY_PREFIX_BYTES ? start : start + len);
+    }
+
+    /**
+     * Materializes just the leading prefix word of the variable key for the
+     * current row, reusing {@link #appendKeyBytes(Record, long)} into the key
+     * heap and rolling the scratch back. Bit-identical to the {@code k1} word
+     * {@link #encodeVariable(Record, long, long)} would write, so a row this
+     * word excludes from the top-K can be dropped before the full encode.
+     */
+    private long leadingWord(Record record) {
+        // Hot path: a single VARCHAR key's leading word comes straight from the
+        // value with a few ALU ops - no key-heap write and no rollback, which is
+        // what the per-row reject in encodeTopK needs to stay cheap.
+        if (isSingleColumnVarchar) {
+            return varcharLeadingWord(record.getVarcharA(columnIndices[0]), isDesc[0]);
+        }
+        // General fallback: encode the leading bytes into the key heap (reusing the
+        // real encode path so it cannot drift), read the word, roll the scratch back.
+        final MemoryCARW heap = keyHeap;
+        final long mark = heap.getAppendOffset();
+        final long padBytes = Long.BYTES - appendKeyBytes(record, Long.BYTES);
+        // Keys shorter than a word are zero-padded, matching encodeVariable's prefix.
+        if (padBytes > 0) {
+            final long padAddr = heap.appendAddressFor(padBytes);
+            for (long b = 0; b < padBytes; b++) {
+                Unsafe.putByte(padAddr + b, (byte) 0);
+            }
+        }
+        final long k1 = Long.reverseBytes(Unsafe.getLong(heap.addressOf(mark)));
+        heap.jumpTo(mark);
+        return k1;
     }
 }
