@@ -450,10 +450,19 @@ pub fn create_row_group_from_partitions(
         };
 
         // Build the per-partition Column slice for this column index.
-        let columns: Vec<Column> = partitions
+        let mut columns: Vec<Column> = partitions
             .iter()
             .map(|partition| partition.columns[col_idx])
             .collect();
+
+        // The strided designated-timestamp encoder iterates the whole merge
+        // index (it takes no row-group bounds). When write_chunk splits a
+        // partition into multiple row groups, narrow that single column to this
+        // row group's window so it isn't re-emitted in full for every group.
+        if columns.len() == 1 && columns[0].strided_timestamp_16 {
+            columns[0] =
+                columns[0].strided_row_group_slice(first_partition_start, last_partition_end)?;
+        }
 
         let pages = encode_column_chunk(
             col_encoding,

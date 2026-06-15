@@ -24,21 +24,25 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -47,6 +51,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Utf8Sequence;
@@ -61,11 +66,14 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class SortKeyEncoder implements QuietCloseable {
     public static final int KEY_PREFIX_BYTES = 16;
+    // Vergesort's index space caps a sort at (2^32 - 2) entries of 8 bytes.
+    public static final long MAX_ENTRY_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final int[] columnByteWidths;
     private final int[] columnIndices;
     private final int[] columnTypes;
     private final Decimal128 decimal128Sink;
     private final Decimal256 decimal256Sink;
+    private final boolean hasBorrowedRankMaps;
     private final boolean[] isDesc;
     private final boolean isSingleColumnFixed8;
     private final boolean[] isStaticSymbol;
@@ -77,6 +85,18 @@ public class SortKeyEncoder implements QuietCloseable {
     private long padMask;
 
     public SortKeyEncoder(RecordMetadata metadata, IntList sortColumnFilter) {
+        this(metadata, sortColumnFilter, null);
+    }
+
+    /**
+     * A non-null {@code rankMapOwner} makes this encoder share the owner's rank
+     * maps for its whole lifetime: building a rank map sorts the whole symbol
+     * dictionary, so per-worker encoders share the owner's read-only maps instead
+     * of building identical ones. A sharing encoder is initialized with
+     * {@link #initFrom(SortKeyEncoder)}, and its {@link #close()} leaves the maps
+     * to the owner.
+     */
+    public SortKeyEncoder(RecordMetadata metadata, IntList sortColumnFilter, SortKeyEncoder rankMapOwner) {
         int n = sortColumnFilter.size();
         this.columnIndices = new int[n];
         this.columnTypes = new int[n];
@@ -87,7 +107,8 @@ public class SortKeyEncoder implements QuietCloseable {
         this.rankMapSizes = new int[n];
         boolean hasDecimal128 = false;
         boolean hasDecimal256 = false;
-        this.rankMaps = new ObjList<>(n);
+        this.hasBorrowedRankMaps = rankMapOwner != null;
+        this.rankMaps = hasBorrowedRankMaps ? rankMapOwner.rankMaps : new ObjList<>(n);
 
         for (int i = 0; i < n; i++) {
             int encoded = sortColumnFilter.getQuick(i);
@@ -99,10 +120,14 @@ public class SortKeyEncoder implements QuietCloseable {
             if (ColumnType.isSymbol(columnTypes[i]) && metadata.isSymbolTableStatic(columnIndices[i])) {
                 isStaticSymbol[i] = true;
                 columnByteWidths[i] = 4;
-                rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
+                if (!hasBorrowedRankMaps) {
+                    rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
+                }
             } else {
                 columnByteWidths[i] = fixedColumnByteWidth(columnTypes[i]);
-                rankMaps.add(null);
+                if (!hasBorrowedRankMaps) {
+                    rankMaps.add(null);
+                }
             }
         }
         this.isSingleColumnFixed8 = n == 1 && columnByteWidths[0] >= 0 && columnByteWidths[0] <= 8;
@@ -181,6 +206,15 @@ public class SortKeyEncoder implements QuietCloseable {
         return rankMaps;
     }
 
+    public static IntHashSet extractSortKeyColumnIndexes(IntList sortColumnFilter) {
+        final IntHashSet indexes = new IntHashSet(sortColumnFilter.size());
+        for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
+            final int encoded = sortColumnFilter.getQuick(i);
+            indexes.add((encoded > 0 ? encoded : -encoded) - 1);
+        }
+        return indexes;
+    }
+
     /**
      * Checks whether all sort columns can be encoded into a byte-comparable
      * key. Every column type that ORDER BY accepts is encodable.
@@ -196,14 +230,42 @@ public class SortKeyEncoder implements QuietCloseable {
         return true;
     }
 
+    /**
+     * Returns how many encoded entries fit the two sort budgets. The settings size
+     * the tree chain's separate key and value heaps; the encoded layout splits each
+     * entry the same way - key bytes against the key budget, the rowId word against
+     * the light value budget - so each setting keeps binding on its own even when
+     * the other is left at its effectively unbounded default.
+     */
+    public static long maxEntries(long keyCapBytes, long valueCapBytes, SortKeyType keyType) {
+        final long keyCap = Math.min(keyCapBytes, MAX_ENTRY_HEAP_BYTES);
+        final long valueCap = Math.min(valueCapBytes, MAX_ENTRY_HEAP_BYTES);
+        return Math.min(
+                Math.min(keyCap / keyType.keyLength(), valueCap / Long.BYTES),
+                MAX_ENTRY_HEAP_BYTES / keyType.entrySize()
+        );
+    }
+
     @SuppressWarnings("unused") // called from generated bytecode (RecordComparatorCompiler)
     public static int rank(Object rankMap, int key) {
         return key < 0 ? 0 : ((DirectIntList) rankMap).get(key);
     }
 
+    public static void throwSortHeapOverflow(long maxEntryMemBytes) {
+        throw LimitOverflowException.instance()
+                .put("limit of ").put(maxEntryMemBytes)
+                .put(" memory exceeded in EncodedSort (raise ")
+                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                .put(" or ")
+                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
+                .put(')');
+    }
+
     @Override
     public void close() {
-        Misc.freeObjListAndKeepObjects(rankMaps);
+        if (!hasBorrowedRankMaps) {
+            Misc.freeObjListAndKeepObjects(rankMaps);
+        }
     }
 
     public void encode(Record record, long destAddr, long rowId) {
@@ -219,13 +281,35 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putLong(destAddr + keyType.rowIdOffset(), rowId);
     }
 
-    public SortKeyType init(RecordCursor baseCursor) {
+    /**
+     * Encodes every frame row into the buffer in one pass, with the column
+     * address, type dispatch and direction transform hoisted out of the per-row
+     * loop. Returns false when the batch does not apply - multi-column key, or
+     * the column is absent from the frame - and the caller must fall back to
+     * per-row {@link #encode(Record, long, long)}.
+     */
+    public boolean encodeFixed8Frame(PageFrameMemory frameMemory, int frameIndex, long frameRowCount, EncodedTopKBuffer topK) {
+        return encodeFixed8Batch(frameMemory, frameIndex, null, frameRowCount, topK);
+    }
+
+    /**
+     * Filtered variant of {@link #encodeFixed8Frame(PageFrameMemory, int, long, EncodedTopKBuffer)}:
+     * encodes only the frame-local row indexes in {@code rows}.
+     */
+    public boolean encodeFixed8Frame(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, EncodedTopKBuffer topK) {
+        return encodeFixed8Batch(frameMemory, frameIndex, rows, rows.size(), topK);
+    }
+
+    public SortKeyType init(SymbolTableSource symbolTableSource) {
+        // A borrowing encoder shares the owner's maps; rebuilding here would
+        // mutate them behind the owner's back.
+        assert !hasBorrowedRankMaps;
         int totalBytes = 0;
         boolean hasVarLength = false;
 
         for (int i = 0; i < columnIndices.length; i++) {
             if (isStaticSymbol[i]) {
-                StaticSymbolTable sst = getStaticSymbolTable(baseCursor.getSymbolTable(columnIndices[i]));
+                StaticSymbolTable sst = getStaticSymbolTable(symbolTableSource.getSymbolTable(columnIndices[i]));
                 int symbolCount = sst.getSymbolCount();
                 buildRankMap(sst, rankMaps.getQuick(i));
                 rankMapSizes[i] = symbolCount;
@@ -254,8 +338,121 @@ public class SortKeyEncoder implements QuietCloseable {
         return keyType;
     }
 
+    /**
+     * Adopts the layout of an already-initialized encoder this one was constructed
+     * to share rank maps with; the maps themselves need no copying as both encoders
+     * reference the same list.
+     */
+    public SortKeyType initFrom(SortKeyEncoder owner) {
+        assert rankMaps == owner.rankMaps;
+        for (int i = 0; i < columnIndices.length; i++) {
+            offsets[i] = owner.offsets[i];
+            columnByteWidths[i] = owner.columnByteWidths[i];
+            rankMapSizes[i] = owner.rankMapSizes[i];
+        }
+        keyType = owner.keyType;
+        padMask = owner.padMask;
+        return keyType;
+    }
+
     public void setKeyHeap(MemoryCARW keyHeap) {
         this.keyHeap = keyHeap;
+    }
+
+    private static void appendEntry(EncodedTopKBuffer topK, long key, long rowId) {
+        if (topK.fastRejectsKey(key)) {
+            return;
+        }
+        final long addr = topK.beginAppend();
+        Unsafe.putLong(addr, key);
+        Unsafe.putLong(addr + 8, rowId);
+        topK.endAppend();
+    }
+
+    private static void batchDouble(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendEntry(topK, doubleKey(Unsafe.getDouble(colAddr + (r << 3)), desc), rowIdBase + r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                final long r = rows.get(p);
+                appendEntry(topK, doubleKey(Unsafe.getDouble(colAddr + (r << 3)), desc), rowIdBase + r);
+            }
+        }
+    }
+
+    private static void batchFloat(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendEntry(topK, floatKey(Unsafe.getFloat(colAddr + (r << 2)), desc), rowIdBase + r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                final long r = rows.get(p);
+                appendEntry(topK, floatKey(Unsafe.getFloat(colAddr + (r << 2)), desc), rowIdBase + r);
+            }
+        }
+    }
+
+    private static void batchIntegral1(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, long xorMask) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendEntry(topK, ((Unsafe.getByte(colAddr + r) & 0xFFL) ^ xorMask) << 56, rowIdBase + r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                final long r = rows.get(p);
+                appendEntry(topK, ((Unsafe.getByte(colAddr + r) & 0xFFL) ^ xorMask) << 56, rowIdBase + r);
+            }
+        }
+    }
+
+    private static void batchIntegral2(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, long xorMask) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendEntry(topK, ((Unsafe.getShort(colAddr + (r << 1)) & 0xFFFFL) ^ xorMask) << 48, rowIdBase + r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                final long r = rows.get(p);
+                appendEntry(topK, ((Unsafe.getShort(colAddr + (r << 1)) & 0xFFFFL) ^ xorMask) << 48, rowIdBase + r);
+            }
+        }
+    }
+
+    private static void batchIntegral4(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, long xorMask) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendEntry(topK, ((Unsafe.getInt(colAddr + (r << 2)) & 0xFFFFFFFFL) ^ xorMask) << 32, rowIdBase + r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                final long r = rows.get(p);
+                appendEntry(topK, ((Unsafe.getInt(colAddr + (r << 2)) & 0xFFFFFFFFL) ^ xorMask) << 32, rowIdBase + r);
+            }
+        }
+    }
+
+    private static void batchIntegral8(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, long xorMask) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendEntry(topK, Unsafe.getLong(colAddr + (r << 3)) ^ xorMask, rowIdBase + r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                final long r = rows.get(p);
+                appendEntry(topK, Unsafe.getLong(colAddr + (r << 3)) ^ xorMask, rowIdBase + r);
+            }
+        }
+    }
+
+    private static long doubleKey(double value, boolean desc) {
+        final long bits = Double.doubleToLongBits(value);
+        if (desc) {
+            return bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
+        }
+        return bits >= 0 ? bits ^ Long.MIN_VALUE : ~bits;
     }
 
     private static void encodeBoolean(long addr, boolean value, boolean desc) {
@@ -273,7 +470,7 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeDouble(long addr, double value, boolean desc) {
-        long bits = Double.doubleToRawLongBits(value);
+        long bits = Double.doubleToLongBits(value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
         } else {
@@ -283,7 +480,7 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeFloat(long addr, float value, boolean desc) {
-        int bits = Float.floatToRawIntBits(value);
+        int bits = Float.floatToIntBits(value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
         } else {
@@ -366,6 +563,16 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.DECIMAL256, ColumnType.LONG256 -> 32;
             default -> -1;
         };
+    }
+
+    private static long floatKey(float value, boolean desc) {
+        int bits = Float.floatToIntBits(value);
+        if (desc) {
+            bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
+        } else {
+            bits = bits >= 0 ? bits ^ Integer.MIN_VALUE : ~bits;
+        }
+        return Integer.toUnsignedLong(bits) << 32;
     }
 
     private static StaticSymbolTable getStaticSymbolTable(SymbolTable symbolTable) {
@@ -516,6 +723,26 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putByte(p, mask);
     }
 
+    private void batchSymbol(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
+        final DirectIntList rankMap = rankMaps.getQuick(0);
+        final int rankMapSize = rankMapSizes[0];
+        final int shift = (8 - columnByteWidths[0]) * 8;
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                final int symKey = Unsafe.getInt(colAddr + (r << 2));
+                final int rank = (symKey < 0 || symKey >= rankMapSize) ? 0 : rankMap.get(symKey);
+                appendEntry(topK, Integer.toUnsignedLong(desc ? ~rank : rank) << shift, rowIdBase + r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                final long r = rows.get(p);
+                final int symKey = Unsafe.getInt(colAddr + (r << 2));
+                final int rank = (symKey < 0 || symKey >= rankMapSize) ? 0 : rankMap.get(symKey);
+                appendEntry(topK, Integer.toUnsignedLong(desc ? ~rank : rank) << shift, rowIdBase + r);
+            }
+        }
+    }
+
     private void encodeFixed8(Record record, long destAddr, long rowId) {
         int colIdx = columnIndices[0];
         int colType = columnTypes[0];
@@ -549,7 +776,7 @@ public class SortKeyEncoder implements QuietCloseable {
                     Integer.toUnsignedLong(record.getDecimal32(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
             case ColumnType.IPv4 -> Integer.toUnsignedLong(desc ? ~record.getIPv4(colIdx) : record.getIPv4(colIdx));
             case ColumnType.FLOAT -> {
-                int bits = Float.floatToRawIntBits(record.getFloat(colIdx));
+                int bits = Float.floatToIntBits(record.getFloat(colIdx));
                 if (desc) {
                     bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
                 } else {
@@ -563,7 +790,7 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.DATE -> record.getDate(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.DECIMAL64 -> record.getDecimal64(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.DOUBLE -> {
-                long bits = Double.doubleToRawLongBits(record.getDouble(colIdx));
+                long bits = Double.doubleToLongBits(record.getDouble(colIdx));
                 if (desc) {
                     yield bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
                 } else {
@@ -574,6 +801,39 @@ public class SortKeyEncoder implements QuietCloseable {
         } << shift;
         Unsafe.putLong(destAddr, key);
         Unsafe.putLong(destAddr + 8, rowId);
+    }
+
+    private boolean encodeFixed8Batch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK) {
+        if (!isSingleColumnFixed8) {
+            return false;
+        }
+        final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
+        if (colAddr == 0) {
+            // Column top: every frame row is NULL for this column.
+            return false;
+        }
+        final long rowIdBase = Rows.toRowID(frameIndex, 0);
+        final boolean desc = isDesc[0];
+        switch (columnTypes[0]) {
+            case ColumnType.SYMBOL -> batchSymbol(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            case ColumnType.FLOAT -> batchFloat(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            case ColumnType.DOUBLE -> batchDouble(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            // BOOLEAN is stored as exactly 0 or 1 (putBool), so xor-ing the raw byte reproduces the
+            // per-row getBool() normalization in encodeFixed8.
+            case ColumnType.BOOLEAN -> batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFL : 0L);
+            case ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                    batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0x7FL : 0x80L);
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                    batchIntegral2(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0x7FFFL : 0x8000L);
+            case ColumnType.CHAR -> batchIntegral2(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFFFL : 0L);
+            case ColumnType.INT, ColumnType.GEOINT, ColumnType.DECIMAL32 ->
+                    batchIntegral4(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0x7FFFFFFFL : 0x80000000L);
+            case ColumnType.IPv4 -> batchIntegral4(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFFFFFFFL : 0L);
+            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 ->
+                    batchIntegral8(topK, colAddr, rowIdBase, rows, rowCount, desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+            default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(columnTypes[0]));
+        }
+        return true;
     }
 
     private void encodeFixedColumn(Record record, int i, long addr) {

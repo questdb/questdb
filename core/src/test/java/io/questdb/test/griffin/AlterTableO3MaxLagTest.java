@@ -348,7 +348,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setO3MaxLagWrongSetSyntax() throws Exception {
         assertQuery("ALTER TABLE X SET o3MaxLag = 111ms")
                 .ddl("CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH")
-                .fails(18, "'param', 'ttl' or 'type' expected");
+                .fails(18, "'param', 'ttl', 'format' or 'type' expected");
     }
 
     @Test

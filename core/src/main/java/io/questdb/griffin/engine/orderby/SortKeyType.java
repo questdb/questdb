@@ -32,6 +32,8 @@ public enum SortKeyType {
     VARIABLE(32),
     UNSUPPORTED(-1);
 
+    public static final int MAX_ENTRY_LONGS = (FIXED_32.entrySize()) / Long.BYTES;
+
     private final int keyLength;
 
     SortKeyType(int keyLength) {

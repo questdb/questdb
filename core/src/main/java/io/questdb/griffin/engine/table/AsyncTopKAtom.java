@@ -41,9 +41,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.orderby.EncodedTopKBuffer;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.griffin.engine.orderby.SortKeyType;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
@@ -55,17 +57,26 @@ import org.jetbrains.annotations.Nullable;
 
 
 public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
+    private final IntHashSet encodedSkipColumnIndexes;
     private final AsyncFilterContext filterCtx;
+    private final boolean isEncoded;
+    private final long lo;
     private final LimitedSizeLongTreeChain ownerChain;
     private final RecordComparator ownerComparator;
+    private final SortKeyEncoder ownerEncoder;
     private final PageFrameMemoryRecord ownerRecordA;
     private final PageFrameMemoryRecord ownerRecordB;
+    private final EncodedTopKBuffer ownerTopK;
     private final ObjList<LimitedSizeLongTreeChain> perWorkerChains;
     private final ObjList<RecordComparator> perWorkerComparators;
+    private final ObjList<SortKeyEncoder> perWorkerEncoders;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<PageFrameMemoryRecord> perWorkerRecordsB;
+    private final ObjList<EncodedTopKBuffer> perWorkerTopK;
     private final ObjList<DirectIntList> rankMaps;
+    private final IntHashSet sortKeyColumnIndexes;
     private final int workerCount;
+    private SortKeyType keyType;
 
     public AsyncTopKAtom(
             @NotNull CairoConfiguration configuration,
@@ -98,31 +109,56 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                     0L
             );
 
-            this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, orderByFilter);
-            final Class<RecordComparator> clazz = recordComparatorCompiler.compile(orderByMetadata, orderByFilter);
-            this.ownerComparator = recordComparatorCompiler.newInstance(clazz);
-            this.ownerRecordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            this.ownerRecordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-            this.ownerChain = new LimitedSizeLongTreeChain(
-                    configuration.getSqlSortKeyPageSize(),
-                    configuration.getSqlSortKeyMaxBytes(),
-                    configuration.getSqlSortLightValuePageSize(),
-                    configuration.getSqlSortLightValueMaxBytes(),
-                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
-            );
-            ownerChain.updateLimits(true, lo);
-
+            this.lo = lo;
             this.workerCount = workerCount;
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            this.perWorkerComparators = new ObjList<>(workerCount);
-            this.perWorkerChains = new ObjList<>(workerCount);
+            this.ownerRecordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            this.ownerRecordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
             this.perWorkerRecordsB = new ObjList<>(workerCount);
-
             for (int i = 0; i < workerCount; i++) {
-                perWorkerComparators.extendAndSet(i, recordComparatorCompiler.newInstance(clazz));
+                perWorkerRecordsB.extendAndSet(i, new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER));
+            }
 
-                final LimitedSizeLongTreeChain chain = new LimitedSizeLongTreeChain(
+            this.isEncoded = SortKeyEncoder.isSupported(orderByMetadata, orderByFilter);
+            if (isEncoded) {
+                this.rankMaps = null;
+                this.ownerComparator = null;
+                this.ownerChain = null;
+                this.perWorkerComparators = null;
+                this.perWorkerChains = null;
+                this.ownerEncoder = new SortKeyEncoder(orderByMetadata, orderByFilter);
+                this.ownerTopK = new EncodedTopKBuffer(configuration);
+                this.perWorkerEncoders = new ObjList<>(workerCount);
+                this.perWorkerTopK = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerEncoders.extendAndSet(i, new SortKeyEncoder(orderByMetadata, orderByFilter, ownerEncoder));
+                    perWorkerTopK.extendAndSet(i, new EncodedTopKBuffer(configuration));
+                }
+                this.sortKeyColumnIndexes = SortKeyEncoder.extractSortKeyColumnIndexes(orderByFilter);
+                if (filterUsedColumnIndexes != null) {
+                    // Late materialization needs only the sort-key columns the filter
+                    // pass did not decode; everything else is skipped.
+                    final IntHashSet skipSet = new IntHashSet();
+                    for (int i = 0, n = orderByMetadata.getColumnCount(); i < n; i++) {
+                        if (!sortKeyColumnIndexes.contains(i) || filterUsedColumnIndexes.contains(i)) {
+                            skipSet.add(i);
+                        }
+                    }
+                    this.encodedSkipColumnIndexes = skipSet;
+                } else {
+                    this.encodedSkipColumnIndexes = null;
+                }
+            } else {
+                this.ownerEncoder = null;
+                this.ownerTopK = null;
+                this.perWorkerEncoders = null;
+                this.perWorkerTopK = null;
+                this.sortKeyColumnIndexes = null;
+                this.encodedSkipColumnIndexes = null;
+                this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, orderByFilter);
+                final Class<RecordComparator> clazz = recordComparatorCompiler.compile(orderByMetadata, orderByFilter);
+                this.ownerComparator = recordComparatorCompiler.newInstance(clazz);
+                this.ownerChain = new LimitedSizeLongTreeChain(
                         configuration.getSqlSortKeyPageSize(),
                         configuration.getSqlSortKeyMaxBytes(),
                         configuration.getSqlSortLightValuePageSize(),
@@ -130,11 +166,22 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                         PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
                         PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
                 );
-                chain.updateLimits(true, lo);
-                perWorkerChains.extendAndSet(i, chain);
-
-                // We need to keep two records around.
-                perWorkerRecordsB.extendAndSet(i, new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER));
+                ownerChain.updateLimits(true, lo);
+                this.perWorkerComparators = new ObjList<>(workerCount);
+                this.perWorkerChains = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerComparators.extendAndSet(i, recordComparatorCompiler.newInstance(clazz));
+                    final LimitedSizeLongTreeChain chain = new LimitedSizeLongTreeChain(
+                            configuration.getSqlSortKeyPageSize(),
+                            configuration.getSqlSortKeyMaxBytes(),
+                            configuration.getSqlSortLightValuePageSize(),
+                            configuration.getSqlSortLightValueMaxBytes(),
+                            PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                            PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+                    );
+                    chain.updateLimits(true, lo);
+                    perWorkerChains.extendAndSet(i, chain);
+                }
             }
         } catch (Throwable th) {
             close();
@@ -146,6 +193,8 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     public void clear() {
         Misc.freeObjListAndKeepObjects(rankMaps);
         Misc.free(ownerChain);
+        Misc.free(ownerTopK);
+        Misc.free(ownerEncoder);
         Misc.free(ownerRecordA);
         Misc.free(ownerRecordB);
         freePerWorkerChainsAndPools();
@@ -160,6 +209,8 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
     public void freePerWorkerChainsAndPools() {
         Misc.freeObjListAndKeepObjects(perWorkerChains);
+        Misc.freeObjListAndKeepObjects(perWorkerTopK);
+        Misc.freeObjListAndKeepObjects(perWorkerEncoders);
         Misc.freeObjListAndKeepObjects(filterCtx.getPerWorkerMemoryPools());
         Misc.freeObjListAndKeepObjects(perWorkerRecordsB);
     }
@@ -171,8 +222,27 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         return perWorkerComparators.getQuick(slotId);
     }
 
+    public IntHashSet getEncodedSkipColumnIndexes() {
+        return encodedSkipColumnIndexes;
+    }
+
+    public SortKeyEncoder getEncoder(int slotId) {
+        if (slotId == -1) {
+            return ownerEncoder;
+        }
+        return perWorkerEncoders.getQuick(slotId);
+    }
+
     public AsyncFilterContext getFilterContext() {
         return filterCtx;
+    }
+
+    public SortKeyType getKeyType() {
+        return keyType;
+    }
+
+    public long getLo() {
+        return lo;
     }
 
     public LimitedSizeLongTreeChain getOwnerChain() {
@@ -203,6 +273,17 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         return perWorkerRecordsB.getQuick(slotId);
     }
 
+    public IntHashSet getSortKeyColumnIndexes() {
+        return sortKeyColumnIndexes;
+    }
+
+    public EncodedTopKBuffer getTopK(int slotId) {
+        if (slotId == -1) {
+            return ownerTopK;
+        }
+        return perWorkerTopK.getQuick(slotId);
+    }
+
     public LimitedSizeLongTreeChain getTreeChain(int slotId) {
         if (slotId == -1) {
             return ownerChain;
@@ -217,13 +298,40 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         filterCtx.initFilters(symbolTableSource, executionContext);
-        buildRankMaps(symbolTableSource);
+        if (isEncoded) {
+            keyType = ownerEncoder.init(symbolTableSource);
+            assert keyType != SortKeyType.UNSUPPORTED;
+            ownerTopK.of(keyType, true, lo);
+            // Fixed-width keys encode inline; variable-length keys spill into a
+            // per-buffer key heap that the encoder must write into.
+            final boolean isVariable = keyType.isVariable();
+            if (isVariable) {
+                ownerEncoder.setKeyHeap(ownerTopK.getKeyHeap());
+            }
+            for (int i = 0; i < workerCount; i++) {
+                // Rank map building sorts the whole symbol dictionary; workers
+                // borrow the owner's maps instead of rebuilding identical ones.
+                final SortKeyEncoder workerEncoder = perWorkerEncoders.getQuick(i);
+                final EncodedTopKBuffer workerTopK = perWorkerTopK.getQuick(i);
+                workerEncoder.initFrom(ownerEncoder);
+                workerTopK.of(keyType, true, lo);
+                if (isVariable) {
+                    workerEncoder.setKeyHeap(workerTopK.getKeyHeap());
+                }
+            }
+        } else {
+            buildRankMaps(symbolTableSource);
+        }
 
         ownerRecordA.of(symbolTableSource);
         ownerRecordB.of(symbolTableSource);
         for (int i = 0; i < workerCount; i++) {
             perWorkerRecordsB.getQuick(i).of(symbolTableSource);
         }
+    }
+
+    public boolean isEncoded() {
+        return isEncoded;
     }
 
     /**
@@ -246,9 +354,16 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
     @Override
     public void reopen() {
-        ownerChain.reopen();
-        for (int i = 0, n = perWorkerChains.size(); i < n; i++) {
-            perWorkerChains.getQuick(i).reopen();
+        if (isEncoded) {
+            ownerTopK.reopen();
+            for (int i = 0; i < workerCount; i++) {
+                perWorkerTopK.getQuick(i).reopen();
+            }
+        } else {
+            ownerChain.reopen();
+            for (int i = 0, n = perWorkerChains.size(); i < n; i++) {
+                perWorkerChains.getQuick(i).reopen();
+            }
         }
     }
 
