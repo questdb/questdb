@@ -216,7 +216,14 @@ public class WorkerPool implements Closeable {
                             .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
                 }
             }
-            workers.clear(); // Worker is not closable
+            // Clear the list under the monitor too. The start-latch-timeout branch reaches here
+            // while start() may still be mid-add-loop (an OOM/SIGTERM-stalled launch): an unguarded
+            // clear() races start()'s workers.add(worker), so a worker added right after the clear
+            // loops on the freeOnExit resources this then frees -- a use-after-free plus an orphan.
+            // Guarding the clear serializes it against the add critical section.
+            synchronized (workersLock) {
+                workers.clear(); // Worker is not closable
+            }
             Misc.freeObjListAndClear(freeOnExit);
         }
     }
@@ -230,7 +237,9 @@ public class WorkerPool implements Closeable {
             }
             halted.await();
         }
-        workers.clear();
+        synchronized (workersLock) {
+            workers.clear();
+        }
     }
 
     /**
@@ -321,11 +330,16 @@ public class WorkerPool implements Closeable {
         WorkerMetrics workerMetrics = metrics.workerMetrics();
         long min = workerMetrics.getMinElapsedMicros();
         long max = workerMetrics.getMaxElapsedMicros();
-        for (int i = 0, n = workers.size(); i < n; i++) {
-            long elapsed = now - workers.getQuick(i).getJobStartMicros();
-            if (elapsed > 0) {
-                min = Math.min(min, elapsed);
-                max = Math.max(max, elapsed);
+        // Iterate the workers list under the monitor: the /metrics scrape calls this concurrently
+        // with start()'s add-loop and halt()'s clear(). Without the guard a torn read returns a null
+        // slot (NPE on getQuick(i).getJobStartMicros()) or a half-published pos/buffer.
+        synchronized (workersLock) {
+            for (int i = 0, n = workers.size(); i < n; i++) {
+                long elapsed = now - workers.getQuick(i).getJobStartMicros();
+                if (elapsed > 0) {
+                    min = Math.min(min, elapsed);
+                    max = Math.max(max, elapsed);
+                }
             }
         }
         workerMetrics.update(min, max);

@@ -214,8 +214,8 @@ public class WorkerPoolBootFailureTest {
      * RED on the un-fixed tree (the un-guarded first pass read+signalled the half-built list).
      *
      * <p>After the parked add releases, the witness also asserts {@code halt()} threw nothing, the
-     * worker added before the park ends up halted (the #403 unconditional first-pass signal ran), and
-     * {@code freeOnExit} was closed. The #248 bounded halt is preserved -- the fix changes only the
+     * worker added before the park ends up halted (the unconditional first-pass halt signal ran), and
+     * {@code freeOnExit} was closed. The bounded halt is preserved -- the fix changes only the
      * publication of the list.
      */
     @Test
@@ -243,7 +243,7 @@ public class WorkerPoolBootFailureTest {
             }
         });
         // A simple ticking job lets the test confirm the worker added before the park was actually
-        // halted (the #403 first-pass signal ran), not merely cleared from the list.
+        // halted (the unconditional first-pass halt signal ran), not merely cleared from the list.
         final AtomicLong jobTicks = new AtomicLong();
         pool.assign((workerId, runStatus) -> {
             jobTicks.incrementAndGet();
@@ -367,13 +367,143 @@ public class WorkerPoolBootFailureTest {
         Assert.assertTrue("halt() must free freeOnExit (an escaped torn-read error would skip it)",
                 resourceFreed.get());
 
-        // The #403 first-pass signal ran: after the full halt the worker added before the park is
+        // The first-pass signal ran: after the full halt the worker added before the park is
         // halted, so its tick count stays stable rather than climbing forever.
         final long afterHalt = jobTicks.get();
         Thread.sleep(200);
-        Assert.assertEquals("the worker added before the park must have been halted (the #403 unconditional "
-                        + "first-pass signal ran before started.await); a climbing tick count means it was not",
+        Assert.assertEquals("the worker added before the park must have been halted (the unconditional "
+                        + "first-pass halt signal ran before started.await); a climbing tick count means it was not",
                 afterHalt, jobTicks.get());
+    }
+
+    /**
+     * The {@code /metrics} scrape calls {@code updateWorkerMetrics()} on its own thread, unserialized
+     * against {@code start()}'s add-loop and {@code halt()}'s clear(). With the workers-list iteration
+     * left unguarded, a scrape that lands while {@code start()} is mid-add reads the list torn -- a null
+     * slot ({@code getQuick(i)} returns null, then {@code getJobStartMicros()} NPEs) or a half-published
+     * non-volatile pos/buffer.
+     *
+     * <p>The witness is deterministic via the same observable proxy the add-loop halt test uses. The
+     * {@code beforeWorkerAddedForTesting} seam parks {@code start()} mid-add-loop holding {@code workersLock}
+     * (worker 0 added, worker 1's add pending). A second thread then calls {@code updateWorkerMetrics()}.
+     * On the fixed tree the scrape's iteration must take the same monitor the parked add holds, so it is
+     * HELD OFF and does not return while {@code start()} is parked. On the un-fixed tree there is no
+     * monitor, so the scrape reads the partial list and returns immediately. The witness asserts the scrape
+     * is held off (does not return) while parked: GREEN on the fixed tree, RED on the un-fixed tree (the
+     * scrape read the half-built workers list).
+     */
+    @Test
+    public void testMetricsScrapeIsHeldOffNotReadTornDuringStartAddLoop() throws Exception {
+        final int workerCount = 4;
+        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.ENABLED;
+            }
+
+            @Override
+            public String getPoolName() {
+                return "scrape-during-add";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
+        });
+        pool.assign((workerId, runStatus) -> false);
+
+        // Park start() inside the add-loop on the SECOND iteration, holding workersLock, so worker 0 is
+        // already added and worker 1's add is pending.
+        final CountDownLatch startParkedInAdd = new CountDownLatch(1);
+        final CountDownLatch releaseStartPark = new CountDownLatch(1);
+        final AtomicLong seamInvocations = new AtomicLong();
+        pool.setBeforeWorkerAddedForTesting(() -> {
+            if (seamInvocations.getAndIncrement() == 1) {
+                startParkedInAdd.countDown();
+                try {
+                    if (!releaseStartPark.await(30, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("add-loop park timed out waiting for release");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+
+        final AtomicReference<Throwable> startError = new AtomicReference<>();
+        final AtomicReference<Throwable> scrapeError = new AtomicReference<>();
+        final CountDownLatch scrapeStarted = new CountDownLatch(1);
+        final CountDownLatch scrapeReturned = new CountDownLatch(1);
+
+        final Thread starter = new Thread(() -> {
+            try {
+                pool.start();
+            } catch (Throwable t) {
+                startError.set(t);
+            }
+        }, "scrape-add-starter");
+        starter.setDaemon(true);
+
+        final Thread scraper = new Thread(() -> {
+            scrapeStarted.countDown();
+            try {
+                pool.updateWorkerMetrics(System.nanoTime() / 1000);
+            } catch (Throwable t) {
+                scrapeError.set(t);
+            } finally {
+                scrapeReturned.countDown();
+            }
+        }, "scrape-add-scraper");
+        scraper.setDaemon(true);
+
+        boolean scrapeHeldOffWhileParked = false;
+        try {
+            starter.start();
+            Assert.assertTrue("start() must park inside the add-loop holding the monitor",
+                    startParkedInAdd.await(15, TimeUnit.SECONDS));
+
+            scraper.start();
+            Assert.assertTrue("scrape thread must start", scrapeStarted.await(10, TimeUnit.SECONDS));
+
+            // The scrape must not complete while start() holds the add critical section open: a return
+            // means it iterated the half-built list (the un-fixed tree). Wait well past any plausible
+            // uncontended scrape latency.
+            scrapeHeldOffWhileParked = !scrapeReturned.await(500, TimeUnit.MILLISECONDS);
+
+            releaseStartPark.countDown();
+            starter.join(TimeUnit.SECONDS.toMillis(15));
+            Assert.assertTrue("the scrape must complete once the add critical section releases",
+                    scrapeReturned.await(15, TimeUnit.SECONDS));
+        } finally {
+            releaseStartPark.countDown();
+            starter.join(TimeUnit.SECONDS.toMillis(10));
+            scraper.join(TimeUnit.SECONDS.toMillis(10));
+            pool.setBeforeWorkerAddedForTesting(null);
+            pool.halt();
+        }
+
+        if (startError.get() != null) {
+            throw new AssertionError("start() threw (torn workers list): "
+                    + startError.get().getClass().getSimpleName() + ": " + startError.get().getMessage(),
+                    startError.get());
+        }
+        if (scrapeError.get() != null) {
+            throw new AssertionError("updateWorkerMetrics() threw reading the workers list torn while "
+                    + "start() was mid-add (a null slot NPEs on getJobStartMicros): "
+                    + scrapeError.get().getClass().getSimpleName() + ": " + scrapeError.get().getMessage(),
+                    scrapeError.get());
+        }
+
+        Assert.assertTrue("the metrics scrape must be held off by the add critical section's monitor while "
+                        + "start() is parked mid-add (it returned -- the un-guarded iteration read the "
+                        + "half-built workers list)",
+                scrapeHeldOffWhileParked);
     }
 
     // Component that mimics a two-stage start: publishes DEGRADED in start(),
