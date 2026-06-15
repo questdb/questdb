@@ -894,19 +894,34 @@ public class CheckpointTest extends AbstractCairoTest {
         // table: a stale abort flag would make its tasks silently skip their
         // work.
         assertMemoryLeak(() -> {
+            // sym_slow is declared *before* sym_fail on purpose. The native
+            // index rebuild enqueues one (partition, column) work item per
+            // indexed symbol column in partition-major, column-index order and
+            // hands them to the workers through a single atomic cursor, so the
+            // first item is sym_slow on the first partition. The cursor hands
+            // out index 0 before index 1, so the worker that grabs that first
+            // item does so before any sym_fail item can be grabbed -- and thus
+            // before the failing sym_fail task can trip the abort latch -- and
+            // the loop body opens the column unconditionally once grabbed. That
+            // guarantees at least one sym_slow openRO starts (and, after the
+            // drain, completes) no matter the pool size or scheduling. With the
+            // reverse order the failing sym_fail item is item 0: it trips the
+            // abort latch almost instantly, and the sibling workers see the latch
+            // already set at their next cursor check and bail before pulling any
+            // sym_slow item -- the timing-dependent flake this ordering removes.
             execute("""
                     CREATE TABLE t_fail (
                         val DOUBLE,
-                        sym_fail SYMBOL INDEX,
                         sym_slow SYMBOL INDEX,
+                        sym_fail SYMBOL INDEX,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
                     INSERT INTO t_fail VALUES
-                    (1.0, 'A', 'X', '2024-01-01T00:00:00.000000Z'),
-                    (2.0, 'B', 'Y', '2024-01-01T12:00:00.000000Z'),
-                    (3.0, 'A', 'X', '2024-01-02T00:00:00.000000Z')
+                    (1.0, 'X', 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'Y', 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'X', 'A', '2024-01-02T00:00:00.000000Z')
                     """);
             execute("""
                     CREATE TABLE t_next (
@@ -933,8 +948,10 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.clear();
 
             // Delete sym_fail's data file from the first partition: the bitmap
-            // index rebuild task for it fails on opening the .d file while the
-            // sym_slow rebuild tasks are still held up in openRO below.
+            // index rebuild task for it fails on opening the .d file. sym_slow's
+            // rebuild tasks are dispatched ahead of it (see the column order
+            // above) and are held up in the slow openRO below, so at least one
+            // sym_slow task is in flight when sym_fail trips the abort latch.
             Assert.assertTrue("failed to delete sym_fail.d", new File(failPartDir, "sym_fail.d").delete());
 
             final AtomicInteger slowOpensStarted = new AtomicInteger();
@@ -1355,6 +1372,249 @@ public class CheckpointTest extends AbstractCairoTest {
             assertQuery("SELECT val FROM t WHERE sym = 'C' AND ts IN '2024-01-03' ORDER BY val")
                     .noLeakCheck()
                     .returns("val\n31\n32\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesPmThenReusesWorkerScratchOnNextParquetPartition() throws Exception {
+        // Gap guard for the riskiest reuse interaction: a worker that takes the
+        // _pm regenerate branch in mapResolvableParquetMeta (taskReader.clear()
+        // + munmap mid-method, removeQuiet, regenerateParquetMetaFile, fresh
+        // openAndMapRO) and THEN processes another parquet partition reusing the
+        // same metaReader / decoder / RowGroupBuffers / parquetColumns /
+        // indexWriters scratch. With rebuild enabled the regenerate path is
+        // immediately followed by a full decode + index of the reused partition,
+        // so any state left dangling by the mid-method munmap/clear corrupts the
+        // next partition's index.
+        //
+        // Every _pm is torn so each partition forces the regenerate arm; pinning
+        // the pool to 2 over 5 parquet partitions means one worker handles >= 3
+        // of them (pigeonhole), guaranteeing regenerate -> reuse -> regenerate ->
+        // reuse within a single worker. Distinct per-partition A/B/C
+        // distributions make any cross-partition state bleed fail an assertion.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val LONG,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (10, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (11, 'B', '2024-01-01T08:00:00.000000Z'),
+                    (12, 'A', '2024-01-01T16:00:00.000000Z'),
+                    (20, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (21, 'A', '2024-01-02T08:00:00.000000Z'),
+                    (22, 'A', '2024-01-02T16:00:00.000000Z'),
+                    (30, 'B', '2024-01-03T00:00:00.000000Z'),
+                    (31, 'C', '2024-01-03T08:00:00.000000Z'),
+                    (32, 'C', '2024-01-03T16:00:00.000000Z'),
+                    (40, 'C', '2024-01-04T00:00:00.000000Z'),
+                    (41, 'A', '2024-01-04T08:00:00.000000Z'),
+                    (42, 'B', '2024-01-04T16:00:00.000000Z'),
+                    (50, 'B', '2024-01-05T00:00:00.000000Z'),
+                    (51, 'B', '2024-01-05T08:00:00.000000Z'),
+                    (52, 'C', '2024-01-05T16:00:00.000000Z'),
+                    (60, 'Z', '2024-01-06T00:00:00.000000Z')
+                    """);
+
+            // 2024-01-06 ('Z') stays a native, active partition; the five prior
+            // days all convert to parquet.
+            final String[] days = {"2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"};
+            for (String day : days) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + day + "'");
+            }
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File[] partDirs = new File[days.length];
+            for (int i = 0; i < days.length; i++) {
+                partDirs[i] = findParquetPartitionDir(tableDir, days[i]);
+            }
+
+            engine.clear();
+
+            // Tear every _pm (header still claims the committed size, file holds
+            // fewer bytes -> opening throws -> the clear()+munmap+removeQuiet
+            // regenerate arm runs) and drop every bitmap sidecar so the rebuild
+            // must recreate sym.k / sym.v.
+            long[] tornPmSizes = new long[days.length];
+            for (int i = 0; i < partDirs.length; i++) {
+                File pm = new File(partDirs[i], "_pm");
+                long pmSize = pm.length();
+                Assert.assertTrue("_pm too small to truncate for " + days[i], pmSize > 16);
+                tornPmSizes[i] = pmSize / 2;
+                try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(pm, "rw")) {
+                    raf.setLength(tornPmSizes[i]);
+                }
+                deleteFilesWithPrefix(partDirs[i], "sym.k");
+                deleteFilesWithPrefix(partDirs[i], "sym.v");
+            }
+
+            // Pin the recovery pool to 2 workers (threadCount = max(2, min(2, cpus)) = 2).
+            CairoConfiguration pinnedPoolConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCheckpointRecoveryThreadpoolMax() {
+                    return 2;
+                }
+
+                @Override
+                public int getCheckpointRecoveryThreadpoolMin() {
+                    return 2;
+                }
+            };
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(pinnedPoolConfig)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            // Every torn _pm regenerated (grown back past the truncated size) and
+            // every bitmap sidecar recreated.
+            for (int i = 0; i < partDirs.length; i++) {
+                File pm = new File(partDirs[i], "_pm");
+                Assert.assertTrue("_pm not regenerated for " + days[i], pm.exists() && pm.length() > tornPmSizes[i]);
+                File[] keyFiles = partDirs[i].listFiles((_, name) -> name.startsWith("sym.k"));
+                Assert.assertNotNull("sym.k not rebuilt for " + days[i], keyFiles);
+                Assert.assertTrue("sym.k not rebuilt for " + days[i], keyFiles.length > 0);
+                File[] valFiles = partDirs[i].listFiles((_, name) -> name.startsWith("sym.v"));
+                Assert.assertNotNull("sym.v not rebuilt for " + days[i], valFiles);
+                Assert.assertTrue("sym.v not rebuilt for " + days[i], valFiles.length > 0);
+            }
+
+            // Per-partition indexed counts (distinct per day) -- a regenerate ->
+            // reuse state leak corrupts at least one.
+            assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-01'", 2);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-01'", 1);
+            assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-02'", 3);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-03'", 1);
+            assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-03'", 2);
+            assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-04'", 1);
+            assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-05'", 2);
+            assertIndexedSymCount("sym = 'A'", 6);
+            assertIndexedSymCount("sym = 'B'", 5);
+            assertIndexedSymCount("sym = 'C'", 4);
+
+            assertQuery("SELECT val FROM t WHERE sym = 'C' AND ts IN '2024-01-03' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("val\n31\n32\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreReusesWorkerScratchAcrossParquetPartitionsWithoutIndexRebuild() throws Exception {
+        // Gap guard for the OSS checkpoint-recovery default
+        // (getCheckpointRecoveryRebuildColumnIndexes() == false): with index
+        // rebuild disabled, processParquetPartition takes the
+        //     if (!rebuildIndexes) return;
+        // early-out right after mapResolvableParquetMeta, so the per-worker
+        // metaReader is the only scratch reused across partitions. A worker that
+        // handles more than one parquet partition re-binds metaReader
+        // (map -> validate -> clear -> munmap) per partition; a leak across that
+        // boundary would defer a corrupt/unresolvable sidecar to query time. The
+        // _pm validation/regeneration is the ONLY restore-time protection on this
+        // path, so one sidecar is torn to force the regenerate branch and then be
+        // followed by a reused partition in the same worker.
+        //
+        // Pin the pool to 2 over 3 parquet partitions: by pigeonhole one worker
+        // processes >= 2 of them, so the cross-partition reuse path runs
+        // deterministically on the rebuild=false branch.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-02T08:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T16:00:00.000000Z'),
+                    (6.0, 'B', '2024-01-03T00:00:00.000000Z'),
+                    (7.0, 'A', '2024-01-03T08:00:00.000000Z'),
+                    (8.0, 'B', '2024-01-03T16:00:00.000000Z'),
+                    (9.0, 'A', '2024-01-04T00:00:00.000000Z')
+                    """);
+
+            // sum(val) reads column data from every partition, forcing the reader
+            // to open each parquet partition through its _pm sidecar; count()
+            // would be answered from _txn row counts without touching _pm.
+            sink.clear();
+            printSql("SELECT sum(val) FROM t");
+            final String expectedSum = sink.toString();
+
+            final String[] days = {"2024-01-01", "2024-01-02", "2024-01-03"};
+            for (String day : days) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + day + "'");
+            }
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File[] partDirs = new File[days.length];
+            for (int i = 0; i < days.length; i++) {
+                partDirs[i] = findParquetPartitionDir(tableDir, days[i]);
+            }
+
+            engine.clear();
+
+            // Tear partition 2's _pm so mapResolvableParquetMeta takes the
+            // clear()+munmap+removeQuiet regenerate arm; partitions 1 and 3 keep
+            // intact sidecars, so the worker mixes the fast-path and the
+            // regenerate-path across reused partitions.
+            File tornPm = new File(partDirs[1], "_pm");
+            long tornPmSizeBefore = tornPm.length();
+            Assert.assertTrue("_pm too small to truncate", tornPmSizeBefore > 16);
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(tornPm, "rw")) {
+                raf.setLength(tornPmSizeBefore / 2);
+            }
+
+            // Pin the recovery pool to 2 workers (threadCount = max(2, min(2, cpus)) = 2).
+            CairoConfiguration pinnedPoolConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCheckpointRecoveryThreadpoolMax() {
+                    return 2;
+                }
+
+                @Override
+                public int getCheckpointRecoveryThreadpoolMin() {
+                    return 2;
+                }
+            };
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(pinnedPoolConfig)
+            ) {
+                // rebuildPartitionColumnIndexes = false: the OSS recovery default.
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+
+            // The torn sidecar must have been regenerated, and every sidecar must
+            // be present and non-empty after a single worker validated them.
+            for (int i = 0; i < partDirs.length; i++) {
+                File pm = new File(partDirs[i], "_pm");
+                Assert.assertTrue("_pm missing for " + days[i], pm.exists());
+                Assert.assertTrue("_pm empty for " + days[i], pm.length() > 0);
+            }
+            Assert.assertTrue("torn _pm not regenerated", tornPm.length() > tornPmSizeBefore / 2);
+
+            // All partitions remain readable through their sidecars; a metaReader
+            // leak across the reuse boundary would surface as a resolve failure.
+            assertQuery("SELECT sum(val) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedSum);
         });
     }
 
