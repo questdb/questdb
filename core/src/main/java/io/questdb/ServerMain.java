@@ -82,7 +82,7 @@ public class ServerMain implements Closeable {
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
-    private Thread compileViewsThread;
+    private volatile Thread compileViewsThread;
     // The HydrationEnvelope fire-once guard. onDependencyState fires from orchestrator threads on
     // every role switch; volatile publishes the first-hydration write so a later switch on another
     // thread observes the non-null guard and suppresses the redundant re-run.

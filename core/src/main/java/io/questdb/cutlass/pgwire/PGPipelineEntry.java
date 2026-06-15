@@ -138,6 +138,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // production (the default): the fire-site is a single static volatile read with no side effect.
     @TestOnly
     private static volatile Runnable parkedUpdateMintObserver;
+    // Test seam: when non-null, fireSyncCommitObserver() runs this hook at the top of commit(), just before
+    // the parked-writer flush that externalizes an autocommit INSERT on the implicit commit at SYNC. A test
+    // installs a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote can settle before the
+    // read-only refusal runs, exercising the implicit-commit-at-SYNC demote race deterministically without
+    // host load. Null in production (the default): the fire-site is a single static volatile read with no
+    // side effect.
+    @TestOnly
+    private static volatile Runnable syncCommitObserver;
     private final ObjectPool<PGNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PGNonNullBinaryArrayView::new, 1);
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -389,11 +397,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (pendingWriters.size() == 0) {
             return;
         }
+        fireSyncCommitObserver();
         // Cheap early-out: if the node is already read-only before we attempt to acquire the lock, skip
         // the lock entirely. This is NOT the authoritative refusal -- the in-lock re-check below is.
         if (engine.isReadOnlyMode()) {
             rollback(pendingWriters);
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw kaput().put((Throwable) CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE));
         }
         // Hold the role-switch READ lock across the authoritative re-check and the actual commit. The
         // role-flip path in EntCairoEngine acquires the WRITE side of this lock around the REPLICA flag
@@ -404,12 +413,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
-            // Authoritative in-lock re-check. Thrown raw (before the commit try below) so it surfaces
-            // as the standard read-only authorization error rather than a wrapped processing exception;
-            // the parked writers are rolled back so nothing lands on the demoting node.
+            // Authoritative in-lock re-check. The refusal is thrown wrapped as a processing exception (via
+            // kaput()) carrying the standard read-only authorization message, so the implicit-commit-at-SYNC
+            // path -- whose catch handles only the processing exception type -- delivers it to the client as a
+            // clean read-only error with the connection kept open, rather than escaping to the connection's
+            // last-resort catch and force-disconnecting. The COMMIT-arm path has its own catch and is
+            // unaffected. The parked writers are rolled back so nothing lands on the demoting node.
             if (engine.isReadOnlyMode()) {
                 rollback(pendingWriters);
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw kaput().put((Throwable) CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE));
             }
             try {
                 for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
@@ -1104,8 +1116,26 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         parkedUpdateMintObserver = observer;
     }
 
+    /**
+     * Test seam: installs a hook commit() fires at the top, just before it flushes the parked writers on the
+     * implicit commit at SYNC. Pass null to uninstall. The hook is shared across pipeline entries, so an
+     * installer must scope its own pause to the statement under test. Never set outside tests -- the field
+     * defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setSyncCommitObserver(Runnable observer) {
+        syncCommitObserver = observer;
+    }
+
     private static void fireParkedUpdateMintObserver() {
         final Runnable observer = parkedUpdateMintObserver;
+        if (observer != null) {
+            observer.run();
+        }
+    }
+
+    private static void fireSyncCommitObserver() {
+        final Runnable observer = syncCommitObserver;
         if (observer != null) {
             observer.run();
         }
