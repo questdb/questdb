@@ -318,6 +318,16 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                 "ACQUIRE_GATED: the CSV importer acquires its writer through the gated getWriter / "
                         + "getTableWriterAPI engine API, refused by the enterprise read-only override."
         );
+        // QWP-UDP is the one ingress whose envelope flips acceptOpen to false on a PRIMARY-to-REPLICA
+        // demote, so the receiver stops draining datagrams off the socket entirely (the freeze), and its
+        // ingress processor also re-checks isReadOnlyMode() in-line before commit. Recorded so the matrix
+        // enumerates QWP-UDP through-demote, which the enterprise QwpUdpRoleSwitchFreezeTest drives for real.
+        ingress.put(
+                "QWP-UDP",
+                "ACQUIRE_GATED: the QWP-UDP envelope flips acceptOpen to false on demote (the receiver stops "
+                        + "draining the socket) and the ingress processor re-checks isReadOnlyMode() in-line "
+                        + "before commit (the QWP-UDP ingress fence)."
+        );
         for (var e : ingress.entrySet()) {
             Assert.assertTrue(
                     "ingress row " + e.getKey() + " must record a non-empty fence reason",
