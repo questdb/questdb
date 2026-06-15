@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractVirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualRecord recordA;
@@ -117,6 +118,13 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         if (baseCursor != null) {
             baseCursor.setParquetDecodeHint(hint);
+        }
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RecordCursor.RowIdSource source) {
+        if (baseCursor != null) {
+            baseCursor.setRecordAtRows(source);
         }
     }
 

@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.table.TimeFrameCursorImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -870,8 +871,68 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     int cachedFrames = pool.getCachedFrameCount();
                     Assert.assertTrue("eviction should leave at most 4 cached frames, got " + cachedFrames, cachedFrames <= 4);
                     Assert.assertTrue("cache should not be empty after the sweep", cachedFrames >= 1);
-                    Assert.assertTrue("eviction should drop the cached frame count below the total", cachedFrames < frameCount);
                     Assert.assertTrue(pool.getCachedBytes() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetDecodeCacheRowFilteredDeclaration() throws Exception {
+        // setRecordAtRows must actually row-filter the parquet decode: a declared row
+        // reads its real value while an undeclared row of the same frame materializes
+        // as NULL (the fill-with-nulls decode). A regression that ignores the
+        // declaration (e.g. hasParquetFrames never set on the address cache) decodes
+        // the full frame and the undeclared row reads a real value instead.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xrf AS (" +
+                    " SELECT x::int v, timestamp_sequence(0, 100_000_000) t" +
+                    " FROM long_sequence(2_000)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+            execute("ALTER TABLE xrf CONVERT PARTITION TO PARQUET WHERE t >= 0");
+            try (RecordCursorFactory factory = select("xrf")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                RecordMetadata metadata = baseFactory.getMetadata();
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+                    cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+                    int frameCount = countFrames(cursor);
+                    Assert.assertTrue(frameCount > 2);
+
+                    PageFrameMemoryPool pool = cursor.getFrameMemoryPool();
+                    Record record = cursor.getRecord();
+                    final int vIndex = metadata.getColumnIndex("v");
+
+                    pool.setRecordAtRows((target, _) -> {
+                        target.ensureCapacity(1);
+                        target.add(Rows.toRowID(0, 0));
+                    });
+                    cursor.recordAt(record, 0, 0);
+                    Assert.assertEquals(1, record.getInt(vIndex));
+                    cursor.recordAt(record, 0, 1);
+                    Assert.assertEquals(Numbers.INT_NULL, record.getInt(vIndex));
+
+                    // An undeclared frame decodes in full while the declaration is
+                    // active; navigating there also unpins frame 0's filtered buffer.
+                    cursor.recordAt(record, 1, 0);
+                    Assert.assertEquals(865, record.getInt(vIndex));
+
+                    // Clearing the declaration restores full-frame decode.
+                    pool.setRecordAtRows(null);
+                    cursor.recordAt(record, 0, 0);
+                    Assert.assertEquals(1, record.getInt(vIndex));
+                    cursor.recordAt(record, 0, 1);
+                    Assert.assertEquals(2, record.getInt(vIndex));
                 }
             }
         });

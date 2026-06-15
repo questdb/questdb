@@ -109,6 +109,23 @@ offending character, not the start of the expression.
   once", no rewording prior commits, no force pushes to clean up. Adding a
   fix-up commit on top is always fine. The squash flow folds the lot at merge
   time anyway.
+- **Bundle related fixes into one PR; do NOT propose splitting by logic.** This
+  is a high-throughput shop (~20 PRs/day) and CI is the bottleneck, not review:
+  a full run takes ~40 min and can go red on an unrelated flake. Splitting one
+  branch into N "logically clean" PRs multiplies that cost — N× CI time, N×
+  flake exposure, PRs failing on each other's flakes, and N× the babysitting to
+  shepherd them all to merge. The squash-merge collapses everything into one
+  tidy `master` commit anyway, so multiple fixes on a branch cost nothing at
+  merge time. Default to adding the change to the PR/branch already in flight,
+  especially when the fixes share a CI lineage (one change is what makes the
+  other's CI go green). When a branch carries more than one fix, give each its
+  own clearly-labeled section in the PR body instead of opening another PR. Only
+  split if the user explicitly asks, or if the changes must merge/revert
+  independently.
+- **When asked to "send a change to PR #N" / update PR metadata:** push the
+  commit(s) to that PR's branch (rebase onto the remote head first if it moved),
+  then update the PR title/body to cover everything the branch now contains.
+  Re-running CI on that branch is the validation; do not open a new PR.
 - **Do not create worktrees or `pr-*` checkout branches when reviewing or
   iterating on a PR.** All work belongs on `vi_api`. Even when a PR exists on a
   separate branch (e.g. `pr-7128`), the canonical state to review and modify is
