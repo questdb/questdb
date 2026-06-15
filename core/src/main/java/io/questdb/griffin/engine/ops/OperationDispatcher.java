@@ -41,11 +41,13 @@ import java.util.concurrent.locks.Lock;
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
     public static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
-    // Test seam: when non-null, execute() runs this hook at the TOP of the EntryUnavailableException
-    // async-enqueue catch branch (the writer-pool-exhausted fallback), once the read-only re-check below
-    // is in place. A test installs a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote can
-    // be coordinated against the async fallback deterministically without host load. Null in production
-    // (the default): the fire-site is a single static volatile read with no side effect.
+    // Test seam: when non-null, execute() runs this hook in the EntryUnavailableException async-enqueue
+    // catch branch (the writer-pool-exhausted fallback), just before it acquires the role-switch read
+    // lock for the authoritative re-check and enqueue. A test installs a hook that pauses there so a
+    // concurrent PRIMARY-to-REPLICA demote can flip the role flag (the demote takes the write side of
+    // the same lock) before the paused operation acquires the read side and re-checks -- coordinating
+    // the async fallback against a demote deterministically without host load. Null in production (the
+    // default): the fire-site is a single static volatile read with no side effect.
     @TestOnly
     private static volatile Runnable asyncEnqueueObserver;
     // Test seam: when non-null, execute() runs this hook just before it externalizes the operation
@@ -124,18 +126,34 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
             // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
             // role-switch-independent robustness gap is left for a dedicated fix.)
+            //
+            // The eager check below is a fast-refuse optimization; the authoritative re-check runs
+            // under the role-switch READ lock, mirroring applyFenced. Holding the read lock around the
+            // re-check and the enqueue serializes the externalization against the role flip, which
+            // takes the WRITE side around its REPLICA flag publish: either the flip ran first (the
+            // in-lock re-check sees read-only and refuses without enqueuing) or the enqueue runs fully
+            // as PRIMARY and the flip's write acquire waits for this read hold to release.
             if (engine.isReadOnlyMode()) {
                 throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
-            OperationFutureImpl future = futurePool.pop();
-            future.of(
-                    operation,
-                    sqlExecutionContext,
-                    eventSubSeq,
-                    operation.getTableNamePosition(),
-                    closeOnDone
-            );
-            return future;
+            final Lock lock = engine.getRoleSwitchReadLock();
+            lock.lock();
+            try {
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                }
+                OperationFutureImpl future = futurePool.pop();
+                future.of(
+                        operation,
+                        sqlExecutionContext,
+                        eventSubSeq,
+                        operation.getTableNamePosition(),
+                        closeOnDone
+                );
+                return future;
+            } finally {
+                lock.unlock();
+            }
         } finally {
             if (closeOnDone && isDone) {
                 operation.close();
@@ -188,8 +206,9 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
      * is the writer-busy enqueue fallback. It is NOT only a non-WAL path: a WAL writer-pool exhaustion
      * routes a WAL UPDATE here too, and the legacy enqueue applies it without minting a replicated
      * sequencer txn, so on a demoting node it would be a silent acked-loss. That branch therefore
-     * carries its own read-only re-check at the top of the catch (see execute()), refusing cleanly on a
-     * demote rather than relying on this fence; the inline-apply success path is the one fenced here.
+     * carries its own read-only re-check under the same role-switch READ lock (see execute()),
+     * symmetric with this fence: the re-check and the enqueue are atomic against the flip's flag
+     * publish, refusing cleanly on a demote. The inline-apply success path is the one fenced here.
      */
     private long applyFenced(T operation, TableWriterAPI writer) {
         if (engine.isReadOnlyMode()) {
