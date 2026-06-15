@@ -140,7 +140,8 @@ public class RecentWriteTracker {
                 Numbers.LONG_NULL,
                 Numbers.LONG_NULL,
                 Numbers.LONG_NULL,
-                MicrosecondClockImpl.INSTANCE.getTicks()
+                0,
+                true
         );
     }
 
@@ -325,7 +326,8 @@ public class RecentWriteTracker {
                     walTimestamp,
                     Numbers.LONG_NULL,
                     Numbers.LONG_NULL,
-                    MicrosecondClockImpl.INSTANCE.getTicks()
+                    0,
+                    true
             )
                     .updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount, morePending);
 
@@ -391,7 +393,8 @@ public class RecentWriteTracker {
                     walTimestamp,
                     Numbers.LONG_NULL,
                     Numbers.LONG_NULL,
-                    MicrosecondClockImpl.INSTANCE.getTicks()
+                    0,
+                    true
             )
                     .updateWal(sequencerTxn, walTimestamp, txnRowCount);
 
@@ -428,7 +431,8 @@ public class RecentWriteTracker {
                     Numbers.LONG_NULL,
                     Numbers.LONG_NULL,
                     Numbers.LONG_NULL,
-                    writeTimestamp
+                    writeTimestamp,
+                    false
             )
                     .updateWriter(writeTimestamp, rowCount, writerTxn);
 
@@ -613,10 +617,14 @@ public class RecentWriteTracker {
             long walTimestamp,
             long tableMinTimestamp,
             long tableMaxTimestamp,
-            long initialActivityTimestamp
+            long initialActivityTimestamp,
+            boolean useCurrentActivityTimestamp
     ) {
         WriteStats stats = writeStats.get(tableToken);
         if (stats == null) {
+            if (useCurrentActivityTimestamp) {
+                initialActivityTimestamp = MicrosecondClockImpl.INSTANCE.getTicks();
+            }
             WriteStats newStats = new WriteStats(timestamp, rowCount, writerTxn, sequencerTxn, walTimestamp, tableMinTimestamp, tableMaxTimestamp, initialActivityTimestamp);
             WriteStats existing = writeStats.putIfAbsent(tableToken, newStats);
             stats = existing != null ? existing : newStats;
