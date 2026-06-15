@@ -24,18 +24,31 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.engine.functions.window.EmaDoubleWindowFunctionFactory;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.tools.TestUtils.generateRandom;
+
 public class EmaWindowFunctionTest extends AbstractCairoTest {
+    private final boolean isCacheLightWindowEnabled;
     private final TestTimestampType timestampType;
 
     public EmaWindowFunctionTest() {
-        this.timestampType = TestUtils.getTimestampType();
+        Rnd rnd = generateRandom(LOG);
+        this.timestampType = TestUtils.getTimestampType(rnd);
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
+        super.setUp();
     }
 
     @Test

@@ -1693,6 +1693,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlWindowCachedLightEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return true;
     }
