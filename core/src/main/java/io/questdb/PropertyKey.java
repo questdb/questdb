@@ -266,6 +266,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_TREE_MAX_BYTES
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_TREE_MAX_BYTES
     CAIRO_SQL_WINDOW_TREE_MAX_BYTES("cairo.sql.window.tree.max.bytes"),
+    CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED("cairo.sql.window.cached.light.enabled"),
     CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH("cairo.sql.interval.max.bracket.depth"),
     CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE("cairo.sql.interval.max.intervals.after.merge"),
     CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD("cairo.sql.interval.incremental.merge.threshold"),
@@ -447,6 +448,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
     LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
     LINE_LOG_MESSAGE_ON_ERROR("line.log.message.on.error"),
+    MEMORY_USAGE_LOG_ENABLED("memory.usage.log.enabled"),
+    MEMORY_USAGE_LOG_INTERVAL("memory.usage.log.interval"),
     METRICS_ENABLED("metrics.enabled"),
     NET_TEST_CONNECTION_BUFFER_SIZE("net.test.connection.buffer.size"),
     PG_ENABLED("pg.enabled"),

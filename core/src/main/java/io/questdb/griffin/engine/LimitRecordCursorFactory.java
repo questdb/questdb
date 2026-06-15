@@ -179,7 +179,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 sizeCounter.add(remaining);
             } else {
                 counter.set(remaining);
-                base.skipRows(counter);
+                // No further reads after the skip -- max=0 lets the base
+                // skip the landing-frame decode altogether.
+                base.skipRows(counter, 0);
                 sizeCounter.add(remaining - counter.get());
                 counter.clear();
             }
@@ -255,13 +257,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void skipRows(Counter skipCounter) {
+        public void skipRows(Counter skipCounter, long maxRowsAfterSkip) {
             ensureReadyToConsume();
             long rowsToSkip = skipCounter.get();
             long excessCount = Math.max(0, rowsToSkip - remaining);
             rowsToSkip -= excessCount;
             skipCounter.dec(excessCount);
-            base.skipRows(skipCounter);
+            final long baseMax = Math.min(maxRowsAfterSkip, remaining - rowsToSkip);
+            base.skipRows(skipCounter, baseMax);
             long counterAfterSkip = skipCounter.get();
             if (counterAfterSkip > 0) {
                 remaining = 0;
@@ -282,9 +285,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             ensureBoundsResolved();
             base.toTop();
             counter.set(baseRowsToSkip);
-            if (counter.get() > 0) {
-                base.skipRows(counter);
-            }
+            // Unconditional call: even with baseRowsToSkip == 0, this pushes
+            // baseRowsToTake as the post-skip cap so the base can clamp
+            // decoding of the first frames.
+            base.skipRows(counter, baseRowsToTake);
             remaining = baseRowsToTake;
             counter.clear();
         }
