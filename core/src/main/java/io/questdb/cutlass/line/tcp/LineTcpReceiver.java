@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
@@ -70,15 +71,7 @@ public class LineTcpReceiver implements Closeable {
                     configuration.getConnectionPoolInitialCapacity()
             );
             this.dispatcher = IODispatchers.create(configuration, contextFactory);
-            sharedPoolNetwork.assign(new Job() {
-                @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    if (!acceptOpen.get()) {
-                        return false;
-                    }
-                    return dispatcher.run(workerId, runStatus);
-                }
-            });
+            sharedPoolNetwork.assign(new AcceptGatedJob(dispatcher, acceptOpen));
             this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, sharedPoolNetwork, dispatcher, sharedPoolWrite);
 
             for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
@@ -96,5 +89,34 @@ public class LineTcpReceiver implements Closeable {
     public void close() {
         Misc.free(scheduler);
         Misc.free(dispatcher);
+    }
+
+    private static class AcceptGatedJob implements Job, EagerThreadSetup {
+        private final AtomicBoolean acceptOpen;
+        private final Job delegate;
+
+        AcceptGatedJob(Job delegate, AtomicBoolean acceptOpen) {
+            this.delegate = delegate;
+            this.acceptOpen = acceptOpen;
+        }
+
+        @Override
+        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+            if (!acceptOpen.get()) {
+                return false;
+            }
+            return delegate.run(workerId, runStatus);
+        }
+
+        @Override
+        public void setup() {
+            // The accept gate guards run(), never setup(): pre-allocating the
+            // connection-context pool at worker start is what lets the receiver
+            // accept connections without allocating once the gate opens, even
+            // under memory pressure.
+            if (delegate instanceof EagerThreadSetup) {
+                ((EagerThreadSetup) delegate).setup();
+            }
+        }
     }
 }

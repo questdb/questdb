@@ -37,6 +37,7 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
+import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -114,25 +115,9 @@ public class HttpServer implements Closeable {
         this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
         this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache, activeConnectionTracker);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
-        networkSharedPool.assign(new Job() {
-            @Override
-            public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                if (!acceptOpen.get()) {
-                    return false;
-                }
-                return dispatcher.run(workerId, runStatus);
-            }
-        });
+        networkSharedPool.assign(new AcceptGatedJob(dispatcher, acceptOpen));
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
-        networkSharedPool.assign(new Job() {
-            @Override
-            public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                if (!acceptOpen.get()) {
-                    return false;
-                }
-                return rescheduleContext.run(workerId, runStatus);
-            }
-        });
+        networkSharedPool.assign(new AcceptGatedJob(rescheduleContext, acceptOpen));
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
@@ -435,6 +420,35 @@ public class HttpServer implements Closeable {
     @FunctionalInterface
     public interface HttpRequestHandlerBuilder {
         HttpRequestHandler newInstance();
+    }
+
+    private static class AcceptGatedJob implements Job, EagerThreadSetup {
+        private final AtomicBoolean acceptOpen;
+        private final Job delegate;
+
+        AcceptGatedJob(Job delegate, AtomicBoolean acceptOpen) {
+            this.delegate = delegate;
+            this.acceptOpen = acceptOpen;
+        }
+
+        @Override
+        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+            if (!acceptOpen.get()) {
+                return false;
+            }
+            return delegate.run(workerId, runStatus);
+        }
+
+        @Override
+        public void setup() {
+            // The accept gate guards run(), never setup(): pre-allocating the
+            // connection-context pool at worker start is what lets the server
+            // accept connections without allocating once the gate opens, even
+            // under memory pressure.
+            if (delegate instanceof EagerThreadSetup) {
+                ((EagerThreadSetup) delegate).setup();
+            }
+        }
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
