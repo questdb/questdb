@@ -877,6 +877,37 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReconcileLatchesCompleteAfterHydratingMissingTables() throws Exception {
+        // M3 optimization: when one hydrateAllTables() reconcile successfully hydrates
+        // every missing table, it must latch cacheComplete in that same pass (reusing the
+        // token snapshot it already collected), not leave the flag off and force the next
+        // catalogue query to run a second, redundant full reconcile (getTableTokens +
+        // allocation + scan) just to observe "nothing missing".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+
+            // Empty + unlatch: tables stay registered, cache is empty, cacheComplete=false.
+            try (MetadataCacheWriter w = cache.writeLock()) {
+                w.clearCache();
+            }
+            Assert.assertFalse(cache.isCacheComplete());
+
+            // A single reconcile hydrates both missing tables AND latches in the same
+            // pass. Pre-fix this latched only on a second reconcile, so the flag stayed
+            // off here.
+            cache.hydrateAllTables();
+            Assert.assertTrue(cache.isCacheComplete());
+            try (MetadataCacheReader ro = cache.readLock()) {
+                Assert.assertEquals(2, ro.getTableCount());
+            }
+        });
+    }
+
+    @Test
     public void testHydrateAllTablesShortCircuitsWhenCacheComplete() throws Exception {
         // hydrateAllTables() backs the tables()/all_tables() startup-race fix, but it
         // must be a no-op once the cache is known complete: from then on writers keep
@@ -1036,12 +1067,17 @@ public class MetadataCacheTest extends AbstractCairoTest {
             final MetadataCache cache = engine.getMetadataCache();
 
             // Start from a warm-but-unlatched state: full cache, cacheComplete=false.
-            // clearCache() empties + unlatches; the first reconcile refills via pass 2
-            // (which never latches), so the cache is complete but the flag is still off.
+            // clearCache() empties + unlatches; we then warm the cache table-by-table via
+            // the point-lookup path (hydrateTableOnDemand never latches cacheComplete), so
+            // the cache holds every table while the flag stays off. A full
+            // hydrateAllTables() reconcile cannot produce this state: once it hydrates
+            // every missing table it latches immediately (under the read lock).
             try (MetadataCacheWriter w = cache.writeLock()) {
                 w.clearCache();
             }
-            cache.hydrateAllTables();
+            for (int i = 0; i < tableCount; i++) {
+                cache.hydrateTableOnDemand(engine.getTableTokenIfExists("t" + i));
+            }
             try (MetadataCacheReader ro = cache.readLock()) {
                 Assert.assertEquals(tableCount, ro.getTableCount());
             }

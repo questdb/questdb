@@ -252,6 +252,23 @@ public class MetadataCache implements QuietCloseable {
             Path.clearThreadLocals();
         }
 
+        // Confirm completeness immediately, reusing the token snapshot we already
+        // collected (no second getTableTokens() / ObjHashSet allocation): if every
+        // missing table was hydrated above, the cache now holds every registered table.
+        // Latch here - under the read lock, mutually exclusive with clearCache() (write
+        // lock), exactly like onStartupAsyncHydrator() - so the next catalogue query
+        // short-circuits on the fast path instead of repeating a full reconcile only to
+        // observe "nothing missing" and set the flag. A silently-failed hydration
+        // (throwError=false evicts the table) leaves a gap, so latchCacheCompleteIfWarmed()
+        // latches only when genuinely warm; otherwise we fall through to the bounded retry
+        // budget below.
+        try (MetadataCacheReader ignore = readLock()) {
+            latchCacheCompleteIfWarmed(tableTokens);
+        }
+        if (cacheComplete) {
+            return;
+        }
+
         // We could not confirm completeness this pass (some tables were missing).
         // A per-table hydration can fail silently (throwError=false), so normally we
         // leave cacheComplete unset and let the next reconcile re-scan - that is how
