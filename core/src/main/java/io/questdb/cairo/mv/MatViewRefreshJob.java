@@ -754,6 +754,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     engine.attachReader(baseTableReader);
                 }
             } catch (Throwable th) {
+                // A demote that flips the read-only flag mid-refresh makes the commit fence refuse from
+                // inside the pump; re-throw so the outer catch defers (retry-later) instead of invalidating.
+                rethrowReadOnlyRefusal(th);
                 LOG.error()
                         .$("could not perform full refresh [view=").$(viewToken)
                         .$(", baseTable=").$(baseTableToken)
@@ -1151,6 +1154,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (Throwable th) {
             Misc.free(factory);
+            // A demote that flips the read-only flag after this refresh acquired its WalWriter makes the
+            // commit fence refuse the mint from inside the pump; re-throw so the caller's outer catch defers
+            // (retry-later) instead of invalidating the view (which would leave it sticky-invalid while the
+            // on-disk state stays valid -- monitoring cannot see it).
+            rethrowReadOnlyRefusal(th);
             int errno = Integer.MIN_VALUE;
             if (th instanceof CairoException e) {
                 if (e.isInterruption() && engine.isClosing()) {
@@ -1429,6 +1437,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     engine.attachReader(baseTableReader);
                 }
             } catch (Throwable th) {
+                // A demote that flips the read-only flag mid-refresh makes the commit fence refuse from
+                // inside the pump; re-throw so the outer catch defers (retry-later) instead of invalidating.
+                rethrowReadOnlyRefusal(th);
                 LOG.error()
                         .$("could not perform full refresh [view=").$(viewToken)
                         .$(", baseTable=").$(baseTableToken)
@@ -1507,6 +1518,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 ? Math.min(minExaminedToTxn, examinedBaseTxn)
                                 : examinedBaseTxn;
                     } catch (Throwable th) {
+                        // A demote that flips the read-only flag mid-refresh makes the commit fence refuse
+                        // from inside the pump; re-throw so the outer catch defers (retry-later) instead of
+                        // invalidating.
+                        rethrowReadOnlyRefusal(th);
                         refreshFailState(viewDefinition, viewState, walWriter, th);
                     }
                 } catch (Throwable th) {
@@ -1625,6 +1640,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
                 return (result & 1L) != 0;
             } catch (Throwable th) {
+                // A demote that flips the read-only flag mid-refresh makes the commit fence refuse from
+                // inside the pump; re-throw so the outer catch defers (retry-later) instead of invalidating.
+                rethrowReadOnlyRefusal(th);
                 LOG.error()
                         .$("could not perform incremental refresh [view=").$(viewToken)
                         .$(", baseTableToken=").$(baseTableToken)
@@ -1749,6 +1767,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 null,
                 -1
         ));
+    }
+
+    // Re-throws a read-only authorization refusal so the surrounding outer catch routes it through
+    // handleErrorRetryRefresh (re-enqueue the same operation, never invalidate). A demote can flip the
+    // read-only flag after the refresh acquired its WalWriter but before it commits, so the role-switch
+    // commit fence refuses the mint from inside the refresh pump -- caught here by an inner catch rather
+    // than by the outer getWalWriter acquire path. Treating that refusal as a refresh failure (invalidate)
+    // leaves the view sticky-invalid while its on-disk state stays valid, which monitoring cannot see; the
+    // correct reaction is retry-later, identical to the acquire-path refusal. A materialized view is derived
+    // state, so the new primary recomputes it forward. Scoped to read-only authorization errors only: any
+    // other failure falls through to the caller's refreshFailState (still invalidates). The refresh job runs
+    // under the internal all-access context, so an authorization error here can only be the read-only gate.
+    private static void rethrowReadOnlyRefusal(Throwable th) {
+        if (th instanceof CairoException ce && ce.isAuthorizationError()) {
+            throw ce;
+        }
     }
 
     private void setInvalidState(MatViewState viewState, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
