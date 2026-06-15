@@ -543,6 +543,14 @@ public class RecentWriteTracker {
         return writeStats.size();
     }
 
+    private static long getInitialActivityTimestamp(long timestamp, long walTimestamp) {
+        if (timestamp == Numbers.LONG_NULL && walTimestamp == Numbers.LONG_NULL) {
+            return MicrosecondClockImpl.INSTANCE.getTicks();
+        }
+        // Hydration has no live activity time, so seed activity from persisted data timestamps.
+        return Math.max(timestamp, walTimestamp);
+    }
+
     /**
      * Evicts the oldest entries to bring size down to maxCapacity.
      * This method is called lazily when size exceeds 2x capacity.
@@ -599,14 +607,6 @@ public class RecentWriteTracker {
         } finally {
             evictionInProgress.set(false);
         }
-    }
-
-    private static long getInitialActivityTimestamp(long timestamp, long walTimestamp) {
-        if (timestamp == Numbers.LONG_NULL && walTimestamp == Numbers.LONG_NULL) {
-            return MicrosecondClockImpl.INSTANCE.getTicks();
-        }
-        // Hydration has no live activity time, so seed activity from persisted data timestamps.
-        return Math.max(timestamp, walTimestamp);
     }
 
     private WriteStats getOrCreateStats(
@@ -828,10 +828,6 @@ public class RecentWriteTracker {
          */
         public long getFloorSeqTxn() {
             return floorSeqTxn.get();
-        }
-
-        private long getLastActivityTimestamp() {
-            return lastActivityTimestamp;
         }
 
         /**
@@ -1182,6 +1178,18 @@ public class RecentWriteTracker {
             return replicaMorePending.get();
         }
 
+        private long getLastActivityTimestamp() {
+            return lastActivityTimestamp;
+        }
+
+        private void touchActivity() {
+            touchActivity(MicrosecondClockImpl.INSTANCE.getTicks());
+        }
+
+        private void touchActivity(long activityTimestamp) {
+            lastActivityTimestamp = activityTimestamp;
+        }
+
         /**
          * Updates replica download fields. Unlike updateWal, this records to the batch
          * histogram instead of the transaction histogram, since replicas download data
@@ -1282,14 +1290,6 @@ public class RecentWriteTracker {
             this.timestamp = timestamp;
             this.rowCount = rowCount;
             this.writerTxn = writerTxn;
-        }
-
-        private void touchActivity() {
-            touchActivity(MicrosecondClockImpl.INSTANCE.getTicks());
-        }
-
-        private void touchActivity(long activityTimestamp) {
-            lastActivityTimestamp = activityTimestamp;
         }
 
         /**
