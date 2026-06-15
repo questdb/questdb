@@ -12486,7 +12486,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t")
                 .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
                 .assertsPlan("""
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
                             VirtualRecord
                               functions: [str,ts,l1,ts::long+l1]

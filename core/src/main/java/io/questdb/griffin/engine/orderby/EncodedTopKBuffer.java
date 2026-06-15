@@ -133,6 +133,18 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     }
 
     /**
+     * Drops the entry written at the last {@link #beginAppend()} without committing it,
+     * reclaiming its key-heap bytes for a variable key. The timestamp early-stop scan
+     * encodes one row past the limit only to read its leading word; that row must not
+     * stay in the buffer or keep its key-heap bytes.
+     */
+    public void discardLastAppend() {
+        if (isVariable) {
+            keyHeap.jumpTo(Unsafe.getLong(entryMem.getAppendAddress() + VAR_ENTRY_KEY_OFFSET));
+        }
+    }
+
+    /**
      * Accepts or rejects the entry written at the {@link #beginAppend()}
      * address; a rejected entry's slot is overwritten by the next candidate,
      * and for variable keys its key bytes are reclaimed from the heap.

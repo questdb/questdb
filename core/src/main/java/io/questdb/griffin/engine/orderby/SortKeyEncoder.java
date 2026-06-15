@@ -460,34 +460,47 @@ public class SortKeyEncoder implements QuietCloseable {
 
     private static void appendLong256Row(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, long r, boolean desc) {
         final long base = colAddr + (r << 5);
-        final long l0 = Unsafe.getLong(base);
-        final long l1 = Unsafe.getLong(base + 8);
-        final long l2 = Unsafe.getLong(base + 16);
-        final long l3 = Unsafe.getLong(base + 24);
-        final long k1 = long256Key(l0, l1, l2, l3, 0, desc);
+        long l0 = Unsafe.getLong(base);
+        long l1 = Unsafe.getLong(base + 8);
+        long l2 = Unsafe.getLong(base + 16);
+        long l3 = Unsafe.getLong(base + 24);
+        // Classify and +1-remap once; entry words are natural (compareUnsigned) order, l3 leading.
+        if (Long256Impl.isNull(l0, l1, l2, l3)) {
+            l0 = l1 = l2 = l3 = 0;
+        } else if (isBelowLong256Null(l0, l1, l2, l3) && ++l0 == 0 && ++l1 == 0 && ++l2 == 0) {
+            l3++;
+        }
+        final long k1 = unsignedKey(l3, desc);
         if (topK.fastRejectsKey(k1)) {
             return;
         }
         final long addr = topK.beginAppend();
         Unsafe.putLong(addr, k1);
-        Unsafe.putLong(addr + 8, long256Key(l0, l1, l2, l3, 1, desc));
-        Unsafe.putLong(addr + 16, long256Key(l0, l1, l2, l3, 2, desc));
-        Unsafe.putLong(addr + 24, long256Key(l0, l1, l2, l3, 3, desc));
+        Unsafe.putLong(addr + 8, unsignedKey(l2, desc));
+        Unsafe.putLong(addr + 16, unsignedKey(l1, desc));
+        Unsafe.putLong(addr + 24, unsignedKey(l0, desc));
         Unsafe.putLong(addr + rowIdOffset, rowIdBase + r);
         topK.endAppend();
     }
 
     private static void appendUuidRow(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, long r, boolean desc) {
         final long base = colAddr + (r << 4);
-        final long hi = Unsafe.getLong(base + 8);
-        final long lo = Unsafe.getLong(base);
-        final long k1 = uuidKeyHi(hi, lo, desc);
+        long hi = Unsafe.getLong(base + 8);
+        long lo = Unsafe.getLong(base);
+        // Classify and +1-remap once; entry words are natural (compareUnsigned) order, hi leading.
+        if (Uuid.isNull(lo, hi)) {
+            hi = 0;
+            lo = 0;
+        } else if (isUuidBelowNull(hi, lo) && ++lo == 0) {
+            hi++; // 128-bit increment carried into hi
+        }
+        final long k1 = unsignedKey(hi, desc);
         if (topK.fastRejectsKey(k1)) {
             return;
         }
         final long addr = topK.beginAppend();
         Unsafe.putLong(addr, k1);
-        Unsafe.putLong(addr + 8, uuidKeyLo(hi, lo, desc));
+        Unsafe.putLong(addr + 8, unsignedKey(lo, desc));
         Unsafe.putLong(addr + rowIdOffset, rowIdBase + r);
         topK.endAppend();
     }
@@ -661,10 +674,16 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeLong256(long addr, long l0, long l1, long l2, long l3, boolean desc) {
-        Unsafe.putLong(addr, Long.reverseBytes(long256Key(l0, l1, l2, l3, 0, desc)));
-        Unsafe.putLong(addr + 8, Long.reverseBytes(long256Key(l0, l1, l2, l3, 1, desc)));
-        Unsafe.putLong(addr + 16, Long.reverseBytes(long256Key(l0, l1, l2, l3, 2, desc)));
-        Unsafe.putLong(addr + 24, Long.reverseBytes(long256Key(l0, l1, l2, l3, 3, desc)));
+        // Classify and +1-remap once; word 0 = most significant l3 ... word 3 = l0, stored big-endian.
+        if (Long256Impl.isNull(l0, l1, l2, l3)) {
+            l0 = l1 = l2 = l3 = 0;
+        } else if (isBelowLong256Null(l0, l1, l2, l3) && ++l0 == 0 && ++l1 == 0 && ++l2 == 0) {
+            l3++;
+        }
+        Unsafe.putLong(addr, Long.reverseBytes(unsignedKey(l3, desc)));
+        Unsafe.putLong(addr + 8, Long.reverseBytes(unsignedKey(l2, desc)));
+        Unsafe.putLong(addr + 16, Long.reverseBytes(unsignedKey(l1, desc)));
+        Unsafe.putLong(addr + 24, Long.reverseBytes(unsignedKey(l0, desc)));
     }
 
     private static void encodeShort(long addr, short value, boolean desc) {
@@ -688,8 +707,15 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeUuid(long addr, long hi, long lo, boolean desc) {
-        Unsafe.putLong(addr, Long.reverseBytes(uuidKeyHi(hi, lo, desc)));
-        Unsafe.putLong(addr + 8, Long.reverseBytes(uuidKeyLo(hi, lo, desc)));
+        // Classify and +1-remap once; hi is the leading (most significant) word, stored big-endian.
+        if (Uuid.isNull(lo, hi)) {
+            hi = 0;
+            lo = 0;
+        } else if (isUuidBelowNull(hi, lo) && ++lo == 0) {
+            hi++; // 128-bit increment carried into hi
+        }
+        Unsafe.putLong(addr, Long.reverseBytes(unsignedKey(hi, desc)));
+        Unsafe.putLong(addr + 8, Long.reverseBytes(unsignedKey(lo, desc)));
     }
 
     private static int fixedColumnByteWidth(int columnType) {
@@ -775,23 +801,6 @@ public class SortKeyEncoder implements QuietCloseable {
                 || (hi == Numbers.LONG_NULL && Long.compareUnsigned(lo, Numbers.LONG_NULL) < 0);
     }
 
-    // Natural entry word of a LONG256 key: word 0 = most significant l3 ... word 3 = l0.
-    private static long long256Key(long l0, long l1, long l2, long l3, int word, boolean desc) {
-        if (Long256Impl.isNull(l0, l1, l2, l3)) {
-            return unsignedKey(0, desc);
-        }
-        if (isBelowLong256Null(l0, l1, l2, l3) && ++l0 == 0 && ++l1 == 0 && ++l2 == 0) {
-            l3++;
-        }
-        final long v = switch (word) {
-            case 0 -> l3;
-            case 1 -> l2;
-            case 2 -> l1;
-            default -> l0;
-        };
-        return unsignedKey(v, desc);
-    }
-
     private static void quickSortRankMap(DirectIntList rankMap, StaticSymbolTable symbolTable, int lo, int hi) {
         while (lo < hi) {
             if (hi - lo < 24) {
@@ -836,79 +845,57 @@ public class SortKeyEncoder implements QuietCloseable {
         return desc ? ~value : value;
     }
 
-    private static long utf16LeadingWord(CharSequence value, boolean desc) {
+    // One pass over a STRING/SYMBOL key produces both the leading comparison word and the
+    // encoded length the top-K reject needs, then applies the reject. The length only has to
+    // tell "the whole key fits the leading word" (len <= 8) from "it spills past it" (len > 8)
+    // and to tie-break equal short keys, so the scan stops once the word is full and the length
+    // passes 8. Mirrors Chars.compare order: UTF-16 code units, 0x00/0x01 escaped, marker +
+    // terminator. desc flips every byte (0xFF mask).
+    private static boolean utf16Rejects(CharSequence value, boolean desc, long rowId, EncodedTopKBuffer topK) {
         final long byteMask = desc ? 0xFFL : 0L;
         if (value == null) {
-            return byteMask << 56;
+            return topK.fastRejectsVarEntry(byteMask << 56, 1, rowId);
         }
         long word = (1L ^ byteMask) << 56; // marker
         int shift = 48;
+        long len = 1; // marker
         for (int i = 0, n = value.length(); i < n; i++) {
             final char c = value.charAt(i);
             final long hi = c >>> 8;
             final long lo = c & 0xFF;
             if (hi <= 1) {
-                word |= (1L ^ byteMask) << shift; // escape
-                if ((shift -= 8) < 0) {
-                    return word;
+                if (shift >= 0) {
+                    word |= (1L ^ byteMask) << shift; // escape
+                    shift -= 8;
                 }
+                len++;
             }
-            word |= ((hi ^ byteMask) & 0xFFL) << shift;
-            if ((shift -= 8) < 0) {
-                return word;
+            if (shift >= 0) {
+                word |= ((hi ^ byteMask) & 0xFFL) << shift;
+                shift -= 8;
             }
+            len++;
             if (lo <= 1) {
-                word |= (1L ^ byteMask) << shift; // escape
-                if ((shift -= 8) < 0) {
-                    return word;
+                if (shift >= 0) {
+                    word |= (1L ^ byteMask) << shift; // escape
+                    shift -= 8;
                 }
+                len++;
             }
-            word |= ((lo ^ byteMask) & 0xFFL) << shift;
-            if ((shift -= 8) < 0) {
-                return word;
+            if (shift >= 0) {
+                word |= ((lo ^ byteMask) & 0xFFL) << shift;
+                shift -= 8;
             }
-        }
-        word |= byteMask << shift; // terminator; trailing bytes stay zero-padded
-        return word;
-    }
-
-    // Length of the UTF-16 key encoding, used only by the top-K fast-reject. The reject
-    // never needs the exact length past the leading word - it only distinguishes len <= 8
-    // (whole key fits the word) from len > 8 - so the scan stops as soon as it passes 8.
-    private static long utf16Len(CharSequence value) {
-        if (value == null) {
-            return 1;
-        }
-        long len = 2; // marker + terminator
-        for (int i = 0, n = value.length(); i < n; i++) {
-            final char c = value.charAt(i);
-            len += (c >>> 8) <= 1 ? 2 : 1;
-            len += (c & 0xFF) <= 1 ? 2 : 1;
-            if (len > Long.BYTES) {
-                return len;
+            len++;
+            if (len > Long.BYTES) { // word full and length already past the leading word
+                return topK.fastRejectsVarEntry(word, len, rowId);
             }
         }
-        return len;
-    }
-
-    private static long uuidKeyHi(long hi, long lo, boolean desc) {
-        if (Uuid.isNull(lo, hi)) {
-            return unsignedKey(0, desc);
+        if (shift >= 0) {
+            word |= byteMask << shift; // terminator; trailing bytes stay zero-padded
         }
-        if (isUuidBelowNull(hi, lo) && lo == -1L) {
-            hi++; // ++lo would wrap to 0 and carry into hi
-        }
-        return unsignedKey(hi, desc);
-    }
-
-    private static long uuidKeyLo(long hi, long lo, boolean desc) {
-        if (Uuid.isNull(lo, hi)) {
-            return unsignedKey(0, desc);
-        }
-        if (isUuidBelowNull(hi, lo)) {
-            lo++;
-        }
-        return unsignedKey(lo, desc);
+        len++; // terminator
+        return topK.fastRejectsVarEntry(word, len, rowId);
     }
 
     /**
@@ -1336,7 +1323,7 @@ public class SortKeyEncoder implements QuietCloseable {
         final CharSequence value = len == TableUtils.NULL_LEN ? null : stringView.of(valueAddr + Vm.STRING_LENGTH_BYTES, len);
         final boolean desc = isDesc[0];
         final long rowId = rowIdBase + r;
-        if (topK.fastRejectsVarEntry(utf16LeadingWord(value, desc), utf16Len(value), rowId)) {
+        if (utf16Rejects(value, desc, rowId, topK)) {
             return;
         }
         record.setRowIndex(r);
@@ -1424,11 +1411,11 @@ public class SortKeyEncoder implements QuietCloseable {
             // STRING and non-static SYMBOL (resolved through the symbol table) share the UTF-16 word.
             case STRING: {
                 final CharSequence value = record.getStrA(columnIndices[0]);
-                return topK.fastRejectsVarEntry(utf16LeadingWord(value, isDesc[0]), utf16Len(value), rowId);
+                return utf16Rejects(value, isDesc[0], rowId, topK);
             }
             case SYMBOL: {
                 final CharSequence value = record.getSymA(columnIndices[0]);
-                return topK.fastRejectsVarEntry(utf16LeadingWord(value, isDesc[0]), utf16Len(value), rowId);
+                return utf16Rejects(value, isDesc[0], rowId, topK);
             }
             default:
                 break;

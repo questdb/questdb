@@ -370,6 +370,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
+        // Pin the window sort caps to the server's unbounded default (Long.MAX_VALUE); summing the
+        // two operands must not overflow to a negative budget that collapses maxEntries to 0.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tv\trow_number\n" +
+                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
+        });
+    }
+
+    @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType.getTypeName());
@@ -486,27 +507,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
-        // Pin the window sort caps to the server's unbounded default (Long.MAX_VALUE); summing the
-        // two operands must not overflow to a negative budget that collapses maxEntries to 0.
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, Long.MAX_VALUE);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, Long.MAX_VALUE);
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, v long) timestamp(ts)");
-            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
-            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns("ts\tv\trow_number\n" +
-                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
-                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
-        });
-    }
-
-    @Test
     public void testCachedWindowLightCumeDistTwoPassUnderLightFactory() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
@@ -540,7 +540,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("SELECT row_number() OVER (ORDER BY d1, d2, d3) FROM tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[d1, d2, d3] => [row_number()]]
                                 PageFrame
                                     Row forward scan
@@ -825,7 +825,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("SELECT row_number() OVER (ORDER BY v) FROM tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[v] => [row_number()]]
                                 PageFrame
                                     Row forward scan
