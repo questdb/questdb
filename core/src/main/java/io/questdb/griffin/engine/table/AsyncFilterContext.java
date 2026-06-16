@@ -289,7 +289,9 @@ public class AsyncFilterContext implements Closeable {
     }
 
     private static void resetCapacity(@Nullable DirectLongList list) {
-        if (list != null) {
+        // Skip closed lists: resetCapacity() on a capacity-0 list would re-malloc
+        // (resurrect) it. clear() can run after close() on the horizon-join error path.
+        if (list != null && list.getCapacity() > 0) {
             list.resetCapacity();
         }
     }

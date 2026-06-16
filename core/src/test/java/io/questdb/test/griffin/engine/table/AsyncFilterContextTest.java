@@ -58,6 +58,47 @@ public class AsyncFilterContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearAfterCloseDoesNotResurrectLists() throws Exception {
+        // On the horizon-join error path the factory frees frameSequence (-> filterCtx
+        // .close()) before the half-open cursor's close() re-runs reset() -> clear(), so
+        // clear() must be safe after close(). A closed list has capacity 0, so an unguarded
+        // resetCapacity() would re-malloc it into a leak that nothing frees.
+        assertMemoryLeak(() -> {
+            final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+            AsyncFilterContext ctx = new AsyncFilterContext(
+                    configuration,
+                    new CompiledFilter(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    4,
+                    0,
+                    Long.MAX_VALUE,
+                    Long.MAX_VALUE
+            );
+            // Grow a list so close() has something sizeable to free.
+            ctx.getFilteredRows(-1).setCapacity(1_000_000);
+            ctx.close();
+
+            final long memAfterClose = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+            Assert.assertEquals("close() should release all NATIVE_OFFLOAD", memBefore, memAfterClose);
+
+            // clear() after close() must not re-allocate the freed lists.
+            ctx.clear();
+
+            final long memAfterClear = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+            Assert.assertEquals(
+                    "clear() after close() must not resurrect freed lists, leaked "
+                            + (memAfterClear - memAfterClose) + " bytes",
+                    memAfterClose,
+                    memAfterClear
+            );
+        });
+    }
+
+    @Test
     public void testClearShrinksGrownColumnAddressLists() throws Exception {
         // Under a JIT filter the context also allocates per-worker column-address lists
         // (data and aux). clear() must shrink those back to their initial capacity too,
