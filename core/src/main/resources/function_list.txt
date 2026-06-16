@@ -260,6 +260,7 @@ io.questdb.griffin.engine.functions.date.VarcharToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.SystimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.NowFunctionFactory
+io.questdb.griffin.engine.functions.date.SleepFunctionFactory
 io.questdb.griffin.engine.functions.date.HourOfDayFunctionFactory
 io.questdb.griffin.engine.functions.date.DayOfMonthFunctionFactory
 io.questdb.griffin.engine.functions.date.DayOfWeekFunctionFactory

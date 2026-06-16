@@ -33,7 +33,14 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Group;
+import org.openjdk.jmh.annotations.GroupThreads;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -85,6 +92,7 @@ public class MetricsScrapeBenchmark {
     }
 
     private static class NullUtf8Sink implements BorrowableUtf8Sink {
+        private int[] ryuE10;
 
         @Override
         public @NotNull NativeByteSink borrowDirectByteSink() {
@@ -114,6 +122,14 @@ public class MetricsScrapeBenchmark {
         @Override
         public Utf8Sink putNonAscii(long lo, long hi) {
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
     }
 }
