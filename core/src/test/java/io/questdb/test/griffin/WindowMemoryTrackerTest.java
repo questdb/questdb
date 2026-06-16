@@ -169,6 +169,38 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistPartitionMapFailsOnMapAllocation() throws Exception {
+        // cume_dist() is TWO_PASS, so it routes through the cached (non-light) window cursor,
+        // whose of() reopens each function's tracker-bound partition map (line "reopen(allFunctions)")
+        // before the record chain is built. Inflating the small-map key capacity makes that map's
+        // first allocation alone exceed the per-query limit, so the breach is charged to the map
+        // itself: the chain is still empty at of() time and the encoded sort buffer (sized by the
+        // window tree key page size, not the small-map knob) stays well under the limit. This
+        // isolates CumeDistFunction.setMemoryTracker on the map - without it the map allocates on
+        // the global counter only and the query never breaches. The getCursor() catch must also
+        // free the base cursor taken inside of(), so no reader is left busy.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT (x % 100) AS k, x::double AS v FROM long_sequence(1_000))");
+            drainWalQueue();
+            // A 64K-entry map backing dwarfs the 256 KiB limit; set after table creation so only
+            // the window query's partition map is inflated.
+            setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 64 * 1024);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT k, cume_dist() OVER (PARTITION BY k ORDER BY v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected per-query memory breach during cursor open, got cursor: " + cursor);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
     public void testCumeDistPartitionReleasesAllocations() throws Exception {
         // cume_dist() over (partition by k order by v) routes through the cached window
         // cursor. Its per-partition map (now lazy/openOnInit=false) and its deferred-offsets
@@ -193,6 +225,37 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testNtilePartitionMapFailsOnMapAllocation() throws Exception {
+        // ntile(4) is TWO_PASS, so it routes through the cached (non-light) window cursor, whose
+        // of() reopens each function's tracker-bound partition map before the record chain is built.
+        // Inflating the small-map key capacity makes that map's first allocation alone exceed the
+        // per-query limit, so the breach is charged to the map itself (the chain is empty at of()
+        // time and the encoded sort buffer stays under the limit). This isolates
+        // NtileFunction.setMemoryTracker on the map - without it the map allocates on the global
+        // counter only and the query never breaches. The getCursor() catch must also free the base
+        // cursor taken inside of(), so no reader is left busy.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT (x % 100) AS k, x::double AS v FROM long_sequence(1_000))");
+            drainWalQueue();
+            // A 64K-entry map backing dwarfs the 256 KiB limit; set after table creation so only
+            // the window query's partition map is inflated.
+            setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 64 * 1024);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT k, ntile(4) OVER (PARTITION BY k ORDER BY v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected per-query memory breach during cursor open, got cursor: " + cursor);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
         });
     }
 
@@ -252,6 +315,37 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testPercentRankPartitionMapFailsOnMapAllocation() throws Exception {
+        // percent_rank() is TWO_PASS, so it routes through the cached (non-light) window cursor,
+        // whose of() reopens each function's tracker-bound partition map before the record chain is
+        // built. Inflating the small-map key capacity makes that map's first allocation alone exceed
+        // the per-query limit, so the breach is charged to the map itself (the chain is empty at
+        // of() time and the encoded sort buffer stays under the limit). This isolates
+        // PercentRankFunction.setMemoryTracker on the map - without it the map allocates on the
+        // global counter only and the query never breaches. The getCursor() catch must also free the
+        // base cursor taken inside of(), so no reader is left busy.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT (x % 100) AS k, x::double AS v FROM long_sequence(1_000))");
+            drainWalQueue();
+            // A 64K-entry map backing dwarfs the 256 KiB limit; set after table creation so only
+            // the window query's partition map is inflated.
+            setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 64 * 1024);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT k, percent_rank() OVER (PARTITION BY k ORDER BY v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected per-query memory breach during cursor open, got cursor: " + cursor);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
         });
     }
 

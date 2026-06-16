@@ -467,6 +467,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 pool.setMemoryTracker(memoryTracker);
                 pool.of(frameAddressCache);
             }
+            // Note: only the per-worker page-frame pools are bound to the per-query tracker. The
+            // Rosti hash tables (pRosti), which hold this operator's dominant, cardinality-scaled
+            // allocation, are deliberately left on the global RSS counter: Rosti grows inside
+            // native C with its own OOM path, so it cannot throw at the offending allocation site
+            // the way the wired allocators do. A runaway keyed vectorized GROUP BY is therefore
+            // backstopped by the global RSS limit, not the per-query limit. Wiring Rosti is a
+            // follow-up (see the PR tradeoffs), consistent with how COPY TO is deferred.
             frameCount = 0;
             isRostiBuilt = false;
             return this;

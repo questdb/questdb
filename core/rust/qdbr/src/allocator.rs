@@ -422,16 +422,26 @@ impl QdbAllocator {
     /// Decrements the per-query counter, clamping at zero, and returns the
     /// previous value. Perfect malloc/free symmetry keeps the counter non-
     /// negative, which the debug_assert at each call site enforces under `-ea`.
-    /// In release builds a latent asymmetry must not wrap the unsigned counter
-    /// to ~2^64: a wrapped `tracker_used` makes every later check_alloc_limit
-    /// read it as over the limit and spuriously fail the whole workload. The
-    /// saturating clamp degrades gracefully to an under-count instead.
+    /// In release builds a latent asymmetry must not leave the unsigned counter
+    /// wrapped to ~2^64: a wrapped `tracker_used` makes every later
+    /// check_alloc_limit read it as over the limit and spuriously fail the
+    /// whole workload.
+    ///
+    /// The common path (no underflow) is a single `fetch_sub`, which lowers to
+    /// one `lock xadd` instead of the `cmpxchg` retry loop a `fetch_update`
+    /// compiles to -- this runs on every tracker-charged free, the symmetric
+    /// partner of the most-contended counter. Only on the impossible underflow
+    /// does a corrective `fetch_add` restore the clamp. That leaves a tiny
+    /// window where a concurrent reader could observe the wrapped value, versus
+    /// the atomic clamp a CAS gives; acceptable because the underflow cannot
+    /// occur under correct malloc/free pairing and the `debug_assert` catches
+    /// any regression that would.
     fn saturating_decrement(counter: &AtomicUsize, delta: usize) -> usize {
-        counter
-            .fetch_update(COUNTER_ORDERING, Ordering::Acquire, |used| {
-                Some(used.saturating_sub(delta))
-            })
-            .unwrap_or_else(|prev| prev)
+        let prev = counter.fetch_sub(delta, COUNTER_ORDERING);
+        if prev < delta {
+            counter.fetch_add(delta - prev, COUNTER_ORDERING);
+        }
+        prev
     }
 }
 
