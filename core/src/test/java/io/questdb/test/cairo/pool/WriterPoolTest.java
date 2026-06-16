@@ -136,12 +136,9 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncCommandPublishConcurrentWithWriterClose() throws Exception {
-        // Stress the async-command publish path against writers that constantly go
-        // distressed and get closed. Before the fix a publisher could serialize into a
-        // TableWriterTask buffer that closeWriter() freed underneath it, which surfaced
-        // either as a JVM SIGSEGV or as an "async command/event queue buffer overflow"
-        // CairoException (a write into a closed/zeroed task). After the fix the close
-        // drains in-flight publishers first, so neither happens.
+        // Stress the publish path against writers that constantly go distressed and close.
+        // Pre-fix a publisher could serialize into a TableWriterTask buffer the close freed
+        // underneath it: a SIGSEGV, or a buffer-overflow CairoException on a zeroed task.
         final int publisherCount = 3;
         final int iterations = 3_000;
         final AtomicReference<Throwable> error = new AtomicReference<>();
@@ -167,9 +164,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             } catch (EntryUnavailableException | PoolClosedException ignore) {
                                 // expected: writer busy / pool closing
                             } catch (CairoException e) {
-                                // "queue is full" is a legitimate outcome under stress (the
-                                // distressed closes never tick the queue). A buffer overflow
-                                // is the bug manifesting and must fail the test.
+                                // "queue is full" is fine under stress; a buffer overflow is the bug.
                                 if (!Chars.contains(e.getFlyweightMessage(), "queue is full")) {
                                     error.compareAndSet(null, e);
                                 }
@@ -187,9 +182,8 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             try {
                 barrier.await();
-                // Owner/closer: repeatedly grab the writer (making it busy so publishers
-                // take the publish path), force it distressed, and release it so it takes
-                // the distressed close path that frees the command queue.
+                // Owner/closer: grab the writer (forcing publishers onto the publish path),
+                // mark it distressed, and release it through the distressed close.
                 for (int i = 0; i < iterations && error.get() == null; i++) {
                     try (TableWriter w = pool.get(zTableToken, "owner")) {
                         w.markDistressed();
@@ -212,19 +206,16 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncCommandPublishDrainsBeforeDistressedClose() throws Exception {
-        // Deterministic proof of the fix: closeWriter() must not free a writer's command
-        // queue while a thread is serializing an async command into it. A publisher is
-        // parked mid-serialize (holding the in-flight publisher count); a concurrent
-        // distressed close must block in drainCommandPublishers() until the publisher
-        // finishes, rather than free the buffer underneath it.
+        // Deterministic proof: a publisher parked mid-serialize holds the in-flight count, so
+        // a concurrent distressed close must block in drainCommandPublishers() until it
+        // finishes instead of freeing the command queue underneath it.
         assertWithPool(pool -> {
             final SOCountDownLatch publisherInSerialize = new SOCountDownLatch(1);
             final SOCountDownLatch releaseSerialize = new SOCountDownLatch(1);
             final AtomicBoolean closeReturned = new AtomicBoolean();
             final AtomicReference<Throwable> error = new AtomicReference<>();
 
-            // Hold the writer busy on this thread so the publisher is forced down the
-            // getWriterOrPublishCommand -> addCommandToWriterQueue -> serialize path.
+            // Hold the writer busy so the publisher takes the publish/serialize path.
             final TableWriter ownerWriter = pool.get(zTableToken, "owner");
             final int tableId = zTableToken.getTableId();
             final TestPublishCommand command =
@@ -262,9 +253,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 closer.start();
                 closerStarted = true;
 
-                // The close must stay blocked while the publisher is parked in serialize.
-                // Poll briefly; with the fix closeReturned never flips here, without it the
-                // close races ahead and frees the queue almost immediately.
+                // With the fix the close stays blocked here; without it closeReturned flips fast.
                 for (int i = 0; i < 250 && !closeReturned.get(); i++) {
                     Os.sleep(1);
                 }
@@ -1189,10 +1178,9 @@ public class WriterPoolTest extends AbstractCairoTest {
         void run(WriterPool pool) throws Exception;
     }
 
-    // Minimal non-structural async writer command for the WriterPool publish-vs-close
-    // tests. In "blocking" mode (latches supplied) it parks inside serialize() so a test
-    // can deterministically race a writer close; otherwise it just widens the serialize
-    // window. Only the methods the publish path touches do real work; the rest are stubs.
+    // Minimal non-structural async command for the publish-vs-close tests. With latches it
+    // parks inside serialize() to deterministically race a close; otherwise it just widens
+    // the serialize window. Only the methods the publish path touches do real work.
     private static class TestPublishCommand implements AsyncWriterCommand {
         static final long CORRELATION_ID = 7L;
         private final SOCountDownLatch inSerialize;
@@ -1271,21 +1259,18 @@ public class WriterPoolTest extends AbstractCairoTest {
             task.of(getCmdType(), tableId, tableToken);
             task.setInstance(CORRELATION_ID);
             if (inSerialize != null) {
-                // Blocking mode: announce we are mid-serialize (addCommandToWriterQueue is
-                // holding the in-flight publisher count) then block so the test can race a
-                // writer close against this in-progress serialize.
+                // Blocking mode: signal that we hold the in-flight count, then park so the
+                // test can race a close against this serialize.
                 inSerialize.countDown();
                 release.await();
             } else {
-                // Widen the serialize window so a concurrent close is likely to land while
-                // we are writing into the task buffer.
+                // Widen the serialize window so a concurrent close is likely to overlap.
                 for (int i = 0; i < 64; i++) {
                     Os.pause();
                 }
             }
-            // Post-fix these land in a live buffer. Pre-fix a racing close has freed and
-            // zeroed the task, so this overflows the (now zero-length) buffer or writes to
-            // address 0.
+            // Post-fix these land in a live buffer; pre-fix a racing close has freed/zeroed
+            // the task, so this overflows the buffer or writes to address 0.
             for (int i = 0; i < 32; i++) {
                 task.putLong(i);
             }
