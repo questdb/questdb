@@ -331,10 +331,16 @@ public class WriterPool extends AbstractPool {
         // Announce ourselves as an in-flight command publisher before serializing into
         // the writer's command queue, then re-validate the writer reference we captured.
         // closeWriter() nulls e.writer and drains this count to zero before it frees the
-        // queue. getAndAddLong is a full fence, so closeWriter() either observes our
-        // count and waits for us, or we observe the nulled writer and bail - the two can
-        // never both slip through, which is what kept serialize() from writing into a
-        // freed/zeroed TableWriterTask buffer and crashing the JVM with a SIGSEGV.
+        // queue. This is a Dekker handshake: our seq-cst increment of the count is followed
+        // by a volatile read of e.writer, while closeWriter() volatile-stores null into
+        // e.writer and then reads the count. Sequential consistency forbids the symmetric
+        // r1==r2==0 outcome (on AArch64 the StoreLoad comes from HotSpot's planted dmb ish,
+        // not from the atomic's LL/SC loop being a fence), so closeWriter() either observes
+        // our count and waits for us, or we observe the nulled writer and bail - the two can
+        // never both slip through. That is what kept serialize() from writing into a
+        // freed/zeroed TableWriterTask buffer and crashing the JVM with a SIGSEGV. Footgun:
+        // keep the count and the e.writer accesses full-volatile; downgrading to
+        // setRelease/getAcquire would re-admit r1==r2==0 and bring the crash back.
         Unsafe.getAndAddLong(e, ENTRY_COMMAND_PUBLISHER_COUNT, 1);
         try {
             if (Unsafe.getObjectVolatile(e, ENTRY_WRITER) != writer) {
@@ -464,10 +470,10 @@ public class WriterPool extends AbstractPool {
     // invoke this before freeing the writer (w.close() -> Misc.free(commandQueue)).
     // A publisher announces itself via commandPublisherCount in addCommandToWriterQueue;
     // without this drain it could serialize into a freed/zeroed TableWriterTask buffer and
-    // crash the JVM with a SIGSEGV. putObjectVolatile publishes the null reference, and the
-    // JMM places a StoreLoad barrier between that volatile store and the volatile read of
-    // commandPublisherCount below; paired with the publisher's fenced increment, neither
-    // side can miss the other.
+    // crash the JVM with a SIGSEGV. The volatile store of null below and the volatile read of
+    // commandPublisherCount form the closer's half of the Dekker handshake described in
+    // addCommandToWriterQueue; sequential consistency between them and the publisher's seq-cst
+    // increment is what stops either side from missing the other. Keep both full-volatile.
     private void drainCommandPublishers(Entry e) {
         Unsafe.putObjectVolatile(e, ENTRY_WRITER, null);
         while (e.commandPublisherCount > 0) {
@@ -777,8 +783,8 @@ public class WriterPool extends AbstractPool {
 
         public TableWriter goodbye() {
             TableWriter w = writer;
-            if (writer != null) {
-                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
+            if (w != null) {
+                w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
                 // The caller takes the writer out of the pool and will close it itself,
                 // freeing the command queue. Detach it from in-flight publishers first.
                 drainCommandPublishers(this);

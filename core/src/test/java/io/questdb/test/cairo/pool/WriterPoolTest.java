@@ -32,12 +32,16 @@ import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
@@ -166,7 +170,11 @@ public class WriterPoolTest extends AbstractCairoTest {
                             } catch (EntryUnavailableException | PoolClosedException ignore) {
                                 // expected: writer busy / locked / pool closing
                             } catch (CairoException e) {
-                                // "queue is full" is fine under stress; a buffer overflow is the bug.
+                                // "queue is full" is fine under stress; a buffer overflow is the bug -
+                                // but that catchable overflow is the least-likely pre-fix symptom. The
+                                // realistic outcome is a SIGSEGV that kills the forked JVM (no assertion
+                                // runs) or silent heap corruption. The crashing fork, not this catch, is
+                                // what these stress tests really guard.
                                 if (!Chars.contains(e.getFlyweightMessage(), "queue is full")) {
                                     error.compareAndSet(null, e);
                                 }
@@ -246,7 +254,11 @@ public class WriterPoolTest extends AbstractCairoTest {
                             } catch (EntryUnavailableException | PoolClosedException ignore) {
                                 // expected: writer busy / pool closing
                             } catch (CairoException e) {
-                                // "queue is full" is fine under stress; a buffer overflow is the bug.
+                                // "queue is full" is fine under stress; a buffer overflow is the bug -
+                                // but that catchable overflow is the least-likely pre-fix symptom. The
+                                // realistic outcome is a SIGSEGV that kills the forked JVM (no assertion
+                                // runs) or silent heap corruption. The crashing fork, not this catch, is
+                                // what these stress tests really guard.
                                 if (!Chars.contains(e.getFlyweightMessage(), "queue is full")) {
                                     error.compareAndSet(null, e);
                                 }
@@ -317,7 +329,11 @@ public class WriterPoolTest extends AbstractCairoTest {
                             } catch (EntryUnavailableException | PoolClosedException ignore) {
                                 // expected: writer busy / pool closing
                             } catch (CairoException e) {
-                                // "queue is full" is fine under stress; a buffer overflow is the bug.
+                                // "queue is full" is fine under stress; a buffer overflow is the bug -
+                                // but that catchable overflow is the least-likely pre-fix symptom. The
+                                // realistic outcome is a SIGSEGV that kills the forked JVM (no assertion
+                                // runs) or silent heap corruption. The crashing fork, not this catch, is
+                                // what these stress tests really guard.
                                 if (!Chars.contains(e.getFlyweightMessage(), "queue is full")) {
                                     error.compareAndSet(null, e);
                                 }
@@ -340,10 +356,10 @@ public class WriterPoolTest extends AbstractCairoTest {
                 // like the trailing Misc.free(writer). The table files survive destroy(), so the
                 // next get() reopens a fresh writer.
                 for (int i = 0; i < iterations && error.get() == null; i++) {
-                    try {
-                        TableWriter w = pool.get(zTableToken, "owner");
+                    try (TableWriter w = pool.get(zTableToken, "owner")) {
+                        // try-with-resources closes the writer (the trailing Misc.free(writer))
+                        // even if destroy() throws, so the writer cannot leak.
                         w.destroy();
-                        w.close();
                     } catch (EntryUnavailableException ignore) {
                         i--;
                     }
@@ -521,6 +537,95 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertTrue("publisher did not finish serializing into a live buffer", command.serializeComplete);
             if (error.get() != null) {
                 throw new AssertionError("publisher or closer failed", error.get());
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncCommandPublishDrainsBeforeGoodbye() throws Exception {
+        // Deterministic proof for the born-free drain site (Entry.goodbye(), reached from
+        // checkClosedAndGetWriter when a thread CAS-grabs a still-pooled writer and then finds
+        // the pool closed). That grab-then-observe-closed window has no synchronization hook, so
+        // reproducing it through get() would need a test seam in production; we exercise
+        // goodbye() directly instead. A publisher parked mid-serialize holds the in-flight count,
+        // so goodbye() must block in drainCommandPublishers() until it finishes - otherwise it
+        // would hand the caller a writer whose command queue is about to be freed underneath the
+        // publisher. The 250 ms negative wait is biased-safe (see the distressed-close test).
+        assertWithPool(pool -> {
+            final SOCountDownLatch publisherInSerialize = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseSerialize = new SOCountDownLatch(1);
+            final AtomicBoolean goodbyeReturned = new AtomicBoolean();
+            final AtomicReference<TableWriter> bornFree = new AtomicReference<>();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            // Hold the writer busy so the publisher takes the publish/serialize path.
+            final TableWriter ownerWriter = pool.get(zTableToken, "owner");
+            final int tableId = zTableToken.getTableId();
+            final TestPublishCommand command =
+                    new TestPublishCommand(zTableToken, tableId, publisherInSerialize, releaseSerialize);
+            final WriterPool.Entry entry = pool.entries().get(zTableToken.getDirName());
+
+            Thread publisher = new Thread(() -> {
+                try {
+                    TableWriter w = pool.getWriterOrPublishCommand(zTableToken, "publisher", command);
+                    Assert.assertNull(w); // command was published, no writer handed back
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread grabber = new Thread(() -> {
+                try {
+                    // checkClosedAndGetWriter hands the just-grabbed writer to goodbye() when the
+                    // pool is closed; goodbye() must drain before the caller can free its queue.
+                    bornFree.set(entry.goodbye());
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    goodbyeReturned.set(true);
+                    Path.clearThreadLocals();
+                }
+            });
+
+            boolean grabberStarted = false;
+            try {
+                publisher.start();
+                // Bail out cleanly instead of hanging to the surefire timeout if the publisher
+                // never reaches serialize() (e.g. it threw on the way in).
+                if (!publisherInSerialize.await(TimeUnit.SECONDS.toNanos(30))) {
+                    throw new AssertionError("publisher never reached serialize()", error.get());
+                }
+
+                grabber.start();
+                grabberStarted = true;
+
+                // With the fix goodbye() stays blocked here; without it goodbyeReturned flips fast.
+                for (int i = 0; i < 250 && !goodbyeReturned.get(); i++) {
+                    Os.sleep(1);
+                }
+                Assert.assertFalse(
+                        "goodbye() handed out the writer while a publisher was mid-serialize",
+                        goodbyeReturned.get());
+            } finally {
+                releaseSerialize.countDown();
+                publisher.join();
+                if (grabberStarted) {
+                    grabber.join();
+                }
+                // goodbye() detached the writer from the pool (DefaultLifecycleManager); close the
+                // born-free writer once to free it. ownerWriter is the same instance.
+                if (ownerWriter.isOpen()) {
+                    ownerWriter.close();
+                }
+            }
+
+            Assert.assertTrue("goodbye() did not return after the publisher finished", goodbyeReturned.get());
+            Assert.assertSame("goodbye() did not hand back the pooled writer", ownerWriter, bornFree.get());
+            Assert.assertTrue("publisher did not finish serializing into a live buffer", command.serializeComplete);
+            if (error.get() != null) {
+                throw new AssertionError("publisher or grabber failed", error.get());
             }
         });
     }
@@ -1491,6 +1596,110 @@ public class WriterPoolTest extends AbstractCairoTest {
 
                 next.await();
                 pool.get(zTableToken, "test2").close();
+            }
+        });
+    }
+
+    @Test
+    public void testWriterPoolFunctionToleratesNullTableTokenWhileClosing() throws Exception {
+        // Regression test: drainCommandPublishers() nulls e.writer before w.close() while the
+        // entry stays map-visible, so Entry.getTableToken() transiently returns null. A
+        // concurrent writer_pool() read must not NPE on that null. A publisher parked
+        // mid-serialize holds the in-flight count, pinning the close inside the drain spin with
+        // the writer already nulled - a deterministic, held-open instance of that window. We run
+        // the query through the engine's own pool, the one writer_pool() reads from.
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch publisherInSerialize = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseSerialize = new SOCountDownLatch(1);
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            // Hold the writer busy so the publisher takes the publish/serialize path.
+            final TableWriter ownerWriter = engine.getWriter(zTableToken, "owner");
+            final int tableId = zTableToken.getTableId();
+            final TestPublishCommand command =
+                    new TestPublishCommand(zTableToken, tableId, publisherInSerialize, releaseSerialize);
+
+            Thread publisher = new Thread(() -> {
+                try {
+                    TableWriter w = engine.getWriterOrPublishCommand(zTableToken, command);
+                    Assert.assertNull(w); // command was published, no writer handed back
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread closer = new Thread(() -> {
+                try {
+                    ownerWriter.markDistressed();
+                    ownerWriter.close(); // distressed close -> closeWriter -> drainCommandPublishers
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            boolean closerStarted = false;
+            try {
+                publisher.start();
+                // Bail out cleanly instead of hanging to the surefire timeout if the publisher
+                // never reaches serialize() (e.g. it threw on the way in).
+                if (!publisherInSerialize.await(TimeUnit.SECONDS.toNanos(30))) {
+                    throw new AssertionError("publisher never reached serialize()", error.get());
+                }
+
+                closer.start();
+                closerStarted = true;
+
+                // Wait until the close has nulled the writer and parked in drainCommandPublishers.
+                // The parked publisher keeps it there, so once observed the entry stays
+                // null-token and map-visible until releaseSerialize fires in the finally below.
+                boolean nulled = false;
+                for (int i = 0; i < 30_000 && !nulled; i++) {
+                    WriterPool.Entry e = engine.getWriterPoolEntries().get(zTableToken.getDirName());
+                    nulled = e != null && e.getTableToken() == null;
+                    if (!nulled) {
+                        Os.sleep(1);
+                    }
+                }
+                Assert.assertTrue("close never nulled the writer in drainCommandPublishers()", nulled);
+
+                // Full scan of writer_pool() over the closing entry. Before the fix, reading
+                // table_name (col 0) dereferenced the null TableToken and NPE'd here.
+                boolean sawClosingEntry = false;
+                try (RecordCursorFactory factory = select("select * from writer_pool()");
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        final CharSequence tableName = record.getStrA(0);
+                        record.getStrB(0);
+                        final int tableNameLen = record.getStrLen(0);
+                        record.getLong(1);
+                        record.getTimestamp(2);
+                        record.getStrA(3);
+                        if (tableName == null) {
+                            Assert.assertEquals(TableUtils.NULL_LEN, tableNameLen);
+                            sawClosingEntry = true;
+                        }
+                    }
+                }
+                Assert.assertTrue("writer_pool() did not observe the closing entry with a null table_name", sawClosingEntry);
+            } finally {
+                releaseSerialize.countDown();
+                publisher.join();
+                if (closerStarted) {
+                    closer.join();
+                }
+                if (ownerWriter.isOpen()) {
+                    ownerWriter.close();
+                }
+            }
+
+            Assert.assertTrue("publisher did not finish serializing into a live buffer", command.serializeComplete);
+            if (error.get() != null) {
+                throw new AssertionError("publisher or closer failed", error.get());
             }
         });
     }
