@@ -2557,6 +2557,63 @@ mod tests {
     }
 
     #[test]
+    fn update_rejects_invalid_append_base() {
+        // The append base comes from the on-disk `_pm` header; a corrupt value
+        // must error (not panic via JNI) before any parsing. Build a valid
+        // 1-row-group `_pm` and a 2-row-group target that would otherwise
+        // append cleanly, then drive the guard with three bad append bases.
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let col_infos = col_infos_from_schema(metadata2.schema_descr.columns(), qdb_meta.as_ref());
+
+        let (initial_pm, _) =
+            generate_parquet_metadata(&col_infos, &thrift_meta.row_groups, 0, &[0], 100, 50, &[], 0, -1)
+                .unwrap();
+        let parse_anchor = initial_pm.len() as u64;
+
+        // A 2-row-group target so the update is well-formed apart from the base.
+        let mut extended_rgs = thrift_meta.row_groups.clone();
+        let mut new_rg = extended_rgs[0].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        extended_rgs.push(new_rg);
+
+        // parse_anchor - 1: below the committed head; parse_anchor + 1: one byte
+        // past the buffer end; u64::MAX: still addressable as usize on 64-bit, so
+        // it trips the buffer-length check rather than the try_from overflow.
+        for &bad_base in &[parse_anchor - 1, parse_anchor + 1, u64::MAX] {
+            let result = update_parquet_metadata(
+                &initial_pm,
+                parse_anchor,
+                bad_base,
+                &extended_rgs,
+                200,
+                60,
+                &[],
+                0,
+            );
+            let err = match result {
+                Ok(_) => panic!("append base {bad_base} must be rejected"),
+                Err(e) => e,
+            };
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("append base") && msg.contains("out of range"),
+                "append base {bad_base}: expected an 'out of range' guard error, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
     fn thrift_missing_column_metadata_errors() {
         // A ColumnChunk with meta_data = None should produce a clear error.
         let rg = parquet2::thrift_format::RowGroup {
