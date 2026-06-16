@@ -7,6 +7,102 @@ to the worker continuation, `TxnWaiter`, `TimerCont`, or `TimerShards`.
 For the C2 hoist hazard and the `CarrierLocal` design, see
 `CARRIER_LOCAL.md`. This document covers everything else.
 
+## Worker loop control flow: handoff suspend vs deep park
+
+`Worker.loopBody` (in `Worker.java`) has two distinct yield sites, and they
+behave differently on resume. Knowing which is which explains why the handoff
+suspend deliberately has no "resumed after a successful yield" branch.
+
+The load-bearing fact is the return contract of `WorkerContinuation.suspend()`
+(`WorkerContinuation.java:115`, a thin wrapper over `Continuation.yield`):
+
+- If the yield is **refused** (carrier pinned by a `synchronized` or native
+  frame above the call), `suspend()` returns `false` immediately, on the same
+  carrier, and the body keeps running.
+- If the yield **succeeds**, the carrier unmounts and the call does NOT return
+  on the current execution. It only returns -- with `true` -- later, if and
+  when some thread calls `run()` on this same cont again and execution thaws at
+  that exact line.
+
+The two yield sites:
+
+- **Deep park** -- a Job calls a `TxnWaiter` / `TimerCont` suspend from inside
+  `Job.run()` at `Worker.java:367`. The waiter retains a reference to the cont,
+  so it can be rescheduled and remounted later.
+- **Handoff suspend** -- `loopBody` itself, after dequeuing a parked foreign
+  cont, stashes it in its own handoff slot and yields at `Worker.java:399`.
+  Nothing retains a reference to the cont that yields here.
+
+In both diagrams below, bare `:NNN` line numbers refer to `Worker.java`;
+cross-file references are written with their file name. `cont` is the
+`WorkerContinuation` running `loopBody`; `handOff` is the foreign cont it
+dequeued and stashed.
+
+### Sequence 1 -- handoff suspend (cont is spent, never resumed here)
+
+```
+OuterDriver                       cont                          continuationQueue
+(Worker.run, :243-302)            (loopBody)
+    |                               |                                  |
+    |  build cont (:245)            |                                  |
+    |--- cont.run() (:250) -------->|  mount; run loopBody             |
+    |                               |  run jobs (:367) -- no deep park |
+    |                               |--- tryDequeue() (:396) --------->|
+    |                               |<------------ handOff ------------|
+    |                               |  cont.setHandoff(handOff) (:398) |
+    |                               |  suspend() -> yield (:399)        |
+    |                               |     yield SUCCEEDS: cont unmounts,|
+    |<--- returns to cont.run() ----|     frozen at :399; suspend()     |
+    |     caller (cont unmounted)         does NOT return into cont     |
+    |  handOff = cont.takeHandoff() (:270)  -> non-null                 |
+    |  recycleJobList(cont) (:287)          -> cont is now SPENT        |
+    |  cont = handOff (:288)                -> spent cont is dropped     |
+    |--- mountForeignCont(handOff) (:289) ----> (runs handOff) ...      |
+    |                                                                   |
+    |  Nobody ever calls run() on the spent cont again:                 |
+    |    - the next outer iteration builds a FRESH cont (:245)          |
+    |    - the spent cont was never enqueued: put (:416) enqueues       |
+    |      handOff, and only on the refused branch                      |
+    |    - scheduleResume (WorkerContinuation.java:192) only holds       |
+    |      deep-park conts (see Sequence 2)                             |
+    |  => suspend() at :399 never returns true                          |
+    |  => the handoff suspend has no resumed-after-success branch       |
+```
+
+### Sequence 2 -- deep park then remount (resumes at the Job call, not the handoff suspend)
+
+```
+OuterDriver      cont           TxnWaiter/TimerCont   continuationQueue   peerWorker
+(:243-302)       (loopBody)                                               (mountForeignCont, :509)
+   |               |                   |                    |                  |
+   |- cont.run()(:250)->| mount loopBody|                    |                  |
+   |               |- Job.run() (:367) ->|                   |                  |
+   |               |   register(cont) + suspend (yield)      |                  |
+   |               |   (waiter retains cont)                 |                  |
+   |<-- returns; cont frozen INSIDE Job.run at :367 ---------|                  |
+   |  handOff = cont.takeHandoff() (:270) -> null            |                  |
+   |  break (:271); mintNextGen (:301); build FRESH cont (:245)                 |
+   |               :   (driver never re-runs this cont)      |                  |
+   :               :                   :                     :                  :
+   |  ... target txn lands / timer fires ...                 |                  |
+   |               |                   |- scheduleResume(cont)|                  |
+   |               |                   |  (WorkerContinuation.java:192) -------->| put
+   |               |                   |                     |<- tryDequeue(:396)-|
+   |               |                   |                     |------- cont ----->|
+   |               |                   |   setHandoff(cont); suspend; then        |
+   |               |                   |   mountForeignCont(cont) -> cont.run() (:289 / :515)
+   |               |<====== cont RESUMES at Job.run (:367), inside the Job =======|
+   |               |  Job.run returns -> loopBody job loop continues             |
+   |               |  (resumes at :367, never at :399)                           |
+```
+
+The only remount path runs through `scheduleResume`
+(`WorkerContinuation.java:192`) -> `continuationQueue` -> a peer's
+`mountForeignCont` (`Worker.java:509`). A remounted cont always thaws at its
+deep-park site inside `Job.run()` (`Worker.java:367`), never at the handoff
+suspend (`Worker.java:399`). Both diagrams therefore reach the same conclusion:
+no execution makes `suspend()` at `Worker.java:399` return `true`.
+
 ## Continuation allocation per outer-driver iteration
 
 `Worker.run()` allocates a fresh `WorkerContinuation` (which wraps a

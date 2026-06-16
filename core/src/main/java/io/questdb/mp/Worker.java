@@ -396,6 +396,14 @@ public class Worker extends Thread {
                 WorkerContinuation toResume = continuationQueue.tryDequeue(scratchResumeTask);
                 if (toResume != null) {
                     self.setHandoff(toResume);
+                    // suspend() only ever returns to this frame with the refused
+                    // (false) outcome below. On a successful yield the carrier unmounts
+                    // here and this cont is NOT resumed at this point: the outer driver
+                    // reads the handoff (takeHandoff), recycles this now-spent cont's
+                    // job generation, and mounts toResume in its place. A deep park
+                    // inside a job (Job.run) resumes at the job call, not here. So there
+                    // is no resumed-after-success branch. See DESIGN_NOTES.md, "Worker
+                    // loop control flow: handoff suspend vs deep park".
                     if (!WorkerContinuation.suspend()) {
                         // Yield refused (carrier pinned). We can't escape this cont
                         // to mount the dequeued one. Re-queue it so a peer worker
@@ -414,16 +422,7 @@ public class Worker extends Thread {
                         }
                         self.setHandoff(null);
                         continuationQueue.put(toResume);
-                    } else {
-                        // Resumed after a successful yield: reset the throttle so a
-                        // future pin episode logs immediately rather than waiting
-                        // for the residual window to expire.
-                        nextYieldRefusedLogMicros = 0L;
                     }
-                    // If suspend yielded, body never returns here directly --
-                    // whichever outer driver mounted this cont takes the handoff
-                    // and runs it; execution lands on the else branch above only
-                    // when this cont is later remounted.
                 }
             }
 
