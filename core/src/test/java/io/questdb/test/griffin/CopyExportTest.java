@@ -3980,7 +3980,7 @@ public class CopyExportTest extends AbstractCairoTest {
         return new Thread(() -> {
             try {
                 while (!stop.get()) {
-                    if (job.run(0)) {
+                    if (job.run()) {
                         break;
                     }
                     Os.sleep(10);

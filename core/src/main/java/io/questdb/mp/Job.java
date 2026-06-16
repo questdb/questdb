@@ -137,11 +137,10 @@ public interface Job {
      * callers outside a worker loop; wraps {@code workerId} in a detached,
      * non-terminating {@link WorkerContext}.
      *
-     * @param workerId caller's pool-local worker index in {@code [0, poolWorkerCount)}
      * @return true if job should be rescheduled ASAP
      */
-    default boolean run(int workerId) {
-        return run(workerId == -1 ? RUNNING_STATUS : new ImmutableWorkerContext(workerId, false));
+    default boolean run() {
+        return run(RUNNING_STATUS);
     }
 
     /**

@@ -994,7 +994,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void tickWalQueue(int ticks) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
             for (int i = 0; i < ticks; i++) {
-                walApplyJob.run(0);
+                walApplyJob.run();
             }
         }
     }

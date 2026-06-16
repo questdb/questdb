@@ -214,7 +214,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     try {
                         try (ViewCompilerJob job = new ViewCompilerJob(workerId, engine, 0)) {
                             while (!stop.get()) {
-                                job.run(0);
+                                job.run();
                                 Os.sleep(rnd.nextInt(50));
                             }
 
@@ -222,7 +222,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                                 do {
                                     drainWalQueue(walApplyJob, engine);
-                                } while (job.run(0));
+                                } while (job.run());
                             }
                         }
                     } catch (Throwable throwable) {
@@ -251,7 +251,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     createView(viewName, viewSql);
                     LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
                     // compile the view before registering it, so dependent views can see this view's metadata
-                    viewCompiler.run(0);
+                    viewCompiler.run();
                     selectGenerator.registerTable(viewName);
                 }
             }

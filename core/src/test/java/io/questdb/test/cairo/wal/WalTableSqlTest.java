@@ -358,7 +358,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 for (int i = 0; i < count; i++) {
-                    walApplyJob.run(0);
+                    walApplyJob.run();
                     engine.releaseInactive();
                     int rows = rnd.nextInt(200);
                     execute("insert into " + tableName +
@@ -1346,7 +1346,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             long walNotification = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            checkWalTransactionsJob.run(0);
+            checkWalTransactionsJob.run();
 
             drainWalQueue();
             Assert.assertTrue(walNotification < engine.getMessageBus().getWalTxnNotificationPubSequence().current());
@@ -2120,7 +2120,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         engine.releaseInactiveTableSequencers();
         try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
-            job.run(0);
+            job.run();
         }
 
         sysPath.of(configuration.getDbRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
@@ -2135,7 +2135,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         control.setMaxBlockRowCount(1);
 
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
-            walApplyJob.run(0);
+            walApplyJob.run();
         }
     }
 

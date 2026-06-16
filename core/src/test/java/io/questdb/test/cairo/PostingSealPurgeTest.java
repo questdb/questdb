@@ -201,7 +201,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 if (!configuration.disableColumnPurgeJob()) {
                     try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
                         for (int i = 0; i < 8; i++) {
-                            job.run(0);
+                            job.run();
                             // Tiny pause so retry-backoff can elapse.
                             Os.pause();
                         }
@@ -232,7 +232,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 assertTrue("log table name must be reported", tableName != null && !tableName.isEmpty());
                 int outstanding = job.getOutstandingPurgeTasks();
                 assertFalse("outstanding tasks must not be negative", outstanding < 0);
-                job.run(0);
+                job.run();
             }
         });
     }
@@ -628,9 +628,9 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             // Advance by well over the retry-delay limit so the backoff never
             // defers a ready task past this run.
             setCurrentMicros(currentMicros + 100L * iteration++);
-            job.run(0);
+            job.run();
             setCurrentMicros(currentMicros + 100L * iteration++);
-            job.run(0);
+            job.run();
         }
     }
 
@@ -651,7 +651,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
                 // Run once; the throttle window starts now. Without the fix,
                 // close() was called here and the job was dead permanently.
-                job.run(0);
+                job.run();
                 assertTrue(
                         "job must remain alive after error overflow (no permanent disable)",
                         job.isJobAliveForTesting()
@@ -661,7 +661,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 // outstanding tasks. The fix lets the iteration through,
                 // sees no work + no errors, and resets the error counter.
                 setCurrentMicros(currentMicros + 120L * 1_000_000L);
-                job.run(0);
+                job.run();
                 assertEquals(
                         "clean iteration must reset error count",
                         0,

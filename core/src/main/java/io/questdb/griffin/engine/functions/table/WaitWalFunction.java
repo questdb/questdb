@@ -183,6 +183,14 @@ class WaitWalFunction extends BooleanFunction implements Function {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        // The result depends on live WAL apply progress, not just the arguments, so the
+        // function must not be folded or admitted where non-deterministic functions are
+        // forbidden (e.g. materialized-view definitions, where a parked wait would stall refresh).
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }
