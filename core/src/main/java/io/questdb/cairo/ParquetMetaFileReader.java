@@ -300,7 +300,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         assert addr != 0;
         assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
         if (nativeReaderPtr == 0) {
-            nativeReaderPtr = createNativeReader(addr, fileSize);
+            // Key the native reader on the resolved committed head, never the
+            // raw mapped header (fileSize). Past a rolled-back in-place update
+            // the physically-last footer -- the one the native reader locates
+            // from the trailer at the passed size -- is an orphaned dead
+            // footer, so pruning must read the committed footer resolveFooter
+            // settled on. resolveFooter always runs first: it populates
+            // rowGroupCount, which every caller reads before the first skip.
+            assert resolvedFileSize != 0;
+            nativeReaderPtr = createNativeReader(addr, resolvedFileSize);
         }
         return canSkipRowGroup0(
                 nativeReaderPtr,
@@ -408,10 +416,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * The handle caches the parsed {@code _pm} header / footer / feature-flag
      * layout so repeated JNI calls (filter pruning AND row-group decode) avoid
      * reparsing. Freed by {@link #clear()}.
+     * <p>
+     * Requires {@link #resolveFooter(long)} to have run first: the handle is
+     * keyed on the resolved committed head, so decode never reads a rolled-back
+     * dead footer.
      */
     public long getOrCreateNativeReaderPtr() {
         if (nativeReaderPtr == 0) {
-            nativeReaderPtr = createNativeReader(addr, fileSize);
+            // See canSkipRowGroup: key on the resolved committed head, not the
+            // raw mapped header, so decode never reads a rolled-back dead footer.
+            assert resolvedFileSize != 0;
+            nativeReaderPtr = createNativeReader(addr, resolvedFileSize);
         }
         return nativeReaderPtr;
     }
@@ -620,14 +635,19 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * feature section. Caller must provide a 16-byte buffer.
      * <p>
      * Enterprise callers use this to retrieve both values in a single JNI
-     * round trip.
+     * round trip. Requires {@link #resolveFooter(long)} to have run first: the
+     * native parse starts from the resolved committed head, so a dead footer
+     * left past the committed head by a rolled-back update is never summed.
      *
      * @param destAddr address of a 16-byte buffer to receive the two longs
      * @throws CairoException on malformed {@code _pm} data
      */
     public void readPartitionMeta(long destAddr) {
         assert addr != 0;
-        readPartitionMeta0(addr, fileSize, destAddr);
+        // Parse from the resolved committed head, never the raw mapped header:
+        // a dead footer past the committed head would otherwise be summed here.
+        assert resolvedFileSize != 0;
+        readPartitionMeta0(addr, resolvedFileSize, destAddr);
     }
 
     /**
@@ -893,7 +913,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             long filterBufEnd
     );
 
-    private static native long createNativeReader(long addr, long fileSize);
+    /**
+     * Builds the native reader backing row-group pruning
+     * ({@link #canSkipRowGroup}) and decode ({@link #getOrCreateNativeReaderPtr}).
+     * {@code resolvedFileSize} MUST be the resolved committed head
+     * ({@link #getResolvedFileSize()}), not the raw mapped header
+     * ({@link #getFileSize()}): the native reader derives the footer from the
+     * trailer at {@code resolvedFileSize - 4}, and once a rolled-back in-place
+     * update leaves a dead footer past the committed head, the footer at the
+     * header size is that orphaned dead footer. Keying on it would prune
+     * against and decode never-committed row groups.
+     */
+    private static native long createNativeReader(long addr, long resolvedFileSize);
 
     private static native void destroyNativeReader(long ptr);
 
