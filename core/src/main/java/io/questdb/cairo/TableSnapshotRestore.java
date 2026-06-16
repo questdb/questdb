@@ -134,9 +134,8 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     @Override
     public void close() {
-        // Every restore path drains its tasks before returning, but freeing
-        // the native-backed objects below under a still-running task would be
-        // a use-after-free, so drain again as a backstop.
+        // Backstop: drain tasks so freeing native-backed objects below cannot
+        // race a still-running task.
         abortAndDrainParallelTasks();
         futures.clear();
         executor.shutdownNow();
@@ -195,12 +194,11 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     /**
      * Awaits every submitted parallel task and surfaces the first failure.
-     * Returns or throws only after all tasks have completed: the tasks read
-     * the shared native-backed {@code tableMetadata}, {@code columnVersionReader}
-     * and {@code txWriter} objects, which callers reload for the next table,
-     * so abandoning a running task on failure would put those reloads under
-     * concurrent readers. Resets the abort flag before returning so the next
-     * table's tasks run normally.
+     * Returns or throws only after all tasks complete: tasks read the shared
+     * native-backed {@code tableMetadata}, {@code columnVersionReader} and
+     * {@code txWriter}, which callers reload for the next table, so abandoning
+     * a running task would expose those reloads to concurrent readers. Resets
+     * the abort flag before returning so the next table's tasks run normally.
      */
     public void finalizeParallelTasks() {
         if (futures.size() > 0) {
@@ -214,12 +212,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             try {
                 futures.getQuick(i).get();
             } catch (InterruptedException e) {
-                // Keep draining: abandoning a running task is a use-after-free
-                // risk for the shared native-backed readers. get() cleared the
-                // interrupt status, so the retry blocks until the task is done;
-                // the status is restored once the drain completes. The abort
-                // flag makes tasks that have not started yet return immediately,
-                // bounding the wait.
+                // Keep draining: abandoning a running task risks a use-after-free
+                // on the shared readers. get() cleared the interrupt status, so
+                // retry (the abort flag bounds the wait) and restore it after.
                 abortParallelTasks.set(true);
                 interrupted = true;
                 //noinspection AssignmentToForLoopParameter
@@ -232,18 +227,16 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
                 if (!failed) {
                     failed = true;
-                    // submitParallelTask has logged the failure on the worker
-                    // thread and replaced thread-local-reused exceptions with
-                    // immutable carriers, so this read cannot race the worker.
-                    // Build the thrown exception only after the drain.
+                    // submitParallelTask already logged the failure and replaced
+                    // thread-local-reused exceptions with immutable carriers, so
+                    // reading the message here cannot race the worker.
                     firstErrorMessage = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getName();
                 }
             }
         }
 
-        // All tasks have completed; reset the abort flag so the tasks of the
-        // next table (enterprise backup restore continues after quarantining a
-        // failed table) do not silently skip their work.
+        // All tasks done; reset the abort flag so the next table's tasks run
+        // (enterprise restore continues after quarantining a failed table).
         abortParallelTasks.set(false);
 
         if (interrupted) {
@@ -375,29 +368,20 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             // Validate restored parquet partitions and ensure each has a _pm
             // sidecar that resolves a footer at the committed parquet size:
-            // generate one for old backups that predate the _pm format, and
-            // regenerate stale, torn or partially written captures. All of this
-            // -- the committed-size truncation check, the map+CRC validation,
-            // regeneration and (when requested) the parquet bitmap-index rebuild
-            // -- runs inside the parallel workers, mapping _pm exactly once.
-            // prepareParquetPartitions submits one worker per pool thread that
-            // pulls partitions from a shared cursor; it does not stat or throw on
-            // the calling thread. Passing the rebuild flag here fuses validation
-            // with the index rebuild so the sidecar is not mapped and CRC-verified
-            // twice on the enterprise-restore path.
+            // generate one for pre-_pm backups, regenerate stale/torn/partial
+            // captures, and (when requested) rebuild the parquet bitmap indexes.
+            // All of this runs inside the parallel workers, mapping _pm once.
+            // Passing the rebuild flag fuses validation with the index rebuild so
+            // the sidecar is not mapped and CRC-verified twice on enterprise restore.
             //
-            // Fail-fast tradeoff: because this phase no longer runs serially
-            // ahead of the symbol/bitmap phases, a truncated capture is no longer
-            // detected before that sibling work is submitted. It surfaces, with
-            // the same path-bearing diagnostic, at the single finalizeParallelTasks
-            // drain below. The first failing worker trips the shared abort latch
-            // (see submitParallelTask), so sibling workers across all three phases
-            // bail at their next item boundary instead of running to completion;
-            // the restore still aborts and never feeds a truncated file to
-            // ParquetMetadataWriter.generate (the per-partition size check guards
-            // regeneration). The cost on a bad capture is the in-flight items
-            // already running when the latch trips -- wasted I/O on an
-            // already-doomed restore, not corruption.
+            // Tradeoff: this no longer runs serially ahead of the symbol/bitmap
+            // phases, so a truncated capture surfaces (with the same path-bearing
+            // diagnostic) at the finalizeParallelTasks drain below rather than
+            // before sibling work is submitted. The first failing worker trips the
+            // shared abort latch (see submitParallelTask), so siblings bail at their
+            // next item boundary; the restore still aborts and never feeds a
+            // truncated file to ParquetMetadataWriter.generate. The cost is the
+            // in-flight items already running -- wasted I/O on a doomed restore.
             prepareParquetPartitions(tablePath.trimTo(pathTableLen), pathTableLen, rebuildPartitionColumnIndexes);
 
             // Symbols are not append-only data structures, they can be corrupt
@@ -410,13 +394,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                 rebuildBitmapIndexes(tablePath, pathTableLen);
             }
 
-            // Drain all parallel tasks (symbol rebuilds + bitmap index rebuilds)
-            // before going further, because tableMetadata, columnVersionReader
-            // and txWriter are reused across tables. Without this, a bitmap
-            // rebuild task from this table could still be running when the
-            // caller loads the next table's metadata into the same objects.
-            // finalizeParallelTasks returns or throws only after every
-            // submitted task has completed.
+            // Drain all parallel tasks before going further: tableMetadata,
+            // columnVersionReader and txWriter are reused across tables, so a
+            // rebuild task from this table must not still be running when the
+            // caller loads the next table into the same objects.
             finalizeParallelTasks();
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
@@ -439,12 +420,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
             }
         } catch (Throwable th) {
-            // Any step above can throw with tasks still in flight: task
-            // submission itself can fail part-way, and finalizeParallelTasks
-            // rethrows the first task failure. Reach quiescence before
-            // propagating, because the caller may quarantine-rename the table
-            // directory the tasks write into and reload the shared
-            // native-backed metadata objects the tasks read.
+            // Any step above can throw with tasks still in flight. Reach quiescence
+            // before propagating: the caller may quarantine-rename the table
+            // directory the tasks write into and reload the shared readers.
             abortAndDrainParallelTasks();
             throw th;
         } finally {
@@ -454,27 +432,23 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Releases the handles the restore holds on the current table's files:
-     * the shared metadata, transaction and column-version readers and the
-     * small memory file (last targeted at {@code _todo_} or a txn log).
-     * They normally stay open until the next table reloads them or
-     * {@link #close()} frees them. Callers that quarantine a failed table by
-     * renaming its directory must call this first: Windows refuses to rename
-     * a directory while any file inside it is open or mapped. The released
-     * objects are reopened lazily, so the restore can continue with other
-     * tables.
+     * Releases the handles the restore holds on the current table's files (the
+     * shared metadata, txn and column-version readers and the small memory
+     * file). Callers that quarantine a failed table by renaming its directory
+     * must call this first: Windows refuses to rename a directory while any
+     * file inside it is open or mapped. The released objects are reopened
+     * lazily, so the restore can continue with other tables.
      */
     public void releaseTableHandles() {
-        // Freeing the native-backed readers under a still-running task would
-        // be a use-after-free; every restore path drains its tasks before
-        // surfacing a failure, so this is a backstop, same as in close().
+        // Backstop drain: freeing native-backed readers under a running task
+        // would be a use-after-free, same as in close().
         abortAndDrainParallelTasks();
         futures.clear();
         tableMetadata = Misc.free(tableMetadata);
         txWriter = Misc.free(txWriter);
         columnVersionReader = Misc.free(columnVersionReader);
-        // keep the object: resetTodoLog and openSmallFile re-target it via
-        // smallFile/of, which work on a closed instance; do not truncate
+        // Keep the object: resetTodoLog/openSmallFile re-target it on a closed
+        // instance; do not truncate.
         memFile.close(false);
     }
 
@@ -598,13 +572,10 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Awaits every submitted parallel task without surfacing task failures;
-     * used on error paths that only need quiescence (the failure that gets
-     * reported is the one already in flight). Sets the abort flag for the
-     * duration of the drain so tasks that have not started yet return
-     * immediately, and resets it afterwards so the next table's tasks run
-     * normally. Restores the interrupt status if the draining thread is
-     * interrupted.
+     * Awaits every submitted parallel task without surfacing task failures; used
+     * on error paths that only need quiescence. Sets the abort flag for the drain
+     * so not-yet-started tasks return immediately, resets it afterwards, and
+     * restores the interrupt status if the draining thread is interrupted.
      */
     private void abortAndDrainParallelTasks() {
         abortParallelTasks.set(true);
@@ -613,8 +584,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             try {
                 futures.getQuick(i).get();
             } catch (InterruptedException e) {
-                // get() cleared the interrupt status; retry so the drain still
-                // waits for the task, and restore the status after the loop
+                // get() cleared the interrupt status; retry and restore it after.
                 interrupted = true;
                 //noinspection AssignmentToForLoopParameter
                 i--;
@@ -665,35 +635,18 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Validates restored parquet partitions and schedules, per parquet partition,
-     * a single parallel task that maps {@code _pm} exactly once to validate it
-     * (footer resolve + full-file CRC) against the committed parquet size,
-     * regenerates it from {@code data.parquet} when missing, stale, torn or
-     * zero-length, and -- when {@code rebuildIndexes} is set and the partition
-     * holds rows -- reuses that same resolved mapping to rebuild the partition's
-     * bitmap indexes (see {@link #processParquetPartition}). The committed-size
-     * truncation check on {@code data.parquet} runs inside that same task (see
-     * {@link #processParquetPartition}), so this loop issues no per-partition
-     * syscalls at all: a ~100k-partition table no longer pays a serial stat per
-     * partition on the calling thread, which on cold/object/network storage with
-     * ms-class stat latency would otherwise become the Amdahl tail dominating the
-     * very restore this parallelizes. A truncated capture still fails with a
-     * path-bearing diagnostic, surfaced through {@link #finalizeParallelTasks}.
-     * <p>
-     * Replaces the former serial map+CRC validation: that pass mapped and
-     * CRC-verified every {@code _pm} on the calling thread and the rebuild then
-     * mapped and CRC-verified it again, so large (~100k) partition tables paid a
-     * redundant serial map/CRC/unmap per parquet partition at startup.
-     * <p>
-     * One task per parquet partition would queue up to ~100k futures/lambdas and
-     * allocate (then free) a {@code Path} + {@code _pm} reader -- plus, on rebuild,
-     * a {@code RowGroupBuffers}, {@code DirectIntList} and {@code ParquetPartitionDecoder}
-     * -- per partition. The executor is a fixed pool, so only {@code threadCount} of
-     * those tasks ever run at once: the surplus buys no parallelism, only overhead.
-     * Instead submit one worker per pool thread; each {@link #processParquetPartitions}
-     * worker pulls partition indices from a shared cursor (dynamic load balancing
-     * across skewed partition sizes) and reuses a single scratch set across every
-     * partition it processes.
+     * Validates restored parquet partitions and ensures each {@code _pm} sidecar
+     * resolves a footer at the committed parquet size, regenerating it from
+     * {@code data.parquet} when missing/stale/torn and -- when
+     * {@code rebuildIndexes} is set -- rebuilding the partition's bitmap indexes
+     * (see {@link #processParquetPartition}). Submits one worker per pool thread;
+     * each {@link #processParquetPartitions} worker pulls partition indices from a
+     * shared cursor (load balancing across skewed partitions) and reuses one
+     * scratch set across every partition it handles. All per-partition syscalls
+     * (including the {@code data.parquet} truncation check) run inside the workers,
+     * so a ~100k-partition table no longer pays a serial stat per partition on the
+     * calling thread. A truncated capture fails with a path-bearing diagnostic via
+     * {@link #finalizeParallelTasks}.
      */
     private void prepareParquetPartitions(Path tablePath, int pathTableLen, boolean rebuildIndexes) {
         final int partitionBy = tableMetadata.getPartitionBy();
@@ -729,13 +682,10 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     /**
      * Worker body for {@link #prepareParquetPartitions}: pulls parquet partition
-     * indices from the shared {@code cursor} and processes each, reusing a single
-     * set of native-backed scratch objects across every partition it handles
-     * instead of allocating and freeing them per partition. The rebuild-only
-     * buffers stay {@code null} on the validation-only (checkpoint recovery) path,
-     * so that light path never maps native buffers it will not use. All scratch is
-     * freed in the {@code finally}, so nothing leaks past this task -- there is no
-     * {@code ThreadLocal}-on-a-fixed-pool lifecycle to manage.
+     * indices from the shared {@code cursor} and processes each, reusing one set
+     * of native-backed scratch objects instead of allocating per partition. The
+     * rebuild-only buffers stay {@code null} on the validation-only (checkpoint
+     * recovery) path. All scratch is freed in the {@code finally}.
      */
     private void processParquetPartitions(
             String tablePathStr,
@@ -752,9 +702,9 @@ public class TableSnapshotRestore implements QuietCloseable {
         DirectIntList parquetColumns = null;
         ParquetPartitionDecoder decoder = null;
         ObjList<IndexWriter> indexWriters = null;
-        // Heap scratch reused across every partition this worker handles, mirroring
-        // the native-backed scratch above: the per-partition StringSink/long[] that
-        // rebuildParquetPartitionIndexes used to allocate now fold in here.
+        // Heap scratch reused across partitions, mirroring the native scratch
+        // above (the per-partition StringSink/long[] rebuildParquetPartitionIndexes
+        // used to allocate fold in here).
         StringSink columnNamesSink = null;
         LongList columnTops = null;
         try {
@@ -773,17 +723,15 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
                 final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 final long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                // The raw partition index i is already in hand, so read the
-                // committed row count by index (O(1) array read) instead of
-                // re-resolving it by timestamp (O(log P) binary search) for the
-                // identical masked value.
+                // Read row count by index (O(1)) since i is in hand, not by
+                // timestamp (O(log P)).
                 final long partitionRowCount = txWriter.getPartitionSize(i);
-                // Use the committed parquet file size from _txn, not the on-disk size.
-                // A snapshot may capture data.parquet mid-append; bytes past the
-                // committed size are not MVCC-visible and must not be published.
+                // Committed parquet size from _txn, not on-disk: a snapshot may
+                // capture data.parquet mid-append, and bytes past the committed
+                // size are not MVCC-visible.
                 final long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
-                // A parquet partition with no rows still needs a valid _pm, but no
-                // index rebuild: rebuildBitmapIndexes skips rowCount<=0 too.
+                // An empty parquet partition still needs a valid _pm but no index
+                // rebuild (rebuildBitmapIndexes skips rowCount<=0 too).
                 final boolean doRebuild = rebuildIndexes && partitionRowCount > 0;
                 try {
                     processParquetPartition(
@@ -806,8 +754,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                             doRebuild
                     );
                 } finally {
-                    // POSTING seal() retains Path thread-locals; clear per partition
-                    // so this executor thread does not carry native paths forward.
+                    // POSTING seal() retains Path thread-locals; clear per partition.
                     Path.clearThreadLocals();
                 }
             }
@@ -822,15 +769,13 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Regenerates the {@code _pm} sidecar from {@code data.parquet} using the
-     * committed {@code parquetFileSize} (never {@code ff.length()}: bytes past the
-     * committed boundary are uncommitted MVCC state). Creates, writes and fsyncs
-     * the file, then fsyncs the partition directory on non-Windows so the new
-     * sidecar survives a post-restore power loss, and removes a partially written
-     * {@code _pm} on failure so a retry regenerates cleanly. {@code path} must
-     * sit inside the partition directory; it is left trimmed to
-     * {@code partitionDirLen} on return. Runs on parallel executor threads, so it
-     * takes a per-task {@code path} and touches no shared mutable state.
+     * Regenerates the {@code _pm} sidecar from {@code data.parquet} at the
+     * committed {@code parquetFileSize} (never {@code ff.length()}: bytes past it
+     * are uncommitted MVCC state). Creates, writes and fsyncs the file, fsyncs the
+     * partition directory on non-Windows so it survives a post-restore power loss,
+     * and removes a partial {@code _pm} on failure. {@code path} must sit inside
+     * the partition directory and is left trimmed to {@code partitionDirLen}. Takes
+     * a per-task {@code path} as it runs on parallel executor threads.
      */
     private void regenerateParquetMetaFile(Path path, int partitionDirLen, long parquetFileSize) {
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
@@ -875,16 +820,15 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Ensures the {@code _pm} sidecar in the partition directory resolves a footer
-     * at the committed {@code parquetFileSize}, regenerating it from
-     * {@code data.parquet} when missing, stale, torn or zero-length. The footer is
-     * resolved -- which runs the full-file CRC -- exactly once on the returned
-     * live mapping: on success {@code taskReader} is bound and resolved over it,
-     * and the caller owns the mapping and must {@code munmap} it (capture
-     * {@code taskReader.getFileSize()} before {@link ParquetMetaFileReader#clear()}
-     * resets it). The committed-size truncation check on {@code data.parquet} must
-     * already have passed. Per-task {@code path}/{@code taskReader} instances are
-     * required: this runs on parallel executor threads.
+     * Ensures the {@code _pm} sidecar resolves a footer at the committed
+     * {@code parquetFileSize}, regenerating it from {@code data.parquet} when
+     * missing/stale/torn/zero-length. Resolving the footer runs the full-file CRC
+     * exactly once on the returned live mapping: on success {@code taskReader} is
+     * bound and resolved over it, and the caller owns the mapping and must
+     * {@code munmap} it (capture {@code taskReader.getFileSize()} before
+     * {@link ParquetMetaFileReader#clear()} resets it). The {@code data.parquet}
+     * truncation check must already have passed. Takes per-task
+     * {@code path}/{@code taskReader} as it runs on parallel executor threads.
      */
     private long mapResolvableParquetMeta(Path path, int partitionDirLen, long parquetFileSize, ParquetMetaFileReader taskReader) {
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -900,8 +844,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                     resolved = taskReader.resolveFooter(parquetFileSize);
                 }
             } catch (CairoException e) {
-                // A torn copy whose header over-claims the file length throws
-                // rather than returning a resolve failure; treat both alike.
+                // A torn copy whose header over-claims the length throws instead
+                // of returning a resolve failure; treat both alike.
                 LOG.info().$("restored _pm failed validation [path=").$(path)
                         .$(", msg=").$safe(e.getFlyweightMessage())
                         .I$();
@@ -915,12 +859,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             if (addr != 0) {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
-            // The sidecar does not resolve a footer at the committed parquet
-            // size: a stale _pm paired with an in-place regenerated data.parquet,
-            // a torn copy, or a partial file left by a crashed restore. Trusting
-            // it would defer the failure to the first read of the partition, so
-            // remove it and regenerate from data.parquet, which the committed-size
-            // check has already validated.
+            // Sidecar does not resolve at the committed size (stale, torn, or a
+            // partial file from a crashed restore). Trusting it would defer the
+            // failure to the first read, so remove and regenerate it.
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             if (!ff.removeQuiet(path.$())) {
                 throw CairoException.critical(ff.errno()).put("cannot remove unresolvable _pm file [path=").put(path).put(']');
@@ -950,19 +891,12 @@ public class TableSnapshotRestore implements QuietCloseable {
     /**
      * Worker body for {@link #rebuildBitmapIndexes}: pulls packed
      * {@code (partitionIndex, colIdx)} items from the shared {@code cursor} and
-     * rebuilds the bitmap/posting index of that one native column, reusing a single
-     * {@code Path} across every item the worker handles instead of allocating one
-     * per (partition, column) task. Distributing individual (partition, column)
-     * items -- rather than a whole partition per worker -- preserves column-level
-     * parallelism for non-partitioned and low-partition-count tables. Partition
-     * metadata (timestamp/rowcount/nameTxn) is resolved per item via O(1) by-index
-     * getters: the shared cursor disperses a worker's items ~workerCount apart in
-     * the partition-major list, so a per-partition cache would mostly miss for the
-     * typical 1-3 indexed columns/partition and buys nothing over the array reads.
-     * The per-column {@link SymbolColumnIndexer}
-     * is still created fresh per column inside
-     * {@link #rebuildBitmapIndexForNativePartitionColumn}, so the index-writer
-     * lifecycle is identical to the former one-task-per-column path.
+     * rebuilds the bitmap/posting index of that one native column, reusing one
+     * {@code Path} across every item instead of allocating per (partition, column).
+     * Distributing individual items rather than a whole partition per worker
+     * preserves column-level parallelism for non-partitioned and low-partition
+     * tables. The {@link SymbolColumnIndexer} is still created fresh per column in
+     * {@link #rebuildBitmapIndexForNativePartitionColumn}.
      */
     private void rebuildBitmapIndexesForNativePartitions(
             String tablePathStr,
@@ -983,12 +917,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 final int partitionIndex = Numbers.decodeLowInt(item);
                 final int colIdx = Numbers.decodeHighInt(item);
 
-                // Resolve partition metadata per item rather than caching the last
-                // partition's: the shared cursor disperses a worker's items
-                // ~workerCount apart in the partition-major list, so a per-partition
-                // cache mostly misses for the typical 1-3 indexed columns/partition,
-                // and the by-index getters are O(1) array reads anyway -- there is
-                // nothing worth caching.
+                // Resolve partition metadata per item: the shared cursor disperses
+                // a worker's items across partitions, so a per-partition cache
+                // mostly misses, and the by-index getters are O(1) array reads.
                 final long partitionTimestamp;
                 final long partitionRowCount;
                 final long partitionNameTxn;
@@ -1004,9 +935,8 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                 final int writerIndex = tableMetadata.getWriterIndex(colIdx);
                 final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-                // columnTop was computed and validated when the work list was built;
-                // read it back from the index-aligned list instead of re-running
-                // the getColumnTop lookup here.
+                // columnTop was computed when the work list was built; read it
+                // back from the index-aligned list.
                 final long columnTop = nativeIndexColumnTops.getQuick(i);
                 final String columnName = tableMetadata.getColumnName(colIdx);
                 final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
@@ -1068,9 +998,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
         LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
 
-        // Fresh per-column indexer: its writer's index type is fixed at construction
-        // and its lifecycle (build + commit/seal on close) matches the former
-        // one-task-per-column behavior exactly.
+        // Fresh per-column indexer: index type is fixed at construction.
         try (SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType)) {
             // Remove existing index files if they exist
             removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexType);
@@ -1088,10 +1016,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                     // seal() can build covering sidecars. BITMAP has no covering
                     // and configureCoveringForPosting is a no-op for it.
                     configureCoveringForPosting(indexer.getWriter(), columnName, tableMetadata, columnVersionReader, partitionTimestamp);
-                    // The restored data is at the snapshot's committed _txn;
-                    // tag the seal's chain entry with that so a subsequent
-                    // recovery walk does not mis-classify the rebuilt index
-                    // as abandoned.
+                    // Tag the seal's chain entry with the committed _txn so a
+                    // later recovery walk does not mis-classify the rebuilt
+                    // index as abandoned.
                     indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                 }
                 indexer.index(ff, columnDataFd, columnTop, partitionRowCount);
@@ -1121,20 +1048,16 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     /**
      * Processes one parquet partition, reusing the caller-owned scratch objects so a
-     * worker amortizes their native allocation across every partition it pulls (see
-     * {@link #processParquetPartitions}). First validates {@code data.parquet}
-     * against its committed size (a stat by path, no fd), then maps {@code _pm} once
-     * via the reused {@code metaReader}, validates it (footer resolve + full-file
-     * CRC) against the committed parquet size and regenerates it from
-     * {@code data.parquet} when missing/stale/torn, then -- when {@code rebuildIndexes}
-     * is set -- reuses that resolved mapping to rebuild the partition's bitmap
-     * indexes. Feeding the resolved reader to the decoder via
+     * worker amortizes their native allocation across partitions (see
+     * {@link #processParquetPartitions}). Validates {@code data.parquet} against its
+     * committed size (a stat, no fd), maps {@code _pm} once via {@code metaReader},
+     * validates/regenerates it, then -- when {@code rebuildIndexes} is set -- reuses
+     * that resolved mapping to rebuild the partition's bitmap indexes. Feeding the
+     * resolved reader to the decoder via
      * {@link ParquetPartitionDecoder#of(ParquetMetaFileReader, long, long, int)}
-     * shallow-copies the resolved+verified state, so the {@code _pm} footer is
-     * resolved and CRC-verified exactly once instead of three times. The caller owns
-     * {@code path} (and clears its thread-locals between partitions); the
-     * rebuild-only {@code rowGroupBuffers}/{@code parquetColumns}/{@code decoder}/
-     * {@code indexWriters} are non-null only when {@code rebuildIndexes} is set.
+     * shallow-copies its state, so the {@code _pm} footer is resolved and
+     * CRC-verified once instead of three times. The caller owns {@code path}; the
+     * rebuild-only buffers are non-null only when {@code rebuildIndexes} is set.
      */
     private void processParquetPartition(
             Path path,
@@ -1162,23 +1085,16 @@ public class TableSnapshotRestore implements QuietCloseable {
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionDirLen = path.size();
 
-        // Validate data.parquet against _txn by its size alone, before touching
-        // _pm: regenerateParquetMetaFile (via mapResolvableParquetMeta below)
-        // reads data.parquet at the committed size, so an undersized file must
-        // fail here first. This must run even when a valid _pm was restored
-        // alongside the partition -- an undersized data.parquet means the
-        // snapshot paired _txn with a stale or truncated parquet file, and
-        // reading it at the committed size would produce garbage. Parallelized
-        // per partition: the size is read by path (a stat, no fd) so it scales
-        // with the workers instead of serializing one stat per partition on the
-        // caller, which on cold/object/network storage dominates wall-clock time.
+        // Validate data.parquet by size before touching _pm: regeneration reads
+        // it at the committed size, so an undersized file must fail first. Runs
+        // even when a valid _pm was restored -- an undersized data.parquet means
+        // _txn was paired with a stale/truncated file. The size is read by path
+        // (a stat, no fd) so it parallelizes across workers.
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
         long onDiskSize = ff.length(path.$());
         if (onDiskSize < 0) {
-            // Keep the full data.parquet path in the message: one restore can
-            // cover hundreds of parquet partitions and the operator needs to
-            // know which one failed. The failure propagates through
-            // finalizeParallelTasks, which preserves this path-bearing message.
+            // Keep the full path in the message: one restore covers many parquet
+            // partitions and the operator needs to know which one failed.
             throw CairoException.critical(ff.errno()).put("cannot read size of restored parquet file [path=").put(path).put(']');
         }
         if (onDiskSize < parquetFileSize) {
@@ -1192,9 +1108,8 @@ public class TableSnapshotRestore implements QuietCloseable {
         long parquetMetaAddr = 0;
         long parquetMetaFileSize = 0;
         try {
-            // Validate + (if needed) regenerate the sidecar, leaving it mapped
-            // and its footer resolved. This is the only _pm map+CRC for the
-            // partition on this path.
+            // Validate + (if needed) regenerate the sidecar, leaving it mapped and
+            // its footer resolved. The only _pm map+CRC on this path.
             parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, metaReader);
             parquetMetaFileSize = metaReader.getFileSize();
 
@@ -1206,7 +1121,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             final long parquetSize = metaReader.getParquetFileSize();
 
             // mmap data.parquet: existence and committed size were validated at
-            // the top of this method, so the committed size is safe to map.
+            // the top of this method.
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             if (!ff.exists(path.$())) {
                 LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
@@ -1215,9 +1130,8 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             try {
-                // Reuse the already-resolved+CRC-verified reader: of(reader)
-                // shallow-copies its footer state, so the decoder skips a
-                // redundant resolveFooter + full-file CRC over the same mapping.
+                // Reuse the resolved+verified reader: of(reader) shallow-copies
+                // its footer state, skipping a redundant resolveFooter + CRC.
                 decoder.of(metaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
                 // Set path to native partition directory (where index files go)
@@ -1250,9 +1164,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                         .I$();
                 throw e;
             } finally {
-                // Reused decoder: destroy its decode context BEFORE munmap to honor
-                // ParquetPartitionDecoder's clear-then-munmap contract; the next
-                // partition's of() re-initializes it.
+                // Destroy the decoder's context BEFORE munmap (its
+                // clear-then-munmap contract); the next of() re-initializes it.
                 decoder.close();
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
@@ -1279,28 +1192,22 @@ public class TableSnapshotRestore implements QuietCloseable {
             return;
         }
 
-        // Flatten the (partition, indexed symbol column) space into one work list
-        // on the calling thread, skipping empty partitions, parquet partitions
-        // (handled by prepareParquetPartitions) and columns absent from a given
-        // partition. Each item packs (partitionIndex, colIdx). Workers then pull
-        // individual items from a shared cursor and reuse one Path each: this keeps
-        // the per-worker Path/scratch amortization that motivated this rewrite
-        // (one Path per worker, not one per item) while preserving column-level
-        // parallelism for non-partitioned and low-partition-count tables -- handing
-        // a whole partition to a worker would serialize that partition's columns
-        // on a single thread.
+        // Flatten the (partition, indexed symbol column) space into one work list,
+        // skipping empty/parquet partitions and columns absent from a partition.
+        // Each item packs (partitionIndex, colIdx); workers pull items from a
+        // shared cursor and reuse one Path each. Distributing items rather than
+        // whole partitions preserves column-level parallelism for low-partition
+        // tables.
         final LongList nativeIndexWork = new LongList();
-        // Index-aligned with nativeIndexWork: entry j holds the columnTop already
-        // computed here for work item j, so the worker reads it back instead of
-        // re-running the O(log V) getColumnTop lookup per item.
+        // Index-aligned with nativeIndexWork: entry j holds the columnTop for work
+        // item j, so the worker reads it back instead of re-running getColumnTop.
         final LongList nativeIndexColumnTops = new LongList();
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             final long partitionTimestamp;
             final long partitionRowCount;
             if (isPartitioned) {
                 partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                // partitionIndex is in hand: read by index (O(1)) rather than
-                // re-resolving by timestamp (O(log P)).
+                // Read by index (O(1)), not by timestamp (O(log P)).
                 partitionRowCount = txWriter.getPartitionSize(partitionIndex);
             } else {
                 partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
@@ -1310,8 +1217,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 continue;
             }
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                // Parquet partitions are validated, regenerated and index-rebuilt
-                // by prepareParquetPartitions.
+                // Handled by prepareParquetPartitions.
                 continue;
             }
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
@@ -1322,7 +1228,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
                 final int writerIndex = tableMetadata.getWriterIndex(colIdx);
                 final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-                // -1 means the column does not exist in this partition,
+                // -1 means the column is absent in this partition,
                 // see ColumnVersionReader.getColumnTop().
                 if (columnTop < 0 || columnTop >= partitionRowCount) {
                     continue;
@@ -1391,8 +1297,7 @@ public class TableSnapshotRestore implements QuietCloseable {
      * Worker body for {@link #rebuildSymbolFiles}: pulls column indices from the
      * shared {@code cursor} and rebuilds the symbol files of each symbol column,
      * reusing one {@code Path} across all of them. {@link SymbolMapUtil} frees its
-     * native memories internally on every call, so a fresh instance per column
-     * matches the former per-task behavior exactly -- only the Path is amortized.
+     * native memory internally per call, so a fresh instance per column is fine.
      */
     private void rebuildSymbolFilesForColumns(
             String tablePathStr,
@@ -1490,26 +1395,20 @@ public class TableSnapshotRestore implements QuietCloseable {
      * future an immutable {@link ParallelTaskException} carrying the
      * materialized message instead of the thread-local original.
      * <p>
-     * On any failure the wrapper also trips {@code abortParallelTasks}, the
-     * shared latch every worker loop polls between items. Restore semantics are
-     * already "report the first failure, abort the rest" ({@link #finalizeParallelTasks}
-     * surfaces only the first error in submission order); setting the latch here
-     * just makes "abort the rest" happen at the next item boundary instead of
-     * after the drain reaches the failing future, bounding wasted I/O on a doomed
-     * restore. It costs nothing on a successful restore -- no worker throws, so
-     * the latch never trips -- and cannot reorder the reported error: a worker
-     * that bails on the latch returns at a clean boundary with nothing to throw,
-     * so the earliest-submitted thrower is still the one reported.
+     * On any failure the wrapper also trips {@code abortParallelTasks}, the shared
+     * latch every worker loop polls between items, so siblings bail at their next
+     * item boundary instead of running to completion on a doomed restore. This
+     * cannot reorder the reported error: a worker that bails returns with nothing
+     * to throw, so the earliest-submitted thrower is still the one reported
+     * ({@link #finalizeParallelTasks} surfaces only the first failure).
      */
     private Future<?> submitParallelTask(Runnable task) {
         return executor.submit(() -> {
             try {
                 task.run();
             } catch (Throwable e) {
-                // Trip the shared latch so sibling workers across every phase
-                // (parquet validate/regen, symbol, native bitmap) short-circuit
-                // at their next item check rather than running to completion on a
-                // doomed restore. finalizeParallelTasks resets it after the drain.
+                // Trip the shared latch so sibling workers short-circuit at their
+                // next item check. finalizeParallelTasks resets it after the drain.
                 abortParallelTasks.set(true);
                 LOG.critical().$("error in parallel task").$(e).I$();
                 if (e instanceof FlyweightMessageContainer) {
@@ -1562,11 +1461,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 types.add(-1);
                 continue;
             }
-            // coveringCols stores writer indices, but metadata's
-            // getColumnType / getColumnName accessors are dense-keyed. After
-            // DROP COLUMN, dense and writer indices diverge for columns past
-            // the dropped slot, so resolve writer -> dense before any
-            // dense-keyed lookup. Mirrors IndexBuilder.configureCovering.
+            // coveringCols stores writer indices, but getColumnType/getColumnName
+            // are dense-keyed, and DROP COLUMN diverges the two. Resolve writer ->
+            // dense first. Mirrors IndexBuilder.configureCovering.
             int covDenseIdx = -1;
             for (int k = 0; k < columnCount; k++) {
                 if (metadata.getWriterIndex(k) == covWriterIdx) {
@@ -1650,8 +1547,8 @@ public class TableSnapshotRestore implements QuietCloseable {
         final int columnCount = metadata.getColumnCount();
 
         // First pass: identify indexed columns and collect names for logging.
-        // columnNamesSink/columnTops are caller-owned scratch reused across every
-        // partition this worker handles; reset them here instead of allocating.
+        // columnNamesSink/columnTops are caller-owned scratch reused across
+        // partitions; reset them here instead of allocating.
         columnNamesSink.clear();
         parquetColumns.clear();
         indexWriters.clear();
@@ -1803,10 +1700,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             for (int i = 0; i < indexedColumnCount; i++) {
                 final IndexWriter w = indexWriters.get(i);
                 if (IndexType.isPosting(w.getIndexType())) {
-                    // The restored data is at the snapshot's committed _txn;
-                    // tag the seal's chain entry with that so a subsequent
-                    // recovery walk does not mis-classify the rebuilt index
-                    // as abandoned.
+                    // Tag the seal's chain entry with the committed _txn so a
+                    // later recovery walk does not mis-classify the rebuilt
+                    // index as abandoned.
                     w.setNextTxnAtSeal(currentTableTxn);
                     w.seal();
                 } else {
@@ -1839,11 +1735,11 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Immutable carrier for a parallel task failure: submitParallelTask
-     * materializes the message of the worker's thread-local-reused exception
-     * into this carrier before it reaches the {@code Future}, so the draining
-     * thread never reads a mutable message cross-thread. Carries no stack
-     * trace and no cause: the worker has already logged the original failure.
+     * Immutable carrier for a parallel task failure: submitParallelTask copies
+     * the message of the worker's thread-local-reused exception into this carrier
+     * before it reaches the {@code Future}, so the draining thread never reads a
+     * mutable message cross-thread. Carries no stack trace or cause: the worker
+     * has already logged the original failure.
      */
     private static class ParallelTaskException extends RuntimeException {
         ParallelTaskException(String message) {

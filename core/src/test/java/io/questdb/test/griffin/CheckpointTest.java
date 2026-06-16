@@ -886,29 +886,21 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointRestoreDrainsParallelTasksOnTaskFailure() throws Exception {
         // When a parallel rebuild task fails, rebuildTableFiles() must reach
-        // quiescence before rethrowing: the enterprise backup restore
-        // quarantine-renames the failed table's directory and reloads the
-        // shared native-backed tableMetadata, columnVersionReader and txWriter
-        // objects for the next table, so abandoning still-running tasks is a
-        // use-after-free risk. The same agent must then fully process the next
-        // table: a stale abort flag would make its tasks silently skip their
-        // work.
+        // quiescence before rethrowing: enterprise restore quarantine-renames the
+        // failed table's directory and reloads the shared tableMetadata,
+        // columnVersionReader and txWriter for the next table, so abandoning
+        // running tasks risks a use-after-free. The agent must then fully process
+        // the next table: a stale abort flag would make its tasks skip their work.
         assertMemoryLeak(() -> {
-            // sym_slow is declared *before* sym_fail on purpose. The native
-            // index rebuild enqueues one (partition, column) work item per
-            // indexed symbol column in partition-major, column-index order and
-            // hands them to the workers through a single atomic cursor, so the
-            // first item is sym_slow on the first partition. The cursor hands
-            // out index 0 before index 1, so the worker that grabs that first
-            // item does so before any sym_fail item can be grabbed -- and thus
-            // before the failing sym_fail task can trip the abort latch -- and
-            // the loop body opens the column unconditionally once grabbed. That
-            // guarantees at least one sym_slow openRO starts (and, after the
-            // drain, completes) no matter the pool size or scheduling. With the
-            // reverse order the failing sym_fail item is item 0: it trips the
-            // abort latch almost instantly, and the sibling workers see the latch
-            // already set at their next cursor check and bail before pulling any
-            // sym_slow item -- the timing-dependent flake this ordering removes.
+            // sym_slow is declared before sym_fail on purpose. The native index
+            // rebuild enqueues work items in partition-major, column-index order
+            // behind a single atomic cursor, so item 0 is sym_slow on the first
+            // partition. A worker grabs and opens it before any sym_fail item can
+            // trip the abort latch, guaranteeing at least one sym_slow openRO
+            // starts regardless of pool size or scheduling. The reverse order
+            // makes sym_fail item 0, which trips the latch almost instantly and
+            // lets siblings bail before pulling a sym_slow item -- the flake this
+            // ordering removes.
             execute("""
                     CREATE TABLE t_fail (
                         val DOUBLE,
@@ -947,11 +939,10 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.clear();
 
-            // Delete sym_fail's data file from the first partition: the bitmap
-            // index rebuild task for it fails on opening the .d file. sym_slow's
-            // rebuild tasks are dispatched ahead of it (see the column order
-            // above) and are held up in the slow openRO below, so at least one
-            // sym_slow task is in flight when sym_fail trips the abort latch.
+            // Delete sym_fail's data file from the first partition: its bitmap
+            // index rebuild task fails on opening the .d file. sym_slow's tasks
+            // are dispatched ahead of it and held up in the slow openRO below, so
+            // at least one is in flight when sym_fail trips the abort latch.
             Assert.assertTrue("failed to delete sym_fail.d", new File(failPartDir, "sym_fail.d").delete());
 
             final AtomicInteger slowOpensStarted = new AtomicInteger();
@@ -1236,21 +1227,14 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointRestoreRebuildsBitmapIndexesAcrossParquetPartitionsReusingWorkerScratch() throws Exception {
         // Regression guard for cross-partition reuse of the per-worker parquet
         // scratch (metaReader / decoder / RowGroupBuffers / parquetColumns /
-        // indexWriters) in TableSnapshotRestore.processParquetPartitions. Each
-        // worker drains a shared cursor, so a worker that handles more than one
-        // parquet partition reuses those native objects and relies on the
-        // per-partition resets (decoder.of/close cycling, metaReader.clear(),
-        // parquetColumns/indexWriters clearing, Path.clearThreadLocals()) not
-        // leaking state into partition N+1.
+        // indexWriters) in processParquetPartitions. A worker that handles more
+        // than one parquet partition reuses those native objects and relies on the
+        // per-partition resets not leaking state into partition N+1.
         //
-        // workerCount = min(threadCount, partitionCount) and the default recovery
-        // pool floor is 4, so with <= 2 parquet partitions every partition gets
-        // its own worker and the reuse path is never reached. We pin the pool to
-        // 2 and build 5 all-parquet partitions: with 2 workers over 5 partitions
-        // at least one worker processes >= 3 of them (pigeonhole), so the reuse
-        // path runs deterministically. Every partition carries a distinct
-        // indexed-symbol distribution, so any state bleeding from one partition's
-        // rebuilt index into the next fails the per-partition assertions below.
+        // Pin the pool to 2 over 5 all-parquet partitions: by pigeonhole one
+        // worker processes >= 3 of them, so the reuse path runs deterministically.
+        // Each partition has a distinct indexed-symbol distribution, so any state
+        // bleed fails a per-partition assertion below.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (
@@ -1279,10 +1263,9 @@ public class CheckpointTest extends AbstractCairoTest {
                     (60, 'Z', '2024-01-06T00:00:00.000000Z')
                     """);
 
-            // 2024-01-06 ('Z') stays a native partition: it is the active
-            // partition (CONVERT TO PARQUET cannot target it) and its distinct
-            // symbol keeps the A/B/C counts below unaffected. The 5 days that DO
-            // convert are all non-active and therefore parquet-convertible.
+            // 2024-01-06 ('Z') stays a native, active partition (CONVERT TO
+            // PARQUET cannot target it); its distinct symbol keeps the A/B/C
+            // counts unaffected. The 5 prior days convert to parquet.
             final String[] days = {"2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"};
             for (String day : days) {
                 execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '" + day + "'");
@@ -1293,7 +1276,7 @@ public class CheckpointTest extends AbstractCairoTest {
             File tableDir = new File(dbRoot, tableToken.getDirName());
 
             // Release readers/writers: rebuildTableFiles targets on-disk files as
-            // it would during checkpoint recovery after an engine restart.
+            // during checkpoint recovery after a restart.
             engine.clear();
 
             // Delete the bitmap index sidecars from every parquet partition so the
@@ -1306,10 +1289,9 @@ public class CheckpointTest extends AbstractCairoTest {
                 deleteFilesWithPrefix(partDir, "sym.v");
             }
 
-            // Pin the recovery pool to 2 workers. The test configuration captures
-            // properties at build time, so setProperty would not reach the
-            // already-built configuration; wrap it instead and override only the
-            // two threadpool getters (threadCount = max(2, min(2, cpus)) = 2).
+            // Pin the recovery pool to 2 workers. The config is built once, so
+            // wrap it and override the two threadpool getters
+            // (threadCount = max(2, min(2, cpus)) = 2) rather than setProperty.
             CairoConfiguration pinnedPoolConfig = new CairoConfigurationWrapper(configuration) {
                 @Override
                 public int getCheckpointRecoveryThreadpoolMax() {
@@ -1339,10 +1321,9 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.assertTrue("sym.v not rebuilt for " + days[i], valFiles.length > 0);
             }
 
-            // Per-partition, per-symbol indexed counts. Distinct per partition, so
-            // any scratch-reuse leak between partitions corrupts at least one of
-            // these. sym == literal on an indexed SYMBOL is served by the rebuilt
-            // bitmap index.
+            // Per-partition, per-symbol indexed counts (distinct per partition, so
+            // any scratch-reuse leak corrupts at least one). sym == literal is
+            // served by the rebuilt bitmap index.
             assertIndexedSymCount("sym = 'A' AND ts IN '2024-01-01'", 2);
             assertIndexedSymCount("sym = 'B' AND ts IN '2024-01-01'", 1);
             assertIndexedSymCount("sym = 'C' AND ts IN '2024-01-01'", 0);
@@ -1365,7 +1346,7 @@ public class CheckpointTest extends AbstractCairoTest {
             assertIndexedSymCount("sym = 'C'", 4);
 
             // Row-level checks: the index must resolve to the right rows, not just
-            // the right cardinality.
+            // the right count.
             assertQuery("SELECT val FROM t WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY val")
                     .noLeakCheck()
                     .returns("val\n10\n12\n");
@@ -1378,20 +1359,15 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointRestoreRegeneratesPmThenReusesWorkerScratchOnNextParquetPartition() throws Exception {
         // Gap guard for the riskiest reuse interaction: a worker that takes the
-        // _pm regenerate branch in mapResolvableParquetMeta (taskReader.clear()
-        // + munmap mid-method, removeQuiet, regenerateParquetMetaFile, fresh
-        // openAndMapRO) and THEN processes another parquet partition reusing the
-        // same metaReader / decoder / RowGroupBuffers / parquetColumns /
-        // indexWriters scratch. With rebuild enabled the regenerate path is
-        // immediately followed by a full decode + index of the reused partition,
-        // so any state left dangling by the mid-method munmap/clear corrupts the
-        // next partition's index.
+        // _pm regenerate branch in mapResolvableParquetMeta (clear + munmap
+        // mid-method, removeQuiet, regenerate, fresh openAndMapRO) and THEN reuses
+        // the same metaReader/decoder/buffers scratch on another partition. With
+        // rebuild enabled the regenerate path is immediately followed by a full
+        // decode + index, so any state left dangling corrupts the next index.
         //
-        // Every _pm is torn so each partition forces the regenerate arm; pinning
-        // the pool to 2 over 5 parquet partitions means one worker handles >= 3
-        // of them (pigeonhole), guaranteeing regenerate -> reuse -> regenerate ->
-        // reuse within a single worker. Distinct per-partition A/B/C
-        // distributions make any cross-partition state bleed fail an assertion.
+        // Every _pm is torn to force the regenerate arm; pin the pool to 2 over 5
+        // parquet partitions so one worker handles >= 3, guaranteeing
+        // regenerate -> reuse cycling. Distinct A/B/C distributions catch any bleed.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (
@@ -1437,8 +1413,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.clear();
 
-            // Tear every _pm (header still claims the committed size, file holds
-            // fewer bytes -> opening throws -> the clear()+munmap+removeQuiet
+            // Tear every _pm (header over-claims the size -> opening throws -> the
             // regenerate arm runs) and drop every bitmap sidecar so the rebuild
             // must recreate sym.k / sym.v.
             long[] tornPmSizes = new long[days.length];
@@ -1508,22 +1483,16 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointRestoreReusesWorkerScratchAcrossParquetPartitionsWithoutIndexRebuild() throws Exception {
-        // Gap guard for the OSS checkpoint-recovery default
-        // (getCheckpointRecoveryRebuildColumnIndexes() == false): with index
-        // rebuild disabled, processParquetPartition takes the
-        //     if (!rebuildIndexes) return;
-        // early-out right after mapResolvableParquetMeta, so the per-worker
-        // metaReader is the only scratch reused across partitions. A worker that
-        // handles more than one parquet partition re-binds metaReader
-        // (map -> validate -> clear -> munmap) per partition; a leak across that
-        // boundary would defer a corrupt/unresolvable sidecar to query time. The
-        // _pm validation/regeneration is the ONLY restore-time protection on this
-        // path, so one sidecar is torn to force the regenerate branch and then be
-        // followed by a reused partition in the same worker.
+        // Gap guard for the OSS checkpoint-recovery default (rebuild disabled):
+        // processParquetPartition takes the early-out right after
+        // mapResolvableParquetMeta, so metaReader is the only scratch reused
+        // across partitions. A worker handling more than one partition re-binds it
+        // (map -> validate -> clear -> munmap) per partition; a leak would defer a
+        // corrupt sidecar to query time. _pm validation is the only restore-time
+        // protection here, so one sidecar is torn to force the regenerate branch.
         //
-        // Pin the pool to 2 over 3 parquet partitions: by pigeonhole one worker
-        // processes >= 2 of them, so the cross-partition reuse path runs
-        // deterministically on the rebuild=false branch.
+        // Pin the pool to 2 over 3 parquet partitions so one worker processes
+        // >= 2, exercising the reuse path on the rebuild=false branch.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (
@@ -1567,9 +1536,8 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.clear();
 
-            // Tear partition 2's _pm so mapResolvableParquetMeta takes the
-            // clear()+munmap+removeQuiet regenerate arm; partitions 1 and 3 keep
-            // intact sidecars, so the worker mixes the fast-path and the
+            // Tear partition 2's _pm to force the regenerate arm; partitions 1 and
+            // 3 keep intact sidecars, so the worker mixes the fast-path and the
             // regenerate-path across reused partitions.
             File tornPm = new File(partDirs[1], "_pm");
             long tornPmSizeBefore = tornPm.length();
