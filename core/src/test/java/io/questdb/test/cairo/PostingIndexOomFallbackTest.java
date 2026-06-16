@@ -31,16 +31,21 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
 import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -82,6 +87,51 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
             Misc.free(cursor);
         }
         return all;
+    }
+
+    /**
+     * Pins the per-key DELTA {@code deltasAddr} scratch (8 bytes/value) in the
+     * seal/rollback RSS pre-flight's {@code encodeCtxPeakBytes} estimate. A
+     * production fix widened that estimate from {@code maxKeyCount * 18 + 2048}
+     * to {@code maxKeyCount * 26 + 2048} because it previously OMITTED the
+     * deltas buffer that {@code EncodeContext.ensureCapacity} allocates and the
+     * DELTA/FoR encoder writes -- so the pre-flight undercounted and could OOM
+     * mid-encode (a recoverable, commit-failing fault) on FLAT-winning or
+     * geometric-doubling shapes.
+     * <p>
+     * Rather than tune a fragile RSS band, this asserts the estimate directly
+     * dominates the bytes {@code EncodeContext.ensureCapacity(N)} actually
+     * allocates under {@code MemoryTag.NATIVE_INDEX_READER} (deltas + efTrial +
+     * efLowMasked + the block buffers + the fixed residual scratch), measured on
+     * a FRESH context so the doubling allocators land on their exact 1x sizes --
+     * matching how the estimate charges them. With the deltas term present the
+     * 26x coefficient clears the ~24.3x the context allocates; drop it back to
+     * 18x and this fails for every non-trivial N.
+     */
+    @Test
+    public void testEncodeCtxPeakBytesCoversDeltaScratchAllocation() throws Exception {
+        // Spans the shapes the estimate must bound: tiny, a single full block,
+        // multi-block, FLAT-winning mid sizes, and a large geometric-doubling
+        // count. encodeCtxPeakBytes charges deltas + efLowMasked at 1x, so a
+        // fresh ensureCapacity (deltaCapacity == 0 -> newCapacity == count) is
+        // the apples-to-apples comparison.
+        final int[] counts = {1, 2, 7, 63, 64, 65, 200, 1_000, 4_096, 100_000, 1_000_000};
+        assertMemoryLeak(() -> {
+            for (int count : counts) {
+                long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER);
+                long actual;
+                try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
+                    ctx.ensureCapacity(count);
+                    actual = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER) - before;
+                }
+                long estimate = PostingIndexWriter.encodeCtxPeakBytesForTesting(count);
+                Assert.assertTrue(
+                        "encodeCtxPeakBytes(" + count + ")=" + estimate
+                                + " must cover the bytes EncodeContext.ensureCapacity allocates (=" + actual
+                                + "); the deltas term (8 bytes/value) was dropped if this fails",
+                        estimate >= actual);
+            }
+        });
     }
 
     /**
@@ -313,6 +363,269 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    /**
+     * Companion to {@link #testRollbackVarCoverStreamsUnderRssPressure} that pins
+     * the SIGN and MAGNITUDE of the var-cover FSST-floor term in the rollback
+     * pre-flight. Same path-based BINARY cover, but the RSS headroom sits JUST
+     * BELOW the var-cover streaming-rollback peak (which the floor dominates):
+     * the pre-flight must refuse with the "split the partition" diagnostic BEFORE
+     * any malloc, value-file switch or sidecar open, and the writer must stay
+     * usable -- the same rollback succeeds once the limit is lifted. Without the
+     * FSST-floor term the estimate would undercount by ~1 MiB, pass this headroom,
+     * and then OOM mid-FSST-batch inside the streaming reencode.
+     */
+    @Test
+    public void testRollbackVarCoverRejectsWhenStreamingPeakExceedsRssHeadroom() throws Exception {
+        final int keys = 64;
+        final int rowsPerKey = 16;
+        final int totalRows = keys * rowsPerKey;
+        final long cutoff = totalRows / 2 - 1;
+        final int payloadBytes = 8;
+        final byte[] phrase = "abcdefghij".getBytes();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "rollback_var_cover_reject";
+                final String coverCol = "covered_bin";
+                writeBinaryCoverFiles(path.trimTo(plen), coverCol, totalRows, payloadBytes, phrase);
+
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    configurePathBinCover(writer, coverCol);
+                    long row = 0;
+                    for (int r = 0; r < rowsPerKey; r++) {
+                        for (int k = 0; k < keys; k++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    writer.setMaxValue(totalRows - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // Probe the actual streaming-rollback peak: a tiny headroom forces
+                    // the reject whose message prints the required byte count.
+                    long streamingPeak = probeRollbackStreamingPeak(writer, cutoff);
+                    // Headroom one byte below the measured peak: the pre-flight must
+                    // refuse. The peak is dominated by the ~1 MiB var-cover FSST floor;
+                    // a few-KiB workload alone could never breach a sub-MiB headroom.
+                    Assert.assertTrue("the var-cover streaming peak must be FSST-floor dominated (> 1 MiB), got " + streamingPeak,
+                            streamingPeak > 1024L * 1024L);
+
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + streamingPeak - 1L);
+                    try {
+                        writer.rollbackValues(cutoff);
+                        Assert.fail("expected the var-cover rollback pre-flight to reject under the tight RSS limit");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "posting index rollback needs");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "split the partition into smaller commits");
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+
+                    // The pre-flight threw before any malloc, value-file switch or
+                    // sidecar open, so the writer is intact and the rollback now
+                    // succeeds with full headroom.
+                    writer.rollbackValues(cutoff);
+                    Assert.assertEquals("retried rollback must lower maxValue to the cutoff",
+                            cutoff, writer.getMaxValue());
+                }
+            }
+        });
+    }
+
+    /**
+     * Path-based VAR-size (BINARY) cover sibling of
+     * {@link #testStreamingRollbackUnderRssPressure}, which uses a NON-covered
+     * index and so never reaches the rollback pre-flight's
+     * {@code isRollbackWritingSidecars} branch -- the var-cover FSST-floor and
+     * sidecarBuf terms. Here a real BINARY cover column on disk plus a real
+     * partition path makes the rollback rebuild the .pc via openSidecarFiles +
+     * reencodeWithPerKeyStreaming, exercising those terms.
+     * <p>
+     * The RSS headroom is set into the band that FITS the var-cover streaming
+     * peak (sidecarBuf + the ~1 MiB FSST floor + workspaces) but is well below
+     * the fast/whole-index peak, so the rollback routes to streaming. The
+     * surviving covered BINARY values must read back unchanged. The headroom is
+     * calibrated from the peak the pre-flight reject prints (see
+     * {@link #probeRollbackStreamingPeak}), not guessed.
+     */
+    @Test
+    public void testRollbackVarCoverStreamsUnderRssPressure() throws Exception {
+        final int keys = 64;
+        final int rowsPerKey = 16;
+        final int totalRows = keys * rowsPerKey;
+        final long cutoff = totalRows / 2 - 1;
+        final int payloadBytes = 8;
+        final byte[] phrase = "abcdefghij".getBytes();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "rollback_var_cover_streams";
+                final String coverCol = "covered_bin";
+                writeBinaryCoverFiles(path.trimTo(plen), coverCol, totalRows, payloadBytes, phrase);
+
+                // Oracle: surviving rowids per key are those <= the cutoff.
+                final ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keys; k++) {
+                    oracle.add(new LongList());
+                }
+
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    configurePathBinCover(writer, coverCol);
+                    long row = 0;
+                    for (int r = 0; r < rowsPerKey; r++) {
+                        for (int k = 0; k < keys; k++) {
+                            writer.add(k, row);
+                            if (row <= cutoff) {
+                                oracle.getQuick(k).add(row);
+                            }
+                            row++;
+                        }
+                    }
+                    writer.setMaxValue(totalRows - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // Measure the streaming-rollback peak via the reject message, then
+                    // give a comfortable margin above it. The fast/whole-index path is
+                    // not on the table for the rollback (it always streams), so the
+                    // assertion that matters is isLastRollbackStreamingForTesting below.
+                    long streamingPeak = probeRollbackStreamingPeak(writer, cutoff);
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + streamingPeak + 4L * 1024L * 1024L);
+                    try {
+                        writer.rollbackValues(cutoff);
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+                    Assert.assertTrue("the var-cover rollback must take the per-key streaming reencode path",
+                            writer.isLastRollbackStreamingForTesting());
+                    Assert.assertEquals("rollback must lower maxValue to the cutoff",
+                            cutoff, writer.getMaxValue());
+                }
+
+                // The surviving covered BINARY values read back unchanged through the
+                // covering cursor -- validates the rollback-rebuilt .pc sidecar.
+                RecordMetadata meta = coveringBinaryMetadata();
+                try (ColumnVersionReader emptyCvr = new ColumnVersionReader();
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                             meta, emptyCvr, 0)) {
+                    for (int k = 0; k < keys; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        try (RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE, new int[]{0})) {
+                            Assert.assertTrue("expected CoveringRowCursor for key=" + k, c instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) c;
+                            int idx = 0;
+                            while (cc.hasNext()) {
+                                long rowId = cc.next();
+                                Assert.assertTrue("key " + k + " extra row at " + idx, idx < expected.size());
+                                Assert.assertEquals("key " + k + " rowid " + idx, expected.getQuick(idx), rowId);
+                                Assert.assertEquals("BINARY length [key=" + k + ", rowId=" + rowId + "]",
+                                        payloadBytes, cc.getCoveredBinLen(0));
+                                BinarySequence bin = cc.getCoveredBin(0);
+                                Assert.assertNotNull("cover BINARY null [key=" + k + ", rowId=" + rowId + "]", bin);
+                                for (int b = 0; b < payloadBytes; b++) {
+                                    Assert.assertEquals("BINARY byte [key=" + k + ", rowId=" + rowId + ", b=" + b + "]",
+                                            phrase[b % phrase.length], bin.byteAt(b));
+                                }
+                                idx++;
+                            }
+                            Assert.assertEquals("key " + k + " short-count", expected.size(), idx);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Configures a single path-based BINARY cover named {@code coverCol} at
+     * writer index 1 (the writer copies its partitionPath into
+     * coveredPartitionPath, so the cover's .d/.i must live in that directory).
+     */
+    private static void configurePathBinCover(PostingIndexWriter writer, String coverCol) {
+        ObjList<CharSequence> names = new ObjList<>();
+        names.add(coverCol);
+        LongList nameTxns = new LongList();
+        nameTxns.add(COLUMN_NAME_TXN_NONE);
+        LongList tops = new LongList();
+        tops.add(0L);
+        IntList shifts = new IntList();
+        shifts.add(-1); // var-size
+        IntList indices = new IntList();
+        indices.add(1);
+        IntList types = new IntList();
+        types.add(ColumnType.BINARY);
+        writer.configureCovering(names, nameTxns, tops, shifts, indices, types, -1);
+    }
+
+    /**
+     * Drives a rollback under a small RSS headroom so the pre-flight refuses,
+     * and parses the required-bytes figure from the
+     * "posting index rollback needs N bytes ..." diagnostic. The headroom is
+     * 256 KiB -- enough to clear the pre-pre-flight setup allocations
+     * (totalCountsAddr, a few hundred bytes here) but far below the
+     * FSST-floor-dominated (~1 MiB) var-cover streaming peak, so the throw is the
+     * pre-flight's, not a generic mid-setup allocation failure. Restores the
+     * writer (the reject is pre-allocation, so the writer is untouched) and the
+     * RSS limit before returning N.
+     */
+    private static long probeRollbackStreamingPeak(PostingIndexWriter writer, long cutoff) {
+        long saved = Unsafe.getRssMemLimit();
+        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 256L * 1024L);
+        try {
+            writer.rollbackValues(cutoff);
+            throw new AssertionError("probe expected a reject under the 1-byte RSS headroom");
+        } catch (CairoException e) {
+            String msg = e.getFlyweightMessage().toString();
+            TestUtils.assertContains(msg, "posting index rollback needs");
+            int start = msg.indexOf("needs ") + "needs ".length();
+            int end = msg.indexOf(" bytes", start);
+            return Long.parseLong(msg.substring(start, end));
+        } finally {
+            Unsafe.setRssMemLimit(saved);
+        }
+    }
+
+    /**
+     * Writes a real BINARY column on disk: aux ({@code <col>.i}) is one 8-byte
+     * offset per row; data ({@code <col>.d}) is {@code [8-byte length][payload]}
+     * per row, matching the layout {@code writeBinaryLikeValue} reads. The cover's
+     * payload is a repeated phrase so every row has the same fixed-length value.
+     */
+    private void writeBinaryCoverFiles(Path dir, String colName, int totalRows, int payloadBytes, byte[] phrase) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int binStride = Long.BYTES + payloadBytes;
+        try (Path p = new Path()) {
+            p.of(dir);
+            try (MemoryCMARWImpl aux = new MemoryCMARWImpl(
+                    ff, TableUtils.iFile(p, colName, COLUMN_NAME_TXN_NONE),
+                    ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                for (int i = 0; i < totalRows; i++) {
+                    aux.putLong((long) i * binStride);
+                }
+            }
+            p.of(dir);
+            try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                    ff, TableUtils.dFile(p, colName, COLUMN_NAME_TXN_NONE),
+                    ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                for (int i = 0; i < totalRows; i++) {
+                    data.putLong(payloadBytes);
+                    for (int b = 0; b < payloadBytes; b++) {
+                        data.putByte(phrase[b % phrase.length]);
+                    }
+                }
+            }
+        }
     }
 
     /**

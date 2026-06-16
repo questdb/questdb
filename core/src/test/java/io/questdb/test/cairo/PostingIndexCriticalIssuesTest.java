@@ -380,6 +380,49 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The bounded {@code decodeKeyToNative(maxValues)} guard sums the per-block
+     * declared counts, but the decode writes each block's first value
+     * UNCONDITIONALLY (one long per block) before its {@code count-1} deltas -- so it
+     * actually writes {@code max(count, 1)} longs per block. A valid encoder never
+     * emits a zero-count block, but a crafted/corrupt block containing one writes more
+     * longs than the summed count: {@code [2, 0, 2]} sums to 4 yet writes 5,
+     * overrunning a destination sized to the summed count. The guard must reject a
+     * zero-count block before writing any value.
+     */
+    @Test
+    public void testDecodeKeyToNativeRejectsZeroCountBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            final int firstWord = 3;
+            final long blockBytes = 256; // generous; zeroed so an unfixed decode would do a clean +1 OOB write
+            final long blockAddr = Unsafe.malloc(blockBytes, MemoryTag.NATIVE_DEFAULT);
+            final int cap = 4; // == sum([2,0,2]); the old sum-only guard would pass this
+            final long destAddr = Unsafe.malloc((long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.DecodeContext dctx = new PostingIndexUtils.DecodeContext()) {
+                for (long o = 0; o < blockBytes; o += Long.BYTES) {
+                    Unsafe.putLong(blockAddr + o, 0L);
+                }
+                Unsafe.putInt(blockAddr, firstWord);
+                Assert.assertTrue("crafted block must not collide with the EF sentinel",
+                        firstWord != PostingIndexUtils.EF_FORMAT_SENTINEL);
+                // valueCounts[] = [2, 0, 2]: sums to cap (passes the old sum-only guard)
+                // but the unconditional per-block first-value write emits 5 longs.
+                Unsafe.putByte(blockAddr + 4, (byte) 2);
+                Unsafe.putByte(blockAddr + 5, (byte) 0);
+                Unsafe.putByte(blockAddr + 6, (byte) 2);
+                try {
+                    PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, cap);
+                    Assert.fail("decodeKeyToNative must reject a zero-count block before writing");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "zero-count block");
+                }
+            } finally {
+                Unsafe.free(blockAddr, blockBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
      * Critical #8: ExpressionNode.deepClone restoration in the covering
      * DISTINCT path leaves the original mutated nodes in expressionNodePool.
      * If the optimization is rejected, downstream compilation must still
@@ -4833,6 +4876,133 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 + " vs preCommitTxn " + preCommitTxn + ")",
                         headSnap.txnAtSeal > preCommitTxn
                 );
+            }
+        });
+    }
+
+    /**
+     * Deterministic cover for the addr-based (O3) cover rollback branch
+     * ({@code reencodeAllGenerations}'s {@code else if (coverCount > 0)} arm),
+     * which only the probabilistic O3 fuzz reaches otherwise. An addr-based
+     * cover (configured via the native-address {@code configureCovering}
+     * overload, so {@code coveredColumnNames} and {@code coveredPartitionPath}
+     * stay empty) commits two generations, then a rollback at a SURVIVING cutoff
+     * ({@code newKeyCount > 0}) drives the streaming reencode through that arm:
+     * it asserts {@code coveredColumnNames.size() == 0}, calls
+     * {@code closeSidecarMems()} WITHOUT reopening (the addr-based reencode
+     * writes no sidecar bytes -- the O3 flow re-seals afterwards to rebuild the
+     * .pc), and re-encodes only the surviving rowids.
+     * <p>
+     * The rollback must take the per-key streaming path (asserted via
+     * {@code isLastRollbackStreamingForTesting}, distinguishing this branch from
+     * the {@code newKeyCount == 0} truncate path) and the surviving rowids must
+     * read back exactly. This differs from the existing addr-based
+     * {@code rollbackValues(0)} cases (poisoned-writer rejection asserts that
+     * throw at the entry guard and never reach this arm) by using a healthy
+     * writer and a cutoff that keeps a strict subset of rows.
+     */
+    @Test
+    public void testRollbackAddrBasedCoverStreamsAndRoundTrips() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "rollback_addr_based_cover";
+            final int keys = 4;
+            final int gen0RowsPerKey = 20;
+            final int gen1RowsPerKey = 20;
+            final int totalRows = keys * (gen0RowsPerKey + gen1RowsPerKey);
+            // Keep the lower half of the rowids; the cutoff leaves survivors on
+            // every key (newKeyCount stays at the full key count > 0).
+            final long cutoff = totalRows / 2 - 1;
+
+            // Addr-based LONG cover backing buffer: one 8-byte slot per rowid
+            // (the reencode reads coveredColumnAddrs[rowid << shift]).
+            final int shift = 3;
+            final long colBytes = (long) totalRows << shift;
+            long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < totalRows; i++) {
+                    Unsafe.putLong(colAddr + ((long) i << shift), 1000L + i);
+                }
+
+                final ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keys; k++) {
+                    oracle.add(new LongList());
+                }
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        long[] addrs = {colAddr};
+                        long[] tops = {0L};
+                        int[] shifts = {shift};
+                        int[] indices = {1};
+                        int[] types = {ColumnType.LONG};
+
+                        // Gen 0: re-supply the addr-based cover per op (mirrors the
+                        // O3 flow), commit a sparse gen.
+                        writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                        long row = 0;
+                        for (int r = 0; r < gen0RowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row);
+                                if (row <= cutoff) {
+                                    oracle.getQuick(k).add(row);
+                                }
+                                row++;
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+
+                        // Gen 1: a second sparse gen so the rollback streams across
+                        // >= 2 generations.
+                        writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                        for (int r = 0; r < gen1RowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row);
+                                if (row <= cutoff) {
+                                    oracle.getQuick(k).add(row);
+                                }
+                                row++;
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        Assert.assertEquals("setup must leave two sparse gens before the rollback",
+                                2, writer.getGenCount());
+
+                        writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                        writer.rollbackValues(cutoff);
+
+                        // The cutoff keeps a strict subset, so the rollback took the
+                        // per-key streaming reencode (the addr-based cover arm), not
+                        // the newKeyCount == 0 truncate path.
+                        Assert.assertTrue("addr-based cover rollback must take the per-key streaming reencode path",
+                                writer.isLastRollbackStreamingForTesting());
+                        Assert.assertEquals("rollback must lower maxValue to the cutoff",
+                                cutoff, writer.getMaxValue());
+                    }
+
+                    // The surviving rowids read back exactly. The addr-based cover
+                    // wrote no .pc on the rollback (rebuilt by a later reseal in the
+                    // O3 flow), so we validate the rowid postings only.
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name,
+                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            LongList actual = new LongList();
+                            try (RowCursor cursor = reader.getCursor(k, 0L, Long.MAX_VALUE)) {
+                                while (cursor.hasNext()) {
+                                    actual.add(cursor.next());
+                                }
+                            }
+                            TestUtils.assertEquals(expected, actual);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

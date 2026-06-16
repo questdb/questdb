@@ -588,6 +588,16 @@ public final class PostingIndexUtils {
         long blockInternalTotal = 0;
         for (int b = 0; b < firstWord; b++) {
             int c = Unsafe.getByte(pos + b) & 0xFF;
+            // A valid block always holds at least its first value, so the encoder never emits a
+            // zero-count block. The decode loop below writes that first value unconditionally
+            // (firstValues[b]) regardless of count, so a crafted/corrupt block of zero-count
+            // entries would write one long per block while contributing 0 to blockInternalTotal,
+            // defeating the bound and overrunning a destination sized to blockInternalTotal. Reject
+            // it here so the checked total equals the number of longs actually written.
+            if (c == 0) {
+                throw CairoException.critical(0)
+                        .put("corrupt posting index: zero-count block [block=").put(b).put(']');
+            }
             Unsafe.putInt(valueCountsAddr + (long) b * Integer.BYTES, c);
             blockInternalTotal += c;
         }

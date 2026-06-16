@@ -290,6 +290,11 @@ public class PostingIndexWriter implements IndexWriter {
         this.pendingTxnAtSeal = 0L;
     }
 
+    @TestOnly
+    public static long encodeCtxPeakBytesForTesting(int maxKeyCount) {
+        return encodeCtxPeakBytes(maxKeyCount);
+    }
+
     public static void initKeyMemory(MemoryMA keyMem) {
         // Default: first chain entry will use sealTxn=0, matching the
         // historical .pv.0 filename for a freshly-initialised, never-sealed
@@ -1562,12 +1567,16 @@ public class PostingIndexWriter implements IndexWriter {
             if (sealTxn == newSealTxn && chain.getHeadSealTxn() != newSealTxn) {
                 // Poisoning is a loud event -- log it with the same severity as
                 // the rollback / rebuildSidecarsByCopy post-switch catches.
+                // Poison FIRST, before the LOG record and scheduleOrphanPurge (both
+                // allocate and can throw under heap pressure): a secondary failure must
+                // still leave the half-switched writer poisoned, never re-drivable into
+                // publishing a live chain entry at newSealTxn.
+                isPoisoned = true;
                 LOG.error().$("posting index seal post-switch failure, poisoning writer and scheduling orphan purge [")
                         .$("indexName=").$(indexName)
                         .$(", newSealTxn=").$(newSealTxn)
                         .$(']').$();
                 scheduleOrphanPurge(newSealTxn);
-                isPoisoned = true;
             } else if (sealTxn != newSealTxn) {
                 // Pre-switch failure: the switch never happened, so the chain and
                 // valueMem still reference oldSealTxn. Free the staging map, unlink
@@ -1850,12 +1859,16 @@ public class PostingIndexWriter implements IndexWriter {
      * scratch).
      * <p>
      * Per-value coefficient: 9 (efTrial worst-case) + 8 (efLowMasked) +
-     * 1 (block buffers, ~5/64 bytes per value rounded up). Plus a
-     * 2 KiB constant for residuals and native scratch that exist
-     * regardless of count.
+     * 8 (deltas -- written by the DELTA/FoR encoder the adaptive path
+     * trials on every key; previously omitted) + 1 (block buffers,
+     * ~5/64 bytes per value rounded up). Plus a 2 KiB constant for
+     * residuals and native scratch that exist regardless of count.
+     * Note: deltas and efLowMasked grow geometrically (max(count,
+     * cap*2)) and can transiently reach ~2x; charged here at 1x, as the
+     * efLowMasked term always has been.
      */
     private static long encodeCtxPeakBytes(int maxKeyCount) {
-        return (long) maxKeyCount * 18L + 2048L;
+        return (long) maxKeyCount * 26L + 2048L;
     }
 
     private static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
@@ -2835,9 +2848,9 @@ public class PostingIndexWriter implements IndexWriter {
         if (coverCount > 0 && maxColValueSize > 0) {
             peak += (long) maxStrideTotal * maxColValueSize;           // worst-case sidecarBuf for the largest cover col
             peak += peakCoverColumnCompressBufBytes(maxKeyCount);      // ALP compressBuf for the worst cover col
+            peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);    // longWorkspace + exceptionWorkspace (fixed covers only)
         }
         peak += peakVarCoverFsstScratchBytes();                       // FSST scratch for var-size covers
-        peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);        // longWorkspace + exceptionWorkspace
         peak += (long) keyCount * Integer.BYTES;                       // totalCountsAddr (already allocated, kept in budget)
         return peak;
     }
@@ -2876,9 +2889,9 @@ public class PostingIndexWriter implements IndexWriter {
             if (coverCount > 0 && maxColValueSize > 0) {
                 peak += (long) maxKeyCount * maxColValueSize;          // streaming sidecarBuf
                 peak += peakCoverColumnCompressBufBytes(maxKeyCount);  // ALP compressBuf for the worst cover col
+                peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);// longWorkspace + exceptionWorkspace (fixed covers only)
             }
             peak += peakVarCoverFsstScratchBytes();                   // streaming FSST scratch for var-size covers
-            peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);    // longWorkspace + exceptionWorkspace
         }
         peak += (long) keyCount * Integer.BYTES;                       // totalCountsAddr
         return peak;
@@ -4285,12 +4298,15 @@ public class PostingIndexWriter implements IndexWriter {
                     // newSealTxn and publishes it live; PostingSealPurgeOperator
                     // re-reads the .pk head at delete time and abandons the purge
                     // when the file is live again, so the deferral is safe past reuse.
+                    // Poison FIRST, before the LOG record and scheduleOrphanPurge (both
+                    // allocate and can throw under heap pressure): a secondary failure
+                    // must still leave the half-switched writer poisoned.
+                    isPoisoned = true;
                     LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, poisoning writer and scheduling orphan purge [")
                             .$("indexName=").$(indexName)
                             .$(", newSealTxn=").$(newSealTxn)
                             .$(']').$();
                     scheduleOrphanPurge(newSealTxn);
-                    isPoisoned = true;
                 } else {
                     // Pre-switch: no chain mutation, no mapping survives into the
                     // writer's valueMem swap -- safe to unlink the staging files
@@ -4661,12 +4677,15 @@ public class PostingIndexWriter implements IndexWriter {
                             // publishing it live -- is closed at delete time:
                             // PostingSealPurgeOperator re-reads the .pk head and
                             // abandons the purge when the file is live again.
+                            // Poison FIRST, before the LOG record and scheduleOrphanPurge
+                            // (both allocate and can throw under heap pressure): a secondary
+                            // failure must still leave the half-switched writer poisoned.
+                            isPoisoned = true;
                             LOG.error().$("posting index rollback post-switch failure, poisoning writer and scheduling orphan purge [")
                                     .$("indexName=").$(indexName)
                                     .$(", newSealTxn=").$(newSealTxn)
                                     .$(']').$();
                             scheduleOrphanPurge(newSealTxn);
-                            isPoisoned = true;
                         } else {
                             // Not switched: nothing maps the staged files yet, so
                             // free the staging maps, unlink the staged files, and
