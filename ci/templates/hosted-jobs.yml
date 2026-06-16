@@ -58,13 +58,7 @@ jobs:
           # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
           # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
           # Exclude pgwire: run in mac-pgwire
-          # Exclude Fuzz: cairo fuzz runs in mac-cairo-fuzz; the enterprise fuzz
-          # suite (SwitchFuzzTest soak, ReplicationFuzzTest, BackupFuzzTest,
-          # StoragePolicyFuzzTest, ...) runs in the dedicated enterprise fuzz
-          # pipeline. Without this exclusion the multi-minute soak lands in this
-          # catch-all bucket and overruns the mac task ceiling, matching the
-          # windows-other Fuzz exclusions.
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/**Fuzz**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin-base:
