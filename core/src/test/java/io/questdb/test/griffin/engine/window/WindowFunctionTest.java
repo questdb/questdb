@@ -815,10 +815,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowLightVarcharOrderByFallsBackToNonLight() throws Exception {
-        // VARCHAR sort keys cannot fit the encoded sort buffer, so the LIGHT dispatch gate
-        // refuses them and the query falls through to the non-light factory regardless of
-        // cairo.sql.window.cached.light.enabled. Plan label must be plain CachedWindow.
+    public void testCachedWindowLightVarcharOrderBy() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
