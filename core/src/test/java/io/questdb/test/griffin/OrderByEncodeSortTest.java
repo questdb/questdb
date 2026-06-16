@@ -119,6 +119,36 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByCastSymbolColumnDescAndLimit() throws Exception {
+        // a::symbol is a non-static (cast) symbol resolved through the symbol table - the
+        // KeyShape.SYMBOL variable encoded path. Exercise it DESC (full sort) and with a
+        // LIMIT (top-K), which the ASC testOrderByCastSymbolColumn does not.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, a STRING)");
+            execute("INSERT INTO x VALUES (1, 'c'), (2, 'a'), (3, NULL), (4, 'b'), (5, 'a')");
+            assertQuery("SELECT id, a::symbol s FROM x ORDER BY s DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tc
+                            4\tb
+                            2\ta
+                            5\ta
+                            3\t
+                            """);
+            assertQuery("SELECT id, a::symbol s FROM x ORDER BY s DESC LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tc
+                            4\tb
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByDateColumnAscMixedValues() throws Exception {
         assertQuery("select * from x order by a asc;")
                 .ddl("create table x as (" +
@@ -2273,6 +2303,50 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 1
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharInvalidUtf8TopK() throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            // Small input: no compaction, every row is encoded, so the top-K errors just like the
+            // full sort. The 0xFF sits past the leading word, so only the full encode reaches it.
+            execute("CREATE TABLE small (id INT, v VARCHAR)");
+            execute("INSERT INTO small VALUES (1, 'a'), (2, 'b')");
+            try (TableWriter writer = getWriter("small")) {
+                Utf8StringSink sink = new Utf8StringSink();
+                sink.put("validprefix"); // 11 valid bytes, then a 0xFF past the leading word
+                sink.putAny((byte) 0xFF);
+                TableWriter.Row row = writer.newRow();
+                row.putInt(0, 3);
+                row.putVarchar(1, sink);
+                row.append();
+                writer.commit();
+            }
+            assertQuery("SELECT id FROM small ORDER BY v LIMIT 2")
+                    .noLeakCheck()
+                    .failsWith("invalid UTF-8");
+
+            // Large input: > compaction-trigger rows that all sort before the 0xFF row, which is
+            // appended last (scanned last). After compaction sets a threshold the 0xFF row is
+            // rejected on its valid 'z...' prefix before any full encode, so the query succeeds.
+            execute("CREATE TABLE big (id INT, v VARCHAR)");
+            execute("INSERT INTO big SELECT x, 'aaaa' FROM long_sequence(5000)");
+            try (TableWriter writer = getWriter("big")) {
+                Utf8StringSink sink = new Utf8StringSink();
+                sink.put("zzzzzzzzzz"); // 10 valid bytes sorting after every 'aaaa', then a 0xFF
+                sink.putAny((byte) 0xFF);
+                TableWriter.Row row = writer.newRow();
+                row.putInt(0, 99_999);
+                row.putVarchar(1, sink);
+                row.append();
+                writer.commit();
+            }
+            assertQuery("SELECT v FROM big ORDER BY v LIMIT 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\naaaa\naaaa\naaaa\naaaa\naaaa\n");
         });
     }
 
