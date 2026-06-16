@@ -654,9 +654,24 @@ public final class Unsafe {
     // reports live usage even for unlimited queries. See QueryRegistry.register().
     private static void recordPerQueryMemAlloc(long size, MemoryTracker tracker) {
         final long addr = tracker.nativeAddress();
-        if (addr != 0) {
-            final long mem = UNSAFE.getAndAddLong(null, addr + MEMORY_TRACKER_USED_OFFSET, size) + size;
-            assert mem >= 0 : "unexpected per-query mem: " + mem + ", size: " + size;
+        if (addr == 0) {
+            return;
+        }
+        final long usedAddr = addr + MEMORY_TRACKER_USED_OFFSET;
+        final long mem = UNSAFE.getAndAddLong(null, usedAddr, size) + size;
+        assert mem >= 0 : "unexpected per-query mem: " + mem + ", size: " + size;
+        if (mem < 0) {
+            // Release-build safety net mirroring Rust's saturating_decrement (allocator.rs):
+            // a malloc/free asymmetry must not leave the shared counter negative. Java reads
+            // `used` as a signed long, so a negative value silently defeats the per-query
+            // limit on this side, while Rust reads the same word as an unsigned usize (~2^64)
+            // and spuriously fails every later allocation for the whole workload. Clamp at 0
+            // so the asymmetry degrades to "limit ineffective" on both sides instead of
+            // inverting it. The assert above still fires loudly under -ea, so a regression is
+            // never silent in tests/CI; this only rescues release builds. The corrective add
+            // leaves the same brief window for a concurrent reader to observe the negative
+            // value as Rust's optimistic fetch_sub does.
+            UNSAFE.getAndAddLong(null, usedAddr, -mem);
         }
     }
 
