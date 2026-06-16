@@ -6228,6 +6228,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void doClose(boolean truncate) {
+        // Run the lifecycle manager's pre-free hook before freeing anything. The writer pool
+        // drains in-flight async-command publishers here so a direct destroy() (the WAL
+        // drop-table purge path) cannot free the command queue underneath a publisher
+        // mid-serialize and crash the JVM with a SIGSEGV. The default hook is a no-op.
+        lifecycleManager.onBeforeClose();
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         // Best-effort cleanup that now does I/O: a spill mmap, and a direct

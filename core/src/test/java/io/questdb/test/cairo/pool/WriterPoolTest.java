@@ -135,6 +135,88 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncCommandPublishConcurrentWithLockAndIdleClose() throws Exception {
+        // Stress the publish path against the other closeWriter triggers that share the
+        // drainCommandPublishers primitive: lock-close (lock()) and idle-expiry
+        // (releaseInactive()) - what real DDL and pool maintenance traffic hits, as opposed to
+        // the distressed close covered above. Same failure shape if the drain were missing: a
+        // publisher serializing into a TableWriterTask buffer the close freed underneath it.
+        final int publisherCount = 3;
+        final int iterations = 2_000;
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final AtomicBoolean running = new AtomicBoolean(true);
+
+        assertWithPool(pool -> {
+            final int tableId = zTableToken.getTableId();
+            final CyclicBarrier barrier = new CyclicBarrier(publisherCount + 1);
+            final ObjList<Thread> publishers = new ObjList<>();
+
+            for (int p = 0; p < publisherCount; p++) {
+                Thread publisher = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (running.get() && error.get() == null) {
+                            try {
+                                TableWriter w = pool.getWriterOrPublishCommand(
+                                        zTableToken, "publisher", new TestPublishCommand(zTableToken, tableId));
+                                if (w != null) {
+                                    // Writer was free, not busy - nothing was published.
+                                    w.close();
+                                }
+                            } catch (EntryUnavailableException | PoolClosedException ignore) {
+                                // expected: writer busy / locked / pool closing
+                            } catch (CairoException e) {
+                                // "queue is full" is fine under stress; a buffer overflow is the bug.
+                                if (!Chars.contains(e.getFlyweightMessage(), "queue is full")) {
+                                    error.compareAndSet(null, e);
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        error.compareAndSet(null, t);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                publishers.add(publisher);
+                publisher.start();
+            }
+
+            try {
+                barrier.await();
+                // Owner/closer: briefly hold the writer (forcing publishers onto the publish
+                // path), release it, then close it through a sibling path - alternating
+                // lock-close and idle-expiry - while publishers may still be mid-serialize.
+                for (int i = 0; i < iterations && error.get() == null; i++) {
+                    try (TableWriter w = pool.get(zTableToken, "owner")) {
+                        Assert.assertNotNull(w);
+                    } catch (EntryUnavailableException ignore) {
+                        i--;
+                        continue;
+                    }
+                    if ((i & 1) == 0) {
+                        //noinspection StringEquality
+                        if (pool.lock(zTableToken, "lock") == WriterPool.OWNERSHIP_REASON_NONE) {
+                            pool.unlock(zTableToken);
+                        }
+                    } else {
+                        pool.releaseInactive();
+                    }
+                }
+            } finally {
+                running.set(false);
+                for (int i = 0, n = publishers.size(); i < n; i++) {
+                    publishers.get(i).join();
+                }
+            }
+        });
+
+        if (error.get() != null) {
+            throw new AssertionError("async publish raced a lock/idle close unsafely", error.get());
+        }
+    }
+
+    @Test
     public void testAsyncCommandPublishConcurrentWithWriterClose() throws Exception {
         // Stress the publish path against writers that constantly go distressed and close.
         // Pre-fix a publisher could serialize into a TableWriterTask buffer the close freed
@@ -205,10 +287,170 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncCommandPublishConcurrentWithWriterDestroy() throws Exception {
+        // Stress the publish path against writers destroyed out of band, the way the WAL
+        // drop-table purge does (ApplyWal2TableJob -> TableWriter.destroy() -> doClose frees
+        // the command queue). Pre-fix a publisher could serialize into a TableWriterTask buffer
+        // that destroy() freed underneath it: a SIGSEGV, or a buffer-overflow CairoException.
+        final int publisherCount = 3;
+        final int iterations = 3_000;
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final AtomicBoolean running = new AtomicBoolean(true);
+
+        assertWithPool(pool -> {
+            final int tableId = zTableToken.getTableId();
+            final CyclicBarrier barrier = new CyclicBarrier(publisherCount + 1);
+            final ObjList<Thread> publishers = new ObjList<>();
+
+            for (int p = 0; p < publisherCount; p++) {
+                Thread publisher = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (running.get() && error.get() == null) {
+                            try {
+                                TableWriter w = pool.getWriterOrPublishCommand(
+                                        zTableToken, "publisher", new TestPublishCommand(zTableToken, tableId));
+                                if (w != null) {
+                                    // Writer was free, not busy - nothing was published.
+                                    w.close();
+                                }
+                            } catch (EntryUnavailableException | PoolClosedException ignore) {
+                                // expected: writer busy / pool closing
+                            } catch (CairoException e) {
+                                // "queue is full" is fine under stress; a buffer overflow is the bug.
+                                if (!Chars.contains(e.getFlyweightMessage(), "queue is full")) {
+                                    error.compareAndSet(null, e);
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        error.compareAndSet(null, t);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                publishers.add(publisher);
+                publisher.start();
+            }
+
+            try {
+                barrier.await();
+                // Owner/destroyer: grab the writer (forcing publishers onto the publish path),
+                // then destroy it out of band like the WAL drop-table purge does, and close it
+                // like the trailing Misc.free(writer). The table files survive destroy(), so the
+                // next get() reopens a fresh writer.
+                for (int i = 0; i < iterations && error.get() == null; i++) {
+                    try {
+                        TableWriter w = pool.get(zTableToken, "owner");
+                        w.destroy();
+                        w.close();
+                    } catch (EntryUnavailableException ignore) {
+                        i--;
+                    }
+                }
+            } finally {
+                running.set(false);
+                for (int i = 0, n = publishers.size(); i < n; i++) {
+                    publishers.get(i).join();
+                }
+            }
+        });
+
+        if (error.get() != null) {
+            throw new AssertionError("async publish raced a writer destroy unsafely", error.get());
+        }
+    }
+
+    @Test
+    public void testAsyncCommandPublishDrainsBeforeDestroy() throws Exception {
+        // Deterministic proof for the WAL drop-table purge path: a publisher parked mid-serialize
+        // holds the in-flight count, so a concurrent TableWriter.destroy() must block in
+        // drainCommandPublishers() (via the doClose() pre-free hook) until it finishes instead of
+        // freeing the command queue underneath it. The 250 ms negative wait below is biased-safe:
+        // with the fix destroy() cannot return until the publisher releases, so it cannot
+        // false-fail; on an oversubscribed box it could at worst miss a regression (false-pass),
+        // which the companion stress test guards against.
+        assertWithPool(pool -> {
+            final SOCountDownLatch publisherInSerialize = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseSerialize = new SOCountDownLatch(1);
+            final AtomicBoolean destroyReturned = new AtomicBoolean();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            // Hold the writer busy so the publisher takes the publish/serialize path.
+            final TableWriter ownerWriter = pool.get(zTableToken, "owner");
+            final int tableId = zTableToken.getTableId();
+            final TestPublishCommand command =
+                    new TestPublishCommand(zTableToken, tableId, publisherInSerialize, releaseSerialize);
+
+            Thread publisher = new Thread(() -> {
+                try {
+                    TableWriter w = pool.getWriterOrPublishCommand(zTableToken, "publisher", command);
+                    Assert.assertNull(w); // command was published, no writer handed back
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread destroyer = new Thread(() -> {
+                try {
+                    ownerWriter.destroy(); // WAL drop-table purge path -> doClose frees the command queue
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    destroyReturned.set(true);
+                    Path.clearThreadLocals();
+                }
+            });
+
+            boolean destroyerStarted = false;
+            try {
+                publisher.start();
+                // Wait until the publisher is inside serialize, holding the in-flight count.
+                // Bail out cleanly instead of hanging to the surefire timeout if it never gets
+                // there (e.g. it threw on the way in).
+                if (!publisherInSerialize.await(TimeUnit.SECONDS.toNanos(30))) {
+                    throw new AssertionError("publisher never reached serialize()", error.get());
+                }
+
+                destroyer.start();
+                destroyerStarted = true;
+
+                // With the fix destroy() stays blocked here; without it destroyReturned flips fast.
+                for (int i = 0; i < 250 && !destroyReturned.get(); i++) {
+                    Os.sleep(1);
+                }
+                Assert.assertFalse(
+                        "destroy() freed the command queue while a publisher was mid-serialize",
+                        destroyReturned.get());
+            } finally {
+                releaseSerialize.countDown();
+                publisher.join();
+                if (destroyerStarted) {
+                    destroyer.join();
+                }
+                // Mirrors Misc.free(writer) after the purge: close() reaches returnToPool, which
+                // evicts the orphaned entry (or does a normal close if destroy() never ran).
+                ownerWriter.close();
+            }
+
+            Assert.assertTrue("destroy did not complete after publisher finished", destroyReturned.get());
+            Assert.assertTrue("publisher did not finish serializing into a live buffer", command.serializeComplete);
+            if (error.get() != null) {
+                throw new AssertionError("publisher or destroyer failed", error.get());
+            }
+        });
+    }
+
+    @Test
     public void testAsyncCommandPublishDrainsBeforeDistressedClose() throws Exception {
         // Deterministic proof: a publisher parked mid-serialize holds the in-flight count, so
         // a concurrent distressed close must block in drainCommandPublishers() until it
-        // finishes instead of freeing the command queue underneath it.
+        // finishes instead of freeing the command queue underneath it. The 250 ms negative wait
+        // below is biased-safe: with the fix the close cannot return until the publisher
+        // releases, so it cannot false-fail; on an oversubscribed box it could at worst miss a
+        // regression (false-pass), which the companion stress test guards against.
         assertWithPool(pool -> {
             final SOCountDownLatch publisherInSerialize = new SOCountDownLatch(1);
             final SOCountDownLatch releaseSerialize = new SOCountDownLatch(1);
@@ -248,7 +490,11 @@ public class WriterPoolTest extends AbstractCairoTest {
             try {
                 publisher.start();
                 // Wait until the publisher is inside serialize, holding the in-flight count.
-                publisherInSerialize.await();
+                // Bail out cleanly instead of hanging to the surefire timeout if it never gets
+                // there (e.g. it threw on the way in).
+                if (!publisherInSerialize.await(TimeUnit.SECONDS.toNanos(30))) {
+                    throw new AssertionError("publisher never reached serialize()", error.get());
+                }
 
                 closer.start();
                 closerStarted = true;

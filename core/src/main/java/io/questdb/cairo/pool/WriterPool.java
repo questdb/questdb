@@ -474,6 +474,19 @@ public class WriterPool extends AbstractPool {
         }
     }
 
+    // Removes an entry by identity. Used to evict an orphaned entry whose writer was already
+    // freed out of band (TableWriter.destroy()), where the table dir name is no longer reachable
+    // through e.writer. Rare path - only a dropped WAL table reaches it.
+    private void evictEntry(Entry e) {
+        Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next() == e) {
+                iterator.remove();
+                return;
+            }
+        }
+    }
+
     private TableWriter getWriterEntry(
             TableToken tableToken,
             @NotNull String lockReason,
@@ -584,6 +597,14 @@ public class WriterPool extends AbstractPool {
 
     private boolean returnToPool(Entry e) {
         final long thread = Thread.currentThread().threadId();
+        if (e.writer == null) {
+            // The doClose() pre-free hook already drained and nulled the writer: this is the
+            // out-of-band TableWriter.destroy() path (the WAL drop-table purge). There is
+            // nothing to roll back or hand back to the pool; just evict the orphaned entry.
+            evictEntry(e);
+            notifyListener(thread, null, PoolListener.EV_RETURN);
+            return true;
+        }
         final TableToken tableToken = e.writer.getTableToken();
 
         boolean isDistressed;
@@ -761,6 +782,19 @@ public class WriterPool extends AbstractPool {
                 drainCommandPublishers(this);
             }
             return w;
+        }
+
+        // doClose() pre-free hook. Reached only when a pooled writer is freed out of band:
+        // TableWriter.destroy() (the WAL drop-table purge) calls doClose() directly, bypassing
+        // the pool close paths that already drain. Those paths swap to DefaultLifecycleManager
+        // before close(), so this override is a no-op for them; for the destroy() path it runs
+        // the same drain, nulling the writer before doClose() frees the command queue. The
+        // orphaned entry is evicted later, when the writer's own close() reaches returnToPool -
+        // after doClose() has released the table lock, so no window exists where the entry is
+        // gone but the lock is still held.
+        @Override
+        public void onBeforeClose() {
+            drainCommandPublishers(this);
         }
     }
 }
