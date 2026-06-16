@@ -91,48 +91,46 @@ public class PGServer implements Closeable {
 
         sharedPoolNetwork.assign(dispatcher);
 
-        for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
-            sharedPoolNetwork.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
-                    try {
-                        if (operation == IOOperation.HEARTBEAT) {
-                            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
-                            return false;
-                        }
-                        context.handleClientOperation(operation);
-                        dispatcher.registerChannel(context, IOOperation.READ);
-                        return true;
-                    } catch (PeerIsSlowToWriteException e) {
-                        dispatcher.registerChannel(context, IOOperation.READ);
-                    } catch (PeerIsSlowToReadException e) {
-                        dispatcher.registerChannel(context, IOOperation.WRITE);
-                    } catch (PeerDisconnectedException e) {
-                        dispatcher.disconnect(
-                                context,
-                                operation == IOOperation.READ
-                                        ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
-                                        : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
-                        );
-                    } catch (PGMessageProcessingException e) {
-                        LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
-                        dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                    } catch (Throwable e) { // must remain last in catch list!
-                        LOG.critical().$("internal error [ex=").$(e).$(']').$();
-                        // This is a critical error, so we treat it as an unhandled one.
-                        metrics.healthMetrics().incrementUnhandledErrors();
-                        dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
-                    }
+        // The processor lambda is stateless and the connection-context Job is
+        // pure dispatch over a shared IODispatcher, so a single shared instance
+        // is safe across all workers. assign(Job) routes the same singleton
+        // to every worker via the default Job.cloneInstance() (returns this).
+        final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+            try {
+                if (operation == IOOperation.HEARTBEAT) {
+                    dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                     return false;
-                };
-
-                @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    return dispatcher.processIOQueue(processor);
                 }
-            });
+                context.handleClientOperation(operation);
+                dispatcher.registerChannel(context, IOOperation.READ);
+                return true;
+            } catch (PeerIsSlowToWriteException e) {
+                dispatcher.registerChannel(context, IOOperation.READ);
+            } catch (PeerIsSlowToReadException e) {
+                dispatcher.registerChannel(context, IOOperation.WRITE);
+            } catch (PeerDisconnectedException e) {
+                dispatcher.disconnect(
+                        context,
+                        operation == IOOperation.READ
+                                ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                                : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
+                );
+            } catch (PGMessageProcessingException e) {
+                LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+                dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+            } catch (Throwable e) { // must remain last in catch list!
+                LOG.critical().$("internal error [ex=").$(e).$(']').$();
+                // This is a critical error, so we treat it as an unhandled one.
+                metrics.healthMetrics().incrementUnhandledErrors();
+                dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
+            }
+            return false;
+        };
+        sharedPoolNetwork.assign(ignore -> dispatcher.processIOQueue(processor));
 
-            // context factory has thread local pools
-            // therefore we need each thread to clean their thread locals individually
+        // pgwire context factory has thread local pools
+        // therefore we need each thread to clean their thread locals individually
+        for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
             sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
         }
     }

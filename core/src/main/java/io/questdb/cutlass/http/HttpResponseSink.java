@@ -334,6 +334,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable {
+
         // the last chunk is a chunk with size zero. it happens to have exactly 8 ascii chars so it fits to long nicely: \r\n00\r\n\r\n
         private static final long EOF_CHUNK_LONG = (long) '\r' << 56 | (long) '\n' << 48 | (long) '0' << 40 | (long) '0' << 32 | (long) '\r' << 24 | (long) '\n' << 16 | (long) '\r' << 8 | (long) '\n';
         private static final long EOF_CHUNK_LONG_BE = Numbers.bswap(EOF_CHUNK_LONG);
@@ -343,6 +344,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private long bufSize;
         private long bufStart;
         private long bufStartOfData;
+        private int[] ryuE10;
 
         private ChunkUtf8Sink(int bufSize) {
             this.bufSize = bufSize;
@@ -397,6 +399,14 @@ public class HttpResponseSink implements Closeable, Mutable {
                 bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
                 clear();
             }
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         void clearAndPrepareToWriteToBuffer() {
@@ -574,6 +584,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private final MillisecondClock clock;
         private boolean chunked;
         private int code;
+        private int[] ryuE10;
 
         public HttpResponseHeaderImpl(MillisecondClock clock) {
             this.clock = clock;
@@ -615,6 +626,14 @@ public class HttpResponseSink implements Closeable, Mutable {
         public Utf8Sink putNonAscii(long lo, long hi) {
             buffer.putNonAscii(lo, hi);
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         @Override
@@ -667,6 +686,8 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     private class ResponseSinkImpl implements Utf8Sink {
 
+        private int[] ryuE10;
+
         @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
             buffer.put(us);
@@ -701,6 +722,14 @@ public class HttpResponseSink implements Closeable, Mutable {
         public Utf8Sink putNonAscii(long lo, long hi) {
             buffer.putNonAscii(lo, hi);
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         public void status(int status, CharSequence contentType) {

@@ -99,7 +99,7 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -158,7 +158,7 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
     }
@@ -1496,7 +1496,7 @@ public final class TestUtils {
     public static void drainWalQueue(CairoEngine engine) {
         try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
+            new CheckWalTransactionsJob(engine).run();
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
