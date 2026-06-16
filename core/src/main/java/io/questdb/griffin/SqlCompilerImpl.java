@@ -3763,6 +3763,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try {
                             tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
                         } catch (CairoException e) {
+                            if (e.isAuthorizationError()) {
+                                // A read-only refusal (e.g. a demoted replica) already carries the
+                                // clean, actionable message; surface it as-is instead of masking it
+                                // behind the generic "could not be truncated" wrap.
+                                throw e;
+                            }
                             LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
                             throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                         }

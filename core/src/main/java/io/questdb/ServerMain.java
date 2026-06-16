@@ -1525,7 +1525,7 @@ public class ServerMain implements Closeable {
     /**
      * Web-HTTP protocol envelope: binds the full-fat HTTP server early,
      * then gates the accept loop on engine==READY via onDependencyState.
-     * Hard-deps on worker-pool-manager AND pg-wire (RESEARCH Section 6: FlushQueryCacheJob
+     * Hard-deps on worker-pool-manager AND pg-wire (FlushQueryCacheJob, owned here,
      * needs the PGServer reference from PgWireEnvelope). Soft-dep on engine.
      */
     private final class WebHttpEnvelope implements io.questdb.lifecycle.Component {
@@ -1582,8 +1582,8 @@ public class ServerMain implements Closeable {
                         ServerMain.this.engine,
                         ServerMain.this.workerPoolManager,
                         acceptOpen);
-                // FlushQueryCacheJob per RESEARCH Section 6: owned by web-http;
-                // reads the PGServer reference from PgWireEnvelope via cross-envelope lookup.
+                // FlushQueryCacheJob is owned by web-http; it reads the PGServer reference
+                // from PgWireEnvelope via cross-envelope lookup.
                 final PGServer pgServer = ServerMain.this.findEnvelope("pg-wire", PgWireEnvelope.class).getPgServer();
                 ServerMain.this.workerPoolManager.getSharedPoolNetwork().assign(
                         new FlushQueryCacheJob(ServerMain.this.engine.getMessageBus(), this.server, pgServer));

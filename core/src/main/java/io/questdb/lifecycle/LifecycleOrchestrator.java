@@ -392,7 +392,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
 
     /**
      * Closed-state accessor for subclass consumption. {@code EntLifecycleOrchestrator.submitSwitch}
-     * (plan 09-08) consults this to reject post-close switch requests without elevating the
+     * consults this to reject post-close switch requests without elevating the
      * visibility of the {@code private final AtomicBoolean closed} field.
      */
     protected boolean isClosed() {
