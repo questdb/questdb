@@ -99,7 +99,7 @@ jobs:
           "${dist_dir}bin/questdb.sh" stop || true
           if [ "$ok" -ne 1 ]; then
             echo "ERROR: packaged QuestDB did not serve a query within the timeout"
-            echo "--- server logs ---"; tail -n 200 "$root"/log/*.txt 2>/dev/null || true
+            echo "--- server logs ---"; tail -n 200 "$root"/log/* 2>/dev/null || true
             exit 1
           fi
           echo "Smoke test passed: distribution built from source, started, and served a query."
