@@ -5,14 +5,14 @@
 # users download and run.
 #
 # The same job also runs the C++ glibc check: it dlopen()s the committed
-# libquestdb.so inside an old-glibc container (amazonlinux:2 on x64, almalinux:8
-# on arm64) to confirm the prebuilt C++ library still loads on the oldest
-# supported glibc. The Rust library is built from source per platform, so it
-# always matches its host and needs no glibc check. Folding it into this job
-# avoids a second checkout.
+# libquestdb.so inside an old-glibc container (amazonlinux:2) to confirm the
+# prebuilt C++ library still loads on the oldest supported glibc. The Rust
+# library is built from source on the host, so it always matches and needs no
+# glibc check. Folding it into this job avoids a second checkout.
 #
-# Runs on self-hosted Linux boxes (x64 + arm64), which carry the Rust toolchain,
-# a C compiler, and Docker.
+# Runs on a self-hosted Linux x64 box, which carries the Rust toolchain, a C
+# compiler, and Docker. OSS publishes only x86 binaries, so there is no arm64
+# leg.
 jobs:
   - job: BuildAndSmokeTest
     displayName: "build + smoke test on"
@@ -31,11 +31,6 @@ jobs:
           JAVA_HOME_25_X64: "/opt/graalvm-25"
           glibcImage: "amazonlinux:2"
           libPath: "core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so"
-        linux-arm64:
-          poolName: "hetzner-incus-arm"
-          JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-arm64"
-          glibcImage: "almalinux:8"
-          libPath: "core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so"
     pool:
       name: $(poolName)
     timeoutInMinutes: 60
