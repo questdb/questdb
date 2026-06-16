@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
+import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
@@ -313,18 +314,20 @@ public final class QueryRunner {
      * {@code parallel} reports whether the query runs with parallel SQL execution
      * enabled (all fault types do when the parallel-fault knob is on). For a FILE
      * fault it also selects the query-execution scope so the fault can fire on a
-     * reduce worker. It relaxes oracle 1 for a query with a row-limited scan: under
+     * reduce worker. It relaxes oracle 1 for a query that terminates early: under
      * the eager parallel reduce, a fired
-     * {@code test_fault()} can land on a page frame whose rows fall past the limit
-     * cutoff, so its throw is discarded on a worker and the query still returns a
+     * {@code test_fault()} can land on a page frame whose rows the query never
+     * reads, so its throw is discarded on a worker and the query still returns a
      * result. Whether the throw propagates or gets discarded depends on worker
      * timing, so both outcomes must reach the same verdict for replay to be
      * stable; the relaxed oracle lets the discarded case fall through to the same
-     * leak / fd / recovery checks the propagating case runs. The limit can be an
-     * explicit {@code LIMIT} or one the optimiser pushes into the scan -- notably
-     * the implicit {@code LIMIT 1} of {@code SELECT max(ts) ...} and its
-     * min/first/last siblings over the designated timestamp (see
-     * {@link #planHasPushedLimit}).
+     * leak / fd / recovery checks the propagating case runs. The early termination
+     * can be a row limit (an explicit {@code LIMIT} or one the optimiser pushes
+     * into the scan, notably the implicit {@code LIMIT 1} of {@code SELECT max(ts)
+     * ...} and its min/first/last siblings over the designated timestamp; see
+     * {@link #planHasPushedLimit}), or an early-exit non-keyed group by such as
+     * {@code count_distinct} over a constant or a fully-enumerated symbol, which
+     * stops at the first matching row (see {@link #factoryHasEarlyExitGroupBy}).
      */
     public Result runFault(GeneratedQuery query, FaultType type, Rnd rnd, boolean parallel) {
         String sql = query.sql();
@@ -398,18 +401,25 @@ public final class QueryRunner {
         // throws (MALLOC OOM, FUNCTION throw) are required to surface.
         if (outcome.failure == null) {
             // Under parallel execution a fired FUNCTION fault can land on a page
-            // frame whose rows fall past a LIMIT cutoff: the eager reduce throws on
-            // a worker, but the frame's result is discarded and the query completes.
+            // frame whose rows the query never reads: the eager reduce throws on a
+            // worker, but the frame's result is discarded and the query completes.
             // That is legitimate early-termination, not a swallowed error, so let it
             // fall through to the leak / fd / recovery checks below (which the
             // propagating case runs too, keeping the verdict timing-independent).
-            // The cutoff can be an explicit LIMIT (matched on the SQL text) or one
-            // the optimiser pushes into the page-frame scan, including the implicit
-            // LIMIT 1 of the min/max/first/last(designated timestamp) rewrite, which
-            // leaves no "limit" keyword in the SQL (see planHasPushedLimit).
-            boolean discardedPastLimit = parallel
-                    && (Chars.containsLowerCase(sql, "limit") || outcome.hasPushedLimit);
-            if (faultFired && type != FaultType.FILE && !discardedPastLimit) {
+            // Two shapes reach an early termination the eager reduce outruns:
+            //   - a row-limit cutoff: an explicit LIMIT (matched on the SQL text) or
+            //     one the optimiser pushes into the page-frame scan, including the
+            //     implicit LIMIT 1 of the min/max/first/last(designated timestamp)
+            //     rewrite, which leaves no "limit" keyword in the SQL (see
+            //     planHasPushedLimit);
+            //   - an early-exit non-keyed group by: count_distinct over a constant
+            //     or a fully-enumerated symbol stops at the first matching row once
+            //     the aggregate is final (see factoryHasEarlyExitGroupBy).
+            boolean discardedEarly = parallel
+                    && (Chars.containsLowerCase(sql, "limit")
+                    || outcome.hasPushedLimit
+                    || outcome.hasEarlyExitGroupBy);
+            if (faultFired && type != FaultType.FILE && !discardedEarly) {
                 return Result.failed(sql, new AssertionError(
                         "fault " + type + " fired but the query returned a result (swallowed): " + sql));
             }
@@ -800,6 +810,41 @@ public final class QueryRunner {
      */
     static boolean planHasPushedLimit(CharSequence plan) {
         return Chars.indexOf(plan, 0, plan.length(), "limit: ") >= 0;
+    }
+
+    /**
+     * Detects whether the consumption spine of {@code factory} (the root and its
+     * base-factory chain) ends in an early-exit non-keyed group by, i.e. one that
+     * stops scanning as soon as the aggregate value is final. The optimiser
+     * routes {@code count_distinct} over a constant or a fully-enumerated symbol
+     * column to {@code GroupByNotKeyedRecordCursorFactory}'s early-exit cursor.
+     * <p>
+     * Like a pushed limit (see {@link #planHasPushedLimit}), this is a legitimate
+     * early termination the swallow oracle must tolerate: the early-exit consumer
+     * stops after the first matching row, but the eager parallel reduce beneath it
+     * keeps filtering later frames, so a fired {@code test_fault()} can land on a
+     * frame whose result the consumer never reads and is discarded on a worker.
+     * <p>
+     * The check is deliberately narrow to avoid masking a real swallow (a false
+     * negative). It matches only {@link GroupByNotKeyedRecordCursorFactory} with
+     * its early-exit cursor, and only on the base-factory chain (the top-level
+     * consumption spine), not anywhere in the plan as the limit check does, so
+     * an early exit buried in a fully-drained subquery is not tolerated. It cannot
+     * hide an error on a frame the query actually reads: had the fault landed on a
+     * consumed frame the reduce error would surface when the group by pulls it, so
+     * {@code outcome.failure} would be non-null and the swallow branch never runs.
+     * The fuzzer only injects {@code test_fault()} into the scan a non-keyed group
+     * by consumes (a count_distinct query is single-source; see GroupByClause), so
+     * a detected early exit always governs the fault-bearing frames.
+     */
+    static boolean factoryHasEarlyExitGroupBy(RecordCursorFactory factory) {
+        while (factory != null) {
+            if (factory instanceof GroupByNotKeyedRecordCursorFactory groupBy && groupBy.isEarlyExitSupported()) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 
     private static String renderOutcome(Outcome outcome, CharSequence rows) {
@@ -1481,9 +1526,10 @@ public final class QueryRunner {
                 }
             }
             planSink.of(factory, executionContext);
-            // hasPushedLimit only feeds the fault oracle's swallow check (runFault),
-            // which runs runRaw / runRawMallocFault, not this differential path.
-            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, usesParquet);
+            // hasPushedLimit / hasEarlyExitGroupBy only feed the fault oracle's
+            // swallow check (runFault), which runs runRaw / runRawMallocFault, not
+            // this differential path.
+            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, false, usesParquet);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1576,12 +1622,13 @@ public final class QueryRunner {
             // evaluating test_fault(), or allocating native memory).
             planSink.of(factory, executionContext);
             boolean hasPushedLimit = planHasPushedLimit(planSink.getSink());
+            boolean hasEarlyExitGroupBy = factoryHasEarlyExitGroupBy(factory);
             int rowsRead;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 rowsRead = materialize(cursor, metadata, metadata.getColumnCount(), rows);
             }
-            return Outcome.ok(rowsRead, false, hasPushedLimit, false);
+            return Outcome.ok(rowsRead, false, hasPushedLimit, hasEarlyExitGroupBy, false);
         } catch (SqlException e) {
             return Outcome.error(e, e.getFlyweightMessage().toString(), false);
         } catch (ImplicitCastException e) {
@@ -1616,13 +1663,14 @@ public final class QueryRunner {
             // marker is captured outside the fault window (see runRaw).
             planSink.of(factory, executionContext);
             boolean hasPushedLimit = planHasPushedLimit(planSink.getSink());
+            boolean hasEarlyExitGroupBy = factoryHasEarlyExitGroupBy(factory);
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
             int rowsRead;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 rowsRead = materialize(cursor, metadata, metadata.getColumnCount(), rows);
             }
-            return Outcome.ok(rowsRead, false, hasPushedLimit, false);
+            return Outcome.ok(rowsRead, false, hasPushedLimit, hasEarlyExitGroupBy, false);
         } catch (SqlException e) {
             return Outcome.error(e, e.getFlyweightMessage().toString(), false);
         } catch (ImplicitCastException e) {
@@ -1660,6 +1708,7 @@ public final class QueryRunner {
             int rowsRead,
             boolean hasIndex,
             boolean hasPushedLimit,
+            boolean hasEarlyExitGroupBy,
             boolean usesParquet,
             Throwable failure,
             String exceptionClass,
@@ -1667,11 +1716,11 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, usesParquet, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, usesParquet, t, t.getClass().getSimpleName(), message);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, usesParquet, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean usesParquet) {
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, usesParquet, null, null, null);
         }
     }
 
