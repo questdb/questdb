@@ -107,7 +107,17 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 throw th;
             }
         }
-        return cursor.of(cursor.baseCursor, executionContext);
+        // getSharedCursor opened cursor.baseCursor first (e.g. it sits on the build side of a
+        // hash join, which opens before the probe side that holds this primary getCursor). cursor.of()
+        // reopens the allocator and then runs Function.init, which can throw; guard it so the reopened
+        // allocator is freed under the current per-query tracker instead of being deferred to factory
+        // close, by which point the tracker may have been recycled to another query.
+        try {
+            return cursor.of(cursor.baseCursor, executionContext);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
