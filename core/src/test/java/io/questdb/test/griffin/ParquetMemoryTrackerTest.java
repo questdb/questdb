@@ -80,6 +80,12 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
         // Per test, before super.setUp(): @BeforeClass would be wiped by the override reset.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000_000);
+        // Compress converted partitions so VarcharSlice pages decompress into the
+        // Rust-side page_buffers on scan. Uncompressed pages are borrowed zero-copy
+        // from the mmap and never reach page_buffers, so the payload-dominant breach
+        // test below relies on this. Incompressible data still stores uncompressed
+        // (min ratio gate), leaving the other tests' aux-driven breach unchanged.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "ZSTD");
         super.setUp();
         // 512 KiB: a single ~12 MiB row-group decode crosses it, while small inputs
         // stay under. Applied per test; the provider reads it live on each acquisition.
@@ -107,6 +113,36 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
             execute("INSERT INTO p_big VALUES ('z', '1970-01-02T00:00:00.000000Z', -1)");
             execute("ALTER TABLE p_big CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
             assertBreach("SELECT * FROM p_big WHERE ts < '1970-01-02'");
+        });
+    }
+
+    @Test
+    public void testParquetPartitionScanFailsOnWidePayloadFewRows() throws Exception {
+        // Payload-dominant row group: few rows, very wide VARCHAR values. The
+        // partition scan decodes the column as VarcharSlice, whose decoded string
+        // bytes live in the Rust-side page_buffers (system-allocated), while only
+        // the 16-byte-per-row aux vector is the tracker-aware AcVec. Here aux is
+        // ~2000 * 16 = ~32 KiB, far under the 512 KiB limit, so the breach can come
+        // only from the payload bytes this PR wires into the per-query tracker.
+        // Without that wiring the multi-MiB payload was invisible to the limit and
+        // this scan would have completed.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE p_wide (s VARCHAR, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            // 2000 distinct ~2 KiB values decode to ~4 MiB of payload in one row group.
+            // Each value is a unique prefix (so the page is not dictionary-encoded)
+            // followed by a long run of 'a' (so ZSTD stores the page compressed, which
+            // forces the decode to materialize it into page_buffers rather than borrow
+            // it from the mmap).
+            execute(
+                    "INSERT INTO p_wide " +
+                            "SELECT rpad(x::varchar, 2_048, 'a'), (x * 1_000_000L)::timestamp, x " +
+                            "FROM long_sequence(2_000)"
+            );
+            execute("INSERT INTO p_wide VALUES ('z', '1970-01-02T00:00:00.000000Z', -1)");
+            execute("ALTER TABLE p_wide CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            assertBreach("SELECT * FROM p_wide WHERE ts < '1970-01-02'");
         });
     }
 

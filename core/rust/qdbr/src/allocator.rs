@@ -443,6 +443,44 @@ impl QdbAllocator {
         }
         prev
     }
+
+    /// Charges `bytes` of externally-allocated native memory against the
+    /// per-query tracker after checking the configured limits. Returns an
+    /// error (recording the breach via `take_last_alloc_error`, exactly as a
+    /// rejected `allocate` does) when the per-query or global limit would be
+    /// crossed.
+    ///
+    /// Used for native memory QuestDB allocates outside this allocator yet
+    /// still wants the per-query limit to bound -- notably the Parquet
+    /// VarcharSlice decode `page_buffers`, whose payload bytes are backed by
+    /// the system allocator rather than an `AcVec`. Only the per-query counter
+    /// is adjusted; the RSS and tagged counters are deliberately left untouched
+    /// because the backing allocation is already invisible to them. Every
+    /// successful charge must be balanced by an equal `credit_tracked` once the
+    /// bytes are released, or the per-query counter drifts upward.
+    pub fn charge_tracked(&self, bytes: usize) -> Result<(), AllocError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        self.check_alloc_limit(bytes)?;
+        if let Some(tracker_used) = self.tracker_used() {
+            tracker_used.fetch_add(bytes, COUNTER_ORDERING);
+        }
+        Ok(())
+    }
+
+    /// Releases `bytes` previously reserved with `charge_tracked`, clamping the
+    /// per-query counter at zero on the impossible underflow (see
+    /// `saturating_decrement`). The RSS and tagged counters are left untouched,
+    /// mirroring `charge_tracked`.
+    pub fn credit_tracked(&self, bytes: usize) {
+        if bytes == 0 {
+            return;
+        }
+        if let Some(tracker_used) = self.tracker_used() {
+            Self::saturating_decrement(tracker_used, bytes);
+        }
+    }
 }
 
 unsafe impl Allocator for QdbAllocator {
@@ -920,6 +958,62 @@ mod tests {
         unsafe { allocator.deallocate(allocation3, layout3) };
         assert_eq!(tas.tracker_used(), 0);
         assert_eq!(tas.rss_mem_used(), 0);
+    }
+
+    #[test]
+    fn test_charge_tracked_only_touches_per_query_counter() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        tas.set_tracker_limit(1024);
+
+        // A charge adjusts only the per-query counter; RSS and tagged counters
+        // stay put because the backing bytes are allocated outside this allocator.
+        allocator.charge_tracked(512).unwrap();
+        assert_eq!(tas.tracker_used(), 512);
+        assert_eq!(tas.rss_mem_used(), 0);
+        assert_eq!(tas.tagged_used(), 0);
+
+        // Crossing the limit is rejected and leaves the counter unchanged.
+        let result = allocator.charge_tracked(1024);
+        assert!(result.is_err());
+        assert!(matches!(
+            take_last_alloc_error().unwrap(),
+            AllocFailure::MemoryLimitExceeded { scope: AllocScope::Query, .. }
+        ));
+        assert_eq!(tas.tracker_used(), 512);
+
+        // A credit releases the charge symmetrically.
+        allocator.credit_tracked(512);
+        assert_eq!(tas.tracker_used(), 0);
+
+        // Zero-byte charge/credit are no-ops on every counter.
+        allocator.charge_tracked(0).unwrap();
+        allocator.credit_tracked(0);
+        assert_eq!(tas.tracker_used(), 0);
+        assert_eq!(tas.rss_mem_used(), 0);
+    }
+
+    #[test]
+    fn test_charge_tracked_without_tracker_checks_global_limit() {
+        // No per-query tracker bound: charge_tracked still honors the global RSS
+        // limit and degrades to a no-op on the (absent) per-query counter.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        tas.set_mem_rss_limit(1024);
+
+        // The global counter is not mutated, so the check compares the request
+        // against the bare limit; 2048 > 1024 is rejected.
+        let result = allocator.charge_tracked(2048);
+        assert!(result.is_err());
+        assert!(matches!(
+            take_last_alloc_error().unwrap(),
+            AllocFailure::MemoryLimitExceeded { scope: AllocScope::Global, .. }
+        ));
+
+        // Under the global limit: accepted, and no counter moves (no tracker).
+        allocator.charge_tracked(512).unwrap();
+        assert_eq!(tas.rss_mem_used(), 0);
+        allocator.credit_tracked(512);
     }
 
     #[test]

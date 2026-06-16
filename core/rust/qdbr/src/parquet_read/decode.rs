@@ -53,12 +53,15 @@ impl ColumnChunkBuffers {
             aux_size: 0,
             page_buffers_size: 0,
             page_buffers: Vec::new(),
+            page_buffers_charged: 0,
         }
     }
 
     // Unconditional re-read so a hypothetical second call between resets cannot keep
-    // a stale ptr after a Vec reallocation.
-    pub fn refresh_ptrs(&mut self) {
+    // a stale ptr after a Vec reallocation. Returns an error when charging the
+    // retained VarcharSlice page bytes against the per-query memory tracker
+    // crosses the configured limit.
+    pub fn refresh_ptrs(&mut self) -> ParquetResult<()> {
         // Always recompute the exposed pointer/size from the backing vectors.
         // Appending additional column chunks into the same buffer (see
         // decode_row_group_range, which decodes a run of row groups without
@@ -73,6 +76,43 @@ impl ColumnChunkBuffers {
 
         // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
         self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
+
+        // Reconcile the per-query tracker charge to the retained payload. A net
+        // growth is checked against the limit and may breach; a net shrink is
+        // always credited. See `page_buffers_charged`.
+        self.reconcile_page_buffers_charge()
+    }
+
+    // Charges or credits the per-query tracker so that exactly
+    // `page_buffers_size` bytes stay reserved for this chunk's retained payload.
+    // The growth path can breach the limit and return an error; the shrink path
+    // never fails. On a breach `page_buffers_charged` is left at the prior value
+    // so `reset`/`Drop` later credit only what was actually charged.
+    fn reconcile_page_buffers_charge(&mut self) -> ParquetResult<()> {
+        let target = self.page_buffers_size;
+        if target > self.page_buffers_charged {
+            let delta = target - self.page_buffers_charged;
+            self.data_vec.allocator().clone().charge_tracked(delta)?;
+            self.page_buffers_charged = target;
+        } else if target < self.page_buffers_charged {
+            let delta = self.page_buffers_charged - target;
+            self.data_vec.allocator().clone().credit_tracked(delta);
+            self.page_buffers_charged = target;
+        }
+        Ok(())
+    }
+
+    // Releases the whole per-query tracker charge held for `page_buffers`. Used
+    // by `reset` and `Drop`, both of which empty (or hand off to the reuse pool)
+    // the retained payload.
+    fn release_page_buffers_charge(&mut self) {
+        if self.page_buffers_charged > 0 {
+            self.data_vec
+                .allocator()
+                .clone()
+                .credit_tracked(self.page_buffers_charged);
+            self.page_buffers_charged = 0;
+        }
     }
 
     // Callers drain `page_buffers` (into a reuse pool) before invoking; this only clears
@@ -88,8 +128,19 @@ impl ColumnChunkBuffers {
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
 
+        self.release_page_buffers_charge();
         self.page_buffers_size = 0;
         self.page_buffers.clear();
+    }
+}
+
+impl Drop for ColumnChunkBuffers {
+    // The `data_vec` / `aux_vec` `AcVec`s credit the per-query tracker through
+    // their own allocator on drop; `page_buffers` is a system-allocated `Vec`,
+    // so its charge must be credited explicitly here to keep the tracker
+    // balanced when a cursor closes without a final `reset`.
+    fn drop(&mut self) {
+        self.release_page_buffers_charge();
     }
 }
 
@@ -2389,7 +2440,7 @@ mod tests {
         let mut bufs = ColumnChunkBuffers::new(allocator);
 
         // Fresh buffer: nothing retained.
-        bufs.refresh_ptrs();
+        bufs.refresh_ptrs().unwrap();
         assert_eq!(bufs.page_buffers_size, 0);
 
         // A VarcharSlice decode retains decompressed page/dict buffers here, with the
@@ -2397,13 +2448,76 @@ mod tests {
         // Java decode-cache budget counts the string bytes.
         bufs.page_buffers.push(vec![0u8; 100]);
         bufs.page_buffers.push(vec![0u8; 56]);
-        bufs.refresh_ptrs();
+        bufs.refresh_ptrs().unwrap();
         assert_eq!(bufs.page_buffers_size, 156);
 
         // reset() must zero it so a reused buffer does not carry stale bytes.
         bufs.reset();
         assert_eq!(bufs.page_buffers_size, 0);
         assert!(bufs.page_buffers.is_empty());
+    }
+
+    #[test]
+    fn page_buffers_charge_tracks_per_query_memory() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        // The system-allocated page_buffers are otherwise invisible to the
+        // per-query tracker; refresh_ptrs charges their retained bytes so a wide
+        // VarcharSlice payload still counts against the limit.
+        bufs.page_buffers.push(vec![0u8; 1000]);
+        bufs.page_buffers.push(vec![0u8; 24]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 1024);
+        assert_eq!(tas.tracker_used(), 1024);
+
+        // A subsequent decode that retains fewer bytes credits the difference.
+        bufs.page_buffers.truncate(1);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 1000);
+        assert_eq!(tas.tracker_used(), 1000);
+
+        // reset() releases the whole charge back to the tracker.
+        bufs.reset();
+        assert_eq!(tas.tracker_used(), 0);
+
+        // A retained charge still outstanding at drop is credited too.
+        bufs.page_buffers.push(vec![0u8; 512]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), 512);
+        drop(bufs);
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn page_buffers_charge_breaches_per_query_limit() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        tas.set_tracker_limit(4096);
+
+        // Under the limit: charged and accepted.
+        bufs.page_buffers.push(vec![0u8; 2048]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), 2048);
+
+        // A wide payload pushes the retained bytes over the limit: refresh_ptrs
+        // breaches at the per-query scope and leaves the charge at its prior value.
+        // The "query" scope label in the message distinguishes a per-query breach
+        // from a global-RSS one.
+        bufs.page_buffers.push(vec![0u8; 8192]);
+        let err = bufs.refresh_ptrs().unwrap_err();
+        assert!(
+            err.to_string().contains("query memory limit exceeded"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(bufs.page_buffers_charged, 2048);
+
+        // The uncharged excess never reached the tracker; drop credits only the
+        // 2048 bytes that were charged, returning the counter to zero.
+        drop(bufs);
+        assert_eq!(tas.tracker_used(), 0);
     }
 
     #[test]

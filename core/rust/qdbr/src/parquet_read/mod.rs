@@ -178,6 +178,16 @@ pub struct ColumnChunkBuffers {
     /// column type (and for uncompressed pages borrowed from the mmap).
     pub page_buffers_size: usize,
     pub page_buffers: Vec<Vec<u8>>,
+
+    /// Bytes of `page_buffers` currently charged against the per-query memory
+    /// tracker. The `page_buffers` payload is backed by the system allocator,
+    /// not the tracker-aware `AcVec`, so it would otherwise escape the per-query
+    /// limit: a wide-payload VarcharSlice row group could materialize unbounded
+    /// while the tracked `aux_vec` (16 bytes per row) stays small. `refresh_ptrs`
+    /// charges the growth and `reset` / `Drop` credit it back, keeping the
+    /// tracker balanced. Always equals the amount this chunk last added to the
+    /// tracker; 0 when nothing is charged. Not read from Java.
+    page_buffers_charged: usize,
 }
 
 #[cfg(test)]
