@@ -612,6 +612,94 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeDoesNotLogReuseRaceWhenOrphanCoverRecreatedAfterUnlink() throws Exception {
+        // The .pc reuse-race detector's no-false-positive guard (the cover analogue of
+        // the .pv pvStillGone re-stat). Benign interleaving: the scan unlinks a genuine
+        // orphan .pc, then a reused-then-republished writer re-creates a fresh LIVE .pc
+        // at the same sealTxn and advances the head to it. Without the re-stat the
+        // post-scan head read sees head == sealTxn and shouts REINDEX though the live .pc
+        // is intact. Model that by reporting the removed .pc present again on the
+        // operator's post-scan exists() re-stat: coverStillGone is then false, so the
+        // detector must stay silent. (testPurgeLogsReuseRaceWhenLiveHeadCoverFileDeleted-
+        // ByOrphanUnlink is the true-positive twin, where the removed .pc stays gone.)
+        final String col = "c_cover_fp";
+        final boolean[] armed = {false};
+        final boolean[] pcRemoved = {false};
+        final boolean[] coverRestatted = {false};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ name) {
+                // Simulate the reused writer having re-created the cover: once a .pc has
+                // been unlinked in this window, report it present again. This is the only
+                // exists(.pc) the operator performs and only the fixed code performs it,
+                // so it doubles as a "the re-stat actually ran" probe.
+                if (armed[0] && pcRemoved[0] && name != null && Utf8s.containsAscii(name, col + ".pc")) {
+                    coverRestatted[0] = true;
+                    return true;
+                }
+                return super.exists(name);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                // Fail every .pk open until a .pc is unlinked, bypassing the pre-unlink
+                // guard and the .pv detector (both run before the cover scan) so only the
+                // post-scan cover detector evaluates the head, mirroring the true-positive twin.
+                if (armed[0] && !pcRemoved[0] && name != null && Utf8s.containsAscii(name, col + ".pk")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                boolean removed = super.removeQuiet(name);
+                if (armed[0] && name != null && Utf8s.containsAscii(name, col + ".pc")) {
+                    pcRemoved[0] = true;
+                }
+                return removed;
+            }
+        };
+        LogCapture capture = new LogCapture();
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_reuse_race_cover_fp");
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                writeCoveringAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                long liveHead = PostingIndexUtils.readSealTxnFromKeyFile(
+                        runtimeFf, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE));
+                partitionPath.trimTo(pLen);
+                assertTrue("live head sealTxn must be positive", liveHead > 0);
+
+                // Target the LIVE head, the state a reused-then-republished orphan sealTxn
+                // lands in. Tiny window so the scoreboard reports it ready.
+                publishPurgeTask(tok, col, liveHead, 1L);
+
+                capture.start();
+                try {
+                    armed[0] = true;
+                    runPurgeJob(job, 3);
+                    // Flush barrier on the same async log path: once this sentinel reaches
+                    // the captured sink, any REINDEX the operator emitted earlier (FIFO) is
+                    // already there too, so the assertNotLogged below is reliable.
+                    LOG.critical().$("posting seal purge test: cover false-positive flush barrier").$();
+                    capture.waitForRegex("cover false-positive flush barrier");
+                    assertTrue("the operator must re-stat the removed cover (the no-false-positive guard)", coverRestatted[0]);
+                    capture.assertNotLogged("orphan cover-file unlink (reuse race)");
+                } finally {
+                    armed[0] = false;
+                    capture.stop();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRecoveryFromLogTable() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -649,51 +737,58 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testReopenEnqueuesOrphansFromPriorIncarnation() throws Exception {
+        // A distressed writer can seal a generation at a table txn the table never
+        // commits to (txnAtSeal > the committed table txn). Reopening and arming the
+        // recovery walk via setCurrentTableTxn must drop that abandoned chain entry
+        // and enqueue its orphan .pv/.pc for purge: of() -> runRecoveryWalkIfRequested
+        // -> chain.recoveryDropAbandoned -> scheduleOrphanPurge. (v1's writer-open
+        // directory scan, logOrphanSealedFiles, is gone -- v2 routes orphan cleanup
+        // through the chain; the chain-level mechanics are covered by
+        // PostingIndexChainWriterTest's testRecoveryDropAbandoned* set, so this pins
+        // only the PostingIndexWriter.of() glue: that an armed reopen actually queues
+        // the orphan rather than leaving it on disk.)
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                String name = "ps_purge_orphan";
-                int plen = path.size();
+                final String name = "ps_purge_orphan";
+                final int plen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
+                long abandonedSealTxn;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
 
-                long firstSealTxn;
-                long secondSealTxn;
-
-                try (PostingIndexWriter writerA = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    // Committed sealed entry at table txn 1 -- recovery must KEEP it.
+                    writer.setNextTxnAtSeal(1L);
                     for (int i = 0; i < 8; i++) {
-                        writerA.add(i % BATCH_KEYS, i);
+                        writer.add(i % BATCH_KEYS, i);
                     }
-                    writerA.setMaxValue(7);
-                    writerA.commit();
-                    writerA.seal();
-                    firstSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    writer.setMaxValue(7);
+                    writer.commit();
+                    writer.seal();
 
+                    // A second sealed entry at table txn 2 that the table txn never
+                    // advanced to: the abandoned/distressed attempt recovery must drop.
+                    writer.setNextTxnAtSeal(2L);
                     for (int i = 8; i < 16; i++) {
-                        writerA.add(i % BATCH_KEYS, i);
+                        writer.add(i % BATCH_KEYS, i);
                     }
-                    writerA.setMaxValue(15);
-                    writerA.commit();
-                    writerA.seal();
-                    secondSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                    writer.setMaxValue(15);
+                    writer.commit();
+                    writer.seal();
+                    abandonedSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
-                }
-                // Writer A closed — pendingPurges discarded, but orphan files
-                // still exist on disk.
-                assertTrue("first-seal .pv survives writer close",
-                        ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, firstSealTxn)));
+                    path.trimTo(plen);
+                    assertTrue("abandoned .pv must exist before recovery", ff.exists(
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, abandonedSealTxn)));
+                    path.trimTo(plen);
 
-                // Writer B opens — its of() should detect the orphan via
-                // logOrphanSealedFiles and push a PendingSealPurge entry.
-                try (PostingIndexWriter writerB = new PostingIndexWriter(configuration)) {
-                    writerB.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
-                    // The orphan was enqueued during of(). Live .pv must still exist.
-                    assertTrue("live .pv must remain after writer-B open",
-                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, secondSealTxn)));
-                    // The orphan from before is still on disk because
-                    // publishPendingPurges hasn't been called yet — the
-                    // outbox holds it pending.
-                    assertTrue("orphan .pv stays on disk until publish + job run",
-                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, firstSealTxn)));
+                    // Reopen from disk and arm the recovery walk at table txn 1: the
+                    // txnAtSeal=2 entry is abandoned (2 > 1) -> dropped + its orphan queued.
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    assertTrue(
+                            "the armed recovery walk must enqueue the abandoned entry's orphan",
+                            writer.getPendingPurgesSizeForTesting() >= 1);
                 }
             }
         });

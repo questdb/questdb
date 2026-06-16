@@ -327,6 +327,55 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The bounded {@code decodeKeyToNative(maxValues)} overload sizes the caller's
+     * destAddr from the summed block counts, but each block's {@code count-1} deltas
+     * are unpacked into the separate fixed {@code BLOCK_CAPACITY}-long
+     * {@code blockDeltasAddr} scratch that {@code DecodeContext} never grows. A valid
+     * encoder splits a key into blocks of at most {@code BLOCK_CAPACITY}, so a
+     * crafted/corrupt single block whose count exceeds {@code BLOCK_CAPACITY} would
+     * unpack more longs than that 64-long scratch holds and overrun it -- a native heap
+     * OOB write the {@code summed-count <= maxValues} guard cannot catch, because it
+     * bounds destAddr only, not the scratch. The decode must reject a block count above
+     * {@code BLOCK_CAPACITY} before writing.
+     */
+    @Test
+    public void testDecodeKeyToNativeRejectsBlockCountAboveCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            final int firstWord = 1; // single block
+            // One past the largest count whose count-1 deltas still fit the 64-long
+            // blockDeltasAddr scratch (count=BLOCK_CAPACITY+1 fills it exactly): the
+            // unguarded decode writes one long past the scratch.
+            final int corruptCount = PostingIndexUtils.BLOCK_CAPACITY + 2;
+            final long blockBytes = 256; // generous; zeroed
+            final long blockAddr = Unsafe.malloc(blockBytes, MemoryTag.NATIVE_DEFAULT);
+            final int cap = 256; // > corruptCount, so the summed-count <= maxValues guard passes
+            final long destAddr = Unsafe.malloc((long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.DecodeContext dctx = new PostingIndexUtils.DecodeContext()) {
+                for (long o = 0; o < blockBytes; o += Long.BYTES) {
+                    Unsafe.putLong(blockAddr + o, 0L);
+                }
+                Unsafe.putInt(blockAddr, firstWord);
+                Assert.assertTrue("crafted block must not collide with the EF sentinel",
+                        firstWord != PostingIndexUtils.EF_FORMAT_SENTINEL);
+                // Single-block DELTA layout for firstWord==1:
+                //   [0..3] firstWord | [4] valueCounts[0] | [5..12] firstValues[0]
+                //   | [13..20] minDeltas[0] | [21] bitWidths[0]  (no packedOffsets when firstWord==1)
+                Unsafe.putByte(blockAddr + 4, (byte) corruptCount); // > BLOCK_CAPACITY
+                Unsafe.putByte(blockAddr + 21, (byte) 0);           // bitWidth 0 -> unconditional delta writes
+                try {
+                    PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, cap);
+                    Assert.fail("decodeKeyToNative must reject a block count above BLOCK_CAPACITY before writing");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "block value count exceeds capacity");
+                }
+            } finally {
+                Unsafe.free(blockAddr, blockBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
      * The bounded {@code decodeKeyToNative(maxValues)} overload must reject a
      * DELTA (delta+FoR) block whose summed block-internal counts exceed the
      * caller's buffer capacity BEFORE writing any value, and pass a valid block

@@ -56,6 +56,8 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private boolean scanAnyCoverRemoved;
     private CharSequence scanColumnName;
     private int scanPartitionPathLen;
+    private long scanRemovedCoverColumnNameTxn;
+    private int scanRemovedCoverIncludeIdx;
     private long scanTargetPostingTxn;
     private long scanTargetSealTxn;
     private TxnScoreboard txnScoreboard;
@@ -97,6 +99,12 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // file, so the live .pc survives and this flag stays false).
         if (ff.removeQuiet(pc)) {
             scanAnyCoverRemoved = true;
+            // Remember a removed cover's identity so purge() can re-stat it after the
+            // scan (the .pv pvStillGone analogue): a reused-then-republished sealTxn
+            // recreates the whole .pc set, so a removed cover that is present again is
+            // the benign orphan-then-reuse case, not a live unlink.
+            scanRemovedCoverIncludeIdx = includeIdx;
+            scanRemovedCoverColumnNameTxn = coveredColumnNameTxn;
         } else {
             scanAllCoversRemoved = false;
         }
@@ -264,33 +272,39 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, scanColumnName, this);
         path.trimTo(pathPartitionLen);
 
-        // Post-unlink reuse-race detection for the cover (.pc) files, the
-        // analogue of the .pv check above. The pre-unlink head guard abandons
-        // the whole task when the head already equals this sealTxn, but it is not
-        // atomic against a writer that REUSES this sealTxn and republishes
-        // .pc.{sealTxn} live in the window between that guard and the scan's
-        // directory snapshot -- onCoverDataFile would then unlink a live cover
-        // file. Re-read the head AFTER the scan (a republish the scan could have
-        // raced must have created the .pc before the snapshot, hence before this
-        // read): head == sealTxn AND a cover was actually removed means a live,
-        // reused .pc was deleted. Losing a .pc is less severe than losing the
-        // .pv -- the reader falls back to the base column rather than hard-failing
-        // -- but it is still a silent live-unlink, so surface the same REINDEX
-        // diagnostic. readSealTxnFromKeyFile returns -1 on a missing/unreadable
-        // .pk, which never equals a valid sealTxn, so a genuine orphan (no live
-        // .pk) does not trip this.
+        // Post-unlink reuse-race detection for the cover (.pc) files, the analogue of
+        // the .pv check above. The pre-unlink head guard abandons the whole task when
+        // the head already equals this sealTxn, but it is not atomic against a writer
+        // that REUSES this sealTxn and republishes .pc.{sealTxn} live in the window
+        // between that guard and the scan's directory snapshot -- onCoverDataFile would
+        // then unlink a live cover file. Re-stat a removed cover AND re-read the head
+        // after the scan to separate that from the benign case (we deleted a genuine
+        // orphan and a later reuse re-created a fresh, still-present .pc): a republished
+        // sealTxn recreates the whole .pc set via openSidecarFiles, so only "the removed
+        // .pc is still gone AND head == sealTxn" means a live, non-recreated cover was
+        // unlinked. Losing a .pc is less severe than losing the .pv -- the reader falls
+        // back to the base column rather than hard-failing -- but it is still a silent
+        // live-unlink, so surface the same REINDEX diagnostic. readSealTxnFromKeyFile
+        // returns -1 on a missing/unreadable .pk, which never equals a valid sealTxn, so
+        // a genuine orphan (no live .pk) does not trip this.
         if (scanAnyCoverRemoved) {
             path.trimTo(pathPartitionLen);
-            long postScanHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                    ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
+            boolean coverStillGone = !ff.exists(PostingIndexUtils.coverDataFileName(
+                    path, task.getIndexColumnName(), scanRemovedCoverIncludeIdx,
+                    task.getPostingColumnNameTxn(), scanRemovedCoverColumnNameTxn, task.getSealTxn()));
             path.trimTo(pathPartitionLen);
-            if (postScanHeadSealTxn == task.getSealTxn()) {
-                LOG.critical().$("posting seal purge: sealTxn became the live chain head during the orphan cover-file unlink (reuse race) and its .pc was deleted while live; REINDEX this column/partition [table=")
-                        .$(liveToken.getTableName())
-                        .$(", column=").$(task.getIndexColumnName())
-                        .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
-                        .$(", sealTxn=").$(task.getSealTxn())
-                        .I$();
+            if (coverStillGone) {
+                long postScanHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
+                path.trimTo(pathPartitionLen);
+                if (postScanHeadSealTxn == task.getSealTxn()) {
+                    LOG.critical().$("posting seal purge: sealTxn became the live chain head during the orphan cover-file unlink (reuse race) and its .pc was deleted while live; REINDEX this column/partition [table=")
+                            .$(liveToken.getTableName())
+                            .$(", column=").$(task.getIndexColumnName())
+                            .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                            .$(", sealTxn=").$(task.getSealTxn())
+                            .I$();
+                }
             }
         }
 

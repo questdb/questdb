@@ -421,6 +421,15 @@ public final class PostingIndexUtils {
             long pos = packedDataAddr;
             for (int b = 0; b < firstWord; b++) {
                 int count = Unsafe.getByte(valueCountsAddr + b) & 0xFF;
+                // A valid block holds at most BLOCK_CAPACITY values; the unpack below writes its
+                // count-1 deltas into the fixed BLOCK_CAPACITY-long blockDeltasAddr scratch, so a
+                // corrupt count above BLOCK_CAPACITY would overrun it (the decodeKeyToNative twin
+                // guards the same invariant). Reject before any write.
+                if (count > BLOCK_CAPACITY) {
+                    throw CairoException.critical(0)
+                            .put("corrupt posting index: block value count exceeds capacity [block=").put(b)
+                            .put(", count=").put(count).put(", max=").put(BLOCK_CAPACITY).put(']');
+                }
                 int bitWidth = Unsafe.getByte(bitWidthsAddr + b) & 0xFF;
                 int numDeltas = count - 1;
                 long firstValue = Unsafe.getLong(firstValuesAddr + (long) b * Long.BYTES);
@@ -593,6 +602,17 @@ public final class PostingIndexUtils {
             if (c == 0) {
                 throw CairoException.critical(0)
                         .put("corrupt posting index: zero-count block [block=").put(b).put(']');
+            }
+            // The encoder splits a key into blocks of at most BLOCK_CAPACITY values, and the decode
+            // loop below unpacks each block's count-1 deltas into blockDeltasAddr -- a fixed
+            // BLOCK_CAPACITY-long scratch buffer that DecodeContext never grows (a valid block can
+            // never need more). The blockInternalTotal <= maxValues check below bounds destAddr but
+            // NOT that scratch, so a corrupt count above BLOCK_CAPACITY would overrun blockDeltasAddr
+            // (the bitWidth==0 arm writes count-1 longs unconditionally). Reject it here too.
+            if (c > BLOCK_CAPACITY) {
+                throw CairoException.critical(0)
+                        .put("corrupt posting index: block value count exceeds capacity [block=").put(b)
+                        .put(", count=").put(c).put(", max=").put(BLOCK_CAPACITY).put(']');
             }
             Unsafe.putInt(valueCountsAddr + (long) b * Integer.BYTES, c);
             blockInternalTotal += c;
