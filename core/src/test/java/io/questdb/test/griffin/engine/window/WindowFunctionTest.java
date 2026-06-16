@@ -590,6 +590,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightEncodedSortVarcharKeyHeapOverflow() throws Exception {
+        // A VARCHAR window ORDER BY takes the variable encoded path: the key bytes spill into
+        // EncodedWindowSortBuffer's key heap (setKeyHeap + sortEncodedVarEntries). Pin the window
+        // sort caps tiny and feed long strings so the key heap, not the entry array, busts the
+        // combined budget, exercising the variable path's overflow guard. Subsequent runs of the
+        // cursor must not leak native memory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 4096);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, rnd_varchar(1000, 1000, 0) from long_sequence(100)");
+            try {
+                assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
+                Assert.fail("expected LimitOverflowException");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "memory exceeded in window encoded sort");
+            }
+        });
+    }
+
+    @Test
     public void testCachedWindowLightFallsBackWhenOrderBySortDisabled() throws Exception {
         // cairo.sql.orderby.sort.enabled=false flips allGroupsEncodedEligible to false
         // in the LIGHT dispatcher. LIGHT must be skipped even when its own flag is on.
@@ -828,6 +850,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: tab
                             """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightVarcharOrderByReturnsSortedRows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 'banana'), (2, 'apple'), (3, NULL), (4, 'cherry'), (5, '')");
+            final String expected = """
+                    v\trn
+                    \t1
+                    \t2
+                    apple\t3
+                    banana\t4
+                    cherry\t5
+                    """;
+            final String query = "SELECT v, row_number() OVER (ORDER BY v) rn FROM tab ORDER BY v";
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
