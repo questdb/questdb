@@ -19,16 +19,20 @@ jobs:
     workspace:
       clean: all
     strategy:
+      # Do NOT set JAVA_HOME here. Matrix variables are read-only at runtime, and
+      # the Maven@3 task below (jdkVersionOption: 1.25) resolves the JDK from
+      # JAVA_HOME_25_X64 and then sets JAVA_HOME itself -- overwriting a read-only
+      # JAVA_HOME is rejected ("Overwriting readonly variable 'JAVA_HOME' is not
+      # permitted"), which fails the build. The smoke-test step sets JAVA_HOME on
+      # its own process env (from JAVA_HOME_25_X64) for the packaged questdb.sh.
       matrix:
         linux-x64:
           poolName: "hetzner-incus"
-          JAVA_HOME: "/opt/graalvm-25"
           JAVA_HOME_25_X64: "/opt/graalvm-25"
           glibcImage: "amazonlinux:2"
           libPath: "core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so"
         linux-arm64:
           poolName: "hetzner-incus-arm"
-          JAVA_HOME: "/usr/lib/jvm/java-25-openjdk-arm64"
           JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-arm64"
           glibcImage: "almalinux:8"
           libPath: "core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so"
@@ -104,3 +108,8 @@ jobs:
           fi
           echo "Smoke test passed: distribution built from source, started, and served a query."
         displayName: "Smoke test: start packaged server and run a query"
+        env:
+          # questdb.sh needs JAVA_HOME when the bundle ships without an embedded
+          # JRE. JAVA_HOME is intentionally not a matrix variable (see above), so
+          # set it on this step's process env from the per-leg JDK path.
+          JAVA_HOME: $(JAVA_HOME_25_X64)
