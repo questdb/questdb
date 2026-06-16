@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -50,6 +51,39 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                             qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision
                             qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter
                             qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint
+                            """);
+        });
+    }
+
+    @Test
+    public void testColumnsCompleteBeforeStartupHydration() throws Exception {
+        // Regression for the startup-hydration race shared with tables()/all_tables():
+        // information_schema.columns() (and the pg_catalog.pg_attribute it backs)
+        // snapshot MetadataCache, which the background onStartupAsyncHydrator() fills
+        // lazily. A query in the post-restart / post-backup-restore pre-hydration
+        // window used to omit tables and their columns, which breaks PostgreSQL
+        // driver introspection (the pg_class -> pg_attribute join renders existing
+        // tables with zero columns). getCursor() must reconcile first.
+        assertMemoryLeak(() -> {
+            execute("create table A(col0 int, col1 symbol)");
+            execute("create table B(col0 long, col1 string)");
+            drainWalQueue();
+
+            // Simulate the pre-hydration window: the registry knows the tables, but
+            // the metadata cache is empty (async hydrator has not run).
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            assertQuery("SELECT table_name, column_name FROM information_schema.columns() ORDER BY table_name, column_name")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
+                            table_name	column_name
+                            A	col0
+                            A	col1
+                            B	col0
+                            B	col1
                             """);
         });
     }

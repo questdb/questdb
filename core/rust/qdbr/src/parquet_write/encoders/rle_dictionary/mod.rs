@@ -20,7 +20,7 @@ use crate::parquet_write::encoders::helpers::{
     FlatValidity,
 };
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::schema::Column;
+use crate::parquet_write::schema::{Column, TimestampValues};
 use crate::parquet_write::util::{bit_width, build_plain_page, BinaryMaxMinStats, MaxMin};
 
 mod fixed;
@@ -32,6 +32,93 @@ mod varlen;
 pub use fixed::{encode_decimal, encode_fixed_len_bytes};
 pub use primitive::{encode_int_notnull, encode_int_nullable, encode_simd};
 pub use varlen::{encode_binary, encode_string, encode_varchar};
+
+/// RleDictionary-encode a designated-timestamp column whose primary data is a
+/// 16-byte-strided merge index. Mirrors the Plain/Delta strided encoders: one
+/// match on `TimestampValues` at the top, then a single dictionary-build pass
+/// over `slice.iter().map(|p| p[0])`.
+///
+/// RLE on a sorted (effectively unique-valued) timestamp column is a
+/// degenerate compression choice — the dictionary ends up 1:1 with rows —
+/// but we still need to support it correctly so any encoding the user picks
+/// works without a Java-side fallback.
+pub fn encode_designated_timestamp_strided(
+    columns: &[Column],
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<Vec<parquet2::page::Page>> {
+    debug_assert_eq!(columns.len(), 1);
+    let column = &columns[0];
+    debug_assert!(column.strided_timestamp_16);
+    debug_assert_eq!(column.column_top, 0);
+
+    let slice: &[[i64; 2]] = match column.timestamp_values() {
+        TimestampValues::Strided16(s) => s,
+        TimestampValues::Contiguous(_) => {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "encode_designated_timestamp_strided called on contiguous column"
+            ));
+        }
+    };
+
+    if slice.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut dict_map: RapidHashMap<<i64 as NativeType>::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<i64> = Vec::new();
+    let mut state = ColumnChunkDictState::<MaxMin<i64>>::new(
+        Repetition::Required,
+        slice.len(),
+        options.write_statistics.then(MaxMin::<i64>::new),
+    );
+
+    // Concrete iterator (slice::Iter<[i64; 2]>::map over a non-capturing
+    // closure) — no enum dispatch in the hot loop.
+    for pair in slice {
+        let key = upsert_dict_entry(
+            &mut dict_map,
+            &mut dict_entries,
+            pair[0],
+            state.stats.as_mut(),
+        )?;
+        state.push_required_value(key);
+    }
+
+    let dict_entry_count = dict_entries.len();
+    let mut dict_buffer = Vec::with_capacity(dict_entry_count * std::mem::size_of::<i64>());
+    {
+        let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
+        let mut bloom = bloom_guard.as_deref_mut();
+        for &entry in &dict_entries {
+            dict_buffer.extend_from_slice(&entry.to_le_bytes());
+            if let Some(ref mut h) = bloom {
+                h.insert(hash_native(entry));
+            }
+        }
+    }
+
+    let stats = state
+        .stats
+        .map(|s| build_primitive_stats(Some(state.null_count as i64), s, primitive_type.clone()));
+    let data_page = build_primitive_dict_data_page(
+        &state.keys,
+        state.validity.as_ref(),
+        state.num_rows,
+        state.null_count,
+        dict_entry_count,
+        stats,
+        primitive_type,
+        options,
+        Repetition::Required,
+    )?;
+    Ok(vec![
+        parquet2::page::Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
+        parquet2::page::Page::Data(data_page),
+    ])
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Repetition {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,6 +38,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -150,7 +151,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         try {
             for (int i = 0; i < slaveStates.size(); i++) {
-                cursor.slaveCursors.setQuick(i, slaveStates.getQuick(i).getFactory().getTimeFrameCursor(executionContext));
+                TimeFrameCursor slaveCursor = slaveStates.getQuick(i).getFactory().getTimeFrameCursor(executionContext);
+                slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                cursor.slaveCursors.setQuick(i, slaveCursor);
             }
             cursor.of(masterCursor, executionContext);
             return cursor;
@@ -436,7 +439,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     final long scaledHorizonTs = scaleTimestamp(horizonTs, ss.getMasterTsScale());
                     long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
 
-                    long matchRowId = Long.MIN_VALUE;
+                    long matchRowId;
                     if (ss.isKeyed()) {
                         Record masterKeyRecord = masterRecord;
                         if (symbolTranslatingRecords.getQuick(s) != null) {

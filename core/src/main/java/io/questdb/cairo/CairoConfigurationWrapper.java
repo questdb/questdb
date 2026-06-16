@@ -1173,8 +1173,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return getDelegate().getSqlParquetFrameCacheCapacity();
+    public long getSqlParquetCacheMemorySize() {
+        return getDelegate().getSqlParquetCacheMemorySize();
     }
 
     @Override
@@ -1690,6 +1690,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return getDelegate().isSqlParquetRowGroupPruningEnabled();
+    }
+
+    @Override
+    public boolean isSqlWindowCachedLightEnabled() {
+        return getDelegate().isSqlWindowCachedLightEnabled();
     }
 
     @Override

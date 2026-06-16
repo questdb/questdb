@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -218,18 +219,23 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            delegate.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public long size() {
             return delegate.size();
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (baseCursor != null) {
                 buildFactories();
                 baseCursor = Misc.free(baseCursor);
             }
 
-            delegate.skipRows(rowCount);
+            delegate.skipRows(rowCount, maxRowsAfterSkip);
         }
 
         @Override
