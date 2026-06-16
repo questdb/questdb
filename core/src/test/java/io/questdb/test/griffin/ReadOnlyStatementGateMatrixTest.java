@@ -83,6 +83,58 @@ public class ReadOnlyStatementGateMatrixTest extends AbstractCairoTest {
     }
 
     /**
+     * The WAL DROP (DROP TABLE / DROP VIEW / DROP MATERIALIZED VIEW / DROP ALL TABLES) is classified
+     * engine-fenced, NOT gate-fenced: the gate the pg-wire and HTTP /exec fences share only sees a DROP on
+     * those two channels, but the QWP egress channel executes the compiled DROP directly and never consults
+     * ReadOnlyStatementGate. All four DROP shapes converge on the one engine entry point
+     * CairoEngine.dropTableOrViewOrMatView, whose WAL branch mints the replicated drop, so the engine fence
+     * on that method (the enterprise override) is the only barrier that covers every DROP shape across all
+     * three channels. The gate still refuses a genuine client DROP on the pg-wire / HTTP channel (asserted
+     * by testGateRefusesExactlyTheWriteTypes via EXPECTED_REFUSED), but that gate refusal is one channel
+     * only -- it does not, and cannot, fence the QWP egress DROP. This test records the classification and
+     * the gate-independence so a future change that mistakes the gate for the DROP's authoritative fence
+     * reds the matrix.
+     */
+    @Test
+    public void testDropIsEngineFencedNotGateFenced() throws Exception {
+        CairoConfiguration cfg = newConfiguration();
+
+        // The four WAL DROP shapes, enumerated individually so the matrix records that all four converge on
+        // the one engine entry point (including the multi-table DROP ALL TABLES loop).
+        String[] dropShapes = {"DROP TABLE", "DROP VIEW", "DROP MATERIALIZED VIEW", "DROP ALL TABLES"};
+        Assert.assertEquals(
+                "all four WAL DROP shapes must be enumerated -- DROP TABLE / VIEW / MATERIALIZED VIEW /"
+                        + " ALL TABLES",
+                4, dropShapes.length
+        );
+
+        // The single engine entry point all four shapes converge on -- the engine-fence chokepoint the
+        // enterprise override wraps in the role-switch read lock. The QWP egress channel reaches this mint
+        // without consulting the gate, so the engine fence here is the only catch-all.
+        Assert.assertNotNull(
+                "CairoEngine.dropTableOrViewOrMatView must exist -- the single engine entry point the WAL"
+                        + " DROP shapes converge on, fenced by the enterprise override (the QWP egress DROP"
+                        + " never consults this gate)",
+                io.questdb.cairo.CairoEngine.class.getDeclaredMethod(
+                        "dropTableOrViewOrMatView",
+                        io.questdb.std.str.Path.class,
+                        io.questdb.cairo.TableToken.class
+                )
+        );
+
+        // On the pg-wire / HTTP channel the gate still refuses a genuine client DROP (a null operation) on a
+        // read-only node, for every DROP shape. This is the channel the gate covers; the QWP egress DROP is
+        // engine-fenced, not gate-fenced.
+        for (String dropShape : dropShapes) {
+            Assert.assertTrue(
+                    "the " + dropShape + " shape mints a replicated WAL drop, so the live gate must refuse"
+                            + " DROP on the pg-wire / HTTP channel on a read-only node",
+                    ReadOnlyStatementGate.isRefusedOnReadOnly(CompiledQuery.DROP, null, cfg)
+            );
+        }
+    }
+
+    /**
      * The export-temp-table DROP exemption, exercised both ways: a DROP whose operation is the parquet
      * exporter's temp-table cleanup must be allowed on a read-only node (the one DROP a replica runs),
      * while every genuine client DROP (a non-export operation, or a null operation) stays refused.

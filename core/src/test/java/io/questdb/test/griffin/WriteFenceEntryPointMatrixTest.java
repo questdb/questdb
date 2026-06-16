@@ -134,6 +134,77 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     }
 
     /**
+     * A WAL DROP is a SINGLE CompiledQuery type (DROP) but FOUR distinct statement shapes -- DROP TABLE,
+     * DROP VIEW, DROP MATERIALIZED VIEW, DROP ALL TABLES -- and all four converge on the one engine entry
+     * point CairoEngine.dropTableOrViewOrMatView, which mints the replicated drop (tableSequencerAPI.dropTable)
+     * inside its WAL branch. A WAL DROP does NOT route through OperationDispatcher (it runs as a
+     * GenericDropOperation / DropAllOperation executed directly), so the pg-wire / HTTP executeDdlFenced
+     * route is one channel only; the QWP egress channel executes the compiled DROP directly and never
+     * consults ReadOnlyStatementGate. The ONLY barrier that covers all four shapes across all three
+     * channels (pg-wire, HTTP /exec, QWP egress) is an engine-level fence on dropTableOrViewOrMatView's
+     * WAL branch -- so the DROP cell is engine-fenced, not gate-fenced.
+     *
+     * <p>The engine fence lives in the enterprise module (EntCairoEngine.dropTableOrViewOrMatView, which
+     * wraps super in the role-switch read lock with an in-lock read-only re-check), which is not on the
+     * OSS test classpath. So the OSS matrix pins the shared OSS seam the enterprise override relies on:
+     * CairoEngine.dropTableOrViewOrMatView fires fireRoleSwitchMintObserver() inside its WAL branch
+     * immediately before the mint (the same seam the parse-time TRUNCATE mint fires and
+     * testParseTimeTruncateDrivesRealWriteAndIsFenced drives for real), so the enterprise DROP demote-race
+     * witness can pause the mint on both the fenced and the unfenced tree. The DROP ALL TABLES loop routes
+     * each WAL token through the same single dropTableOrViewOrMatView entry, so a multi-table DROP ALL is
+     * covered by the same one fence -- pinned by the multi-shape enumeration below.
+     */
+    @Test
+    public void testDropSubRoutesShareTheEngineFence() throws Exception {
+        // The four WAL DROP statement shapes, enumerated individually so the matrix records that all four
+        // converge on the one engine entry point (including the multi-table DROP ALL TABLES loop).
+        String[] dropShapes = {"DROP TABLE", "DROP VIEW", "DROP MATERIALIZED VIEW", "DROP ALL TABLES"};
+        Assert.assertEquals(
+                "all four WAL DROP shapes must be enumerated -- DROP TABLE / VIEW / MATERIALIZED VIEW /"
+                        + " ALL TABLES",
+                4, dropShapes.length
+        );
+
+        // The single engine entry point all four shapes converge on. A WAL DROP mints the replicated drop
+        // here (not through OperationDispatcher, and not behind the gate on the QWP egress channel), so the
+        // engine fence on this method is the only catch-all across pg-wire, HTTP /exec and QWP egress.
+        Assert.assertNotNull(
+                "CairoEngine.dropTableOrViewOrMatView must exist -- the single engine entry point the WAL"
+                        + " DROP TABLE / VIEW / MATERIALIZED VIEW / ALL TABLES shapes all converge on, and the"
+                        + " engine-fence chokepoint the enterprise override wraps in the role-switch read lock",
+                CairoEngine.class.getDeclaredMethod(
+                        "dropTableOrViewOrMatView",
+                        io.questdb.std.str.Path.class,
+                        TableToken.class
+                )
+        );
+        Assert.assertNotNull(
+                "CairoEngine.getRoleSwitchReadLock must exist -- the lock the enterprise DROP override holds"
+                        + " around the dropTableOrViewOrMatView WAL mint",
+                CairoEngine.class.getDeclaredMethod("getRoleSwitchReadLock")
+        );
+        Assert.assertNotNull(
+                "CairoEngine.fireRoleSwitchMintObserver must exist -- fired inside the dropTableOrViewOrMatView"
+                        + " WAL branch immediately before the mint (the same seam the parse-time TRUNCATE mint"
+                        + " fires), so the enterprise DROP demote-race witness can pause the mint on both trees",
+                CairoEngine.class.getDeclaredMethod("fireRoleSwitchMintObserver")
+        );
+
+        // The pg-wire / HTTP channel must refuse a genuine client DROP on a read-only node (the QWP egress
+        // channel is gate-independent and is covered by the engine fence). A null operation models a genuine
+        // client DROP (not the export-temp-table exemption, which has its own cross-check above).
+        CairoConfiguration cfg = new DefaultCairoConfiguration(root);
+        for (String dropShape : dropShapes) {
+            Assert.assertTrue(
+                    "the " + dropShape + " shape mints a replicated WAL drop, so the live"
+                            + " ReadOnlyStatementGate must refuse DROP on a read-only node for the pg-wire /"
+                            + " HTTP channel",
+                    ReadOnlyStatementGate.isRefusedOnReadOnly(CompiledQuery.DROP, null, cfg)
+            );
+        }
+    }
+
+    /**
      * The export-temp-table DROP exemption cross-check, exercised both ways: the parquet-export temp
      * table DROP is the one DROP a read-only replica runs (allowed), a genuine client DROP stays refused.
      * This is the single FENCED type that is conditionally exempt, so the matrix pins it explicitly.
@@ -224,6 +295,13 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("CREATE_TABLE_AS_SELECT", FENCED);
         http.put("CREATE_MAT_VIEW", FENCED);
         http.put("CREATE_VIEW", FENCED);
+        // DROP (DROP TABLE / VIEW / MATERIALIZED VIEW / ALL TABLES) routes to executeDdl on the pg-wire /
+        // HTTP channel, but a WAL DROP does NOT mint through OperationDispatcher: it converges on the one
+        // engine entry point CairoEngine.dropTableOrViewOrMatView, whose WAL branch mints the replicated
+        // drop. The QWP egress channel executes the same compiled DROP directly and never consults the
+        // gate, so the engine fence on dropTableOrViewOrMatView (the enterprise override) is the only
+        // catch-all across all three channels. FENCED -- engine-fenced, not gate-fenced; the four DROP
+        // shapes and the multi-table DROP ALL loop are pinned in testDropSubRoutesShareTheEngineFence.
         http.put("DROP", FENCED);
         // INSERT / INSERT_AS_SELECT route to executeInsert; the InsertOperation re-checks read-only in
         // its own execute() (the in-op fence), and externalizes only through a pooled writer the drain
@@ -372,10 +450,17 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     @Test
     public void testPgWireEntryPointClassifiesEveryType() throws Exception {
         Map<String, Byte> pg = new LinkedHashMap<>();
-        // CTAS/CREATE/CREATE MAT VIEW/DROP arms -> executeDdlFenced. FENCED.
+        // CTAS/CREATE/CREATE MAT VIEW arms -> executeDdlFenced. FENCED.
         put(pg, "CREATE_TABLE", FENCED);
         put(pg, "CREATE_TABLE_AS_SELECT", FENCED);
         put(pg, "CREATE_MAT_VIEW", FENCED);
+        // DROP (DROP TABLE / VIEW / MATERIALIZED VIEW / ALL TABLES) reaches executeDdl on the pg-wire
+        // channel, but a WAL DROP converges on the one engine entry point
+        // CairoEngine.dropTableOrViewOrMatView (not OperationDispatcher), whose WAL branch mints the
+        // replicated drop. The QWP egress channel executes the same compiled DROP directly and never
+        // consults the gate, so the engine fence on dropTableOrViewOrMatView (the enterprise override) is
+        // the only catch-all across all three channels. FENCED -- engine-fenced, not gate-fenced; pinned
+        // in testDropSubRoutesShareTheEngineFence (incl. the multi-table DROP ALL loop).
         put(pg, "DROP", FENCED);
         // CREATE VIEW routes to the default arm -> executeFenced by the gate predicate. FENCED.
         put(pg, "CREATE_VIEW", FENCED);

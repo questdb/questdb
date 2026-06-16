@@ -779,6 +779,14 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
                 durableAckRegistry.onTableDropped(tableToken);
+                // Both-trees pre-externalization fire-point: fire the role-switch mint observer here,
+                // immediately before tableSequencerAPI.dropTable mints the replicated drop. A WAL DROP
+                // does not route through OperationDispatcher (it runs as a GenericDropOperation executed
+                // directly), so this is the single externalization site for DROP TABLE/VIEW/MATERIALIZED
+                // VIEW/ALL TABLES across pg-wire, HTTP /exec and the QWP egress channel. Firing here lets
+                // a demote-race witness arm one seam that trips on both the fenced and the unfenced tree.
+                // A strict no-op in production (the observer field is null).
+                fireRoleSwitchMintObserver();
                 tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);

@@ -1645,6 +1645,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
             this.parquetExportTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX, "zzz.copy.");
+            if (Chars.isBlank(this.parquetExportTableNamePrefix)) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "prefix must not be blank");
+            }
             this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 500_000);
             this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
             this.parquetExportBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_BLOOM_FILTER_FPP, String.valueOf(PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP));
