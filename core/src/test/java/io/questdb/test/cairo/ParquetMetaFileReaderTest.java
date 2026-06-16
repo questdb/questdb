@@ -897,6 +897,84 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDirtyAheadCanSkipRowGroupUsesCommittedFooter() throws Exception {
+        // canSkipRowGroup's native reader must key on the resolved
+        // committed head, not the raw dirty-ahead header. The committed footer C
+        // carries TWO row groups; the orphaned dead footer C' past it carries
+        // ONE. Keyed on C', row group index 1 is out of range and the native side
+        // throws; keyed on the committed footer both indices prune cleanly.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100, 50, 1000, 2000)) {
+                final long committedHead = file.dataLen; // N: committed footer C (2 row groups), derived parquet size 158
+                final int origFooterLength = Unsafe.getInt(file.dataPtr + committedHead - 4);
+                final long origFooterOffset = committedHead - 4 - Integer.toUnsignedLong(origFooterLength);
+                final int rowGroupEntry0 = Unsafe.getInt(file.dataPtr + origFooterOffset + 40); // C's first row group entry
+
+                // Dead footer C': fixed(40) + 1 rg entry(4) + CRC(4) + trailer(4) = 52.
+                final int appendedFooterBytes = 52;
+                final long dirtyLen = committedHead + appendedFooterBytes; // M: header points past C, at C'
+
+                final long buf = Unsafe.malloc(dirtyLen, MemoryTag.NATIVE_DEFAULT);
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (
+                        Path path = new Path();
+                        DirectLongList emptyFilters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    Unsafe.copyMemory(file.dataPtr, buf, committedHead);
+
+                    // Speculative footer C' with a SINGLE row group (fewer than
+                    // committed C's two), reusing C's first block, prev = C.
+                    final long fc = buf + committedHead;
+                    Unsafe.putLong(fc, 400L);
+                    Unsafe.putInt(fc + 8, 80);
+                    Unsafe.putInt(fc + 12, 1);
+                    Unsafe.putLong(fc + 16, 0L);
+                    Unsafe.putLong(fc + 24, committedHead);
+                    Unsafe.putLong(fc + 32, 0L);
+                    Unsafe.putInt(fc + 40, rowGroupEntry0);
+                    Unsafe.putInt(fc + 44, 0);
+                    Unsafe.putInt(fc + 48, 48);
+                    // Dirty header points at C'; CRC spans the whole snapshot.
+                    Unsafe.putLong(buf, dirtyLen);
+                    patchCrc(buf, dirtyLen);
+
+                    path.concat(root).concat("dirty_ahead_canskip_pm").$();
+                    long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                    Assert.assertTrue(fd > -1);
+                    try {
+                        Assert.assertEquals(dirtyLen, ff.write(fd, buf, dirtyLen, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+
+                    final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
+                    Assert.assertTrue("openAndMapRO must map the dirty-ahead _pm", addr != 0);
+                    final long mappedSize = reader.getFileSize();
+                    try {
+                        Assert.assertTrue(reader.resolveFooter(158L));
+                        Assert.assertEquals("mapped header is the dirty-ahead M", dirtyLen, reader.getFileSize());
+                        Assert.assertEquals("resolved head is the committed N", committedHead, reader.getResolvedFileSize());
+                        Assert.assertEquals("committed footer has two row groups", 2, reader.getRowGroupCount());
+
+                        // First skip lazily creates the native reader. It must
+                        // parse the committed footer C, so both committed row
+                        // groups are addressable; keyed on the dead footer C',
+                        // index 1 would throw a CairoException -- the C1 bug.
+                        Assert.assertFalse(reader.canSkipRowGroup(0, emptyFilters, 0));
+                        Assert.assertFalse(reader.canSkipRowGroup(1, emptyFilters, 0));
+                    } finally {
+                        reader.clear();
+                        ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    }
+                } finally {
+                    Unsafe.free(buf, dirtyLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFooterChainWalkResolvesCorrectFooter() throws Exception {
         assertMemoryLeak(() -> {
             // Build a single-footer _pm: 1 column, parquetFooterOff=100, parquetFooterLen=50,
