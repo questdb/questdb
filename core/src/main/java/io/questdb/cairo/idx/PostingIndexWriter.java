@@ -209,6 +209,7 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean hasPendingData;
     private boolean hasSpillData;
     private boolean isLastRollbackStreaming;
+    private boolean isLastSealIncremental;
     private boolean isLastSealStreaming;
     private boolean isPoisoned;
     private int keyCapacity;
@@ -414,6 +415,7 @@ public class PostingIndexWriter implements IndexWriter {
                 hasPendingData = false;
                 isPoisoned = false;
                 isLastSealStreaming = false;
+                isLastSealIncremental = false;
                 isLastRollbackStreaming = false;
                 activeKeyCount = 0;
                 coverCount = 0;
@@ -985,6 +987,20 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public boolean isLastRollbackStreamingForTesting() {
         return isLastRollbackStreaming;
+    }
+
+    /**
+     * Whether the last seal() committed to the incremental branch
+     * ({@code true}) -- copying clean strides verbatim and merging only the
+     * dirty ones -- rather than a full seal ({@code false}, set whenever
+     * reencodeAllGenerations runs, including when sealIncremental's pre-flight
+     * defers to it). Lets a test assert the incremental-vs-full-seal pre-flight
+     * actually routed where it claims rather than inferring it from a
+     * regression-fragile headroom band. Reset on close/reopen.
+     */
+    @TestOnly
+    public boolean isLastSealIncrementalForTesting() {
+        return isLastSealIncremental;
     }
 
     /**
@@ -4345,12 +4361,16 @@ public class PostingIndexWriter implements IndexWriter {
         long toTxn = chain.getCurrentTxnAtSeal();
         long fromTxn;
         if (toTxn < 0) {
-            // The chain is empty — recordPostingSealPurge was called from
-            // a code path that didn't append an entry first (e.g. close
-            // without seal). Use a conservative window so the file
-            // lingers rather than disappearing under a live reader; the
-            // writer-open recovery walk will pick it up on the next
-            // reopen.
+            // The chain is empty -- recordPostingSealPurge was called from a
+            // code path that didn't append an entry first (e.g. close without
+            // seal). Use a conservative window [0, MAX) so the queued purge can
+            // never delete the file under a live reader; the global purge job
+            // reclaims it under its scoreboard check once the outbox drains via
+            // publishPendingPurges. If the writer is distressed and closes
+            // without draining (releasePendingPurges), the file leaks (bounded)
+            // like any other undrained entry -- no writer-open recovery walk
+            // reclaims it, the walk being chain-driven and unable to rediscover a
+            // never-published file. See scheduleOrphanPurge / releasePendingPurges.
             fromTxn = 0L;
             toTxn = Long.MAX_VALUE;
         } else {
@@ -4720,6 +4740,10 @@ public class PostingIndexWriter implements IndexWriter {
                 // pre-realloc cost (the upstream realloc that lived here
                 // previously could itself OOM under tight RSS, defeating the
                 // whole purpose of the pre-flight).
+                // A full seal ran (either directly or via sealIncremental's
+                // pre-flight fallback): clear the incremental flag for the test
+                // hook. The fast-vs-streaming sub-path then sets isLastSealStreaming.
+                isLastSealIncremental = false;
                 final long maxColValueSize = peakCoverColumnValueSize();
                 final long fastPathPeakBytes = estimateFastPathPeakBytes(maxStrideTotal, maxKeyCount, maxStrideTrialSize, maxColValueSize);
                 final long streamingPathPeakBytes = estimateStreamingPathPeakBytes(maxKeyCount, maxColValueSize);
@@ -5605,10 +5629,12 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         // Committed to the incremental path now (every fallback above returns via
-        // sealFull, which sets this in reencodeAllGenerations). The incremental seal
-        // is neither the fast nor the streaming full-seal path, so clear the flag
-        // rather than leaving a prior full seal's value stale for the test hook.
+        // sealFull, which sets these in reencodeAllGenerations). The incremental
+        // seal is neither the fast nor the streaming full-seal path, so clear
+        // isLastSealStreaming and flag isLastSealIncremental for the test hooks
+        // rather than leaving a prior full seal's values stale.
         isLastSealStreaming = false;
+        isLastSealIncremental = true;
 
         long strideIndexBuf = 0;
         long bpTrialBuf = 0;

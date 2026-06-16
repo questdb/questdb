@@ -1344,6 +1344,97 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRollbackRejectsNegativeDenseFlatPrefixCount() throws Exception {
+        // decodeDenseGenSingleKey guards count < 0, the partner of its
+        // count > capacity guard. A non-monotonic FLAT prefix-counts array
+        // (corruption) yields a negative per-key count; unguarded it would
+        // drive a negative destination offset and write out of bounds. Build a
+        // dense FLAT gen 0, corrupt the prefix so one key's count goes negative,
+        // then roll back -- filterCountsForRollback decodes that key and must
+        // throw rather than read/write out of bounds. The existing corrupt-gen
+        // tests only cover the count > capacity / over-decode direction.
+        final int numKeys = 200;  // 200 keys x 1 row -> stride 0 picks FLAT (see testSizeFastPathOnDenseFlatStride)
+        final int badKey = 100;   // mid-stride, so prefix[badKey] and prefix[badKey + 1] are interior slots
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "corrupt_flat_prefix";
+                final FilesFacade rawFf = configuration.getFilesFacade();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    long row = 0;
+                    for (int k = 0; k < numKeys; k++) {
+                        writer.add(k, row++);
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                    Assert.assertEquals("seal must leave a single dense gen 0", 1, writer.getGenCount());
+
+                    // Resolve gen 0's file offset, key count and the live sealTxn from the chain head.
+                    final long gen0FileOffset;
+                    final int gen0KeyCount;
+                    final long curSealTxn;
+                    final long pkLen = rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                            rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(pk);
+                        PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                        chain.loadHeadEntry(pk, head);
+                        Assert.assertEquals("expected a single dense gen 0", 1, head.genCount);
+                        curSealTxn = head.sealTxn;
+                        long gen0Dir = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0);
+                        gen0FileOffset = pk.getLong(gen0Dir + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+                        int genKeyCount = pk.getInt(gen0Dir + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                        Assert.assertEquals("gen 0 must be dense and cover every key", numKeys, genKeyCount);
+                        gen0KeyCount = genKeyCount;
+                    }
+
+                    // FLAT stride layout in .pv: [mode][baseValue][prefix counts: ks + 1 ints]...
+                    // count[badKey] = prefix[badKey + 1] - prefix[badKey]; make prefix[badKey + 1]
+                    // smaller than prefix[badKey] so that difference goes negative.
+                    final long pvLen = rawFf.length(PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn));
+                    int origPrefixNext = 0;
+                    long prefixNextSlot = 0;
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        int siSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
+                        long stride0Off = pv.getLong(gen0FileOffset); // stride index entry 0
+                        long strideAddr = gen0FileOffset + siSize + stride0Off;
+                        Assert.assertEquals("stride 0 must be FLAT to exercise the FLAT prefix guard",
+                                PostingIndexUtils.STRIDE_MODE_FLAT, pv.getByte(strideAddr));
+                        long prefixBase = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                        prefixNextSlot = prefixBase + (long) (badKey + 1) * Integer.BYTES;
+                        int prefixCur = pv.getInt(prefixBase + (long) badKey * Integer.BYTES);
+                        origPrefixNext = pv.getInt(prefixNextSlot);
+                        pv.putInt(prefixNextSlot, prefixCur - 1); // count[badKey] = (prefixCur - 1) - prefixCur = -1
+                    }
+
+                    // Roll back keeping badKey's row id (100 <= 189): filterCountsForRollback
+                    // decodes badKey from the corrupt FLAT stride and the count < 0 guard fires.
+                    try {
+                        writer.rollbackValues(numKeys - 11L); // keep rows <= 189; badKey's row (100) survives
+                        Assert.fail("rollback must reject a negative dense FLAT prefix count");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "corrupt posting index");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "dense FLAT key count");
+                    }
+
+                    // Restore the prefix so the try-with-resources close()'s auto-seal re-compacts
+                    // cleanly -- leaving the corruption would re-throw out of close() and mask the above.
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        pv.putInt(prefixNextSlot, origPrefixNext);
+                    }
+                }
+            }
+        });
+    }
+
     /**
      * The sealed-sidecar validator bounded the sealed region with
      * {@code sentinel + siSize <= fileLen}, which a corrupt

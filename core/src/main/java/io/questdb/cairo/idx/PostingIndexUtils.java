@@ -548,24 +548,20 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Decodes all values for a key from delta-encoded data directly into native memory,
-     * using pre-allocated workspace arrays from the provided context.
+     * Decodes all values for a key from delta-encoded data directly into native
+     * memory, using pre-allocated workspace arrays from the provided context.
+     * <p>
+     * {@code maxValues} caps the number of longs written to {@code destAddr}.
+     * Each block carries its own value count, so a corrupt or mismatched gen
+     * whose block-internal counts exceed the gen-dir count the caller sized its
+     * buffer to would otherwise overflow {@code destAddr}. This sums the
+     * block-internal counts and throws before any value is written when the
+     * total exceeds {@code maxValues}.
      *
-     * @param srcAddr  address of the encoded data for this key
-     * @param destAddr native memory destination address (must have room for totalCount longs)
-     * @param ctx      reusable decode context (call ensureCapacity first)
-     */
-    public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx) {
-        decodeKeyToNative(srcAddr, destAddr, ctx, Integer.MAX_VALUE);
-    }
-
-    /**
-     * Bounded variant: {@code maxValues} caps the number of longs written to
-     * {@code destAddr}. Each block carries its own value count, so a corrupt or
-     * mismatched gen whose block-internal counts exceed the gen-dir count the
-     * caller sized its buffer to would otherwise overflow {@code destAddr}.
-     * This sums the block-internal counts and throws before any value is
-     * written when the total exceeds {@code maxValues}.
+     * @param srcAddr   address of the encoded data for this key
+     * @param destAddr  native memory destination address (must have room for maxValues longs)
+     * @param ctx       reusable decode context (call ensureCapacity first)
+     * @param maxValues cap on the number of longs written to destAddr
      */
     public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx, int maxValues) {
         int firstWord = Unsafe.getInt(srcAddr);

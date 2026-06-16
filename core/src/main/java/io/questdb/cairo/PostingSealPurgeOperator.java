@@ -53,6 +53,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private final Path path;
     private final int pathRootLen;
     private boolean scanAllCoversRemoved;
+    private boolean scanAnyCoverRemoved;
     private CharSequence scanColumnName;
     private int scanPartitionPathLen;
     private long scanTargetPostingTxn;
@@ -86,7 +87,17 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         }
         LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(scanPartitionPathLen),
                 scanColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-        if (!ff.removeQuiet(pc)) {
+        // removeQuiet returns true on ENOENT too, but scanSealedFiles only
+        // invokes this callback for .pc files actually present in the directory
+        // listing, so a true return here means a real file was unlinked. Track
+        // it so purge() can run the same post-unlink reuse-race head re-read for
+        // covers that it already runs for the .pv (a reused-then-republished
+        // sealTxn can make a .pc.{sealTxn} live again between purge()'s pre-unlink
+        // guard and this scan; on Windows removeQuiet fails on the open mapped
+        // file, so the live .pc survives and this flag stays false).
+        if (ff.removeQuiet(pc)) {
+            scanAnyCoverRemoved = true;
+        } else {
             scanAllCoversRemoved = false;
         }
         path.trimTo(scanPartitionPathLen);
@@ -244,6 +255,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         }
 
         scanAllCoversRemoved = true;
+        scanAnyCoverRemoved = false;
         scanTargetSealTxn = task.getSealTxn();
         scanTargetPostingTxn = task.getPostingColumnNameTxn();
         scanColumnName = task.getIndexColumnName();
@@ -251,6 +263,36 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         path.trimTo(pathPartitionLen);
         PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, scanColumnName, this);
         path.trimTo(pathPartitionLen);
+
+        // Post-unlink reuse-race detection for the cover (.pc) files, the
+        // analogue of the .pv check above. The pre-unlink head guard abandons
+        // the whole task when the head already equals this sealTxn, but it is not
+        // atomic against a writer that REUSES this sealTxn and republishes
+        // .pc.{sealTxn} live in the window between that guard and the scan's
+        // directory snapshot -- onCoverDataFile would then unlink a live cover
+        // file. Re-read the head AFTER the scan (a republish the scan could have
+        // raced must have created the .pc before the snapshot, hence before this
+        // read): head == sealTxn AND a cover was actually removed means a live,
+        // reused .pc was deleted. Losing a .pc is less severe than losing the
+        // .pv -- the reader falls back to the base column rather than hard-failing
+        // -- but it is still a silent live-unlink, so surface the same REINDEX
+        // diagnostic. readSealTxnFromKeyFile returns -1 on a missing/unreadable
+        // .pk, which never equals a valid sealTxn, so a genuine orphan (no live
+        // .pk) does not trip this.
+        if (scanAnyCoverRemoved) {
+            path.trimTo(pathPartitionLen);
+            long postScanHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                    ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
+            path.trimTo(pathPartitionLen);
+            if (postScanHeadSealTxn == task.getSealTxn()) {
+                LOG.critical().$("posting seal purge: sealTxn became the live chain head during the orphan cover-file unlink (reuse race) and its .pc was deleted while live; REINDEX this column/partition [table=")
+                        .$(liveToken.getTableName())
+                        .$(", column=").$(task.getIndexColumnName())
+                        .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                        .$(", sealTxn=").$(task.getSealTxn())
+                        .I$();
+            }
+        }
 
         boolean done = allRemoved && scanAllCoversRemoved;
         if (done) {

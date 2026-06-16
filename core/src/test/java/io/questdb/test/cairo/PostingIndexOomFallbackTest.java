@@ -708,6 +708,8 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals("incremental seal should compact into one dense gen 0",
                             1, writer.getGenCount());
+                    Assert.assertTrue("the seal must have taken the incremental branch, not a full seal",
+                            writer.isLastSealIncrementalForTesting());
                 }
 
                 // Read-back: the hot key returns every rowid in order; each
@@ -803,6 +805,8 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals("fallback full seal should leave one dense gen 0",
                             1, writer.getGenCount());
+                    Assert.assertFalse("the incremental pre-flight must have deferred to a full seal",
+                            writer.isLastSealIncrementalForTesting());
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
