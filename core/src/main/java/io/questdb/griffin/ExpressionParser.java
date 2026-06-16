@@ -561,10 +561,13 @@ public class ExpressionParser {
             parseExpr(lexer, windowExprTreeBuilder, sqlParserCallback, decls);
             return windowExprTreeBuilder.getResult();
         } finally {
-            // Restore stack bottoms
-            opStack.setBottom(savedOpStackBottom);
-            paramCountStack.setBottom(savedParamCountStackBottom);
-            argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
+            // Restore stack bottoms. On an error unwind the inner parseExpr's catch already cleared
+            // these stacks (bottom=0), so a saved bottom raised by an enclosing lambda frame can
+            // exceed the emptied stack; clamp to avoid a masking IllegalStateException that would hide
+            // the real positioned error. No-op on the happy path (sizeRaw() >= the saved bottom).
+            opStack.setBottom(Math.min(savedOpStackBottom, opStack.sizeRaw()));
+            paramCountStack.setBottom(Math.min(savedParamCountStackBottom, paramCountStack.sizeRaw()));
+            argStackDepthStack.setBottom(Math.min(savedArgStackDepthStackBottom, argStackDepthStack.sizeRaw()));
         }
     }
 
@@ -2010,10 +2013,17 @@ public class ExpressionParser {
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
-                            } else {
+                            } else if (en.token instanceof GenericLexer.FloatingSequence) {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
+                            } else {
+                                // 'en' is not a valid qualifier for a dotted name. This happens for
+                                // malformed input such as "tables()/.env", where the top of the stack
+                                // is a pending operator ('/') rather than an identifier. Reject it
+                                // cleanly instead of letting the cast above fail with an internal
+                                // ClassCastException (which would surface as a 500/critical error).
+                                throw SqlException.$(lastPos, "'.' is unexpected here");
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
@@ -2194,7 +2204,10 @@ public class ExpressionParser {
             paramCountStack.clear();
             throw e;
         } finally {
-            scopeStack.setBottom(savedScopeStackBottom);
+            // The SqlException catch already cleared scopeStack (bottom=0); a nested frame's
+            // savedScopeStackBottom can then exceed the emptied stack, so clamp to avoid a masking
+            // IllegalStateException. No-op on the happy path (sizeRaw() >= savedScopeStackBottom).
+            scopeStack.setBottom(Math.min(savedScopeStackBottom, scopeStack.sizeRaw()));
             argStackDepthStack.popAll();
             paramCountStack.popAll();
         }

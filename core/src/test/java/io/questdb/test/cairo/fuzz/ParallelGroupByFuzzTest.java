@@ -2596,9 +2596,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         final int threadId = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            try {
+                            // SqlExecutionContext is not thread-safe: its compilation state (e.g.
+                            // timestampRequiredStack) is mutated during code generation, so each
+                            // worker thread must run with its own execution context.
+                            try (SqlExecutionContext threadContext = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, query, expected);
+                                    assertQueries(engine, threadContext, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
@@ -3770,9 +3773,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         final int threadId = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            try {
+                            // SqlExecutionContext is not thread-safe: its compilation state (e.g.
+                            // timestampRequiredStack) is mutated during code generation, so each
+                            // worker thread must run with its own execution context.
+                            try (SqlExecutionContext threadContext = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, query, expected);
+                                    assertQueries(engine, threadContext, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
@@ -3833,10 +3839,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         final int threadId = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker)
-                            try {
+                            // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker).
+                            // SqlExecutionContext is not thread-safe, so each worker uses its own context.
+                            try (SqlExecutionContext threadContext = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertCairoException(engine, sqlExecutionContext);
+                                    assertCairoException(engine, threadContext);
                                 }
                             } catch (NullPointerException npe) {
                                 // NPE is expected

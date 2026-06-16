@@ -694,6 +694,61 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOffsetWithVarLenColumns() throws Exception {
+        // A LIMIT query decodes only a prefix of each row group. For var-len
+        // columns on DELTA_LENGTH_BYTE_ARRAY pages the value bytes start after
+        // the FULL delta-encoded lengths block; the decoder used to compute
+        // their offset from the partially consumed block and served length
+        // bytes as values (garbage strings of the right length).
+        assertMemoryLeak(() -> {
+            final long rows = 5000;
+            execute("create table x as (select" +
+                    " x as id," +
+                    " rnd_str(1, 16, 4) as a_str," +
+                    " rnd_varchar(1, 16, 4) as a_varchar," +
+                    " rnd_bin(1, 24, 4) as a_bin" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 1");
+                assertSqlCursors0("select * from x limit 1");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 100, 500");
+                assertSqlCursors0("select * from x limit 100, 500");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 999, 2501");
+                assertSqlCursors0("select * from x limit 999, 2501");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit -2, -1999");
+                assertSqlCursors0("select * from x limit -2, -1999");
+            }
+        });
+    }
+
+    @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;

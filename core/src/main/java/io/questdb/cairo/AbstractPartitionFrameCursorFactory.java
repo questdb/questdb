@@ -87,6 +87,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
 
     @Override
     public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
+        // The token is resolved from the synchronously loaded registry, but the metadata
+        // cache is hydrated lazily; hydrate on demand so parquet row-group pruning is not
+        // silently skipped for a registered-but-not-yet-cached table during the startup
+        // hydration window.
+        executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
         try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
             CairoTable table = metadataRO.getTable(tableToken);
             return table != null && table.hasParquetPartitions();

@@ -129,12 +129,18 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
         ) throws SqlException {
             this.viewToken = viewToken;
             this.executionContext = executionContext;
+            // The view token is resolved from the synchronously loaded table registry
+            // (SqlParserCallback.getViewToken), which already guarantees the view exists
+            // and is a view. Do NOT treat a metadata-cache miss as "view does not exist":
+            // plain views have no _meta file, are skipped by the startup hydrator, and
+            // hydrateTableOnDemand() no-ops on views, so only the async ViewCompilerJob
+            // ever caches them. Gating on the cache would report a registered view as
+            // missing during the startup / embedded window (the bug fixed for SHOW CREATE
+            // TABLE/MATERIALIZED VIEW). Read the cache best-effort to keep the staleness
+            // guard when the view is warm; the definition itself is read from disk below.
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.view = metadataRO.getTable(viewToken);
-                if (this.view == null) {
-                    throw SqlException.$(tokenPosition, "view does not exist [view=")
-                            .put(viewToken.getTableName()).put(']');
-                } else if (!viewToken.equals(view.getTableToken())) {
+                if (this.view != null && !viewToken.equals(view.getTableToken())) {
                     throw TableReferenceOutOfDateException.of(viewToken);
                 }
             }

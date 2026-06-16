@@ -390,6 +390,135 @@ fn test_delta_length_array_slicer_skip() {
 }
 
 #[test]
+fn test_delta_length_array_slicer_partial_row_count_skip() {
+    // Partial decode (row_count < the page's total value count, e.g. a LIMIT
+    // query) driven through skip() + next() the way decode_page0 consumes a
+    // page with row_lo > 0. The page spans multiple delta blocks (128 values
+    // each) with varying lengths so the data offset depends on draining the
+    // full lengths block; see test_delta_length_array_slicer_partial_window
+    // for the plain next() variant.
+    let strings: Vec<String> = (0..300).map(|i| "y".repeat(i % 5 + 1)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 10, 10).unwrap();
+    slicer.skip(7).unwrap();
+    assert_eq!(slicer.next().unwrap(), strings[7].as_bytes());
+    assert_eq!(slicer.next().unwrap(), strings[8].as_bytes());
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_truncated_tail_block_errors() {
+    // The partial-decode drain walks the lengths block past the decoded prefix
+    // to locate the value bytes; a block truncated in that region must surface
+    // a clean error from the drain rather than a bogus data offset.
+    let strings: Vec<String> = (0..300).map(|i| "z".repeat(i % 7 + 1)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    // Locate the end of the lengths block by draining a throwaway decoder,
+    // then cut inside the block's tail, beyond the take(5) prefix.
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let lengths_end = decoder.consumed_bytes();
+    encoded.truncate(lengths_end - 10);
+
+    assert!(DeltaLengthArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_truncated_tail_block_errors() {
+    // DELTA_BYTE_ARRAY variant: a truncation inside the suffix-lengths block,
+    // beyond the decoded prefix, must error out of the suffix drain.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let prefix_end = decoder.consumed_bytes();
+    let mut decoder =
+        parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded[prefix_end..]).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let suffix_end = prefix_end + decoder.consumed_bytes();
+    encoded.truncate(suffix_end - 10);
+
+    assert!(DeltaBytesArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_truncated_prefix_block_errors() {
+    // DELTA_BYTE_ARRAY variant: a truncation inside the prefix-lengths block. With
+    // a partial row_count the prefix take() stops early, so locating the suffix
+    // block falls back to delta_stream_byte_len's structural walk of the prefix
+    // stream, which must error on the truncated block rather than panic or parse
+    // the suffix from inside the prefix.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut decoder = parquet2::encoding::delta_bitpacked::Decoder::try_new(&encoded).unwrap();
+    assert_eq!(decoder.by_ref().count(), 300);
+    let prefix_end = decoder.consumed_bytes();
+    encoded.truncate(prefix_end - 10);
+
+    assert!(DeltaBytesArraySlicer::try_new(&encoded, 5, 5).is_err());
+}
+
+#[test]
+fn test_delta_slicers_zero_row_count_construct_and_count() {
+    // The empty decode window [x, x) (LimitRecordCursor's sizing pass, LIMIT 0)
+    // reaches the slicers with row_count == 0 over a valid, non-empty values
+    // buffer. Both slicers must construct cleanly and report a zero count without
+    // decoding or panicking.
+    let length_strings = ["alpha", "beta", "gamma"];
+    let mut length_encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        length_strings.iter().map(|s| s.as_bytes()),
+        &mut length_encoded,
+    );
+    let length_slicer = DeltaLengthArraySlicer::try_new(&length_encoded, 0, 0).unwrap();
+    assert_eq!(length_slicer.count(), 0);
+
+    let bytes_strings: Vec<&[u8]> = vec![b"alpha", b"alpine", b"beta"];
+    let mut bytes_encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(bytes_strings.into_iter(), &mut bytes_encoded);
+    let bytes_slicer = DeltaBytesArraySlicer::try_new(&bytes_encoded, 0, 0).unwrap();
+    assert_eq!(bytes_slicer.count(), 0);
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_row_count() {
+    // Partial-decode variant for DELTA_BYTE_ARRAY: the suffix-lengths block
+    // starts after the FULL prefix-lengths block, and the suffix bytes after
+    // the FULL suffix-lengths block. Pre-fix, a partial prefix decode made
+    // try_new parse the suffix block from inside the prefix block.
+    let strings: Vec<String> = (0..300).map(|i| format!("prefix_{:05}", i)).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 5, 5).unwrap();
+    for expected in strings.iter().take(5) {
+        assert_eq!(slicer.next().unwrap(), expected.as_bytes());
+    }
+}
+
+#[test]
 fn test_delta_length_array_slicer_partial_range_constant_len() {
     // Regression for silent STRING corruption on a partial range read: when
     // row_count < num_values and the length stream spans more than one delta
@@ -935,4 +1064,90 @@ fn test_fixed_slicer_exact_buffer_reads_ok() {
     let mut sink = TestSink::new();
     slicer.next_slice_into(1, &mut sink).unwrap();
     assert_eq!(sink.into_inner(), data.to_vec());
+}
+
+#[test]
+fn test_delta_length_array_slicer_partial_window() {
+    // DELTA_LENGTH_BYTE_ARRAY lays out [all N lengths][concatenated bytes]. A
+    // partial decode window (row_count < N, e.g. a LIMIT-clamped page decode)
+    // must still locate the data start after the FULL lengths block; stopping at
+    // consumed_bytes() mid-block slices garbage for every value.
+    // Enough values to span many delta miniblocks (32 values each): a small input
+    // fits one miniblock, which the decoder consumes whole, masking the bug.
+    let strings: Vec<String> = (0..1000).map(|i| format!("value_{i}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for row_count in [1, 7, 33, 130, 1000] {
+        let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, row_count, row_count).unwrap();
+        for s in strings.iter().take(row_count) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_partial_window() {
+    // DELTA_BYTE_ARRAY lays out [all N prefix lengths][all N suffix lengths]
+    // [concatenated suffix bytes]. A partial decode window must drain both
+    // length blocks to find the suffix-block and data starts.
+    // Enough values to span many delta miniblocks (32 values each): a small input
+    // fits one miniblock, which the decoder consumes whole, masking the bug.
+    let strings: Vec<String> = (0..1000).map(|i| format!("prefix_{i}_suffix")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for row_count in [1, 7, 33, 130, 1000] {
+        let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, row_count, row_count).unwrap();
+        for s in strings.iter().take(row_count) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_length_array_slicer_window_with_row_lo() {
+    // A clamped page decode skips the leading row_lo rows: the slicer decodes the
+    // first row_hi lengths (row_hi < page rows), drains the rest to find the data
+    // start, then skip(row_lo) advances past the skipped values' bytes. Mirrors the
+    // sliced_row_count < row_count call shape from decode_column_chunk_with_params.
+    let strings: Vec<String> = (0..1000).map(|i| format!("value_{i}")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_length_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for (row_lo, row_hi) in [(130usize, 200usize), (1, 1000), (500, 700)] {
+        let mut slicer =
+            DeltaLengthArraySlicer::try_new(&encoded, row_hi, row_hi - row_lo).unwrap();
+        slicer.skip(row_lo).unwrap();
+        for s in strings.iter().take(row_hi).skip(row_lo) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn test_delta_bytes_array_slicer_window_with_row_lo() {
+    let strings: Vec<String> = (0..1000).map(|i| format!("prefix_{i}_suffix")).collect();
+    let mut encoded = Vec::new();
+    parquet2::encoding::delta_byte_array::encode(
+        strings.iter().map(|s| s.as_bytes()),
+        &mut encoded,
+    );
+
+    for (row_lo, row_hi) in [(130usize, 200usize), (1, 1000), (500, 700)] {
+        let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, row_hi, row_hi - row_lo).unwrap();
+        slicer.skip(row_lo).unwrap();
+        for s in strings.iter().take(row_hi).skip(row_lo) {
+            assert_eq!(slicer.next().unwrap(), s.as_bytes());
+        }
+    }
 }

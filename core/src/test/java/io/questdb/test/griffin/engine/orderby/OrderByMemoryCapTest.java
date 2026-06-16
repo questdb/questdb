@@ -37,8 +37,8 @@ import org.junit.Test;
 public class OrderByMemoryCapTest extends AbstractCairoTest {
 
     @Test
-    public void testParallelTopKPerWorkerCapFires() throws Exception {
-        // Each AsyncTopK worker builds its own LimitedSizeLongTreeChain carrying the full sort.key
+    public void testParallelTopKEncodedPerWorkerCapFires() throws Exception {
+        // Each AsyncTopK worker builds its own EncodedTopKBuffer carrying the full sort.key
         // budget, so a 64-byte cap fires per worker. Confirms AsyncTopKAtom threads the (raise ...)
         // hint correctly, not just the single-threaded path.
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, true);
@@ -56,8 +56,47 @@ public class OrderByMemoryCapTest extends AbstractCairoTest {
                         sqlExecutionContext
                 );
 
-                // Multi-column ORDER BY routes through the tree chain rather than the long top-K path.
+                // Fixed-width INT keys take the encoded per-worker buffers rather than the tree chain.
                 final String query = "SELECT ts, g, v FROM tab ORDER BY g, v LIMIT 40000";
+
+                // Guard against a silent serial fallback: the plan must be the parallel top-K factory.
+                final StringSink sink = new StringSink();
+                TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + query, sink);
+                TestUtils.assertContains(sink, "Async");
+                TestUtils.assertContains(sink, "Top K");
+
+                try {
+                    TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+                    Assert.fail("expected LimitOverflowException from constrained sort.key budget");
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                            "memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes or cairo.sql.sort.light.value.max.bytes)");
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelTopKTreeChainPerWorkerCapFires() throws Exception {
+        // A VARCHAR sort key is not encodable, so AsyncTopK falls back to the per-worker
+        // LimitedSizeLongTreeChain; a 64-byte sort.key cap fires per worker with the
+        // RedBlackTree (raise ...) hint.
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute(
+                        "CREATE TABLE tab AS (" +
+                                "SELECT (x * 1_000_000L)::TIMESTAMP AS ts, (x % 1_000)::VARCHAR AS s, x::INT AS v" +
+                                " FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY",
+                        sqlExecutionContext
+                );
+
+                final String query = "SELECT ts, s, v FROM tab ORDER BY s, v LIMIT 40000";
 
                 // Guard against a silent serial fallback: the plan must be the parallel top-K factory.
                 final StringSink sink = new StringSink();

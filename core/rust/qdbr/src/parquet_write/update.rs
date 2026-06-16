@@ -36,7 +36,7 @@ use parquet2::schema::types::ParquetType;
 use parquet2::schema::Repetition;
 use parquet2::write;
 use parquet2::write::footer_cache::FooterCache;
-use parquet2::write::{ParquetFile, Version};
+use parquet2::write::{ColumnOffsetsMetadata, ParquetFile, Version};
 use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
 use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
@@ -1268,10 +1268,15 @@ fn build_raw_row_group(
         .filter_map(|c| c.meta_data.as_ref())
         .map(|m| m.total_compressed_size)
         .sum();
+    // RowGroup.file_offset points at the start of the row group, which is
+    // the offset of the first page of the first column chunk. When that
+    // column has a dictionary page, the dictionary precedes the data pages
+    // and is the actual start; reading data_page_offset alone overshoots by
+    // dict_bytes_written. Mirror parquet2's helper so the dict-or-data
+    // fallback stays in lockstep with write_row_group.
     let file_offset = columns
         .first()
-        .and_then(|c| c.meta_data.as_ref())
-        .map(|m| m.data_page_offset);
+        .and_then(|c| ColumnOffsetsMetadata::from_column_chunk(c).calc_row_group_file_offset());
 
     RowGroup {
         columns,
@@ -2253,6 +2258,81 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    fn make_column_chunk(
+        data_page_offset: i64,
+        dictionary_page_offset: Option<i64>,
+    ) -> super::ColumnChunk {
+        super::ColumnChunk {
+            file_path: None,
+            file_offset: 0,
+            meta_data: Some(super::ColumnMetaData {
+                type_: super::Type::INT64,
+                encodings: vec![],
+                path_in_schema: vec!["c".to_string()],
+                codec: super::CompressionCodec::UNCOMPRESSED,
+                num_values: 0,
+                total_uncompressed_size: 500,
+                total_compressed_size: 250,
+                key_value_metadata: None,
+                data_page_offset,
+                index_page_offset: None,
+                dictionary_page_offset,
+                statistics: None,
+                encoding_stats: None,
+                bloom_filter_offset: None,
+                bloom_filter_length: None,
+            }),
+            offset_index_offset: None,
+            offset_index_length: None,
+            column_index_offset: None,
+            column_index_length: None,
+            crypto_metadata: None,
+            encrypted_column_metadata: None,
+        }
+    }
+
+    #[test]
+    fn build_raw_row_group_uses_dict_offset_when_first_column_has_dict() {
+        // Regression: build_raw_row_group used to read only data_page_offset
+        // for RowGroup.file_offset. With the new (spec-correct) page offsets,
+        // a dict-encoded first column has data_page_offset past the dict
+        // page; using it would overshoot the row group's start byte by
+        // dict_bytes_written.
+        let dict_offset: i64 = 1000;
+        let data_offset: i64 = 1090;
+        let columns = vec![
+            make_column_chunk(data_offset, Some(dict_offset)),
+            make_column_chunk(2000, None),
+        ];
+
+        let rg = super::build_raw_row_group(columns, 10, None);
+        assert_eq!(
+            rg.file_offset,
+            Some(dict_offset),
+            "row group file_offset must point at the dict page, not the data page"
+        );
+    }
+
+    #[test]
+    fn build_raw_row_group_uses_data_offset_when_first_column_has_no_dict() {
+        let data_offset: i64 = 1000;
+        let columns = vec![make_column_chunk(data_offset, None)];
+
+        let rg = super::build_raw_row_group(columns, 10, None);
+        assert_eq!(rg.file_offset, Some(data_offset));
+    }
+
+    #[test]
+    fn build_raw_row_group_falls_back_to_data_offset_when_dict_offset_is_zero() {
+        // calc_row_group_file_offset filters dict_offset > 0; a sentinel 0
+        // should be ignored and the data_page_offset used instead.
+        let data_offset: i64 = 1000;
+        let columns = vec![make_column_chunk(data_offset, Some(0))];
+
+        let rg = super::build_raw_row_group(columns, 10, None);
+        assert_eq!(rg.file_offset, Some(data_offset));
     }
 
     /// Regression for the no-sorting-columns case (a table with no designated
