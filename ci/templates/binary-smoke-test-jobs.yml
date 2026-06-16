@@ -77,6 +77,14 @@ jobs:
           dist_dir="$(ls -d questdb-*-rt-*/ | head -1)"
           root="$PWD/smoke-root"
           rm -rf "$root"
+          # The pipeline sets QDB_LOG_W_FILE_LOCATION (test-hosted-pipeline.yml)
+          # to route unit-test JVM logs into a shared tests.log. That env var
+          # overrides w.file.location in the packaged server's conf/log.conf,
+          # whose rolling-file writer requires a `$` in the location -- a plain
+          # tests.log path makes LogRollingFileWriter reject it and the server
+          # never starts. Clear all leaked QDB_LOG_* overrides so the smoke
+          # server uses its own shipped log configuration.
+          for v in $(env | grep -o '^QDB_LOG_[A-Za-z0-9_]*' || true); do unset "$v"; done
           "${dist_dir}bin/questdb.sh" start -d "$root"
           ok=0
           for _ in $(seq 1 60); do
