@@ -5102,24 +5102,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'wal' or 'replication'");
-        if (isReplicationKeyword(tok)) {
-            // ALTER TABLE <t> RESUME REPLICATION: clear the per-table _rebase_new marker so the table
-            // replicates normally again (set by ALTER TABLE ... REBASE WAL).
-            if (!engine.isWalTable(tableToken)) {
-                throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
-            }
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && !Chars.equals(tok, ';')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
-            }
-            executionContext.getSecurityContext().authorizeResumeWal(tableToken);
-            if (!executionContext.isValidationOnly()) {
-                engine.resumeReplication(tableToken);
-            }
-            compiledQuery.ofTableResume();
-            return;
-        }
+        CharSequence tok = expectToken(lexer, "'wal'");
         if (!isWalKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
         }
@@ -5190,6 +5173,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
             }
         }
+        executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 

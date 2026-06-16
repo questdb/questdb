@@ -55,7 +55,7 @@ public class WalUtils {
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
     // Per-table marker file written on the freshly-created table of an ALTER TABLE ... REBASE WAL. Lives
-    // in the table dir; survives restart; cleared by RESUME REPLICATION. getReplicationStatus reports
+    // in the table dir and is permanent (survives restart, never removed). getReplicationStatus reports
     // REBASE_NEW so the uploader skips the empty first txn and records it in the replication index, and a
     // replica stalls instead of building the table from empty until a physical copy arrives.
     public static final String REBASE_NEW_FILE_NAME = "_rebase_new";
@@ -142,20 +142,6 @@ public class WalUtils {
         final int len = tableDirPath.size();
         try {
             return ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$());
-        } finally {
-            tableDirPath.trimTo(len);
-        }
-    }
-
-    /**
-     * Removes the {@link #REBASE_NEW_FILE_NAME} marker (RESUME REPLICATION). Idempotent.
-     *
-     * @param tableDirPath path positioned at the table directory; restored on return.
-     */
-    public static void removeRebaseNewMarker(FilesFacade ff, Path tableDirPath) {
-        final int len = tableDirPath.size();
-        try {
-            ff.removeQuiet(tableDirPath.concat(REBASE_NEW_FILE_NAME).$());
         } finally {
             tableDirPath.trimTo(len);
         }

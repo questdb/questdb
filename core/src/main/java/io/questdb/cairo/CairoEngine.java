@@ -1401,15 +1401,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Re-enables replication for the table on this node (clears whatever {@link #markRebaseNew} set).
-     * Invoked by {@code ALTER TABLE ... RESUME REPLICATION}. No-op in OSS; enterprise overrides it to
-     * delete the per-table marker and re-notify the downloader. Must be idempotent.
-     */
-    public void resumeReplication(TableToken tableToken) {
-        // no-op in OSS
-    }
-
-    /**
      * Removes a table from the runtime hard-suspend set. Called by
      * {@code ALTER TABLE ... RESUME WAL}. A table configured via
      * {@code cairo.wal.apply.suspended.tables} stays suspended until also removed from the config.
@@ -1430,7 +1421,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
-        return configured != null && configured.contains(tableToken.getTableName());
+        return configured != null && configured.contains(tableToken.getDirName());
     }
 
     public boolean isWalTable(TableToken tableToken) {

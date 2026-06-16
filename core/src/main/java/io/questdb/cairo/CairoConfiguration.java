@@ -883,10 +883,12 @@ public interface CairoConfiguration {
     int getWalApplyLookAheadTransactionCount();
 
     /**
-     * Set of logical table names whose WAL transactions must not be applied by the
-     * ApplyWal2Table job ("hard suspended" tables). Configured via
-     * {@code cairo.wal.apply.suspended.tables} (comma-separated) and reloadable. The runtime set
-     * extended through {@code ALTER TABLE ... SUSPEND WAL} is held separately on the engine.
+     * Set of table directory names (e.g. {@code my_table~3}) whose WAL transactions must not be
+     * applied by the ApplyWal2Table job ("hard suspended" tables). Directory names are matched, not
+     * logical names, so the suspension binds to the physical table across a rename and a fresh table
+     * reusing the name is unaffected. Configured via {@code cairo.wal.apply.suspended.tables}
+     * (comma-separated) and reloadable. The runtime set extended through
+     * {@code ALTER TABLE ... SUSPEND WAL} is held separately on the engine.
      *
      * @return the configured set, or null when none are configured (treated as empty).
      */

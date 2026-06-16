@@ -932,9 +932,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String walApplySuspendedTablesValue = getString(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
         if (walApplySuspendedTablesValue != null) {
             for (String entry : walApplySuspendedTablesValue.split(",")) {
-                final String tableName = entry.trim();
-                if (!tableName.isEmpty()) {
-                    walApplySuspendedTables.add(tableName);
+                final String dirName = entry.trim();
+                if (!dirName.isEmpty()) {
+                    walApplySuspendedTables.add(dirName);
                 }
             }
         }

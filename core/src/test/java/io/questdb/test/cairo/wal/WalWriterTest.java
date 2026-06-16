@@ -5170,6 +5170,43 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalSucceedsWhenConfigSuspendsSameName() throws Exception {
+        // Regression: a cairo.wal.apply.suspended.tables entry that shares the table's logical name
+        // must not block REBASE WAL. The config list is matched by dir name, and the rebased table
+        // gets a fresh dir, so its seed commit (getWalWriter on the new dir) is not denied. Before the
+        // fix the config was matched by logical name, which the new dir shared, so the seed threw
+        // "table is suspended" and the rebase rolled back.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        // Logical name in the list; with dir-name matching this no longer suspends the table by itself.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, "t");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Hard-suspend to block writes (the rebase precondition), then rebase.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            // The fresh dir is not in the config list, so the rebased table is live and writable.
+            Assert.assertFalse(engine.isWalApplySuspended(newToken));
+
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+        });
+    }
+
+    @Test
     public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
@@ -5270,7 +5307,8 @@ public class WalWriterTest extends AbstractCairoTest {
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
 
             // The reloadable config list suspends the table and denies writes.
-            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, "t");
+            final String dirName = engine.verifyTableName("t").getDirName();
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
             Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
             try {
                 execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");

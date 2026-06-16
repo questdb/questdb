@@ -137,6 +137,10 @@ public interface SecurityContext extends Mutable {
 
     void authorizeSqlEngineAdmin();
 
+    default void authorizeSuspendWal(TableToken tableToken) {
+        authorizeResumeWal(tableToken);
+    }
+
     void authorizeSystemAdmin();
 
     void authorizeTableCreate();
