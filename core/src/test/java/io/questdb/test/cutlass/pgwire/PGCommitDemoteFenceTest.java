@@ -26,10 +26,10 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cutlass.pgwire.PGMessageProcessingException;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.test.AbstractCairoTest;
@@ -52,7 +52,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * RED state (before the fix): commit(pendingWriters) had no read-only check and no lock; a parked
  * writer was flushed unconditionally even on a read-only node, acknowledging an unreplicated write
  * to the client (the table's seqTxn advances). The test asserts writerAPI.commit() is NOT called and
- * an authorization error is thrown -- both fail before the fix.
+ * the flush is refused by throwing a processing exception carrying the read-only authorization
+ * message -- both fail before the fix.
  * <p>
  * GREEN state (after the fix): the early-out, the in-lock re-check, and the rollback-on-refusal all
  * refuse the flush; writerAPI.commit() is never called and the parked writers are rolled back.
@@ -66,7 +67,8 @@ public class PGCommitDemoteFenceTest extends AbstractCairoTest {
      * <p>
      * RED state: only the (absent) early-out existed, so the flip between the two reads went
      * undetected and the parked writer was flushed.
-     * GREEN state: the in-lock re-check catches the flip and throws authorization without flushing.
+     * GREEN state: the in-lock re-check catches the flip and refuses the flush by throwing a
+     * processing exception carrying the read-only authorization message, without flushing.
      */
     @Test
     public void testCommitInLockReCheckCatchesFlipAfterEarlyOut() throws Exception {
@@ -78,8 +80,8 @@ public class PGCommitDemoteFenceTest extends AbstractCairoTest {
                 ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters = parkWriter(commitCalled);
                 try {
                     entry.commit(pendingWriters);
-                    Assert.fail("commit() must throw authorization when the in-lock re-check sees read-only");
-                } catch (CairoException e) {
+                    Assert.fail("commit() must throw a processing exception when the in-lock re-check sees read-only");
+                } catch (PGMessageProcessingException e) {
                     assertReadOnlyRefusal(e);
                 }
                 Assert.assertEquals("writerAPI.commit() must not be called on the flipped node", 0, commitCalled.get());
@@ -111,8 +113,9 @@ public class PGCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     /**
-     * The headline bypass: a parked writer plus a read-only engine. The flush must be refused with
-     * the standard authorization error, the writer rolled back, and writerAPI.commit() never called.
+     * The headline bypass: a parked writer plus a read-only engine. The flush must be refused by
+     * throwing a processing exception carrying the read-only authorization message, the writer
+     * rolled back, and writerAPI.commit() never called.
      * This exercises the early-out path AND, via the always-read-only engine, the in-lock re-check.
      */
     @Test
@@ -124,8 +127,8 @@ public class PGCommitDemoteFenceTest extends AbstractCairoTest {
                 ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters = parkWriter(commitCalled);
                 try {
                     entry.commit(pendingWriters);
-                    Assert.fail("commit() must throw CairoException.authorization on a read-only node");
-                } catch (CairoException e) {
+                    Assert.fail("commit() must throw a processing exception on a read-only node");
+                } catch (PGMessageProcessingException e) {
                     assertReadOnlyRefusal(e);
                 }
                 Assert.assertEquals("writerAPI.commit() must not be called on a read-only node", 0, commitCalled.get());
@@ -134,11 +137,10 @@ public class PGCommitDemoteFenceTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertReadOnlyRefusal(CairoException e) {
-        Assert.assertTrue("exception must be an authorization error", e.isAuthorizationError());
+    private static void assertReadOnlyRefusal(PGMessageProcessingException e) {
         Assert.assertTrue(
                 "message must be 'replica access is read-only'",
-                e.getMessage().contains("replica access is read-only")
+                e.getFlyweightMessage().toString().contains("replica access is read-only")
         );
     }
 
