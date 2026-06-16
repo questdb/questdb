@@ -40,6 +40,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -86,7 +87,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             final int keyHeapPageSize = configuration.getSqlWindowTreeKeyPageSize();
             heap = new MemoryCARWImpl(
                     keyHeapPageSize,
-                    (int) Math.min(Integer.MAX_VALUE, maxEntryMemBytes / keyHeapPageSize + 1),
+                    (int) Math.min(Integer.MAX_VALUE, maxEntryMemBytes / Numbers.ceilPow2(keyHeapPageSize) + 1),
                     MemoryTag.NATIVE_DEFAULT,
                     PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES.getPropertyPath()
             );

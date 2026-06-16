@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -202,7 +203,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
                 // second word and heap tail, so let the full encode + endAppend decide.
                 return false;
             }
-            cmp = Long.compare(len, thresholdLen);
+            cmp = Long.compareUnsigned(len, thresholdLen);
             if (cmp == 0) {
                 cmp = Long.compareUnsigned(rowId, thresholdEntry[4]);
             }
@@ -234,7 +235,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
             if (len > VAR_PREFIX6_KEY_BYTES && thresholdLen > VAR_PREFIX6_KEY_BYTES) {
                 return false;
             }
-            cmp = Long.compare(len, thresholdLen);
+            cmp = Long.compareUnsigned(len, thresholdLen);
             if (cmp == 0) {
                 cmp = Long.compareUnsigned(rowId, thresholdEntry[4]);
             }
@@ -467,7 +468,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
                 cmp = compareMemory(tailAddr, thresholdTailMem.getAddress(), minLen - SortKeyEncoder.KEY_PREFIX_BYTES);
             }
             if (cmp == 0) {
-                cmp = Long.compare(len, thresholdLen);
+                cmp = Long.compareUnsigned(len, thresholdLen);
             }
             if (cmp == 0) {
                 cmp = Long.compareUnsigned(Unsafe.getLong(entryAddr + VAR_ENTRY_ROWID_OFFSET), thresholdEntry[4]);
@@ -508,7 +509,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         final long budget = Math.min(keyCapBytes, SortKeyEncoder.MAX_ENTRY_HEAP_BYTES);
         return new MemoryCARWImpl(
                 keyHeapPageSize,
-                (int) Math.min(Integer.MAX_VALUE, budget / keyHeapPageSize + 1),
+                (int) Math.min(Integer.MAX_VALUE, budget / Numbers.ceilPow2(keyHeapPageSize) + 1),
                 MemoryTag.NATIVE_DEFAULT,
                 PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
         );

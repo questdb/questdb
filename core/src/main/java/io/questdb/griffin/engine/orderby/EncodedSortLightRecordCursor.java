@@ -44,6 +44,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -93,7 +94,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             );
             this.keyHeap = new MemoryCARWImpl(
                     keyHeapPageSize,
-                    (int) Math.min(Integer.MAX_VALUE, maxKeyHeapBytes / keyHeapPageSize + 1),
+                    (int) Math.min(Integer.MAX_VALUE, maxKeyHeapBytes / Numbers.ceilPow2(keyHeapPageSize) + 1),
                     MemoryTag.NATIVE_DEFAULT,
                     PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
             );

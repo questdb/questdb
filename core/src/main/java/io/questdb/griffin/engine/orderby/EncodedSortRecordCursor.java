@@ -84,7 +84,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             final long keyHeapPageSize = configuration.getSqlSortKeyPageSize();
             this.keyHeap = new MemoryCARWImpl(
                     keyHeapPageSize,
-                    (int) Math.min(Integer.MAX_VALUE, maxEntryMemBytes / keyHeapPageSize + 1),
+                    (int) Math.min(Integer.MAX_VALUE, maxEntryMemBytes / Numbers.ceilPow2(keyHeapPageSize) + 1),
                     MemoryTag.NATIVE_DEFAULT,
                     PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
             );
