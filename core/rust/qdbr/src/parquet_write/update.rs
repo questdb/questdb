@@ -121,7 +121,14 @@ pub struct ParquetUpdater {
     target_col_id_to_pos: Option<RapidHashMap<i32, usize>>,
     parquet_meta_fd: Option<File>,
     parquet_meta_file_size: u64,
-    existing_parquet_meta_file_size: i64,
+    // The append base: the `_pm` offset-0 header (the reader's getFileSize()),
+    // threaded in from Java parallel to the parse anchor (parquet_meta_file_size).
+    // New incremental bytes land here, strictly past any orphaned dead footer a
+    // rolled-back update left between the parse anchor and the append base.
+    append_base: u64,
+    // The existing parquet data-file size, used only as a first-time (`<= 0`) vs
+    // incremental gate in end(). It is not a `_pm` size.
+    existing_parquet_file_size: i64,
     result_parquet_meta_size: i64,
     // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
     // Seeded at construction from the old qdb_meta's ascii flag:
@@ -160,7 +167,8 @@ impl ParquetUpdater {
         min_compression_ratio: f64,
         parquet_meta_fd: Option<File>,
         parquet_meta_file_size: u64,
-        existing_parquet_meta_file_size: i64,
+        append_base: u64,
+        existing_parquet_file_size: i64,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -355,7 +363,8 @@ impl ParquetUpdater {
             target_col_id_to_pos: None,
             parquet_meta_fd,
             parquet_meta_file_size,
-            existing_parquet_meta_file_size,
+            append_base,
+            existing_parquet_file_size,
             result_parquet_meta_size: -1,
             varchar_all_ascii,
         })
@@ -967,7 +976,7 @@ impl ParquetUpdater {
                 .map(|i| i as i32)
                 .unwrap_or(-1);
 
-            if self.is_rewrite || self.existing_parquet_meta_file_size <= 0 {
+            if self.is_rewrite || self.existing_parquet_file_size <= 0 {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
@@ -993,29 +1002,21 @@ impl ParquetUpdater {
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
                 // Incremental update: read the committed _pm and append the new
-                // snapshot. Two distinct offsets drive this:
+                // snapshot. Two distinct offsets drive this, both threaded in
+                // from Java:
                 //  - parse anchor: the committed head resolved from `_txn`
-                //    (`parquet_meta_file_size`, threaded from Java). Drives which
-                //    footer is parsed, the new footer's `prev`, and the reused
-                //    row-group offsets.
-                //  - append base: the published `parquet_meta_file_size` header
-                //    at offset 0 (== the Java reader's getFileSize()). New bytes
-                //    land there, strictly past any orphaned dead footer a
-                //    rolled-back update left in [parse anchor, append base), so
-                //    committed and reader-mapped bytes are never overwritten.
-                //    The two coincide unless a prior update patched the header
-                //    but crashed before its `_txn` commit (the crash window).
-                //    The table write lock is held, so the header is stable.
+                //    (`parquet_meta_file_size`). Drives which footer is parsed,
+                //    the new footer's `prev`, and the reused row-group offsets.
+                //  - append base: the `_pm` offset-0 header (the Java reader's
+                //    getFileSize()). New bytes land there, strictly past any
+                //    orphaned dead footer a rolled-back update left in
+                //    [parse anchor, append base), so committed and reader-mapped
+                //    bytes are never overwritten. The two coincide unless a prior
+                //    update patched the header but crashed before its `_txn`
+                //    commit (the crash window). The table write lock is held, so
+                //    the header is stable between the Java read and this write.
                 let parse_anchor = self.parquet_meta_file_size;
-                let mut header = [0u8; 8];
-                parquet_meta_file
-                    .seek(SeekFrom::Start(0))
-                    .map_err(ParquetError::from)?;
-                parquet_meta_file
-                    .read_exact(&mut header)
-                    .map_err(ParquetError::from)
-                    .context("could not read _pm header")?;
-                let append_base = u64::from_le_bytes(header);
+                let append_base = self.append_base;
                 let mut existing_pm = vec![0u8; append_base as usize];
                 parquet_meta_file
                     .seek(SeekFrom::Start(0))
@@ -1075,13 +1076,15 @@ impl ParquetUpdater {
     /// lands the snapshot is published -- even if the following `sync_data`
     /// throws, the header already points at the new footer. That is safe: the
     /// committed `_txn` `parquet_meta_file_size` is unchanged, so a reader pinned
-    /// to it walks the MVCC chain back to the committed footer. Sequential writes
-    /// on one fd are kernel-ordered and `pread` / `MAP_SHARED` reads observe them
-    /// in order, so a reader that sees the patched size also sees the appended
-    /// blocks and footer; no Java-side fence on the `_pm` itself is required. The
-    /// cross-thread hand-off is instead ordered by `_txn`'s own acquire fence
-    /// (the `Unsafe.loadFence` in `TxReader.unsafeLoadBaseOffset`), which gates
-    /// when the new `parquet_meta_file_size` becomes visible to readers.
+    /// to it walks the MVCC chain back to the committed footer. The writer and
+    /// the readers run on the same host and share the OS page cache (they open
+    /// distinct fds / a fresh mmap, not one shared fd), so a reader observes the
+    /// writer's appended blocks and footer once it sees the size that points at
+    /// them. What gates that size is not the `_pm` writes themselves but `_txn`:
+    /// the cross-thread hand-off is ordered by `_txn`'s acquire fence (the
+    /// `Unsafe.loadFence` in `TxReader.unsafeLoadBaseOffset`), which gates when
+    /// the new `parquet_meta_file_size` becomes visible to readers. A reader that
+    /// sees the committed `_txn` size therefore also sees the bytes it points at.
     ///
     /// When `sync` is set the `sync_data` stops a power loss from leaving `_txn`
     /// pointing at a footer the page cache lost. In NOSYNC commit mode the fsync
@@ -1893,7 +1896,8 @@ mod tests {
                 100.0,                          // min_compression_ratio (impossibly high)
                 None,                           // parquet_meta_fd
                 0,                              // parquet_meta_file_size
-                -1,                             // existing_parquet_meta_file_size
+                0,                              // append_base
+                -1,                             // existing_parquet_file_size
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -1953,7 +1957,8 @@ mod tests {
                 0.5,  // min_compression_ratio: ratio check active but easily met
                 None, // parquet_meta_fd
                 0,    // parquet_meta_file_size
-                -1,   // existing_parquet_meta_file_size
+                0,    // append_base
+                -1,   // existing_parquet_file_size
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -2381,6 +2386,7 @@ mod tests {
             0.0,
             None,
             0,
+            0,
             -1,
         )?;
 
@@ -2476,6 +2482,7 @@ mod tests {
             0.0,
             None,
             0,
+            0,
             -1,
         )?;
 
@@ -2570,6 +2577,7 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
+            0,
             0,
             -1,
         )?;
@@ -2680,6 +2688,7 @@ mod tests {
             0.0,
             None,
             0,
+            0,
             -1,
         )?;
 
@@ -2764,6 +2773,7 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
+            0,
             0,
             -1,
         )?;

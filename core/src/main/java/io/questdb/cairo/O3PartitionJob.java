@@ -303,8 +303,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // Parse anchor = committed head (resolved from _txn), not
                         // the raw header: a rolled-back update can leave the
                         // header ahead of _txn, and parsing from there would
-                        // build on dead row groups. The append base is the _pm
-                        // header (offset 0), read Rust-side from the held fd.
+                        // build on dead row groups. The append base, passed
+                        // separately below as parquetMetaReader.getFileSize(), is
+                        // the raw _pm header (offset 0) where the new bytes land.
                         updaterParquetMetaFileSize = parquetMetaReader.getResolvedFileSize();
                         // Restore path to parquet file.
                         path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
@@ -343,8 +344,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         bloomFilterFpp,
                         minCompressionRatio,
                         parquetMetaFdOs,
-                        updaterParquetMetaFileSize,
-                        parquetFileSize
+                        updaterParquetMetaFileSize, // parse anchor (committed head from _txn)
+                        parquetMetaReader.getFileSize(), // append base (_pm header at offset 0)
+                        parquetFileSize // existing parquet data-file size (gates first-time vs incremental)
                 );
 
                 if (hasSchemaChange) {
@@ -672,9 +674,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                     fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
                     if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
-                        ff.fsync(fd);
+                        // fsyncAndClose closes the fd even when fsync fails, so a
+                        // throw here does not leak the _pm fd.
+                        ff.fsyncAndClose(fd);
+                    } else {
+                        ff.close(fd);
                     }
-                    ff.close(fd);
                 }
             }
             // Rewrite mode: original is intact, new dir already removed by the inner catch.

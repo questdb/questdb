@@ -134,6 +134,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         0.0,
                         -1, // no _pm fd
                         0L,
+                        0L,
                         -1L
                 );
 
@@ -154,6 +155,139 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
 
                 final long updatedParquetPartitionSize = ff.length(path.$());
                 Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitPublishesHeaderWhileCommittedReaderResolvesOldFooter() throws Exception {
+        // Exercises commitParquetMeta's real header-publish through two real
+        // updates (no spliced buffer, no fail-point). Update A full-creates the
+        // _pm at committedHead. Update B is a normal incremental update: its
+        // end() appends a new committed footer at [committedHead, newHead) but
+        // leaves the header at committedHead, then commitParquetMeta patches the
+        // header to newHead and fsyncs. That reproduces the "header patched, then
+        // fsync throws (or a crash before the _txn commit)" sub-window:
+        // getFileSize() reports the published-ahead header newHead, yet a reader
+        // still pinned to the unchanged committed _txn resolves the committed
+        // footer at committedHead by walking the MVCC chain back -- no torn read.
+        // The fsync itself is not fault-injected: the header-before-fsync
+        // ordering inside commit_parquet_meta is structural, and forcing the Rust
+        // sync_data to throw would need a production test seam the project
+        // forbids. Each update appends a row group to data.parquet, so the two
+        // snapshots' footers carry distinct parquet-size tokens; resolveFooter
+        // keys on that parquet data size (from _txn), so the committed token
+        // (committedParquetSize) resolves Update A's footer while Long.MAX_VALUE
+        // takes Update B's.
+        assertMemoryLeak(() -> {
+            final String tableName = "commit_publish_test";
+            final long rows = 10;
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute("CREATE TABLE " + tableName + " AS (SELECT" +
+                    " x id," +
+                    " timestamp_sequence(400_000_000_000, 500)::" + timestampType.getTypeName() + " designated_ts" +
+                    " FROM long_sequence(" + rows + ")) TIMESTAMP(designated_ts) PARTITION BY DAY");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater()
+            ) {
+                final TableToken table = engine.getTableTokenIfExists(tableName);
+                path.concat(root).concat(table.getDirNameUtf8()).concat("1970-01-05").slash$();
+                path.put(".1").slash$();
+                final int versionedDirLen = path.size();
+                ff.mkdirs(path, configuration.getMkDirMode());
+                path.concat("data.parquet").$();
+
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                PartitionEncoder.encode(descriptor, path);
+                final long parquetDataSize0 = ff.length(path.$());
+                final int opts = configuration.getWriterFileOpenOpts();
+
+                // Update A: full-create the _pm (gate == 0). The full-create
+                // writes the header as part of its bytes, so the on-disk header
+                // already equals committedHead -- no commitParquetMeta needed.
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                int parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
+                path.trimTo(versionedDirLen).concat("data.parquet").$();
+                int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                int writerFd = Files.detach(ff.openRW(path.$(), opts));
+                updater.of(path.$(), readerFd, parquetDataSize0, writerFd, parquetDataSize0,
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L);
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+                final long committedHead = updater.getResultParquetMetaFileSize();
+                Assert.assertTrue(committedHead > 0);
+                // Update A appended a row group + new footer: data.parquet grew,
+                // and committedParquetSize is the committed footer's MVCC token.
+                final long committedParquetSize = ff.length(path.$());
+                // The full-create wrote the header as part of its bytes, so the
+                // on-disk _pm length already equals committedHead.
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                Assert.assertEquals("full-create _pm length is committedHead", committedHead, ff.length(path.$()));
+
+                // Update B: a normal incremental update (gate > 0). Parse anchor
+                // and append base both sit cleanly at the committed head (NOT the
+                // dirty-ahead case). end() appends another row group + footer to
+                // data.parquet and writes the new _pm footer at
+                // [committedHead, newHead), leaving the header at committedHead.
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
+                path.trimTo(versionedDirLen).concat("data.parquet").$();
+                readerFd = Files.detach(ff.openRONoCache(path.$()));
+                writerFd = Files.detach(ff.openRW(path.$(), opts));
+                updater.of(path.$(), readerFd, committedParquetSize, writerFd, committedParquetSize,
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, committedHead, committedParquetSize);
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+                final long newHead = updater.getResultParquetMetaFileSize();
+                Assert.assertTrue("incremental update must extend the _pm", newHead > committedHead);
+
+                // Publish: the REAL header patch (header -> newHead) followed by
+                // sync_data. This is the exact code path the safety claim rests
+                // on.
+                updater.commitParquetMeta(true);
+
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                Assert.assertEquals("physical _pm length is newHead", newHead, ff.length(path.$()));
+
+                // A reader pinned to the OLD committed _txn (the committed parquet
+                // data size token) resolves the committed footer, even though the
+                // header was published ahead to newHead.
+                ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+                Assert.assertTrue("openAndMapRO must map the _pm", addr != 0);
+                long mappedSize = parquetMetaReader.getFileSize();
+                try {
+                    Assert.assertEquals("header published ahead to newHead", newHead, parquetMetaReader.getFileSize());
+                    // resolveFooter verifies the resolved footer's cumulative CRC,
+                    // so corruption would throw here.
+                    Assert.assertTrue(parquetMetaReader.resolveFooter(committedParquetSize));
+                    Assert.assertEquals("pinned reader resolves the committed footer", committedHead, parquetMetaReader.getResolvedFileSize());
+                    Assert.assertTrue("committed head precedes the published header", parquetMetaReader.getResolvedFileSize() < parquetMetaReader.getFileSize());
+                } finally {
+                    parquetMetaReader.clear();
+                    ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
+
+                // The newly published footer is itself valid: a post-recovery
+                // reader (once _txn advances to newHead) takes the physically-last
+                // footer and resolves newHead.
+                parquetMetaReader = new ParquetMetaFileReader();
+                addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+                Assert.assertTrue("openAndMapRO must map the _pm", addr != 0);
+                mappedSize = parquetMetaReader.getFileSize();
+                try {
+                    Assert.assertTrue(parquetMetaReader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertEquals("physically-last footer resolves to newHead", newHead, parquetMetaReader.getResolvedFileSize());
+                } finally {
+                    parquetMetaReader.clear();
+                    ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
             }
         });
     }
@@ -218,6 +352,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         0.01,
                         0.0,
                         -1, // no _pm fd
+                        0L,
                         0L,
                         -1L
                 );
@@ -292,6 +427,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         0.0,
                         parquetMetaFd,
                         parquetPartitionSize,
+                        parquetPartitionSize,
                         0L
                 );
 
@@ -353,7 +489,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 int readerFd = Files.detach(ff.openRONoCache(path.$()));
                 int writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(path.$(), readerFd, parquetDataSize0, writerFd, parquetDataSize0,
-                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, 0L);
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();
@@ -394,7 +530,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 readerFd = Files.detach(ff.openRONoCache(path.$()));
                 writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(path.$(), readerFd, parquetDataSize1, writerFd, parquetDataSize1,
-                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, parquetDataSize1);
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, physicalWithDeadTail, parquetDataSize1);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();

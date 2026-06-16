@@ -171,7 +171,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     min_compression_ratio: jdouble,
     parquet_meta_fd: jint,
     parquet_meta_file_size: jlong,
-    existing_parquet_meta_file_size: jlong,
+    append_base: jlong,
+    existing_parquet_file_size: jlong,
 ) -> *mut ParquetUpdater {
     let env = &mut env;
     let create = || -> ParquetResult<ParquetUpdater> {
@@ -220,7 +221,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             min_compression_ratio,
             parquet_meta_fd_handle,
             parquet_meta_file_size as u64,
-            existing_parquet_meta_file_size,
+            append_base as u64,
+            existing_parquet_file_size,
         )
     };
 
