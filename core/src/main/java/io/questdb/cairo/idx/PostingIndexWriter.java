@@ -4782,8 +4782,8 @@ public class PostingIndexWriter implements IndexWriter {
      * After the row-id index is sealed, sidecars are written via the
      * streaming variant {@link #writeSidecarsPerColumnStreaming}.
      *
-     * @param keyBuffer pre-allocated workspace sized to {@code maxKeyCount * 8} bytes,
-     *                  reused across keys; lifetime owned by the caller
+     * @param keyBuffer  pre-allocated workspace sized to {@code maxKeyCount * 8} bytes,
+     *                   reused across keys; lifetime owned by the caller
      * @param isRollback {@code true} when re-encoding the surviving prefix of a
      *                   rollback (the per-key decode may legitimately exceed the
      *                   surviving {@code count}, which is the filtered prefix, so
