@@ -218,13 +218,14 @@ public class WriterPool extends AbstractPool {
             Entry e = entries.get(tableToken.getDirName());
             if (e == null) {
                 // We are racing to create new writer!
-                e = new Entry(clock.getTicks());
-                Entry other = entries.putIfAbsent(tableToken.getDirName(), e);
+                final String dirName = tableToken.getDirName();
+                e = new Entry(clock.getTicks(), dirName);
+                Entry other = entries.putIfAbsent(dirName, e);
                 if (other == null) {
                     if (lockAndNotify(thread, e, tableToken, lockReason)) {
                         return OWNERSHIP_REASON_NONE;
                     } else {
-                        entries.remove(tableToken.getDirName());
+                        entries.remove(dirName);
                         return reinterpretOwnershipReason(e.ownershipReason);
                     }
                 } else {
@@ -474,17 +475,12 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    // Removes an entry by identity. Used to evict an orphaned entry whose writer was already
-    // freed out of band (TableWriter.destroy()), where the table dir name is no longer reachable
-    // through e.writer. Rare path - only a dropped WAL table reaches it.
+    // Evicts an orphaned entry whose writer was already freed out of band (TableWriter.destroy()),
+    // where the table dir name is no longer reachable through the nulled e.writer. The entry caches
+    // the map key it was inserted under, so this removes it in O(1), and only when the key still
+    // maps to this exact entry. Rare path - only a dropped WAL table reaches it.
     private void evictEntry(Entry e) {
-        Iterator<Entry> iterator = entries.values().iterator();
-        while (iterator.hasNext()) {
-            if (iterator.next() == e) {
-                iterator.remove();
-                return;
-            }
-        }
+        entries.remove(e.dirName, e);
     }
 
     private TableWriter getWriterEntry(
@@ -500,8 +496,9 @@ public class WriterPool extends AbstractPool {
             Entry e = entries.get(tableToken.getDirName());
             if (e == null) {
                 // We are racing to create new writer!
-                e = new Entry(clock.getTicks());
-                Entry other = entries.putIfAbsent(tableToken.getDirName(), e);
+                final String dirName = tableToken.getDirName();
+                e = new Entry(clock.getTicks(), dirName);
+                Entry other = entries.putIfAbsent(dirName, e);
                 if (other == null) {
                     // race won
                     return createWriter(tableToken, e, thread, lockReason);
@@ -739,6 +736,10 @@ public class WriterPool extends AbstractPool {
         // drainCommandPublishers) before it frees the queue so a publisher can never
         // write into freed memory.
         private volatile long commandPublisherCount;
+        // The entries map key (tableToken.getDirName()) this entry was inserted under. The
+        // dir name is stable across renames, so it stays valid for the entry's whole life and
+        // lets evictEntry() remove the entry in O(1) even once e.writer has been nulled.
+        private final String dirName;
         private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
@@ -748,8 +749,9 @@ public class WriterPool extends AbstractPool {
         private volatile String ownershipReason = OWNERSHIP_REASON_NONE;
         private TableWriter writer;
 
-        public Entry(long lastReleaseTime) {
+        public Entry(long lastReleaseTime, String dirName) {
             this.lastReleaseTime = lastReleaseTime;
+            this.dirName = dirName;
         }
 
         @Override

@@ -526,6 +526,101 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncCommandPublishDrainsBeforePoolClosedReturn() throws Exception {
+        // Deterministic proof for the pool-closed return path (returnToPool's re-grab, the
+        // EV_OUT_OF_POOL_CLOSE branch): when the pool closes while a writer is checked out,
+        // returning that writer runs doClose, which frees the command queue. A publisher parked
+        // mid-serialize holds the in-flight count, so the return must block in
+        // drainCommandPublishers() until the publisher finishes. This is the only one of the four
+        // drain sites reached by a normal close into a closed pool, and the deterministic tests
+        // above never exercise it with a real in-flight publisher. The 250 ms negative wait is
+        // biased-safe (see the distressed-close test).
+        assertWithPool(pool -> {
+            final SOCountDownLatch publisherInSerialize = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseSerialize = new SOCountDownLatch(1);
+            final AtomicBoolean closeReturned = new AtomicBoolean();
+            final AtomicBoolean sawOutOfPoolClose = new AtomicBoolean();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            pool.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (event == PoolListener.EV_OUT_OF_POOL_CLOSE) {
+                    sawOutOfPoolClose.set(true);
+                }
+            });
+
+            // Hold the writer busy so the publisher takes the publish/serialize path.
+            final TableWriter ownerWriter = pool.get(zTableToken, "owner");
+            final int tableId = zTableToken.getTableId();
+            final TestPublishCommand command =
+                    new TestPublishCommand(zTableToken, tableId, publisherInSerialize, releaseSerialize);
+
+            Thread publisher = new Thread(() -> {
+                try {
+                    TableWriter w = pool.getWriterOrPublishCommand(zTableToken, "publisher", command);
+                    Assert.assertNull(w); // command was published, no writer handed back
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread closer = new Thread(() -> {
+                try {
+                    // Pool already closed: returnToPool re-grabs the entry and runs doClose, which
+                    // frees the command queue -> drainCommandPublishers must wait for the publisher.
+                    ownerWriter.close();
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    closeReturned.set(true);
+                    Path.clearThreadLocals();
+                }
+            });
+
+            boolean closerStarted = false;
+            try {
+                publisher.start();
+                // Wait until the publisher is inside serialize, holding the in-flight count.
+                if (!publisherInSerialize.await(TimeUnit.SECONDS.toNanos(30))) {
+                    throw new AssertionError("publisher never reached serialize()", error.get());
+                }
+
+                // Close the pool while the owner still holds the writer. The busy writer is not
+                // released here; the pool-closed return path runs when the owner closes below.
+                pool.close();
+
+                closer.start();
+                closerStarted = true;
+
+                // With the fix the return stays blocked here; without it closeReturned flips fast.
+                for (int i = 0; i < 250 && !closeReturned.get(); i++) {
+                    Os.sleep(1);
+                }
+                Assert.assertFalse(
+                        "pool-closed return freed the command queue while a publisher was mid-serialize",
+                        closeReturned.get());
+            } finally {
+                releaseSerialize.countDown();
+                publisher.join();
+                if (closerStarted) {
+                    closer.join();
+                }
+                if (ownerWriter.isOpen()) {
+                    ownerWriter.close();
+                }
+            }
+
+            Assert.assertTrue("pool-closed return did not complete after publisher finished", closeReturned.get());
+            Assert.assertTrue("publisher did not finish serializing into a live buffer", command.serializeComplete);
+            Assert.assertTrue("returnToPool did not take the pool-closed re-grab path", sawOutOfPoolClose.get());
+            if (error.get() != null) {
+                throw new AssertionError("publisher or closer failed", error.get());
+            }
+        });
+    }
+
+    @Test
     public void testBasicCharSequence() throws Exception {
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
