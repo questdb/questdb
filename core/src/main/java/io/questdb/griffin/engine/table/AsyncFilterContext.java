@@ -136,10 +136,12 @@ public class AsyncFilterContext implements Closeable {
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
-        // Shrink the row-id and column-address lists back to initial capacity, as
-        // PageFrameReduceTask.clear() does. A JIT filter grows them to a full page frame
-        // and they only ever grow, so a cached/idle factory would otherwise pin
-        // peak-sized NATIVE_OFFLOAD buffers until eviction.
+        // Shrink the row-id and column-address lists back to initial capacity,
+        // mirroring the per-task reset in PageFrameReduceTask.clear(). Under a JIT
+        // filter the row-id lists grow to a full page frame (up to
+        // cairo.sql.page.frame.max.rows longs = 8 MB each) and only ever grow, so an
+        // idle or cached factory would otherwise pin peak-sized NATIVE_OFFLOAD buffers
+        // until eviction.
         resetCapacity(ownerFilteredRows);
         resetCapacity(ownerDataAddresses);
         resetCapacity(ownerAuxAddresses);
