@@ -564,9 +564,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
 
                 // Publish the new _pm last: patch its header (the MVCC commit
-                // signal) and fsync. Done after the index build so any failure up
-                // to here leaves the committed header intact, with the new footer
-                // an invisible dead tail past it that the next update overwrites.
+                // signal) and fsync. Done after the index build so any failure
+                // before the header patch leaves the committed header intact,
+                // with the new footer an invisible dead tail past it that the
+                // next update overwrites. commitParquetMeta patches the header
+                // before its fsync, so a throw from the fsync alone still
+                // publishes the header; that is safe because _txn is unchanged
+                // and a pinned reader walks back to the committed footer (see
+                // commit_parquet_meta).
                 partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
             } catch (Throwable e) {
                 if (isRewrite) {
@@ -603,14 +608,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ff.close(fd);
 
                 if (parquetMetaReader.getAddr() != 0) {
-                    // Leave _pm un-truncated, header unrestored. commitParquetMeta
-                    // runs only after a successful index build, so a failure here
-                    // never patched the header: it still points at the committed
-                    // footer, and the failed update's bytes sit past it as an
-                    // invisible dead tail the next update overwrites. Truncating
-                    // would pull pages from under a concurrent reader's mmap and
-                    // SIGBUS the JVM -- the hazard this change removes. fsync so
-                    // the leftover dead tail is durable, not a partial tail.
+                    // Leave _pm un-truncated, header unrestored. A failure before
+                    // commitParquetMeta leaves the header at the committed footer;
+                    // a failure inside it (header patched, then fsync threw)
+                    // leaves the header at the new footer. Either way the
+                    // committed _txn size is unchanged, so a reader walks the MVCC
+                    // chain back to the committed footer and the failed update's
+                    // bytes sit past it as a dead tail the next update overwrites.
+                    // Truncating would pull pages from under a concurrent reader's
+                    // mmap and SIGBUS the JVM -- the hazard this change removes.
+                    // fsync so the leftover tail is durable, not a partial tail.
                     path.of(pathToTable);
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                     fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
