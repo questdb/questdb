@@ -78,7 +78,9 @@ public class WriterPool extends AbstractPool {
     public static final String OWNERSHIP_REASON_RELEASED = "released";
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
+    private static final long ENTRY_COMMAND_PUBLISHER_COUNT = Unsafe.getFieldOffset(Entry.class, "commandPublisherCount");
     private static final long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private static final long ENTRY_WRITER = Unsafe.getFieldOffset(Entry.class, "writer");
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
@@ -325,9 +327,26 @@ public class WriterPool extends AbstractPool {
             // Retry from very beginning
             throw EntryUnavailableException.instance("please retry");
         }
-        // Publish it. publishAsyncWriterCommand() marks the command as executing
-        // asynchronously (startAsync) once it has validated the WAL invariant.
-        writer.publishAsyncWriterCommand(asyncWriterCommand);
+        // Announce ourselves as an in-flight command publisher before serializing into
+        // the writer's command queue, then re-validate the writer reference we captured.
+        // closeWriter() nulls e.writer and drains this count to zero before it frees the
+        // queue. getAndAddLong is a full fence, so closeWriter() either observes our
+        // count and waits for us, or we observe the nulled writer and bail - the two can
+        // never both slip through, which is what kept serialize() from writing into a
+        // freed/zeroed TableWriterTask buffer and crashing the JVM with a SIGSEGV.
+        Unsafe.getAndAddLong(e, ENTRY_COMMAND_PUBLISHER_COUNT, 1);
+        try {
+            if (Unsafe.getObjectVolatile(e, ENTRY_WRITER) != writer) {
+                // A concurrent close pulled the writer out from under us. Do not serialize
+                // into its soon-to-be-freed queue; let the caller retry.
+                throw EntryUnavailableException.instance("please retry");
+            }
+            // Publish it. publishAsyncWriterCommand() marks the command as executing
+            // asynchronously (startAsync) once it has validated the WAL invariant.
+            writer.publishAsyncWriterCommand(asyncWriterCommand);
+        } finally {
+            Unsafe.getAndAddLong(e, ENTRY_COMMAND_PUBLISHER_COUNT, -1);
+        }
 
         // Make sure writer does not go to the pool with command in the queue
         // Wait until writer is either in the pool or out
@@ -340,7 +359,12 @@ public class WriterPool extends AbstractPool {
             // Writer became available straight after setting items in the queue.
             // Don't leave it unprocessed
             try {
-                writer.tick(true);
+                // Re-read the writer under ownership: a close racing our publish may have
+                // freed the one we captured. Only tick a live writer.
+                TableWriter w = e.writer;
+                if (w != null) {
+                    w.tick(true);
+                }
             } finally {
                 Unsafe.cas(e, ENTRY_OWNER, thread, UNALLOCATED);
             }
@@ -377,10 +401,12 @@ public class WriterPool extends AbstractPool {
     private void closeWriter(long thread, Entry e, short ev, int reason) {
         TableWriter w = e.writer;
         if (w != null) {
-            TableToken tableToken = e.writer.getTableToken();
+            TableToken tableToken = w.getTableToken();
+            // Wait out any in-flight async-command publisher before w.close() frees the
+            // writer command queue (see drainCommandPublishers).
+            drainCommandPublishers(e);
             w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
-            e.writer = null;
             e.ownershipReason = OWNERSHIP_REASON_RELEASED;
             LOG.info().$("closed [table=").$(tableToken)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
@@ -429,6 +455,21 @@ public class WriterPool extends AbstractPool {
             e.owner = UNALLOCATED;
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
             throw ex;
+        }
+    }
+
+    // Makes the entry's writer unreachable to async-command publishers and waits for any
+    // that already captured it to finish serializing into its command queue. A caller must
+    // invoke this before freeing the writer (w.close() -> Misc.free(commandQueue)).
+    // A publisher announces itself via commandPublisherCount in addCommandToWriterQueue;
+    // without this drain it could serialize into a freed/zeroed TableWriterTask buffer and
+    // crash the JVM with a SIGSEGV. putObjectVolatile publishes the null reference and
+    // getAndAddLong reads the count with a full fence; together with the publisher's fenced
+    // increment, neither side can miss the other.
+    private void drainCommandPublishers(Entry e) {
+        Unsafe.putObjectVolatile(e, ENTRY_WRITER, null);
+        while (Unsafe.getAndAddLong(e, ENTRY_COMMAND_PUBLISHER_COUNT, 0) > 0) {
+            Os.pause();
         }
     }
 
@@ -595,7 +636,10 @@ public class WriterPool extends AbstractPool {
                 // to avoid race condition try to grab the writer before declaring it a
                 // free agent
                 if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
-                    e.writer = null;
+                    // Returning false makes TableWriter.close() run doClose(), which frees
+                    // the command queue. Drain in-flight publishers first, just like
+                    // closeWriter() does on the other free paths.
+                    drainCommandPublishers(e);
                     notifyListener(thread, tableToken, PoolListener.EV_OUT_OF_POOL_CLOSE);
                     return false;
                 }
@@ -668,6 +712,11 @@ public class WriterPool extends AbstractPool {
     }
 
     public class Entry implements LifecycleManager {
+        // Number of threads currently serializing an async writer command into this
+        // entry's writer command queue. The pool drains this to zero (see
+        // drainCommandPublishers) before it frees the queue so a publisher can never
+        // write into freed memory.
+        private volatile long commandPublisherCount;
         private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
@@ -706,7 +755,9 @@ public class WriterPool extends AbstractPool {
             TableWriter w = writer;
             if (writer != null) {
                 writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
-                writer = null;
+                // The caller takes the writer out of the pool and will close it itself,
+                // freeing the command queue. Detach it from in-flight publishers first.
+                drainCommandPublishers(this);
             }
             return w;
         }

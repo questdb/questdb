@@ -37,13 +37,17 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.wal.MetadataService;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -127,6 +131,162 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertTrue(writerCount.get() > 0);
             Assert.assertEquals(0, errors1.get());
             Assert.assertEquals(0, errors2.get());
+        });
+    }
+
+    @Test
+    public void testAsyncCommandPublishConcurrentWithWriterClose() throws Exception {
+        // Stress the async-command publish path against writers that constantly go
+        // distressed and get closed. Before the fix a publisher could serialize into a
+        // TableWriterTask buffer that closeWriter() freed underneath it, which surfaced
+        // either as a JVM SIGSEGV or as an "async command/event queue buffer overflow"
+        // CairoException (a write into a closed/zeroed task). After the fix the close
+        // drains in-flight publishers first, so neither happens.
+        final int publisherCount = 3;
+        final int iterations = 3_000;
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final AtomicBoolean running = new AtomicBoolean(true);
+
+        assertWithPool(pool -> {
+            final int tableId = zTableToken.getTableId();
+            final CyclicBarrier barrier = new CyclicBarrier(publisherCount + 1);
+            final ObjList<Thread> publishers = new ObjList<>();
+
+            for (int p = 0; p < publisherCount; p++) {
+                Thread publisher = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (running.get() && error.get() == null) {
+                            try {
+                                TableWriter w = pool.getWriterOrPublishCommand(
+                                        zTableToken, "publisher", new TestPublishCommand(zTableToken, tableId));
+                                if (w != null) {
+                                    // Writer was free, not busy - nothing was published.
+                                    w.close();
+                                }
+                            } catch (EntryUnavailableException | PoolClosedException ignore) {
+                                // expected: writer busy / pool closing
+                            } catch (CairoException e) {
+                                // "queue is full" is a legitimate outcome under stress (the
+                                // distressed closes never tick the queue). A buffer overflow
+                                // is the bug manifesting and must fail the test.
+                                if (!Chars.contains(e.getFlyweightMessage(), "queue is full")) {
+                                    error.compareAndSet(null, e);
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        error.compareAndSet(null, t);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                publishers.add(publisher);
+                publisher.start();
+            }
+
+            try {
+                barrier.await();
+                // Owner/closer: repeatedly grab the writer (making it busy so publishers
+                // take the publish path), force it distressed, and release it so it takes
+                // the distressed close path that frees the command queue.
+                for (int i = 0; i < iterations && error.get() == null; i++) {
+                    try (TableWriter w = pool.get(zTableToken, "owner")) {
+                        w.markDistressed();
+                    } catch (EntryUnavailableException ignore) {
+                        i--;
+                    }
+                }
+            } finally {
+                running.set(false);
+                for (int i = 0, n = publishers.size(); i < n; i++) {
+                    publishers.get(i).join();
+                }
+            }
+        });
+
+        if (error.get() != null) {
+            throw new AssertionError("async publish raced a writer close unsafely", error.get());
+        }
+    }
+
+    @Test
+    public void testAsyncCommandPublishDrainsBeforeDistressedClose() throws Exception {
+        // Deterministic proof of the fix: closeWriter() must not free a writer's command
+        // queue while a thread is serializing an async command into it. A publisher is
+        // parked mid-serialize (holding the in-flight publisher count); a concurrent
+        // distressed close must block in drainCommandPublishers() until the publisher
+        // finishes, rather than free the buffer underneath it.
+        assertWithPool(pool -> {
+            final SOCountDownLatch publisherInSerialize = new SOCountDownLatch(1);
+            final SOCountDownLatch releaseSerialize = new SOCountDownLatch(1);
+            final AtomicBoolean closeReturned = new AtomicBoolean();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            // Hold the writer busy on this thread so the publisher is forced down the
+            // getWriterOrPublishCommand -> addCommandToWriterQueue -> serialize path.
+            final TableWriter ownerWriter = pool.get(zTableToken, "owner");
+            final int tableId = zTableToken.getTableId();
+            final TestPublishCommand command =
+                    new TestPublishCommand(zTableToken, tableId, publisherInSerialize, releaseSerialize);
+
+            Thread publisher = new Thread(() -> {
+                try {
+                    TableWriter w = pool.getWriterOrPublishCommand(zTableToken, "publisher", command);
+                    Assert.assertNull(w); // command was published, no writer handed back
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread closer = new Thread(() -> {
+                try {
+                    ownerWriter.markDistressed();
+                    ownerWriter.close(); // distressed close -> closeWriter -> drainCommandPublishers
+                } catch (Throwable t) {
+                    error.compareAndSet(null, t);
+                } finally {
+                    closeReturned.set(true);
+                    Path.clearThreadLocals();
+                }
+            });
+
+            boolean closerStarted = false;
+            try {
+                publisher.start();
+                // Wait until the publisher is inside serialize, holding the in-flight count.
+                publisherInSerialize.await();
+
+                closer.start();
+                closerStarted = true;
+
+                // The close must stay blocked while the publisher is parked in serialize.
+                // Poll briefly; with the fix closeReturned never flips here, without it the
+                // close races ahead and frees the queue almost immediately.
+                for (int i = 0; i < 250 && !closeReturned.get(); i++) {
+                    Os.sleep(1);
+                }
+                Assert.assertFalse(
+                        "closeWriter() freed the command queue while a publisher was mid-serialize",
+                        closeReturned.get());
+            } finally {
+                releaseSerialize.countDown();
+                publisher.join();
+                if (closerStarted) {
+                    closer.join();
+                }
+                if (ownerWriter.isOpen()) {
+                    ownerWriter.close();
+                }
+            }
+
+            Assert.assertTrue("close did not complete after publisher finished", closeReturned.get());
+            Assert.assertTrue("publisher did not finish serializing into a live buffer", command.serializeComplete);
+            if (error.get() != null) {
+                throw new AssertionError("publisher or closer failed", error.get());
+            }
         });
     }
 
@@ -1027,5 +1187,117 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private interface PoolAwareCode {
         void run(WriterPool pool) throws Exception;
+    }
+
+    // Minimal non-structural async writer command for the WriterPool publish-vs-close
+    // tests. In "blocking" mode (latches supplied) it parks inside serialize() so a test
+    // can deterministically race a writer close; otherwise it just widens the serialize
+    // window. Only the methods the publish path touches do real work; the rest are stubs.
+    private static class TestPublishCommand implements AsyncWriterCommand {
+        static final long CORRELATION_ID = 7L;
+        private final SOCountDownLatch inSerialize;
+        private final SOCountDownLatch release;
+        private final int tableId;
+        private final TableToken tableToken;
+        volatile boolean serializeComplete;
+
+        TestPublishCommand(TableToken tableToken, int tableId) {
+            this(tableToken, tableId, null, null);
+        }
+
+        TestPublishCommand(TableToken tableToken, int tableId, SOCountDownLatch inSerialize, SOCountDownLatch release) {
+            this.tableToken = tableToken;
+            this.tableId = tableId;
+            this.inSerialize = inSerialize;
+            this.release = release;
+        }
+
+        @Override
+        public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
+            return 0;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public AsyncWriterCommand deserialize(TableWriterTask task) {
+            return this;
+        }
+
+        @Override
+        public int getCmdType() {
+            return TableWriterTask.CMD_ALTER_TABLE;
+        }
+
+        @Override
+        public String getCommandName() {
+            return "TEST_PUBLISH";
+        }
+
+        @Override
+        public long getCorrelationId() {
+            return CORRELATION_ID;
+        }
+
+        @Override
+        public int getTableId() {
+            return tableId;
+        }
+
+        @Override
+        public int getTableNamePosition() {
+            return 0;
+        }
+
+        @Override
+        public TableToken getTableToken() {
+            return tableToken;
+        }
+
+        @Override
+        public long getTableVersion() {
+            return 0;
+        }
+
+        @Override
+        public boolean isStructural() {
+            return false;
+        }
+
+        @Override
+        public void serialize(TableWriterTask task) {
+            task.of(getCmdType(), tableId, tableToken);
+            task.setInstance(CORRELATION_ID);
+            if (inSerialize != null) {
+                // Blocking mode: announce we are mid-serialize (addCommandToWriterQueue is
+                // holding the in-flight publisher count) then block so the test can race a
+                // writer close against this in-progress serialize.
+                inSerialize.countDown();
+                release.await();
+            } else {
+                // Widen the serialize window so a concurrent close is likely to land while
+                // we are writing into the task buffer.
+                for (int i = 0; i < 64; i++) {
+                    Os.pause();
+                }
+            }
+            // Post-fix these land in a live buffer. Pre-fix a racing close has freed and
+            // zeroed the task, so this overflows the (now zero-length) buffer or writes to
+            // address 0.
+            for (int i = 0; i < 32; i++) {
+                task.putLong(i);
+            }
+            serializeComplete = true;
+        }
+
+        @Override
+        public void setCommandCorrelationId(long correlationId) {
+        }
+
+        @Override
+        public void startAsync() {
+        }
     }
 }
