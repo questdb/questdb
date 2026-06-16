@@ -898,16 +898,15 @@ public class CheckpointTest extends AbstractCairoTest {
                     CREATE TABLE t_fail (
                         val DOUBLE,
                         sym_fail SYMBOL INDEX,
-                        sym_buf SYMBOL INDEX,
                         sym_slow SYMBOL INDEX,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
                     INSERT INTO t_fail VALUES
-                    (1.0, 'A', 'P', 'X', '2024-01-01T00:00:00.000000Z'),
-                    (2.0, 'B', 'Q', 'Y', '2024-01-01T12:00:00.000000Z'),
-                    (3.0, 'A', 'P', 'X', '2024-01-02T00:00:00.000000Z')
+                    (1.0, 'A', 'X', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', 'Y', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', 'X', '2024-01-02T00:00:00.000000Z')
                     """);
             execute("""
                     CREATE TABLE t_next (
@@ -950,28 +949,24 @@ public class CheckpointTest extends AbstractCairoTest {
                         slowOpensFinished.incrementAndGet();
                         return fd;
                     }
-                    // Buffer task between the failing sym_fail bitmap task and
-                    // the first sym_slow bitmap task: with a single recovery
-                    // thread this keeps the worker busy long enough for the
-                    // drain to flip the abort flag, so every sym_slow task then
-                    // short-circuits at its top-of-task abort check.
-                    if (Utf8s.endsWithAscii(name, "sym_buf.d")) {
-                        Os.sleep(100);
+                    if (Utf8s.endsWithAscii(name, "sym_fail.d")) {
+                        // Let sym_fail's bitmap rebuild fail only once a
+                        // sym_slow rebuild task is in flight, so the drain has a
+                        // genuine in-flight task to await. Without this gate the
+                        // failure can be rethrown before any sym_slow task even
+                        // starts (it then short-circuits at its top-of-task
+                        // abort check), which left the finished > 0 assertion
+                        // racing the scheduler. The wait is bounded so a small
+                        // recovery pool cannot hang the test; super.openRO then
+                        // returns -1 for the deleted file and the rebuild fails.
+                        for (int i = 0; i < 5_000 && slowOpensStarted.get() == 0; i++) {
+                            Os.sleep(1);
+                        }
                     }
                     return super.openRO(name);
                 }
             };
             CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
-                @Override
-                public int getCheckpointRecoveryThreadpoolMax() {
-                    return 1;
-                }
-
-                @Override
-                public int getCheckpointRecoveryThreadpoolMin() {
-                    return 1;
-                }
-
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
                     return slowFf;
@@ -991,9 +986,12 @@ public class CheckpointTest extends AbstractCairoTest {
                     // per thread, so the next failed table would hit
                     // IllegalStateException instead of a CairoException.
                     Assert.assertNull("parallel task failure must not retain the reused cause", e.getCause());
-                    // Capture immediately: with the abandon-on-first-failure bug
-                    // the sym_slow tasks are still sleeping (or queued) here and
-                    // only catch up after the failure has been rethrown.
+                    // The sym_fail.d gate guarantees at least one sym_slow task
+                    // was in flight when the failure fired, so the drain must
+                    // have let it finish: started == finished proves no
+                    // abandon-on-first-failure, and finished > 0 proves the
+                    // drain actually waited for the in-flight task rather than
+                    // rethrowing past it.
                     final int started = slowOpensStarted.get();
                     final int finished = slowOpensFinished.get();
                     Assert.assertEquals(
