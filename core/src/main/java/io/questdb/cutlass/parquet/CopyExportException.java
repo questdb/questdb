@@ -26,13 +26,13 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 
 public class CopyExportException extends CairoException implements Sinkable, FlyweightMessageContainer {
 
-    private static final io.questdb.std.ThreadLocal<CopyExportException> tlException = new ThreadLocal<>(CopyExportException::new);
+    private static final CarrierLocal<CopyExportException> tlException = new CarrierLocal<>(CopyExportException::new);
     private CopyExportRequestTask.Phase phase;
 
     public static CopyExportException instance(CopyExportRequestTask.Phase phase, CharSequence message, int errno) {

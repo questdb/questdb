@@ -586,11 +586,7 @@ public class ServerMain implements Closeable {
                                     sharedPoolQuery
                             );
 
-                            for (int i = 0; i < workerCount; i++) {
-                                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
-                                exportWorkerPool.assign(i, copyExportRequestJob);
-                                exportWorkerPool.freeOnExit(copyExportRequestJob);
-                            }
+                            exportWorkerPool.assign(new CopyExportRequestJob(engine));
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())
@@ -757,23 +753,14 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
-        for (int i = 0, workerCount = mvWorkerPool.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine, sharedQueryWorkerCount);
-            mvWorkerPool.assign(i, matViewRefreshJob);
-            mvWorkerPool.freeOnExit(matViewRefreshJob);
-        }
+        // assign(Job) clones once per worker via MatViewRefreshJob.cloneInstance().
+        mvWorkerPool.assign(new MatViewRefreshJob(engine, sharedQueryWorkerCount));
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         mvWorkerPool.assign(matViewTimerJob);
     }
 
     protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
-        for (int i = 0, workerCount = vWorkerPool.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final ViewCompilerJob viewCompilerJob = new ViewCompilerJob(i, engine, sharedQueryWorkerCount);
-            vWorkerPool.assign(i, viewCompilerJob);
-            vWorkerPool.freeOnExit(viewCompilerJob);
-        }
+        vWorkerPool.assign(new ViewCompilerJob(engine, sharedQueryWorkerCount));
     }
 
     protected void setupWalApplyJob(
@@ -781,12 +768,7 @@ public class ServerMain implements Closeable {
             CairoEngine engine,
             int sharedQueryWorkerCount
     ) {
-        for (int i = 0, workerCount = sharedPoolWrite.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
-            sharedPoolWrite.assign(i, applyWal2TableJob);
-            sharedPoolWrite.freeOnExit(applyWal2TableJob);
-        }
+        sharedPoolWrite.assign(new ApplyWal2TableJob(engine, sharedQueryWorkerCount));
     }
 
     protected String webConsoleSchema() {

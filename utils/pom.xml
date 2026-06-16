@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>utils</artifactId>
-    <version>9.4.3-SNAPSHOT</version>
+    <version>9.4.4-SNAPSHOT</version>
 
     <name>Command line utils for QuestDB</name>
 
@@ -123,7 +123,7 @@
                     <version>3.5.3</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
-                        <argLine>--sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED</argLine>
+                        <argLine>--sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED</argLine>
                         <includes>
                             <include>${test.include}</include>
                         </includes>

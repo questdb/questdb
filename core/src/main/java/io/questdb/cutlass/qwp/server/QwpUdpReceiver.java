@@ -214,7 +214,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             // runSerially() executes under the SynchronizedJob lock with
             // closed=true, confirming no concurrent access to shared resources.
             while (!closedAcknowledged) {
-                this.run(0);
+                this.run();
                 Os.pause();
             }
 
@@ -257,19 +257,19 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        // Close-acknowledgment path: once closed=true, close() spins this.run(0)
+    public boolean run(@NotNull WorkerContext workerContext) {
+        // Close-acknowledgment path: once closed=true, close() spins this.run()
         // until runSerially() executes under the SyncJob lock and checkClosed()
         // sets closedAcknowledged. Bypass the acceptOpen short-circuit in that
         // case so the spin can make progress. The receiver is already closed,
         // so no ingestion can happen even if super.run() is invoked.
         if (closed) {
-            return super.run(workerId, runStatus);
+            return super.run(workerContext);
         }
         if (!acceptOpen.get()) {
             return false;
         }
-        return super.run(workerId, runStatus);
+        return super.run(workerContext);
     }
 
     @Override

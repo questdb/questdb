@@ -90,14 +90,14 @@ public class WorkerPoolBootFailureTest {
         // the fixed tree only the workers spawned before the in-lock closed re-check observed closed run;
         // on the un-fixed tree all four run despite the concurrent halt.
         final Set<Integer> startedWorkerIds = Collections.newSetFromMap(new ConcurrentHashMap<>());
-        pool.assign((workerId, runStatus) -> {
-            startedWorkerIds.add(workerId);
+        pool.assign(workerContext -> {
+            startedWorkerIds.add(workerContext.carrierId());
             return false;
         });
 
         // freeOnExit is what a late-spawned worker would loop on after halt frees it.
         final AtomicBoolean resourceFreed = new AtomicBoolean(false);
-        pool.freeOnExit((Closeable) () -> resourceFreed.set(true));
+        pool.freeOnExit(closeableJob(() -> resourceFreed.set(true)));
 
         // Park start() inside the add-loop on the SECOND iteration: worker 0 has already been added and
         // started, and the monitor is held open while worker 1's add is pending. The concurrent halt
@@ -299,7 +299,7 @@ public class WorkerPoolBootFailureTest {
         });
 
         final AtomicLong jobTicks = new AtomicLong();
-        pool.assign((workerId, runStatus) -> {
+        pool.assign(workerContext -> {
             jobTicks.incrementAndGet();
             return false;
         });
@@ -307,7 +307,7 @@ public class WorkerPoolBootFailureTest {
         // Track that freeOnExit is released by halt(): a worker still looping after halt against a
         // freed resource is the use-after-free this guards.
         final AtomicBoolean resourceFreed = new AtomicBoolean(false);
-        pool.freeOnExit((Closeable) () -> resourceFreed.set(true));
+        pool.freeOnExit(closeableJob(() -> resourceFreed.set(true)));
 
         // Stall start() in the running=true / started-not-counted-down window: the workers are
         // already spawned and looping, but the start latch is held open until we release it.
@@ -415,13 +415,13 @@ public class WorkerPoolBootFailureTest {
         // A simple ticking job lets the test confirm the worker added before the park was actually
         // halted (the unconditional first-pass halt signal ran), not merely cleared from the list.
         final AtomicLong jobTicks = new AtomicLong();
-        pool.assign((workerId, runStatus) -> {
+        pool.assign(workerContext -> {
             jobTicks.incrementAndGet();
             return false;
         });
 
         final AtomicBoolean resourceFreed = new AtomicBoolean(false);
-        pool.freeOnExit((Closeable) () -> resourceFreed.set(true));
+        pool.freeOnExit(closeableJob(() -> resourceFreed.set(true)));
 
         // Park start() inside the add-loop on the SECOND iteration, holding workersLock (fixed tree).
         // Parking on the second iteration means worker 0 has already been added, started and is ticking
@@ -586,7 +586,7 @@ public class WorkerPoolBootFailureTest {
                 return true;
             }
         });
-        pool.assign((workerId, runStatus) -> false);
+        pool.assign(workerContext -> false);
 
         // Park start() inside the add-loop on the SECOND iteration, holding workersLock, so worker 0 is
         // already added and worker 1's add is pending.
@@ -674,6 +674,32 @@ public class WorkerPoolBootFailureTest {
                         + "start() is parked mid-add (it returned -- the un-guarded iteration read the "
                         + "half-built workers list)",
                 scrapeHeldOffWhileParked);
+    }
+
+    // The pool's freeOnExit(Job) closes elements that are Closeable via
+    // Misc.freeObjListIfCloseable. Wrap a resource-freeing Runnable in a no-op Job that is
+    // also Closeable so freeOnExit accepts it and halt() runs onClose at shutdown.
+    private static Job closeableJob(Runnable onClose) {
+        return new CloseableJob(onClose);
+    }
+
+    // No-op Job that runs onClose when the pool closes it via freeOnExit().
+    private static final class CloseableJob implements Job, Closeable {
+        private final Runnable onClose;
+
+        private CloseableJob(Runnable onClose) {
+            this.onClose = onClose;
+        }
+
+        @Override
+        public void close() {
+            onClose.run();
+        }
+
+        @Override
+        public boolean run(Job.WorkerContext workerContext) {
+            return false;
+        }
     }
 
     // Component that mimics a two-stage start: publishes DEGRADED in start(),

@@ -108,11 +108,11 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(@NotNull WorkerContext workerContext) {
         if (!acceptOpen.get()) {
             return false;
         }
-        return super.run(workerId, runStatus);
+        return super.run(workerContext);
     }
 
     @Override

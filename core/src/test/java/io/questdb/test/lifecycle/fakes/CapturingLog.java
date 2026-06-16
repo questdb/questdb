@@ -328,6 +328,11 @@ public final class CapturingLog implements Log {
         }
 
         @Override
+        public int[] ryuScratch() {
+            return sink.ryuScratch();
+        }
+
+        @Override
         public LogRecord ts() {
             return this;
         }

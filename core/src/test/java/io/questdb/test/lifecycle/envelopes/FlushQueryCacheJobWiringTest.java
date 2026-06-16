@@ -143,7 +143,7 @@ public class FlushQueryCacheJobWiringTest {
      */
     private static final class FakeFlushQueryCacheJob implements Job {
         @Override
-        public boolean run(int workerId, Job.RunStatus runStatus) {
+        public boolean run(Job.WorkerContext workerContext) {
             return false;
         }
     }

@@ -52,11 +52,11 @@ public class AcceptGatedJob implements Job, EagerThreadSetup {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(@NotNull WorkerContext workerContext) {
         if (!acceptOpen.get()) {
             return false;
         }
-        return delegate.run(workerId, runStatus);
+        return delegate.run(workerContext);
     }
 
     @Override

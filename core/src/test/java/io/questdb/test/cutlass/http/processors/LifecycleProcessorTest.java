@@ -177,6 +177,7 @@ public class LifecycleProcessorTest {
 
     private static final class FakeHttpChunkedResponse implements HttpChunkedResponse {
         private final StringBuilder buf;
+        private int[] ryuScratch;
 
         FakeHttpChunkedResponse(StringBuilder buf) {
             this.buf = buf;
@@ -213,6 +214,14 @@ public class LifecycleProcessorTest {
         public @NotNull FakeHttpChunkedResponse putNonAscii(long lo, long hi) {
             // not needed in tests; all strings in JSON output are ASCII
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuScratch == null) {
+                ryuScratch = new int[1];
+            }
+            return ryuScratch;
         }
 
         @Override
@@ -262,6 +271,7 @@ public class LifecycleProcessorTest {
         private final int cap;
         private final StringBuilder working = new StringBuilder();
         private int bookmark;
+        private int[] ryuScratch;
 
         BoundedFakeHttpChunkedResponse(int cap) {
             this.cap = cap;
@@ -304,6 +314,14 @@ public class LifecycleProcessorTest {
         @Override
         public @NotNull BoundedFakeHttpChunkedResponse putNonAscii(long lo, long hi) {
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuScratch == null) {
+                ryuScratch = new int[1];
+            }
+            return ryuScratch;
         }
 
         @Override

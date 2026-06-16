@@ -31,7 +31,7 @@ import io.questdb.std.datetime.Clock;
 /**
  * Builds and sends log messages to writer thread. Log messages are constructed using "builder" pattern,
  * which usually begins with "level method" {@link #debug()}, {@link #info()} or {@link #error()} followed by
- * $(x) to append log message content and must terminate with {@link #$()}. There are $(x) methods for all types
+ * $(x) to append log message content and must terminate with {@link LogRecord#$()}. There are $(x) methods for all types
  * of "x" parameter to help avoid string concatenation and string creation in general.
  * <p>
  * <code>
@@ -40,7 +40,7 @@ import io.questdb.std.datetime.Clock;
  * LOG.info().$("Hello world: ").$(123).$();
  * </code>
  * <p>
- * Logger appends messages to native memory buffer and dispatches buffer to writer thread queue with {@link #$()} call.
+ * Logger appends messages to native memory buffer and dispatches buffer to writer thread queue with {@link LogRecord#$()} call.
  * When writer queue is full all logger method calls between level and $() become no-ops. In this case queue size
  * have to be increased or choice of log storage has to be reviewed. Depending on complexity of log message
  * structure it should be possible to log between 1,000,000 and 10,000,000 messages per second to SSD device.
@@ -107,17 +107,10 @@ public final class Logger extends AbstractLogRecord implements Log {
             return NullLogRecord.INSTANCE;
         }
 
-        // Materialise the thread-local CursorHolder (and its lazily allocated abandonedLogRecordError)
-        // before claiming the ring slot, so a failure in the lazy allocation cannot strand a claimed
-        // slot. Mirrors the guaranteed-logging nextWaiting path; harmless on the hot path because the
-        // first materialisation per thread allocates and every later call is a cheap lookup. Hold the
-        // resolved holder and pass it straight into prepareLogRecord so the hot success path does a
-        // single thread-local lookup instead of two (the nextWaiting sibling already does this).
-        final CursorHolder h = tl.get();
         final long cursor = seq.next();
         if (cursor < 0) {
             return NullLogRecord.INSTANCE;
         }
-        return prepareLogRecord(h, seq, ring, level, cursor);
+        return prepareLogRecord(seq, ring, level, cursor);
     }
 }
