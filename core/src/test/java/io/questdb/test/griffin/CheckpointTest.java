@@ -898,15 +898,16 @@ public class CheckpointTest extends AbstractCairoTest {
                     CREATE TABLE t_fail (
                         val DOUBLE,
                         sym_fail SYMBOL INDEX,
+                        sym_buf SYMBOL INDEX,
                         sym_slow SYMBOL INDEX,
                         ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
                     INSERT INTO t_fail VALUES
-                    (1.0, 'A', 'X', '2024-01-01T00:00:00.000000Z'),
-                    (2.0, 'B', 'Y', '2024-01-01T12:00:00.000000Z'),
-                    (3.0, 'A', 'X', '2024-01-02T00:00:00.000000Z')
+                    (1.0, 'A', 'P', 'X', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', 'Q', 'Y', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', 'P', 'X', '2024-01-02T00:00:00.000000Z')
                     """);
             execute("""
                     CREATE TABLE t_next (
@@ -949,10 +950,28 @@ public class CheckpointTest extends AbstractCairoTest {
                         slowOpensFinished.incrementAndGet();
                         return fd;
                     }
+                    // Buffer task between the failing sym_fail bitmap task and
+                    // the first sym_slow bitmap task: with a single recovery
+                    // thread this keeps the worker busy long enough for the
+                    // drain to flip the abort flag, so every sym_slow task then
+                    // short-circuits at its top-of-task abort check.
+                    if (Utf8s.endsWithAscii(name, "sym_buf.d")) {
+                        Os.sleep(100);
+                    }
                     return super.openRO(name);
                 }
             };
             CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCheckpointRecoveryThreadpoolMax() {
+                    return 1;
+                }
+
+                @Override
+                public int getCheckpointRecoveryThreadpoolMin() {
+                    return 1;
+                }
+
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
                     return slowFf;
