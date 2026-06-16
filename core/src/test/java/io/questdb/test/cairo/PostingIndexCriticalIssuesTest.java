@@ -9711,7 +9711,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     private static void runPostingSealPurgeJob(PostingSealPurgeJob purgeJob) {
         for (int i = 0; i < 32; i++) {
-            if (!purgeJob.run(0)) {
+            if (!purgeJob.run()) {
                 break;
             }
         }

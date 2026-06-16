@@ -44,10 +44,11 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.std.CarrierLocal;
 
 public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
-    private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = CarrierLocal.withInitial(StringSink::new);
 
     @Override
     public String getSignature() {

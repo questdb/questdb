@@ -34,7 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentLongHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.StringSink;
@@ -52,13 +52,13 @@ public class QueryRegistry {
     private final Clock clock;
     private final AtomicLong idSeq = new AtomicLong();
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
-    private final ThreadLocal<WeakMutableObjectPool<Entry>> tlQueryPool;
+    private final CarrierLocal<WeakMutableObjectPool<Entry>> tlQueryPool;
 
     private volatile Listener listener;
 
     public QueryRegistry(CairoConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
-        tlQueryPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(Entry::new, configuration.getQueryRegistryPoolSize()));
+        tlQueryPool = new CarrierLocal<>(() -> new WeakMutableObjectPool<>(Entry::new, configuration.getQueryRegistryPoolSize()));
     }
 
     /**

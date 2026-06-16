@@ -36,6 +36,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -562,6 +564,8 @@ public interface CairoConfiguration {
 
     int getQueryCacheEventQueueCapacity();
 
+    long getQueryContinuationWakeIntervalMillis();
+
     int getQueryRegistryPoolSize();
 
     /**
@@ -866,6 +870,14 @@ public interface CairoConfiguration {
 
     @NotNull
     TextConfiguration getTextConfiguration();
+
+    /**
+     * Number of {@link TimerShards} shards (one daemon thread each) used
+     * to fire timer-based wakeups for parked SQL continuations and other
+     * {@link DelayedFireable} entries. Higher values reduce
+     * {@code DelayQueue} lock contention but cost one always-on thread per shard.
+     */
+    int getTimerShardCount();
 
     int getTxnScoreboardEntryCount();
 

@@ -24,7 +24,7 @@
 
 package io.questdb.test.mp;
 
-import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.CountedConcurrentQueue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -80,7 +80,7 @@ public class ConcurrentQueueFuzzTest {
         int elementsCount = 33 + rnd.nextInt(1_000) + (int) Math.pow(2, rnd.nextInt(20));
         boolean[] received = new boolean[elementsCount];
 
-        ConcurrentQueue<IntHolderQueue> queue = ConcurrentQueue.createConcurrentQueue(IntHolderQueue::new);
+        CountedConcurrentQueue<IntHolderQueue> queue = CountedConcurrentQueue.create(IntHolderQueue::new);
         AtomicInteger counter = new AtomicInteger();
 
         CyclicBarrier barrier = new CyclicBarrier(nProducers + nConsumers);
@@ -154,6 +154,10 @@ public class ConcurrentQueueFuzzTest {
         for (int i = nProducers; i < nProducers + nConsumers; i++) {
             threads.getQuick(i).join();
         }
+
+        Assert.assertEquals("queue length must be zero after all elements drained", 0, queue.sizeDirty());
+        Assert.assertFalse("queue must be empty after all elements drained", queue.tryDequeue(new IntHolderQueue()));
+        Assert.assertEquals("queue length must remain zero after a no-op tryDequeue", 0, queue.sizeDirty());
 
         if (!errors.isEmpty()) {
             Assert.assertTrue(errors.toString(), errors.isEmpty());

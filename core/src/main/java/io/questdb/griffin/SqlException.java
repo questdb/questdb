@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -40,7 +40,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
-    private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
+    private static final CarrierLocal<SqlException> tlException = new CarrierLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private int error;
     private int position;

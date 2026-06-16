@@ -341,7 +341,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 } else {
                                     copiedReader = pool.get(tableToken);
                                     Os.sleep(1); // wait a bit
-                                    reader = pool.getCopyOf(copiedReader);
+                                    reader = pool.getCopyOf(copiedReader, null);
                                 }
 
                                 // Just read the table contents.
@@ -526,7 +526,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     isSymbolFaultEnabled.set(true);
                     // getCopyOf(src) lands on slot 1's R1 (R1.txn T2 > src.txn T1), downgrades via
                     // init() -> openSymbolMaps(), and the faulted .o open throws out of refreshAt().
-                    try (TableReader ignore = pool.getCopyOf(srcRef)) {
+                    try (TableReader ignore = pool.getCopyOf(srcRef, null)) {
                         Assert.fail("getCopyOf refresh should have failed");
                     } catch (Throwable th) {
                         refreshError.set(th);
@@ -926,7 +926,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 final String expected = sink.toString();
 
                 TableReader copyReaderRef;
-                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                try (TableReader copyReader = pool.getCopyOf(ogReader, null)) {
                     copyReaderRef = copyReader;
                     cursor.of(copyReader);
                     println(copyReader.getMetadata(), cursor);
@@ -966,7 +966,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 println(ogReader.getMetadata(), cursor);
                 final String expected = sink.toString();
 
-                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                try (TableReader copyReader = pool.getCopyOf(ogReader, null)) {
                     cursor.of(copyReader);
                     println(copyReader.getMetadata(), cursor);
                     final String copyActual = sink.toString();
@@ -1019,7 +1019,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     Assert.assertNotEquals(expected, newerTxnActual);
                 }
 
-                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                try (TableReader copyReader = pool.getCopyOf(ogReader, null)) {
                     Assert.assertSame(newerTxnReaderRef, copyReader);
                     cursor.of(copyReader);
                     println(copyReader.getMetadata(), cursor);
@@ -1077,7 +1077,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 println(ogReader.getMetadata(), cursor);
                 final String expected = sink.toString();
 
-                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                try (TableReader copyReader = pool.getCopyOf(ogReader, null)) {
                     cursor.of(copyReader);
                     println(copyReader.getMetadata(), cursor);
                     final String copyActual = sink.toString();
@@ -1124,7 +1124,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
 
                 // We should get the same reader as before since getCopyOf() is no-op in this case.
-                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                try (TableReader copyReader = pool.getCopyOf(ogReader, null)) {
                     Assert.assertSame(sameTxnReaderRef, copyReader);
                     cursor.of(copyReader);
                     println(copyReader.getMetadata(), cursor);

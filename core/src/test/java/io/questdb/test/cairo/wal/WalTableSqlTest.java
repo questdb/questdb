@@ -358,7 +358,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 for (int i = 0; i < count; i++) {
-                    walApplyJob.run(0);
+                    walApplyJob.run();
                     engine.releaseInactive();
                     int rows = rnd.nextInt(200);
                     execute("insert into " + tableName +
@@ -1346,7 +1346,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             long walNotification = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            checkWalTransactionsJob.run(0);
+            checkWalTransactionsJob.run();
 
             drainWalQueue();
             Assert.assertTrue(walNotification < engine.getMessageBus().getWalTxnNotificationPubSequence().current());
@@ -2029,7 +2029,17 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testWhenApplyJobTerminatesEarlierLagCommitted() throws Exception {
         AtomicBoolean isTerminating = new AtomicBoolean();
-        Job.RunStatus runStatus = isTerminating::get;
+        Job.WorkerContext runStatus = new Job.WorkerContext() {
+            @Override
+            public int carrierId() {
+                return 0;
+            }
+
+            @Override
+            public boolean isTerminating() {
+                return isTerminating.get();
+            }
+        };
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             // terminate WAL apply Job as soon as first wal segment is opened.
@@ -2062,16 +2072,16 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " values (103, 'dfd', '2022-02-24T01:03', 'asd')");
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                walApplyJob.run(0, runStatus);
+                walApplyJob.run(runStatus);
                 engine.releaseInactive();
                 isTerminating.set(false);
 
                 // Run one more time, we want to be on seqTxn 2 for the next step
-                walApplyJob.run(0, runStatus);
+                walApplyJob.run(runStatus);
                 isTerminating.set(false);
 
                 //noinspection StatementWithEmptyBody
-                while (walApplyJob.run(0, runStatus)) ;
+                while (walApplyJob.run(runStatus)) ;
 
                 engine.releaseInactive();
 
@@ -2110,7 +2120,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         engine.releaseInactiveTableSequencers();
         try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
-            job.run(0);
+            job.run();
         }
 
         sysPath.of(configuration.getDbRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
@@ -2125,7 +2135,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         control.setMaxBlockRowCount(1);
 
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
-            walApplyJob.run(0);
+            walApplyJob.run();
         }
     }
 

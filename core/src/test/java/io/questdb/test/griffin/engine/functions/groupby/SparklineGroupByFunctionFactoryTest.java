@@ -1412,11 +1412,15 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     for (int t = 0; t < CONTENTION_THREADS; t++) {
                         final int threadId = t;
                         new Thread(() -> {
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
                                     mismatches.addAndGet(countKeyedSparklineMismatches(
-                                            engine, sqlExecutionContext, expected, sampleWrongValue));
+                                            engine, threadCtx, expected, sampleWrongValue));
                                 }
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
@@ -1620,10 +1624,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                         final int threadId = t;
                         new Thread(() -> {
                             int localMismatches = 0;
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
-                                    String observed = runSparkline(engine, sqlExecutionContext, sql);
+                                    String observed = runSparkline(engine, threadCtx, sql);
                                     if (!expected.equals(observed)) {
                                         localMismatches++;
                                         sampleWrongValue.compareAndSet(null, observed);
