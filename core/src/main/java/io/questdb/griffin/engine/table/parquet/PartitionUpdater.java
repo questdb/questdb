@@ -67,6 +67,21 @@ public class PartitionUpdater implements QuietCloseable {
         destroy();
     }
 
+    /**
+     * Publishes the new {@code _pm} snapshot and makes it durable: patches the
+     * committed {@code parquet_meta_file_size} into the header (the MVCC commit
+     * signal), then fsyncs. The caller MUST invoke this after
+     * {@link #updateFileMetadata()} and the index build, and before the matching
+     * {@code _txn} commit. The header patch is the last {@code _pm} write, so a
+     * failure before it leaves the committed header and footer intact; the fsync
+     * (skipped when {@code sync} is false, i.e. NOSYNC commit mode) stops a power
+     * loss from leaving {@code _txn} pointing at a footer the page cache lost.
+     */
+    public void commitParquetMeta(boolean sync) {
+        assert ptr != 0;
+        commitParquetMeta(ptr, sync);
+    }
+
     public void copyRowGroup(int rowGroupIndex) {
         assert ptr != 0;
         copyRowGroup(ptr, rowGroupIndex);
@@ -162,19 +177,6 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
-    /**
-     * Flushes pending writes for the {@code _pm} sidecar to durable storage.
-     * The caller MUST invoke this after {@link #updateFileMetadata()} and
-     * before the matching {@code _txn} commit when {@code commitMode} is
-     * {@code SYNC} or {@code ASYNC}; otherwise a power loss can leave the
-     * partition referenced by {@code _txn} while {@code _pm} is still only
-     * in the page cache, making the partition unreadable.
-     */
-    public void syncParquetMeta() {
-        assert ptr != 0;
-        syncParquetMeta(ptr);
-    }
-
     // call to this method will update file metadata
     // MUST be called after all row groups have been updated
     // returns the final file size
@@ -206,6 +208,8 @@ public class PartitionUpdater implements QuietCloseable {
             descriptor.clear();
         }
     }
+
+    private static native void commitParquetMeta(long impl, boolean sync) throws CairoException;
 
     private static native void copyRowGroup(
             long impl,
@@ -257,8 +261,6 @@ public class PartitionUpdater implements QuietCloseable {
             long colDataLen,
             int timestampIndex
     ) throws CairoException;
-
-    private static native void syncParquetMeta(long impl) throws CairoException;
 
     private static native void insertRowGroup(
             long impl,

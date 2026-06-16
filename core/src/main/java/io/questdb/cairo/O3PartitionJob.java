@@ -262,7 +262,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetMetaFd = TableUtils.openRW(ff, path.$(), LOG, opts);
                         parquetMetaFdOs = Files.detach(parquetMetaFd);
                         parquetMetaFd = -1;
-                        updaterParquetMetaFileSize = parquetMetaReader.getFileSize();
+                        // Parse anchor = committed head (resolved from _txn), not
+                        // the raw header: a rolled-back update can leave the
+                        // header ahead of _txn, and parsing from there would
+                        // build on dead row groups. The append base is the _pm
+                        // header (offset 0), read Rust-side from the held fd.
+                        updaterParquetMetaFileSize = parquetMetaReader.getResolvedFileSize();
                         // Restore path to parquet file.
                         path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
                     }
@@ -523,12 +528,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 newParquetSize = partitionUpdater.updateFileMetadata();
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
-                // Persist _pm before _txn references the new parquet_meta_file_size.
-                // _txn commit follows in TableWriter; without this fsync a power
-                // loss could leave _txn pointing at a footer the page cache loses.
-                if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
-                    partitionUpdater.syncParquetMeta();
-                }
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
                 LOG.info()
                         .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
@@ -563,6 +562,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rowGroupBuffers,
                         isRewrite
                 );
+
+                // Publish the new _pm last: patch its header (the MVCC commit
+                // signal) and fsync. Done after the index build so any failure up
+                // to here leaves the committed header intact, with the new footer
+                // an invisible dead tail past it that the next update overwrites.
+                partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -587,7 +592,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // and on Windows the file is not locked by stale fds.
             partitionUpdater.close();
             if (!isRewrite) {
-                // Update mode: truncate both parquet and _pm to their pre-merge sizes.
+                // Update mode: truncate the parquet data file back to its
+                // pre-merge size. _pm is never truncated (see below).
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                 long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
@@ -597,31 +603,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ff.close(fd);
 
                 if (parquetMetaReader.getAddr() != 0) {
-                    final long oldParquetMetaFileSize = parquetMetaReader.getFileSize();
+                    // Leave _pm un-truncated, header unrestored. commitParquetMeta
+                    // runs only after a successful index build, so a failure here
+                    // never patched the header: it still points at the committed
+                    // footer, and the failed update's bytes sit past it as an
+                    // invisible dead tail the next update overwrites. Truncating
+                    // would pull pages from under a concurrent reader's mmap and
+                    // SIGBUS the JVM -- the hazard this change removes. fsync so
+                    // the leftover dead tail is durable, not a partial tail.
                     path.of(pathToTable);
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                     fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                    // Rust patches parquet_meta_file_size at offset 0 last, so when
-                    // updateFileMetadata throws after that patch the on-disk header
-                    // claims a size larger than the pre-merge file. Restore the old
-                    // size header BEFORE truncating; otherwise readParquetMetaFileSize
-                    // would return the stale larger value and mapRO past EOF would
-                    // SIGBUS the JVM on the next open.
-                    final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_O3);
-                    try {
-                        Unsafe.putLong(tempMem8b, oldParquetMetaFileSize);
-                        if (ff.write(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
-                            LOG.error().$("could not restore _pm header on rollback [path=").$(path)
-                                    .$(", errno=").$(ff.errno()).I$();
-                        }
-                    } finally {
-                        Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_O3);
-                    }
-                    if (!ff.truncate(fd, oldParquetMetaFileSize)) {
-                        LOG.error().$("could not truncate _pm file [path=").$(path).I$();
-                    }
-                    // Make the restored header durable so that crash recovery does
-                    // not resurrect the bad post-patch header out of the page cache.
                     if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
                         ff.fsync(fd);
                     }

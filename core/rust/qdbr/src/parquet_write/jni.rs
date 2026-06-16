@@ -316,22 +316,23 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_syncParquetMeta(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_commitParquetMeta(
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
+    sync: jboolean,
 ) {
     let env = &mut env;
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-        err.add_context("error in PartitionUpdater.syncParquetMeta");
+        err.add_context("error in PartitionUpdater.commitParquetMeta");
         err.into_cairo_exception().throw::<()>(env);
         return;
     }
 
     let parquet_updater = unsafe { &mut *updater };
-    if let Err(mut err) = parquet_updater.sync_parquet_meta() {
-        err.add_context("error in PartitionUpdater.syncParquetMeta");
+    if let Err(mut err) = parquet_updater.commit_parquet_meta(sync != 0) {
+        err.add_context("error in PartitionUpdater.commitParquetMeta");
         err.into_cairo_exception().throw::<()>(env);
     }
 }

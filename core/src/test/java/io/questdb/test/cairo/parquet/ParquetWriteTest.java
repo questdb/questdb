@@ -26,6 +26,7 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -36,7 +37,9 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -2927,6 +2930,119 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateRollbackDoesNotTruncateParquetMeta() throws Exception {
+        // Headline of the _pm SIGBUS change: an in-place parquet O3 update that
+        // fails after updateFileMetadata grew _pm must NOT truncate _pm on
+        // rollback. Truncating pages out from under a concurrent header-mapping
+        // reader's mmap is the SIGBUS hazard. The header is patched only by
+        // commitParquetMeta after the index build, so this failure leaves it at
+        // the committed head with the grown bytes as an invisible dead tail; the
+        // retried update overwrites that tail from the committed head.
+        //
+        // Force in-place (update) mode: 2 row groups + permissive rewrite
+        // thresholds. The injected failure is the 2nd data.parquet openRO, the
+        // mapRO inside updateParquetIndexes -- after updateFileMetadata, before
+        // commitParquetMeta.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        AtomicBoolean armed = new AtomicBoolean(false);
+        FilesFacade dodgyFacade = getFilesFacade(armed);
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows / row-group-size 4 → 2 row groups: the O3 stays in update mode.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+            File tableDir = new File(root, tableToken.getDirName());
+            final long parquetMetaSizeBefore = parquetMetaLength(tableDir);
+            Assert.assertTrue(parquetMetaSizeBefore > 0);
+
+            // Arm the failure and run an in-place O3 update (merges into rg0).
+            armed.set(true);
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+            armed.set(false);
+
+            // The update failed and suspended the table.
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // In-place mode left no new partition directory, and the rollback
+            // left _pm GROWN (the orphaned dead tail) rather than truncated back
+            // to the committed size -- the old code truncated here.
+            Assert.assertEquals("in-place update must not create a new dir", 1, countPartitionDirs(tableDir));
+            final long parquetMetaSizeAfterFailure = parquetMetaLength(tableDir);
+            Assert.assertTrue(
+                    "_pm must not be truncated on rollback [before=" + parquetMetaSizeBefore + ", after=" + parquetMetaSizeAfterFailure + "]",
+                    parquetMetaSizeAfterFailure > parquetMetaSizeBefore
+            );
+
+            // The committed snapshot is still readable: the header was never
+            // patched (no SIGBUS; resolves the pre-update footer).
+            assertQuery("SELECT count() FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
+
+            // Recover: the re-applied update overwrites the dead tail from the
+            // committed head (the header still points there).
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            9\t2020-01-01T00:30:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            10\t2020-01-01T01:30:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRewriteResetsUnusedBytesToZero() throws Exception {
         // Use small row group size to get multiple row groups.
         // Set absolute threshold low so the second O3 triggers a rewrite.
@@ -3276,6 +3392,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
     private static int countPartitionDirs(File tableDir) {
         String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
         return dirs != null ? dirs.length : 0;
+    }
+
+    private static long parquetMetaLength(File tableDir) {
+        String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
+        Assert.assertNotNull("no 2020-01-01 partition dir found", dirs);
+        Assert.assertEquals("expected exactly one 2020-01-01 partition dir", 1, dirs.length);
+        File pm = new File(new File(tableDir, dirs[0]), "_pm");
+        Assert.assertTrue("_pm must exist: " + pm, pm.exists());
+        return pm.length();
     }
 
     private static @NotNull FilesFacade getFilesFacade(AtomicBoolean armed) {

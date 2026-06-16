@@ -29,10 +29,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileWriter;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -660,11 +662,13 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     // Patch header parquet_meta_file_size to publish footer 3.
                     Unsafe.putLong(newBuf, newTotalLen);
 
-                    // Recompute CRC over the published snapshot. resolveFooter
-                    // verifies the CRC up front against the committed file
-                    // size; older footers reached via the MVCC chain walk are
-                    // not re-checksummed, so only the latest snapshot needs a
-                    // matching CRC.
+                    // Recompute the cumulative CRC of every snapshot the test
+                    // resolves, oldest-first (each footer's CRC covers the file
+                    // through its own committed size). resolveFooter now verifies
+                    // the *resolved* footer's CRC after the chain walk — not just
+                    // the latest physical footer — so footer 2 needs a valid CRC
+                    // too. The base footer's CRC was written by buildFile.
+                    patchCrc(newBuf, footer3Start);
                     patchCrc(newBuf, newTotalLen);
 
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
@@ -695,6 +699,198 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.resolveFooter(9999L));
                 } finally {
                     Unsafe.free(newBuf, newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResolveFooterSkipsOrphanedDeadFooter() throws Exception {
+        // Models the append-past-dead-footer design. A committed footer C ends
+        // at origLen (derived parquet size 158). A since-rolled-back in-place
+        // update left an orphaned dead footer D in the tail. The next update
+        // appended a new footer C' whose prev_parquet_meta_file_size points at C
+        // (origLen), NOT at D — so the MVCC walk reaches C' then C and never
+        // reads D, and D's version is unreachable. The published-snapshot CRC
+        // still spans D's bytes, so a reader resolving C' (now CRC-validated
+        // against the *resolved* footer, not the physically-last one) accepts it.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100, 50, 1000)) {
+                long origLen = file.dataLen;
+                int origFooterLength = Unsafe.getInt(file.dataPtr + origLen - 4);
+                long origFooterOffset = origLen - 4 - Integer.toUnsignedLong(origFooterLength);
+                int rowGroupEntry = Unsafe.getInt(file.dataPtr + origFooterOffset + 40);
+
+                // Layout per appended footer: fixed(40) + 1 rg entry(4) + CRC(4) + trailer(4) = 52.
+                int appendedFooterBytes = 52;
+                long deadStart = origLen;                       // orphaned dead footer D
+                long newStart = origLen + appendedFooterBytes;  // new footer C'
+                long newTotalLen = origLen + 2L * appendedFooterBytes;
+
+                long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.copyMemory(file.dataPtr, newBuf, origLen);
+
+                    // Dead footer D: derived parquet size 288, prev back at C. It
+                    // was published by a since-rolled-back update; nothing in the
+                    // live chain points at it.
+                    long fd = newBuf + deadStart;
+                    Unsafe.putLong(fd, 200L);
+                    Unsafe.putInt(fd + 8, 80);
+                    Unsafe.putInt(fd + 12, 1);
+                    Unsafe.putLong(fd + 16, 0L);
+                    Unsafe.putLong(fd + 24, origLen);
+                    Unsafe.putLong(fd + 32, 0L);
+                    Unsafe.putInt(fd + 40, rowGroupEntry);
+                    Unsafe.putInt(fd + 44, 0);
+                    Unsafe.putInt(fd + 48, 48);
+
+                    // New footer C': derived parquet size 488. prev points at C
+                    // (origLen), SKIPPING the dead footer D at deadStart.
+                    long fc = newBuf + newStart;
+                    Unsafe.putLong(fc, 400L);
+                    Unsafe.putInt(fc + 8, 80);
+                    Unsafe.putInt(fc + 12, 1);
+                    Unsafe.putLong(fc + 16, 0L);
+                    Unsafe.putLong(fc + 24, origLen); // prev = C, not D
+                    Unsafe.putLong(fc + 32, 0L);
+                    Unsafe.putInt(fc + 40, rowGroupEntry);
+                    Unsafe.putInt(fc + 44, 0);
+                    Unsafe.putInt(fc + 48, 48);
+
+                    // Publish C' and recompute the CRC over the whole snapshot,
+                    // which covers the dead footer's bytes too.
+                    Unsafe.putLong(newBuf, newTotalLen);
+                    patchCrc(newBuf, newTotalLen);
+
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+
+                    // C' resolves directly; the CRC validated is the resolved
+                    // footer's, spanning the dead region.
+                    reader.of(newBuf, newTotalLen);
+                    Assert.assertTrue(reader.resolveFooter(488L));
+                    Assert.assertEquals(488L, reader.getParquetFileSize());
+                    Assert.assertEquals(1, reader.getRowGroupCount());
+                    Assert.assertEquals(newTotalLen, reader.getResolvedFileSize());
+
+                    // C resolves via one chain step that jumps from C' straight to
+                    // C — never reading the dead footer D.
+                    reader.of(newBuf, newTotalLen);
+                    Assert.assertTrue(reader.resolveFooter(158L));
+                    Assert.assertEquals(158L, reader.getParquetFileSize());
+                    Assert.assertEquals(1, reader.getRowGroupCount());
+                    Assert.assertEquals(origLen, reader.getResolvedFileSize());
+
+                    // The dead footer's version is unreachable: nothing's prev
+                    // points at it, so the walk exhausts the chain.
+                    reader.of(newBuf, newTotalLen);
+                    Assert.assertFalse(reader.resolveFooter(288L));
+                } finally {
+                    Unsafe.free(newBuf, newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDirtyAheadHeaderResolvesToCommittedHead() throws Exception {
+        // The crash window: a "dirty ahead" header (M) points at a speculative
+        // footer C' past the committed footer C (an update published the header
+        // then crashed before its _txn commit). resolveFooter walks back to C, so
+        // getResolvedFileSize() -- the in-place-update parse anchor -- is C's head
+        // N, not the mapped M.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100, 50, 1000)) {
+                final long committedHead = file.dataLen;     // N: footer C, derived parquet size 158
+                final int origFooterLength = Unsafe.getInt(file.dataPtr + committedHead - 4);
+                final long origFooterOffset = committedHead - 4 - Integer.toUnsignedLong(origFooterLength);
+                final int rowGroupEntry = Unsafe.getInt(file.dataPtr + origFooterOffset + 40);
+
+                // Layout per appended footer: fixed(40) + 1 rg entry(4) + CRC(4) + trailer(4) = 52.
+                final int appendedFooterBytes = 52;
+                final long dirtyLen = committedHead + appendedFooterBytes; // M: header points past C, at C'
+
+                final long buf = Unsafe.malloc(dirtyLen, MemoryTag.NATIVE_DEFAULT);
+                final long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    Unsafe.copyMemory(file.dataPtr, buf, committedHead);
+
+                    // Speculative footer C' (derived parquet size 488), prev = C.
+                    final long fc = buf + committedHead;
+                    Unsafe.putLong(fc, 400L);
+                    Unsafe.putInt(fc + 8, 80);
+                    Unsafe.putInt(fc + 12, 1);
+                    Unsafe.putLong(fc + 16, 0L);
+                    Unsafe.putLong(fc + 24, committedHead);
+                    Unsafe.putLong(fc + 32, 0L);
+                    Unsafe.putInt(fc + 40, rowGroupEntry);
+                    Unsafe.putInt(fc + 44, 0);
+                    Unsafe.putInt(fc + 48, 48);
+                    // Dirty header points at C'; CRC spans the snapshot.
+                    Unsafe.putLong(buf, dirtyLen);
+                    patchCrc(buf, dirtyLen);
+
+                    path.concat(root).concat("dirty_ahead_pm").$();
+                    long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                    Assert.assertTrue(fd > -1);
+                    try {
+                        Assert.assertEquals(dirtyLen, ff.write(fd, buf, dirtyLen, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+
+                    // Open at the dirty header, resolve the committed footer (size 158).
+                    final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
+                    Assert.assertTrue("openAndMapRO must map the dirty-ahead _pm", addr != 0);
+                    long mappedSize = reader.getFileSize();
+                    try {
+                        Assert.assertTrue(reader.resolveFooter(158L));
+                        Assert.assertEquals("mapped header is the dirty-ahead M", dirtyLen, reader.getFileSize());
+                        Assert.assertEquals("resolved head is the committed N", committedHead, reader.getResolvedFileSize());
+                        Assert.assertEquals("physical length is M (never truncated)", dirtyLen, ff.length(path.$()));
+                        Assert.assertTrue("committed head precedes the dirty header", reader.getResolvedFileSize() < reader.getFileSize());
+                        Assert.assertEquals(158L, reader.getParquetFileSize());
+                        Assert.assertEquals(1, reader.getRowGroupCount());
+                    } finally {
+                        reader.clear();
+                        ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    }
+
+                    // A plain failed update leaves the header at the committed head
+                    // N (it is never patched) with the speculative footer as a dead
+                    // tail past it -- no truncate, no restore. Model that by writing
+                    // N to the header.
+                    Unsafe.putLong(scratch, committedHead);
+                    fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                    Assert.assertTrue(fd > -1);
+                    try {
+                        Assert.assertEquals(Long.BYTES, ff.write(fd, scratch, Long.BYTES, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+
+                    // Re-open: header == N, C' kept as a dead tail past it.
+                    addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
+                    Assert.assertTrue(addr != 0);
+                    mappedSize = reader.getFileSize();
+                    try {
+                        Assert.assertTrue(reader.resolveFooter(158L));
+                        Assert.assertEquals("header at the committed head", committedHead, reader.getFileSize());
+                        Assert.assertEquals(committedHead, reader.getResolvedFileSize());
+                        final long physical = ff.length(path.$());
+                        Assert.assertEquals("dead tail retained, not truncated", dirtyLen, physical);
+                        Assert.assertTrue("physical exceeds the committed header", physical > reader.getFileSize());
+                        Assert.assertEquals(158L, reader.getParquetFileSize());
+                        Assert.assertEquals(1, reader.getRowGroupCount());
+                    } finally {
+                        reader.clear();
+                        ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    }
+                } finally {
+                    Unsafe.free(buf, dirtyLen, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });

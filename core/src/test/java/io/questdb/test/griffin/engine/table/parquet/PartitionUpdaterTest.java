@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -34,6 +35,8 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -303,6 +306,123 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
                 Assert.assertTrue("_pm file must exist", ff.exists(path.$()));
                 Assert.assertEquals("_pm file size on disk", parquetMetaFileSize, ff.length(path.$()));
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateAppendsPastDeadTail() throws Exception {
+        // Crash-window path: an in-place _pm update appends past an orphaned dead
+        // footer when the header is dirty-ahead (a prior update published a footer
+        // past the committed head, then crashed before its _txn commit). We build
+        // a committed _pm, splice a dead tail and patch the header ahead of the
+        // committed footer, then run an incremental update and assert it appends
+        // strictly past the dead tail and the result still resolves (its
+        // cumulative CRC spans the tail).
+        assertMemoryLeak(() -> {
+            final String tableName = "dead_tail_test";
+            final long rows = 10;
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute("CREATE TABLE " + tableName + " AS (SELECT" +
+                    " x id," +
+                    " timestamp_sequence(400_000_000_000, 500)::" + timestampType.getTypeName() + " designated_ts" +
+                    " FROM long_sequence(" + rows + ")) TIMESTAMP(designated_ts) PARTITION BY DAY");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater()
+            ) {
+                final TableToken table = engine.getTableTokenIfExists(tableName);
+                path.concat(root).concat(table.getDirNameUtf8()).concat("1970-01-05").slash$();
+                path.put(".1").slash$();
+                final int versionedDirLen = path.size();
+                ff.mkdirs(path, configuration.getMkDirMode());
+                path.concat("data.parquet").$();
+
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                PartitionEncoder.encode(descriptor, path);
+                final long parquetDataSize0 = ff.length(path.$());
+                final int opts = configuration.getWriterFileOpenOpts();
+
+                // Update 1: full-create the _pm (gate == 0).
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                int parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
+                path.trimTo(versionedDirLen).concat("data.parquet").$();
+                int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                int writerFd = Files.detach(ff.openRW(path.$(), opts));
+                updater.of(path.$(), readerFd, parquetDataSize0, writerFd, parquetDataSize0,
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, 0L);
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+                final long committedHead = updater.getResultParquetMetaFileSize();
+                Assert.assertTrue(committedHead > 0);
+                final long parquetDataSize1 = ff.length(path.$());
+
+                // Splice an orphaned dead tail (here just garbage -- the next
+                // update folds it into the CRC, it is never parsed as a footer)
+                // past the committed head and patch the header to point past it.
+                // This is the crash-window state: a published footer the _txn
+                // commit never reached. The committed footer stays at
+                // committedHead; the next update appends past the dead tail.
+                final int deadBytes = 96;
+                final long physicalWithDeadTail = committedHead + deadBytes;
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                final long deadTailFd = ff.openRW(path.$(), opts);
+                final long scratch = Unsafe.malloc(deadBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < deadBytes; i++) {
+                        Unsafe.putByte(scratch + i, (byte) (0xAB + i));
+                    }
+                    Assert.assertEquals(deadBytes, ff.write(deadTailFd, scratch, deadBytes, committedHead));
+                    // Dirty-ahead header: published size points past the dead tail.
+                    Unsafe.putLong(scratch, physicalWithDeadTail);
+                    Assert.assertEquals(Long.BYTES, ff.write(deadTailFd, scratch, Long.BYTES, 0));
+                } finally {
+                    Unsafe.free(scratch, deadBytes, MemoryTag.NATIVE_DEFAULT);
+                    ff.close(deadTailFd);
+                }
+                Assert.assertEquals(physicalWithDeadTail, ff.length(path.$()));
+
+                // Update 2: incremental update (gate > 0, parse anchor = the
+                // committed head, append base = the dirty-ahead header). It must
+                // append past the dead tail.
+                parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
+                path.trimTo(versionedDirLen).concat("data.parquet").$();
+                readerFd = Files.detach(ff.openRONoCache(path.$()));
+                writerFd = Files.detach(ff.openRW(path.$(), opts));
+                updater.of(path.$(), readerFd, parquetDataSize1, writerFd, parquetDataSize1,
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, parquetDataSize1);
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+                final long newHead = updater.getResultParquetMetaFileSize();
+                // Publish the new snapshot (patch header + fsync), as the O3 job
+                // does after the index build.
+                updater.commitParquetMeta(true);
+
+                // The new footer landed strictly past the dead tail.
+                Assert.assertTrue("must append past the dead tail", newHead > physicalWithDeadTail);
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                Assert.assertEquals(newHead, ff.length(path.$()));
+
+                // The published _pm resolves: openAndMapRO maps the new header and
+                // resolveFooter verifies the resolved footer's CRC -- which spans
+                // the dead tail -- so a wrong CRC would throw here.
+                final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+                Assert.assertTrue("openAndMapRO must map the _pm", addr != 0);
+                final long mappedSize = parquetMetaReader.getFileSize();
+                try {
+                    Assert.assertEquals("header published to the new head", newHead, parquetMetaReader.getFileSize());
+                    Assert.assertTrue(parquetMetaReader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertEquals(newHead, parquetMetaReader.getResolvedFileSize());
+                } finally {
+                    parquetMetaReader.clear();
+                    ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
             }
         });
     }

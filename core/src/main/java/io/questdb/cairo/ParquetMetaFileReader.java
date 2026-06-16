@@ -167,6 +167,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Lazily allocated native handle to a JniParquetMetaReader. Created on
     // the first canSkipRowGroup call and freed by clear().
     private long nativeReaderPtr;
+    // Committed size of the footer resolveFooter settled on (the MVCC walk's
+    // terminal currentSize) -- the committed head N. Differs from fileSize (the
+    // mapped/header size) once a dead footer is present. 0 until resolveFooter.
+    private long resolvedFileSize;
     private int rowGroupCount;
 
     /**
@@ -314,6 +318,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         }
         this.addr = 0;
         this.fileSize = 0;
+        this.resolvedFileSize = 0;
         this.footerAddr = 0;
         this.columnCount = 0;
         this.rowGroupCount = 0;
@@ -433,6 +438,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             total += Unsafe.getLong(rowGroupBlockAddr(i));
         }
         return total;
+    }
+
+    /**
+     * Returns the committed {@code _pm} size of the footer {@link #resolveFooter}
+     * settled on -- the committed head {@code N}. It drives the in-place-update
+     * parse anchor and the dead-bytes rewrite trigger, and differs from
+     * {@link #getFileSize()} (the mapped / header size) once a dead footer is
+     * present. Returns {@code 0} before {@link #resolveFooter} has run.
+     */
+    public long getResolvedFileSize() {
+        return resolvedFileSize;
     }
 
     public int getRowGroupCount() {
@@ -590,6 +606,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         clear();
         this.addr = other.addr;
         this.fileSize = other.fileSize;
+        this.resolvedFileSize = other.resolvedFileSize;
         this.footerAddr = other.footerAddr;
         this.columnCount = other.columnCount;
         this.rowGroupCount = other.rowGroupCount;
@@ -630,26 +647,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      *
      * @param parquetFileSize parquet file size from {@code _txn} field 3,
      *                        used as MVCC version token; pass
-     *                        {@link Long#MAX_VALUE} to take the latest
-     *                        footer without MVCC matching
+     *                        {@link Long#MAX_VALUE} to take the physically-last
+     *                        footer without MVCC matching. Because the
+     *                        {@code _pm} is no longer truncated on a rolled-back
+     *                        in-place update, the physically-last footer can be
+     *                        an orphaned dead footer; {@link Long#MAX_VALUE} is
+     *                        therefore only safe for a file with no failed or
+     *                        concurrent in-place update (e.g. a freshly staged
+     *                        or read-only {@code _pm}).
      * @return false if the parquet footer couldn't be found
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveFooter(long parquetFileSize) {
         final long addr = this.addr;
         final long parquetMetaFileSize = this.fileSize;
-
-        // Verify the CRC32 once per open before trusting any byte of the
-        // file. Single-bit disk rot or RAM corruption otherwise passes the
-        // structural bound checks and is served as authoritative metadata
-        // steering SQL row-group pruning and cold-storage byte-range reads.
-        // The check parses the file once; the cached flag stops re-verifying
-        // on subsequent canSkipRowGroup calls. verifyChecksum0 throws
-        // CairoException on mismatch, null pointer, or unparseable file.
-        if (!checksumVerified) {
-            verifyChecksum0(addr, parquetMetaFileSize);
-            checksumVerified = true;
-        }
 
         // Walk the MVCC chain. Each step: read the trailer at
         // `currentSize - 4` to get the footer length, derive the footer
@@ -704,6 +715,19 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                 return false;
             }
             currentSize = prevSize;
+        }
+
+        // Verify the CRC32 of the *resolved* footer (not the physically-last
+        // one) before trusting any of its bytes. With the dead-footer-tolerant
+        // writer the physically-last footer can be an orphaned, rolled-back
+        // footer; only the resolved footer is guaranteed committed and
+        // immutable. Keyed on currentSize so the native reader locates exactly
+        // that footer. Verified once per open; the cached flag stops
+        // re-verifying on subsequent canSkipRowGroup calls. verifyChecksum0
+        // throws CairoException on mismatch, null pointer, or unparseable file.
+        if (!checksumVerified) {
+            verifyChecksum0(addr, currentSize);
+            checksumVerified = true;
         }
 
         // Use local variables for all validation. Fields are only
@@ -857,6 +881,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.footerAddr = footerAddr;
         this.columnCount = columnCount;
         this.rowGroupCount = rowGroupCount;
+        this.resolvedFileSize = currentSize;
         return true;
     }
 
