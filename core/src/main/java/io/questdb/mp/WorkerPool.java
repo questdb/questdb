@@ -311,6 +311,16 @@ public class WorkerPool implements Closeable {
                     if (beforeWorkerAdded != null) {
                         beforeWorkerAdded.run();
                     }
+                    // Re-check closed inside the critical section, before spawning. A concurrent
+                    // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
+                    // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
+                    // already gone by the time this loop resumes. Spawning a worker now would loop it on
+                    // freed resources -- a use-after-free plus an orphan thread. Break instead: the
+                    // workers added so far are already halt-signalled, and started.countDown() below
+                    // still runs so a waiting halt() proceeds.
+                    if (closed.get()) {
+                        break;
+                    }
                     workers.add(worker);
                     worker.start();
                 }

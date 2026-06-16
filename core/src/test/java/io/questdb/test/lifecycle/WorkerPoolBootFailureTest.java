@@ -17,6 +17,9 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.io.Closeable;
+import java.util.Collections;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,6 +41,173 @@ public class WorkerPoolBootFailureTest {
             .withTimeout(30, TimeUnit.SECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    /**
+     * A SIGTERM-during-boot drives {@code halt(long)} concurrently with a {@code start()} that is still
+     * mid-way through its per-worker spawn loop. {@code halt(long)} sets {@code closed} (a plain CAS,
+     * outside the monitor) and frees {@code freeOnExit}. If {@code start()} only checks {@code closed}
+     * at the top of the method (before the loop), it keeps spawning the remaining workers AFTER the
+     * concurrent halt set {@code closed} -- each one loops on the {@code freeOnExit} resources that
+     * {@code halt} then frees, a use-after-free plus an orphan-thread leak.
+     *
+     * <p>The witness uses the {@code beforeWorkerAddedForTesting} seam to park {@code start()} inside
+     * the add critical section after worker 0 has been spawned. A second thread then calls
+     * {@code halt(long)}; it flips {@code closed} immediately and blocks on the monitor the parked add
+     * holds. Releasing the park lets {@code start()} resume INSIDE the same monitor with {@code closed}
+     * already set.
+     *
+     * <p>On the un-fixed tree {@code start()} has no in-lock {@code closed} re-check, so it spawns every
+     * remaining worker (1..N-1) against resources {@code halt} is about to free: RED. With the in-lock
+     * {@code closed.get()} re-check it breaks the loop, so the workers after the one observed-closed are
+     * never spawned: GREEN. The witness asserts the late workers never ran.
+     */
+    @Test
+    public void testConcurrentHaltStopsStartFromSpawningAgainstFreedResources() throws Exception {
+        final int workerCount = 4;
+        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public String getPoolName() {
+                return "start-halt-race";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
+        });
+
+        // Every worker that actually starts records its worker id when its assigned job first runs. On
+        // the fixed tree only the workers spawned before the in-lock closed re-check observed closed run;
+        // on the un-fixed tree all four run despite the concurrent halt.
+        final Set<Integer> startedWorkerIds = Collections.newSetFromMap(new ConcurrentHashMap<>());
+        pool.assign((workerId, runStatus) -> {
+            startedWorkerIds.add(workerId);
+            return false;
+        });
+
+        // freeOnExit is what a late-spawned worker would loop on after halt frees it.
+        final AtomicBoolean resourceFreed = new AtomicBoolean(false);
+        pool.freeOnExit((Closeable) () -> resourceFreed.set(true));
+
+        // Park start() inside the add-loop on the SECOND iteration: worker 0 has already been added and
+        // started, and the monitor is held open while worker 1's add is pending. The concurrent halt
+        // arrives in this window.
+        final CountDownLatch startParkedInAdd = new CountDownLatch(1);
+        final CountDownLatch releaseStartPark = new CountDownLatch(1);
+        final AtomicLong seamInvocations = new AtomicLong();
+        pool.setBeforeWorkerAddedForTesting(() -> {
+            if (seamInvocations.getAndIncrement() == 1) {
+                startParkedInAdd.countDown();
+                try {
+                    if (!releaseStartPark.await(20, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("add-loop park timed out waiting for release");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+
+        final AtomicReference<Throwable> startError = new AtomicReference<>();
+        final AtomicReference<Throwable> haltError = new AtomicReference<>();
+        final CountDownLatch haltSetClosed = new CountDownLatch(1);
+        final CountDownLatch haltReturned = new CountDownLatch(1);
+
+        final Thread starter = new Thread(() -> {
+            try {
+                pool.start();
+            } catch (Throwable t) {
+                startError.set(t);
+            }
+        }, "start-halt-starter");
+        starter.setDaemon(true);
+
+        final Thread halter = new Thread(() -> {
+            haltSetClosed.countDown();
+            try {
+                // halt(long) flips closed via a plain CAS (outside the monitor) immediately, then blocks
+                // on the monitor the parked add holds. Once the park releases it proceeds to free
+                // freeOnExit.
+                pool.halt(TimeUnit.SECONDS.toNanos(10));
+            } catch (Throwable t) {
+                haltError.set(t);
+            } finally {
+                haltReturned.countDown();
+            }
+        }, "start-halt-halter");
+        halter.setDaemon(true);
+
+        try {
+            starter.start();
+            Assert.assertTrue("start() must park inside the add-loop holding the monitor",
+                    startParkedInAdd.await(15, TimeUnit.SECONDS));
+
+            // Wait until worker 0 (spawned before the park) is actually ticking, so the test exercises a
+            // real running worker, not just an entry in the list.
+            final long tickDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (startedWorkerIds.isEmpty() && System.nanoTime() < tickDeadline) {
+                Thread.sleep(1);
+            }
+            Assert.assertTrue("worker 0 (spawned before the park) must be running", startedWorkerIds.contains(0));
+
+            // Fire the concurrent halt while start() is parked mid-add. It sets closed immediately, then
+            // blocks on the monitor held by the parked add.
+            halter.start();
+            Assert.assertTrue("halt thread must start", haltSetClosed.await(10, TimeUnit.SECONDS));
+            // Give the halter time to flip closed and reach the monitor it must wait on.
+            Thread.sleep(200);
+
+            // Release the parked add: start() resumes INSIDE the monitor with closed already set by the
+            // concurrent halt. With the in-lock re-check it breaks; without it, it spawns the remaining
+            // workers against soon-to-be-freed resources.
+            releaseStartPark.countDown();
+
+            starter.join(TimeUnit.SECONDS.toMillis(15));
+            Assert.assertTrue("halt() must return after the add critical section releases",
+                    haltReturned.await(20, TimeUnit.SECONDS));
+        } finally {
+            releaseStartPark.countDown();
+            starter.join(TimeUnit.SECONDS.toMillis(10));
+            halter.join(TimeUnit.SECONDS.toMillis(10));
+            pool.setBeforeWorkerAddedForTesting(null);
+            pool.halt();
+        }
+
+        if (startError.get() != null) {
+            throw new AssertionError("start() threw: "
+                    + startError.get().getClass().getSimpleName() + ": " + startError.get().getMessage(),
+                    startError.get());
+        }
+        if (haltError.get() != null) {
+            throw new AssertionError("halt() threw: "
+                    + haltError.get().getClass().getSimpleName() + ": " + haltError.get().getMessage(),
+                    haltError.get());
+        }
+
+        Assert.assertTrue("halt() must free freeOnExit", resourceFreed.get());
+
+        // The core safety assertion: once the concurrent halt has set closed, start()'s loop must break
+        // before spawning any further worker. The remaining workers (1..N-1) would loop on the freeOnExit
+        // resources halt frees -- a use-after-free plus orphan threads. On the fixed tree they are never
+        // spawned; on the un-fixed tree start() spawns them all regardless of closed.
+        for (int i = 1; i < workerCount; i++) {
+            Assert.assertFalse(
+                    "worker " + i + " must NOT have been spawned after the concurrent halt set closed "
+                            + "(start() spawned it against soon-to-be-freed resources -- a use-after-free "
+                            + "plus an orphan thread; the in-lock closed re-check is missing)",
+                    startedWorkerIds.contains(i));
+        }
+    }
 
     /**
      * A stage-2 callback (onStableBelow) that throws must surface the failure
