@@ -699,21 +699,36 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(tablePath.$())) {
-                if (isParquetMetaResolvable(tablePath, parquetFileSize)) {
+                // Trust an existing _pm only when data.parquet is EXACTLY the
+                // committed size. When the file is longer (onDiskSize >
+                // parquetFileSize), the snapshot captured the partition mid in-place
+                // O3 rewrite: a later generation appended row groups and a new
+                // footer past the committed point and rewrote _pm to describe that
+                // later generation, while _txn still records the earlier committed
+                // size. resolveFooter() can still resolve a footer at the committed
+                // size, so the stale sidecar would be silently kept and then
+                // mis-read at the committed size -- a column chunk of the later
+                // generation lies past parquetFileSize, surfacing as
+                // "File out of specification" on the first merge/read and suspending
+                // a replica that replays over the restored partition. Regenerate
+                // from data.parquet at the committed size, which the size check
+                // above has already validated.
+                if (onDiskSize == parquetFileSize && isParquetMetaResolvable(tablePath, parquetFileSize)) {
                     tablePath.trimTo(plen);
                     continue;
                 }
                 // The sidecar does not resolve a footer at the committed parquet
-                // size: a stale _pm paired with an in-place regenerated
-                // data.parquet, a torn copy, or a partial file left by a crashed
-                // restore. Trusting it would defer the failure to the first read
-                // of the partition, so remove it and regenerate from
-                // data.parquet, which the committed-size check above has already
-                // validated.
+                // size, or data.parquet is longer than the committed size (a stale
+                // _pm paired with an in-place regenerated data.parquet, a torn
+                // copy, or a partial file left by a crashed restore). Trusting it
+                // would defer the failure to the first read of the partition, so
+                // remove it and regenerate from data.parquet, which the
+                // committed-size check above has already validated.
                 if (!ff.removeQuiet(tablePath.$())) {
                     throw CairoException.critical(ff.errno()).put("cannot remove unresolvable _pm file [path=").put(tablePath).put(']');
                 }
-                LOG.info().$("removed unresolvable _pm of restored parquet partition for regeneration [path=").$(tablePath).I$();
+                LOG.info().$("removed stale/unresolvable _pm of restored parquet partition for regeneration [path=").$(tablePath)
+                        .$(", committed=").$(parquetFileSize).$(", onDisk=").$(onDiskSize).I$();
             }
 
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
