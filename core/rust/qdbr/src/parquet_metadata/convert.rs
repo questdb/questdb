@@ -2582,9 +2582,18 @@ mod tests {
         let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
         let col_infos = col_infos_from_schema(metadata2.schema_descr.columns(), qdb_meta.as_ref());
 
-        let (initial_pm, _) =
-            generate_parquet_metadata(&col_infos, &thrift_meta.row_groups, 0, &[0], 100, 50, &[], 0, -1)
-                .unwrap();
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+            -1,
+        )
+        .unwrap();
         let parse_anchor = initial_pm.len() as u64;
 
         // A 2-row-group target so the update is well-formed apart from the base.
