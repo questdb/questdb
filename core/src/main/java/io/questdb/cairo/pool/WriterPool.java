@@ -463,12 +463,13 @@ public class WriterPool extends AbstractPool {
     // invoke this before freeing the writer (w.close() -> Misc.free(commandQueue)).
     // A publisher announces itself via commandPublisherCount in addCommandToWriterQueue;
     // without this drain it could serialize into a freed/zeroed TableWriterTask buffer and
-    // crash the JVM with a SIGSEGV. putObjectVolatile publishes the null reference and
-    // getAndAddLong reads the count with a full fence; together with the publisher's fenced
-    // increment, neither side can miss the other.
+    // crash the JVM with a SIGSEGV. putObjectVolatile publishes the null reference, and the
+    // JMM places a StoreLoad barrier between that volatile store and the volatile read of
+    // commandPublisherCount below; paired with the publisher's fenced increment, neither
+    // side can miss the other.
     private void drainCommandPublishers(Entry e) {
         Unsafe.putObjectVolatile(e, ENTRY_WRITER, null);
-        while (Unsafe.getAndAddLong(e, ENTRY_COMMAND_PUBLISHER_COUNT, 0) > 0) {
+        while (e.commandPublisherCount > 0) {
             Os.pause();
         }
     }
