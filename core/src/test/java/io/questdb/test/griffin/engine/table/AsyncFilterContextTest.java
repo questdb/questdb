@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.griffin.engine.table.AsyncFilterContext;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -33,6 +34,77 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class AsyncFilterContextTest extends AbstractCairoTest {
+
+    @Test
+    public void testClearShrinksGrownColumnAddressLists() throws Exception {
+        // Under a JIT filter the context also allocates per-worker column-address lists
+        // (data and aux). clear() must shrink those back to their initial capacity too,
+        // alongside the row-id lists.
+        assertMemoryLeak(() -> {
+            final int slotCount = 4;
+            final long rowIdInitialCapacity = configuration.getPageFrameReduceRowIdListCapacity();
+            final long columnInitialCapacity = configuration.getPageFrameReduceColumnListCapacity();
+            final long grownCapacity = 100_000;
+
+            // A non-null compiled filter makes the constructor allocate the owner plus
+            // per-worker data/aux address lists. The function is never compiled, so its
+            // close() is a no-op.
+            AsyncFilterContext ctx = new AsyncFilterContext(
+                    configuration,
+                    new CompiledFilter(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    slotCount,
+                    0,
+                    Long.MAX_VALUE,
+                    Long.MAX_VALUE
+            );
+            try {
+                final long memAtInitial = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+
+                // Grow the owner plus every per-worker row-id, data, and aux list.
+                ctx.getFilteredRows(-1).setCapacity(grownCapacity);
+                ctx.getDataAddresses(-1).setCapacity(grownCapacity);
+                ctx.getAuxAddresses(-1).setCapacity(grownCapacity);
+                for (int i = 0; i < slotCount; i++) {
+                    ctx.getFilteredRows(i).setCapacity(grownCapacity);
+                    ctx.getDataAddresses(i).setCapacity(grownCapacity);
+                    ctx.getAuxAddresses(i).setCapacity(grownCapacity);
+                }
+
+                final long memGrown = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+                final long expectedGrowthBytes = ((1 + slotCount) * (grownCapacity - rowIdInitialCapacity)
+                        + 2 * (1 + slotCount) * (grownCapacity - columnInitialCapacity)) * Long.BYTES;
+                Assert.assertTrue(
+                        "row-id and column lists should have grown by ~" + expectedGrowthBytes + " bytes, grew by " + (memGrown - memAtInitial),
+                        memGrown - memAtInitial >= expectedGrowthBytes
+                );
+
+                // The fix: clear() shrinks every list back to its initial capacity.
+                ctx.clear();
+
+                Assert.assertEquals(rowIdInitialCapacity, ctx.getFilteredRows(-1).getCapacity());
+                Assert.assertEquals(columnInitialCapacity, ctx.getDataAddresses(-1).getCapacity());
+                Assert.assertEquals(columnInitialCapacity, ctx.getAuxAddresses(-1).getCapacity());
+                for (int i = 0; i < slotCount; i++) {
+                    Assert.assertEquals(rowIdInitialCapacity, ctx.getFilteredRows(i).getCapacity());
+                    Assert.assertEquals(columnInitialCapacity, ctx.getDataAddresses(i).getCapacity());
+                    Assert.assertEquals(columnInitialCapacity, ctx.getAuxAddresses(i).getCapacity());
+                }
+
+                final long memCleared = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+                Assert.assertTrue(
+                        "clear() should release the grown memory, still holding " + (memCleared - memAtInitial) + " extra bytes",
+                        memCleared <= memAtInitial
+                );
+            } finally {
+                Misc.free(ctx);
+            }
+        });
+    }
 
     @Test
     public void testClearShrinksGrownRowIdLists() throws Exception {
