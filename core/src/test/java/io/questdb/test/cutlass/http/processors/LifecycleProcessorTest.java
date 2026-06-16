@@ -113,6 +113,54 @@ public class LifecycleProcessorTest {
         Assert.assertTrue("state must be uppercase READY", body.contains("\"state\":\"READY\""));
     }
 
+    @Test
+    public void testTerminalFlushParkResumesAndNeverStrands() throws Exception {
+        // A slow reader can park the terminal sendChunk(true) with PeerIsSlowToReadException. The
+        // serializer must keep the per-connection state resumable through that park so the framework's
+        // later resumeSend re-issues exactly that final flush, instead of nulling the snapshot before
+        // the flush and stranding the buffered terminal chunk until idle-timeout.
+        ObjList<LifecycleSnapshot.ComponentSnapshot> components = new ObjList<>();
+        components.add(new LifecycleSnapshot.ComponentSnapshot("min-http", State.READY, 100L, null, listOf("factory-provider"), new ObjList<>()));
+        LifecycleSnapshot snap = new LifecycleSnapshot(1000L, components);
+
+        // Canonical full body via the non-resumable writer.
+        StringBuilder full = new StringBuilder();
+        LifecycleProcessor.writeSnapshot(new FakeHttpChunkedResponse(full), snap);
+
+        // A buffer large enough to hold the whole body in one pass, so the only sendChunk is the
+        // terminal one -- isolating the slow-reader park to the final flush.
+        BoundedFakeHttpChunkedResponse bounded = new BoundedFakeHttpChunkedResponse(4096);
+        bounded.throwOnceOnTerminal = true;
+
+        // Caller-held state shared across the park and the resume (a fresh-state-per-call writer cannot
+        // model this).
+        LifecycleProcessor.LifecycleState state = LifecycleProcessor.LifecycleState.newTestState(snap);
+
+        // First drive: the terminal flush parks. The state must stay resumable -- snapshot non-null and
+        // the terminal not yet marked flushed -- so the framework's resumeSend can re-enter and finish.
+        try {
+            LifecycleProcessor.writeSnapshotResumable(bounded, state);
+            Assert.fail("the terminal flush must park with PeerIsSlowToReadException");
+        } catch (PeerIsSlowToReadException expected) {
+            // The framework parks the connection here and calls resumeSend later.
+        }
+        Assert.assertTrue(
+                "snapshot must remain non-null through the slow-reader park so resumeSend re-issues the terminal flush",
+                state.hasSnapshot());
+        Assert.assertFalse("the terminal flush must not be marked done while it is still parked", state.isTerminalFlushed());
+        Assert.assertEquals("no terminal flush has succeeded yet", 0, bounded.terminalFlushes);
+
+        // Resume: the reader has drained, the terminal flush succeeds, the full body is emitted, and the
+        // state is finalized only after the successful flush.
+        LifecycleProcessor.writeSnapshotResumable(bounded, state);
+        Assert.assertEquals(
+                "the resumed terminal flush must emit the full snapshot body",
+                full.toString(), bounded.flushed.toString());
+        Assert.assertEquals("the terminal flush must have succeeded exactly once on resume", 1, bounded.terminalFlushes);
+        Assert.assertTrue("the terminal flush must be marked done after a successful flush", state.isTerminalFlushed());
+        Assert.assertFalse("snapshot must be nulled only after the terminal flush succeeds", state.hasSnapshot());
+    }
+
     private static String captureResponseBody(LifecycleSnapshot snap) throws Exception {
         StringBuilder buf = new StringBuilder();
         LifecycleProcessor.writeSnapshot(new FakeHttpChunkedResponse(buf), snap);
@@ -206,6 +254,11 @@ public class LifecycleProcessorTest {
     private static final class BoundedFakeHttpChunkedResponse implements HttpChunkedResponse {
         final StringBuilder flushed = new StringBuilder();
         int partialFlushes;
+        int terminalFlushes;
+        // When true, the first terminal sendChunk(true) throws PeerIsSlowToReadException exactly once
+        // (mirroring a slow reader whose TCP buffer is full on the final flush) and then clears the
+        // flag, so a re-driven resume can complete the flush.
+        boolean throwOnceOnTerminal;
         private final int cap;
         private final StringBuilder working = new StringBuilder();
         private int bookmark;
@@ -263,7 +316,16 @@ public class LifecycleProcessorTest {
 
         @Override
         public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            if (!done) {
+            if (done) {
+                if (throwOnceOnTerminal) {
+                    throwOnceOnTerminal = false;
+                    // The slow reader's TCP buffer is full on the terminal flush; the framework parks
+                    // the connection and later calls resumeSend. The working buffer is left intact so
+                    // the re-driven terminal flush emits the same residual.
+                    throw PeerIsSlowToReadException.INSTANCE;
+                }
+                terminalFlushes++;
+            } else {
                 partialFlushes++;
             }
             flushed.append(working);

@@ -14,6 +14,7 @@ import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.function.Supplier;
 
@@ -177,6 +178,15 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         resumeSnapshot(r, state, LifecycleProcessor::writeNoHeaderExtraFields);
     }
 
+    // Visible for testing: drives the resumable serialization against a caller-held LifecycleState so
+    // a test can model a cross-call resume (a slow-reader park on the terminal flush re-driven later),
+    // which the snapshot-only overload above cannot since it builds a fresh state per call.
+    @TestOnly
+    public static void writeSnapshotResumable(HttpChunkedResponse r, LifecycleState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        resumeSnapshot(r, state, LifecycleProcessor::writeNoHeaderExtraFields);
+    }
+
     protected static void encodeProgressEvent(HttpChunkedResponse r, ProgressEvent event) {
         switch (event) {
             case RestoreProgress rp -> r.putAscii('{')
@@ -301,9 +311,17 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
             }
         }
 
-        // All phases complete: close the chunked transfer.
+        // All phases complete: close the chunked transfer. Keep snapshot non-null until the terminal
+        // sendChunk(true) actually returns, so a PeerIsSlowToReadException park on this final flush
+        // re-enters here via resumeSend (which early-returns on a null snapshot) and re-issues the
+        // flush until it succeeds, instead of stranding the buffered terminal chunk until idle-timeout.
+        // Mirrors the header-guard's state-before-side-effect discipline and the JSON query processor's
+        // resumable terminal state.
+        if (!state.terminalFlushed) {
+            response.sendChunk(true);
+            state.terminalFlushed = true;
+        }
         state.snapshot = null;
-        response.sendChunk(true);
     }
 
     private static void writeNoHeaderExtraFields(HttpChunkedResponse response, Object holder) {
@@ -323,7 +341,7 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
     /**
      * Per-connection serialization cursor for resumable GET /lifecycle responses.
      */
-    static final class LifecycleState {
+    public static final class LifecycleState {
         int cursor;
         boolean footerWritten;
         boolean headerWritten;
@@ -331,6 +349,26 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         // subclass) passed to the header-extra hook. Held alongside the base snapshot the loop iterates.
         Object holder;
         LifecycleSnapshot snapshot;
+        // Set once the terminal sendChunk(true) has actually returned. Keeps snapshot non-null while
+        // the terminal flush is parked on a slow reader so a resume re-issues exactly that flush.
+        boolean terminalFlushed;
+
+        @TestOnly
+        public static LifecycleState newTestState(LifecycleSnapshot snap) {
+            final LifecycleState state = new LifecycleState();
+            state.reset(snap, snap);
+            return state;
+        }
+
+        @TestOnly
+        public boolean hasSnapshot() {
+            return snapshot != null;
+        }
+
+        @TestOnly
+        public boolean isTerminalFlushed() {
+            return terminalFlushed;
+        }
 
         void reset(Object holder, LifecycleSnapshot base) {
             cursor = 0;
@@ -338,6 +376,7 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
             headerWritten = false;
             this.holder = holder;
             snapshot = base;
+            terminalFlushed = false;
         }
     }
 }

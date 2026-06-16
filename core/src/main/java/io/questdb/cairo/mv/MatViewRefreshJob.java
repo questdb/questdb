@@ -1298,6 +1298,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState != null && !viewState.isDropped() && !viewState.isInvalid()) {
+            if (engine.isReadOnlyMode()) {
+                // The node is, or just became, a replica: marking the view invalid acquires a WalWriter
+                // through the read-only chokepoint, which throws an authorization error that would escape
+                // the refresh worker's run() (a spurious CRITICAL plus a dropped invalidation, and a
+                // halt-on-error pool would stop). Defer instead -- mark the view pending and re-enqueue so
+                // the invalidation retries after a re-promote, mirroring the refresh face's read-only
+                // deferral. A materialized view is derived state.
+                viewState.markAsPendingInvalidation();
+                stateStore.enqueueInvalidate(viewToken, invalidationReason);
+                return;
+            }
             if (!viewState.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
                 viewState.markAsPendingInvalidation();
