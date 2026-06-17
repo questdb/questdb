@@ -123,6 +123,57 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEncodedSortVarcharCapFires() throws Exception {
+        // A VARCHAR ORDER BY key takes the encoded buffer too, spilling its bytes into the key
+        // heap; the window memory caps still bound that path.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 4096);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT" +
+                    " ('s' || (x % 8))::SYMBOL AS sym," +
+                    " (x * 1_000_000_000L)::TIMESTAMP AS ts," +
+                    " ('v' || x)::VARCHAR AS v" +
+                    " FROM long_sequence(50_000)) TIMESTAMP(ts)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY v) FROM tab",
+                    0,
+                    "memory exceeded in window encoded sort (raise cairo.sql.window.tree.max.bytes / cairo.sql.window.rowid.max.bytes)"
+            );
+        });
+    }
+
+    @Test
+    public void testEncodedSortVarcharResults() throws Exception {
+        // A VARCHAR ORDER BY key exercises the encoded buffer's variable sort; verify the ordering.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT" +
+                    " ('p' || (x % 2))::SYMBOL AS sym," +
+                    " (x * 1_000_000L)::TIMESTAMP AS ts," +
+                    " ('k' || (100 - x))::VARCHAR AS k," +
+                    " x::LONG AS n" +
+                    " FROM long_sequence(6)) TIMESTAMP(ts)");
+
+            assertQuery("SELECT sym, ts, n, lag(n, 1) OVER (PARTITION BY sym ORDER BY k) AS prev_n FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            sym\tts\tn\tprev_n
+                            p1\t1970-01-01T00:00:01.000000Z\t1\t3
+                            p0\t1970-01-01T00:00:02.000000Z\t2\t4
+                            p1\t1970-01-01T00:00:03.000000Z\t3\t5
+                            p0\t1970-01-01T00:00:04.000000Z\t4\t6
+                            p1\t1970-01-01T00:00:05.000000Z\t5\tnull
+                            p0\t1970-01-01T00:00:06.000000Z\t6\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testHappyPathUnchanged() throws Exception {
         // The default uncapped configuration must not regress small queries.
         assertMemoryLeak(() -> {
@@ -194,9 +245,9 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
 
     @Test
     public void testRowIdCapFires() throws Exception {
-        // The rowid cap bounds the LongTreeChain value heap, which the CachedWindow path uses only
-        // for sort keys the encoded sort buffer cannot hold (e.g. VARCHAR). Encoded-eligible keys
-        // (such as the designated timestamp) take the encoded sort path and never touch the tree.
+        // Disabling the encoded sort routes the window sort to the LongTreeChain; the rowid
+        // cap bounds its value heap.
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 8192);
 
@@ -218,9 +269,9 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
 
     @Test
     public void testTreeKeyCapFires() throws Exception {
-        // The tree-key cap bounds the LongTreeChain key heap, which the CachedWindow path uses only
-        // for sort keys the encoded sort buffer cannot hold (e.g. VARCHAR). Encoded-eligible keys
-        // (such as the designated timestamp) take the encoded sort path and never touch the tree.
+        // Disabling the encoded sort routes the window sort to the LongTreeChain; the tree-key
+        // cap bounds its key heap.
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 8192);
 
