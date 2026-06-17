@@ -17001,11 +17001,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNullLiteralArgumentRejectedWithCleanError() throws Exception {
-        // A window value/navigation function whose argument is the untyped null literal resolves to a
-        // NULL output column type. The cached window path could not build a record sink over a NULL
-        // column and leaked an internal "IllegalArgumentException: Unexpected column type: NULL". The
-        // code generator now rejects a NULL-typed window function with a user-facing SqlException, and
-        // the rejection is consistent across frames (streaming and cached paths alike).
+        // A window value/navigation function whose argument is the untyped null literal used to leak an
+        // internal "IllegalArgumentException: Unexpected column type: NULL" from the cached window path.
+        // Worse, overload resolution over an untyped NULL ties across every typed variant of the function
+        // (NULL to any type has zero overload distance), so the winner - and thus the behaviour - depended
+        // on classpath scan order: a clean rejection on one platform, a "not yet implemented for NULL"
+        // factory error on another, or even silent acceptance returning NULLs. FunctionParser now rejects
+        // an untyped NULL window argument before any factory runs, so every function gives the same clean
+        // SqlException at the same position on every platform, across frames (streaming and cached alike).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x DOUBLE, g SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1.0, 'A', 1_000_000), (2.0, 'A', 2_000_000), (3.0, 'B', 3_000_000)");
@@ -17035,9 +17038,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // PARTITION BY does not change it.
             assertExceptionNoLeakCheck("SELECT lead(null, 1) OVER (PARTITION BY g ORDER BY ts) FROM t", 7, contains);
 
-            // A pre-existing guard rejects nth_value over an untyped NULL with its own message; it must
-            // keep working and never leak the internal exception.
-            assertExceptionNoLeakCheck("SELECT nth_value(null, 2) OVER (ORDER BY ts) FROM t", 17, "nth_value is not yet implemented for NULL");
+            // nth_value over an untyped NULL is rejected with the same clean message as every other
+            // window function, never leaking the internal exception.
+            assertExceptionNoLeakCheck("SELECT nth_value(null, 2) OVER (ORDER BY ts) FROM t", 7, contains);
 
             // The error message points at a concrete cast as the fix, so the cast must actually work and
             // compute over NULL, returning a NULL column.
