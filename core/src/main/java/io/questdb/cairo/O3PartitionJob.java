@@ -42,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -70,9 +71,9 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
-    private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
-            new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
-    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
+    private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
+            new CarrierLocal<>(O3ParquetMergeContext::new);
+    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT::removeAndFree;
     // High bit set on the column type signals the Rust parquet encoder that the
     // symbol column contains no nulls, so it can emit an all-ones RLE run for
     // definition levels instead of checking each row.  This is a write-time hint
@@ -3860,7 +3861,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         processPartition(queue.get(cursor), cursor, subSeq);
         return true;
     }
