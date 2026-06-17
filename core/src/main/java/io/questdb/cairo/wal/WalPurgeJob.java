@@ -205,6 +205,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     logic.releaseLocks();
                     throw th;
                 }
+                if (engine.isClosing()) {
+                    // fetchSequencerPairs() bails before it can populate the next-to-apply set once the
+                    // engine starts closing, because it must not touch the sequencer/metadata mappings the
+                    // teardown is freeing underneath this worker. Running the deletion pass with that set
+                    // empty would treat every discovered segment as already applied and delete the whole
+                    // WAL directory, including segments a replica downloaded but has not applied yet -- data
+                    // loss on the hot demote path. Release the locks and stop; a later purge pass reclaims
+                    // any genuine garbage after the engine has fully closed and reopened.
+                    logic.releaseLocks();
+                    return;
+                }
                 // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
                 // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
                 // pending segments that are yet to be applied to the table.

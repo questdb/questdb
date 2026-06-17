@@ -720,6 +720,89 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoWalDeletionWhenEngineClosesMidSweep() throws Exception {
+        // Regression test for a data-loss hole in the engine-close tolerance: a replica downloads a WAL
+        // segment ahead of WAL apply, then a primary->replica demote starts closing the engine while a
+        // WalPurgeJob worker is mid-sweep. fetchSequencerPairs() must bail without touching the torn-down
+        // sequencer mappings, so it returns before populating the next-to-apply set. If broadSweep() then
+        // still runs the deletion pass, every discovered segment looks "already applied" (next-to-apply is
+        // empty) and the whole WAL directory is deleted -- including the downloaded-but-unapplied segment.
+        // That suspends the table once apply reaches the missing seqTxn (the ReplicationFuzzTest symptom).
+        //
+        // The fix makes broadSweep() skip the deletion pass (release the locks and stop) once it observes
+        // engine.isClosing() after the sweep, since a sweep that never tracked next-to-apply must never
+        // delete. This test reproduces the race deterministically: it flips the engine to closing DURING
+        // the sweep's discovery phase (after broadSweep's own entry guard has already let the sweep in),
+        // then asserts the unapplied WAL and both its segments survive and the data still applies. Before
+        // the fix the closing sweep deletes wal1; after the fix it leaves it untouched.
+        final String tableName = testName.getMethodName();
+        final String tableDirName = tableName + "~1";
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long findFirst(LPSZ path) {
+                // Discovery scans the table's WAL directories. This runs after broadSweep's entry guard
+                // (which saw isClosing()==false) but before fetchSequencerPairs(), so flipping the flag
+                // here opens exactly the mid-sweep race window the fix must tolerate.
+                if (armed.get() && Utf8s.containsAscii(path, tableDirName)) {
+                    engine.setClosing(true);
+                }
+                return super.findFirst(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("alter table " + tableName + " add column s1 string");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+
+            // Release the writer so both segments are unlocked, but leave the txns UNAPPLIED. The sequencer
+            // still tracks segment 0 as next-to-apply, so a normal sweep must protect the WAL.
+            engine.releaseInactive();
+            assertWalNotLocked(tableName, 1);
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // Control: a normal (not-closing) sweep leaves the unapplied WAL alone. This proves the witness
+            // is not vacuous -- the WAL is genuinely on disk and protected by next-to-apply tracking.
+            TestUtils.drainPurgeJob(engine, testFf);
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // Arm the mid-sweep flip and sweep again. The fixed sweep observes isClosing() after discovery
+            // and bails without deleting; the unfixed sweep deletes wal1 with the unapplied segment.
+            armed.set(true);
+            try {
+                TestUtils.drainPurgeJob(engine, testFf);
+            } finally {
+                armed.set(false);
+                engine.setClosing(false);
+            }
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // The unapplied txns must still apply after the engine reopens -- no data was lost.
+            drainWalQueue();
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts\ts1
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\tx
+                            """);
+        });
+    }
+
+    @Test
     public void testOneSegment() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
