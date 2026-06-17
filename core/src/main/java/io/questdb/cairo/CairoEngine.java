@@ -2439,11 +2439,20 @@ public class CairoEngine implements Closeable, WriterSource {
             // (covers a rebased base table, and a rebased mat view that is itself a base of another).
             matViewStateStore.enqueueInvalidateDependentViews(newToken, "base table rebase");
 
-            // Committed. Tear down the old table (data survives via new dir hard links).
+            // Committed. Tear down the old table (data survives via new dir hard links). Mark the dir as
+            // the rebase SOURCE first: the uploader stats this marker as the dir winds down and records
+            // the table in the replication index with the rebase-source flag (the high bit of last_txn)
+            // instead of a drop, so the object-store baseline is kept for the rebased table and replicas
+            // keep the dir they already have. Remove _txn/_meta to tombstone the dir for WalPurgeJob, but
+            // do NOT rmdir here and do NOT remove the upload.pending marker: that raced the uploader's
+            // in-flight read of txn_seq and lost the record. The purge job reclaims the dir later, once
+            // the uploader has recorded the flag and cleared the sequencer upload.pending marker itself.
             oldWriter.close();
             oldWriter = null;
             try (Path p = new Path()) {
-                final int len = p.of(root).concat(oldToken).size();
+                p.of(root).concat(oldToken);
+                WalUtils.writeRebaseSourceMarker(ff, p);
+                final int len = p.size();
                 ff.removeQuiet(p.concat(TableUtils.TXN_FILE_NAME).$());
                 ff.removeQuiet(p.trimTo(len).concat(TableUtils.META_FILE_NAME).$());
             }
@@ -2453,10 +2462,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 // Drop the old mat view's graph/state entries (keyed by the old dir name).
                 matViewStateStore.removeViewState(oldToken);
                 matViewGraph.removeView(oldToken);
-            }
-            try (Path p = new Path()) {
-                p.of(root).concat(oldToken).$();
-                ff.rmdir(p, true);
             }
         } finally {
             if (oldWriter != null) {

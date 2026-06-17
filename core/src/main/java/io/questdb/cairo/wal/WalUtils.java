@@ -59,6 +59,12 @@ public class WalUtils {
     // REBASE_NEW so the uploader skips the empty first txn and records it in the replication index, and a
     // replica stalls instead of building the table from empty until a physical copy arrives.
     public static final String REBASE_NEW_FILE_NAME = "_rebase_new";
+    // Per-table marker written on the OLD (source) dir of an ALTER TABLE ... REBASE WAL. The uploader
+    // stats it as the source dir winds down and records the table in the replication index with the
+    // rebase-source flag (high bit of last_txn) instead of a drop, so the object-store baseline is kept
+    // for the rebased table and replicas treat the table as replication-disabled (they keep what they
+    // have). The dir is purged locally by the normal WAL apply/purge jobs.
+    public static final String REBASE_SOURCE_FILE_NAME = "_rebase_source";
     public static final int SEG_MIN_ID = 0;
     public static final int SEG_NONE_ID = Integer.MAX_VALUE >> 2;
     public static final int SEG_MAX_ID = SEG_NONE_ID - 1;
@@ -156,6 +162,22 @@ public class WalUtils {
         final int len = tableDirPath.size();
         try {
             if (!ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$())) {
+                ff.touch(tableDirPath.$());
+            }
+        } finally {
+            tableDirPath.trimTo(len);
+        }
+    }
+
+    /**
+     * Creates the {@link #REBASE_SOURCE_FILE_NAME} marker in the table dir. Idempotent.
+     *
+     * @param tableDirPath path positioned at the table directory; restored on return.
+     */
+    public static void writeRebaseSourceMarker(FilesFacade ff, Path tableDirPath) {
+        final int len = tableDirPath.size();
+        try {
+            if (!ff.exists(tableDirPath.concat(REBASE_SOURCE_FILE_NAME).$())) {
                 ff.touch(tableDirPath.$());
             }
         } finally {
