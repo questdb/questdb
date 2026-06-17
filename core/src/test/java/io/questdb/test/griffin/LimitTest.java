@@ -1282,7 +1282,7 @@ public class LimitTest extends AbstractCairoTest {
                     .timestampDesc("timestamp")
                     .expectSize()
                     .withPlan("""
-                            Sort light lo: $0::long hi: $1::long
+                            Encode sort light lo: $0::long hi: $1::long
                               keys: [timestamp desc, c]
                                 PageFrame
                                     Row forward scan
@@ -1303,7 +1303,7 @@ public class LimitTest extends AbstractCairoTest {
                     .timestampDesc("timestamp")
                     .expectSize()
                     .withPlan("""
-                            Sort light lo: $0::long hi: $1::long
+                            Encode sort light lo: $0::long hi: $1::long
                               keys: [timestamp desc, c]
                                 PageFrame
                                     Row forward scan
@@ -1324,7 +1324,7 @@ public class LimitTest extends AbstractCairoTest {
                     .timestampDesc("timestamp")
                     .expectSize()
                     .withPlan("""
-                            Sort light lo: -10 hi: -3
+                            Encode sort light lo: -10 hi: -3
                               keys: [timestamp desc, c]
                                 PageFrame
                                     Row forward scan
@@ -1349,7 +1349,7 @@ public class LimitTest extends AbstractCairoTest {
                     .timestampDesc("timestamp")
                     .expectSize()
                     .withPlan("""
-                            Sort light lo: $0::long hi: $1::long
+                            Encode sort light lo: $0::long hi: $1::long
                               keys: [timestamp desc, c]
                                 PageFrame
                                     Row forward scan
@@ -1385,7 +1385,7 @@ public class LimitTest extends AbstractCairoTest {
                     .timestamp("timestamp")
                     .expectSize()
                     .withPlan("""
-                            Sort light lo: :lo::long hi: :hi::long partiallySorted: true
+                            Encode sort light lo: :lo::long hi: :hi::long partiallySorted: true
                               keys: [timestamp, c]
                                 PageFrame
                                     Row forward scan
@@ -1406,7 +1406,7 @@ public class LimitTest extends AbstractCairoTest {
                     .timestamp("timestamp")
                     .expectSize()
                     .withPlan("""
-                            Sort light lo: :lo::long hi: :hi::long partiallySorted: true
+                            Encode sort light lo: :lo::long hi: :hi::long partiallySorted: true
                               keys: [timestamp, c]
                                 PageFrame
                                     Row forward scan

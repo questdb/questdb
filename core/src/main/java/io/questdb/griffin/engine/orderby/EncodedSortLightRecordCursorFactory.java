@@ -36,9 +36,10 @@ import io.questdb.griffin.SqlExecutionContext;
 
 /**
  * Factory for {@link EncodedSortLightRecordCursor} that sorts multiple columns
- * by encoding them into a fixed-size byte-comparable key and sorting with
- * radix/quicksort. This replaces the red-black tree approach for cases where
- * all sort columns can be encoded into 8, 16, 24, or 32 bytes.
+ * by encoding them into a byte-comparable key and sorting with
+ * radix/quicksort. Keys of up to 32 fixed-width bytes are stored inline in
+ * the sort entries; wider or variable-length keys live in a key heap with a
+ * 16-byte prefix inline. This replaces the red-black tree approach.
  */
 public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -52,6 +53,8 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
             ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
+        // The light cursor re-fetches rows with baseCursor.recordAt during emit.
+        assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.cursor = new EncodedSortLightRecordCursor(
                 configuration,

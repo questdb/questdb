@@ -1509,7 +1509,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -1653,7 +1653,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 SELECT * FROM CPB PIVOT (sum(jg) FOR nf IN (SELECT NF FROM CPB ORDER BY NF) GROUP BY CPDH) ORDER BY CPDH;""")
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [CPDH]
                             GroupBy vectorized: false
                               keys: [CPDH]
@@ -1710,7 +1710,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -1802,7 +1802,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -1903,7 +1903,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .withPlan("""
-                            Sort light
+                            Encode sort light
                               keys: [country]
                                 GroupBy vectorized: false
                                   keys: [country]
@@ -2102,7 +2102,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [country, name]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -2301,7 +2301,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2339,7 +2339,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
@@ -2377,7 +2377,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
@@ -2450,7 +2450,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2487,7 +2487,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [country desc]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2593,7 +2593,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country, name]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -3448,7 +3448,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country,name]

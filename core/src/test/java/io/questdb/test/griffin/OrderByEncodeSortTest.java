@@ -25,10 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
@@ -93,6 +95,55 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             2\t1\t2\t11
                             2\t0\t0\t2
                             2\t0\t2\t8
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByCastSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, a STRING)");
+            execute("INSERT INTO x VALUES (1, 'c'), (2, 'a'), (3, NULL), (4, 'b'), (5, 'a')");
+            assertQuery("SELECT id, a::symbol s FROM x ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            3\t
+                            2\ta
+                            5\ta
+                            4\tb
+                            1\tc
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByCastSymbolColumnDescAndLimit() throws Exception {
+        // a::symbol is a non-static (cast) symbol resolved through the symbol table - the
+        // KeyShape.SYMBOL variable encoded path. Exercise it DESC (full sort) and with a
+        // LIMIT (top-K), which the ASC testOrderByCastSymbolColumn does not.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, a STRING)");
+            execute("INSERT INTO x VALUES (1, 'c'), (2, 'a'), (3, NULL), (4, 'b'), (5, 'a')");
+            assertQuery("SELECT id, a::symbol s FROM x ORDER BY s DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tc
+                            4\tb
+                            2\ta
+                            5\ta
+                            3\t
+                            """);
+            assertQuery("SELECT id, a::symbol s FROM x ORDER BY s DESC LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tc
+                            4\tb
                             """);
         });
     }
@@ -184,6 +235,114 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByDecimal128ColumnAscWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, d DECIMAL(38, 2))");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, (-1)::decimal(38, 2)),
+                            (3, (0)::decimal(38, 2)),
+                            (4, (1)::decimal(38, 2)),
+                            (5, (2)::decimal(38, 2))"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByDecimal128ColumnDescWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, d DECIMAL(38, 2))");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, (-1)::decimal(38, 2)),
+                            (3, (0)::decimal(38, 2)),
+                            (4, (1)::decimal(38, 2)),
+                            (5, (2)::decimal(38, 2))"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY d DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByDecimal256ColumnAscWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, d DECIMAL(50, 2))");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, (-1)::decimal(50, 2)),
+                            (3, (0)::decimal(50, 2)),
+                            (4, (1)::decimal(50, 2)),
+                            (5, (2)::decimal(50, 2))"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByDecimal256ColumnDescWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, d DECIMAL(50, 2))");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, (-1)::decimal(50, 2)),
+                            (3, (0)::decimal(50, 2)),
+                            (4, (1)::decimal(50, 2)),
+                            (5, (2)::decimal(50, 2))"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY d DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByDoubleEdgeCases() throws Exception {
         Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
         assertMemoryLeak(() -> {
@@ -241,6 +400,40 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             -0.0
                             -1.0000000000000002
                             -1.0000000000000004
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByFixedKeyOver32Bytes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    x % 2 AS a,
+                                    x % 3 AS b,
+                                    x * 0 AS c,
+                                    x * 0 AS d,
+                                    x AS e
+                                FROM long_sequence(10)
+                            )"""
+            );
+            assertQuery("SELECT * FROM x ORDER BY a, b, c, d, e DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc\td\te
+                            0\t0\t0\t0\t6
+                            0\t1\t0\t0\t10
+                            0\t1\t0\t0\t4
+                            0\t2\t0\t0\t8
+                            0\t2\t0\t0\t2
+                            1\t0\t0\t0\t9
+                            1\t0\t0\t0\t3
+                            1\t1\t0\t0\t7
+                            1\t1\t0\t0\t1
+                            1\t2\t0\t0\t5
                             """);
         });
     }
@@ -936,37 +1129,6 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByLimitParquetRowFilteredEmitNoLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE pqu AS (
-                        SELECT x v, ('r' || x)::varchar note, timestamp_sequence(0, 100) ts
-                        FROM long_sequence(50)
-                    ) TIMESTAMP(ts) PARTITION BY DAY""");
-            execute("INSERT INTO pqu VALUES (1_000_000, 'r1000000', '2000-01-01')");
-            execute("ALTER TABLE pqu CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
-            // The filter keeps 10 of the 50 parquet rows, under the 50% density gate,
-            // so the unlimited sort's emit declaration row-filters the parquet decode.
-            assertQuery("SELECT v, note FROM pqu WHERE v % 5 = 3 ORDER BY v DESC")
-                    .noLeakCheck()
-                    .withPlanContaining(limitedSortPlanType())
-                    .returns("""
-                            v\tnote
-                            48\tr48
-                            43\tr43
-                            38\tr38
-                            33\tr33
-                            28\tr28
-                            23\tr23
-                            18\tr18
-                            13\tr13
-                            8\tr8
-                            3\tr3
-                            """);
-        });
-    }
-
-    @Test
     public void testOrderByLimitParquetRowFilteredEmitMultiRowGroup() throws Exception {
         // The single-row-group fixtures always declare emit rows in row group 0 from
         // offset 0, so an off-by-rowGroupLo or wrong-slice-segment bug in the row-filtered
@@ -1010,6 +1172,37 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             2501\tr2501
                             2502\tr2502
                             2503\tr2503
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLimitParquetRowFilteredEmitNoLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pqu AS (
+                        SELECT x v, ('r' || x)::varchar note, timestamp_sequence(0, 100) ts
+                        FROM long_sequence(50)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO pqu VALUES (1_000_000, 'r1000000', '2000-01-01')");
+            execute("ALTER TABLE pqu CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'");
+            // The filter keeps 10 of the 50 parquet rows, under the 50% density gate,
+            // so the unlimited sort's emit declaration row-filters the parquet decode.
+            assertQuery("SELECT v, note FROM pqu WHERE v % 5 = 3 ORDER BY v DESC")
+                    .noLeakCheck()
+                    .withPlanContaining(limitedSortPlanType())
+                    .returns("""
+                            v\tnote
+                            48\tr48
+                            43\tr43
+                            38\tr38
+                            33\tr33
+                            28\tr28
+                            23\tr23
+                            18\tr18
+                            13\tr13
+                            8\tr8
+                            3\tr3
                             """);
         });
     }
@@ -1188,6 +1381,61 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM x ORDER BY v LIMIT null::long")
                     .noLeakCheck()
                     .failsWith("memory exceeded");
+        });
+    }
+
+    @Test
+    public void testOrderByLong256ColumnAscWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, l LONG256)");
+            // ids 3 and 4 straddle the all-Long.MIN_VALUE null bit pattern
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, 0x0000000000000000000000000000000000000000000000000000000000000001),
+                            (3, 0x8000000000000000800000000000000080000000000000007fffffffffffffff),
+                            (4, 0x8000000000000000800000000000000080000000000000008000000000000001),
+                            (5, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff)"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByLong256ColumnDescWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, l LONG256)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, 0x0000000000000000000000000000000000000000000000000000000000000001),
+                            (3, 0x8000000000000000800000000000000080000000000000007fffffffffffffff),
+                            (4, 0x8000000000000000800000000000000080000000000000008000000000000001),
+                            (5, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff)"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY l DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
         });
     }
 
@@ -1436,6 +1684,130 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByStringColumnAscWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, s STRING)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, ''),
+                            (3, 'a'),
+                            (4, 'aaaaaaaaaaaaaaaaaaaax'),
+                            (5, 'aaaaaaaaaaaaaaaaaaaay'),
+                            (6, 'ab'),
+                            (7, 'b'),
+                            (8, 'é'),
+                            (9, '中')"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            8
+                            9
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByStringColumnDescWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, s STRING)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, ''),
+                            (3, 'a'),
+                            (4, 'aaaaaaaaaaaaaaaaaaaax'),
+                            (5, 'aaaaaaaaaaaaaaaaaaaay'),
+                            (6, 'ab'),
+                            (7, 'b'),
+                            (8, 'é'),
+                            (9, '中')"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY s DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            9
+                            8
+                            7
+                            6
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByStringVsVarcharSupplementaryChars() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, s STRING, v VARCHAR)");
+            execute("INSERT INTO x VALUES (1, '😀', '😀'), (2, '￿', '￿')");
+            // STRING compares UTF-16 code units: the U+1F600 surrogate pair (0xD83D...)
+            // sorts below U+FFFF
+            assertQuery("SELECT id FROM x ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            // VARCHAR compares UTF-8 bytes: U+FFFF (0xEF...) sorts below U+1F600 (0xF0...)
+            assertQuery("SELECT id FROM x ORDER BY v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderBySymbolAndVarcharColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v VARCHAR)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('b', 'q'),
+                            ('a', 'x'),
+                            (NULL, 'r'),
+                            ('a', 'p'),
+                            ('b', NULL)"""
+            );
+            assertQuery("SELECT * FROM x ORDER BY s, v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            \tr
+                            a\tx
+                            a\tp
+                            b\tq
+                            b\t
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderBySymbolColumnAscWithNulls() throws Exception {
         assertQuery("SELECT * FROM x ORDER BY sym ASC")
                 .ddl("CREATE TABLE x AS (" +
@@ -1611,6 +1983,36 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByTimestampAndVarcharColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v VARCHAR)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (2, 'a'),
+                            (1, 'b'),
+                            (2, NULL),
+                            (1, 'a'),
+                            (2, 'b'),
+                            (1, NULL)"""
+            );
+            assertQuery("SELECT * FROM x ORDER BY ts, v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000001Z\tb
+                            1970-01-01T00:00:00.000001Z\ta
+                            1970-01-01T00:00:00.000001Z\t
+                            1970-01-01T00:00:00.000002Z\tb
+                            1970-01-01T00:00:00.000002Z\ta
+                            1970-01-01T00:00:00.000002Z\t
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByTimestampColumnAscMixedValues() throws Exception {
         assertQuery("select * from x order by a asc;")
                 .ddl("create table x as (" +
@@ -1696,6 +2098,336 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         
                         
                         """);
+    }
+
+    @Test
+    public void testOrderByUuidColumnAscWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, u UUID)");
+            // ids 4 and 5 straddle the hi=lo=Long.MIN_VALUE null bit pattern
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, '00000000-0000-0000-0000-000000000000'),
+                            (3, '11111111-2222-3333-4444-555555555555'),
+                            (4, '7fffffff-ffff-ffff-ffff-ffffffffffff'),
+                            (5, '80000000-0000-0000-8000-000000000001'),
+                            (6, 'ffffffff-ffff-ffff-ffff-ffffffffffff')"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByUuidColumnDescWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, u UUID)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, '00000000-0000-0000-0000-000000000000'),
+                            (3, '11111111-2222-3333-4444-555555555555'),
+                            (4, '7fffffff-ffff-ffff-ffff-ffffffffffff'),
+                            (5, '80000000-0000-0000-8000-000000000001'),
+                            (6, 'ffffffff-ffff-ffff-ffff-ffffffffffff')"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY u DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            6
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharAndLongColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v VARCHAR, l LONG)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('b', 1),
+                            ('a', 2),
+                            (NULL, 3),
+                            ('a', 1),
+                            ('b', 2),
+                            (NULL, 1)"""
+            );
+            assertQuery("SELECT * FROM x ORDER BY v, l DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tl
+                            \t3
+                            \t1
+                            a\t2
+                            a\t1
+                            b\t2
+                            b\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharColumnAscWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, v VARCHAR)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, ''),
+                            (3, 'a'),
+                            (4, 'aaaaaaaaaaaaaaaaaaaax'),
+                            (5, 'aaaaaaaaaaaaaaaaaaaay'),
+                            (6, 'ab'),
+                            (7, 'b'),
+                            (8, 'é'),
+                            (9, '中')"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY v")
+                    .noLeakCheck()
+                    .withPlanContaining(sortMode == SortMode.SORT_ENABLED ? "Encode sort light" : "Sort light")
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            8
+                            9
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharColumnDescWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, v VARCHAR)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, NULL),
+                            (2, ''),
+                            (3, 'a'),
+                            (4, 'aaaaaaaaaaaaaaaaaaaax'),
+                            (5, 'aaaaaaaaaaaaaaaaaaaay'),
+                            (6, 'ab'),
+                            (7, 'b'),
+                            (8, 'é'),
+                            (9, '中')"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            9
+                            8
+                            7
+                            6
+                            5
+                            4
+                            3
+                            2
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharInvalidUtf8() throws Exception {
+        // A VARCHAR can hold non-UTF-8 bytes (e.g. via ILP or CSV ingestion). The encoded
+        // sort rejects a 0xFF byte rather than emit a wrong order; the tree path sorts such
+        // data by unsigned bytes, where 0xFF (id 3) sorts last ascending.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, v VARCHAR)");
+            execute("INSERT INTO x VALUES (1, 'a'), (2, 'b')");
+            try (TableWriter writer = getWriter("x")) {
+                Utf8StringSink sink = new Utf8StringSink();
+                sink.putAny((byte) 0xFF);
+                TableWriter.Row row = writer.newRow();
+                row.putInt(0, 3);
+                row.putVarchar(1, sink);
+                row.append();
+                writer.commit();
+            }
+            if (sortMode == SortMode.SORT_ENABLED) {
+                assertQuery("SELECT id FROM x ORDER BY v")
+                        .noLeakCheck()
+                        .failsWith("invalid UTF-8");
+                assertQuery("SELECT id FROM x ORDER BY v DESC")
+                        .noLeakCheck()
+                        .failsWith("invalid UTF-8");
+            } else {
+                assertQuery("SELECT id FROM x ORDER BY v")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id
+                                1
+                                2
+                                3
+                                """);
+                assertQuery("SELECT id FROM x ORDER BY v DESC")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id
+                                3
+                                2
+                                1
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharInvalidUtf8TopK() throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            // Small input: no compaction, every row is encoded, so the top-K errors just like the
+            // full sort. The 0xFF sits past the leading word, so only the full encode reaches it.
+            execute("CREATE TABLE small (id INT, v VARCHAR)");
+            execute("INSERT INTO small VALUES (1, 'a'), (2, 'b')");
+            try (TableWriter writer = getWriter("small")) {
+                Utf8StringSink sink = new Utf8StringSink();
+                sink.put("validprefix"); // 11 valid bytes, then a 0xFF past the leading word
+                sink.putAny((byte) 0xFF);
+                TableWriter.Row row = writer.newRow();
+                row.putInt(0, 3);
+                row.putVarchar(1, sink);
+                row.append();
+                writer.commit();
+            }
+            assertQuery("SELECT id FROM small ORDER BY v LIMIT 2")
+                    .noLeakCheck()
+                    .failsWith("invalid UTF-8");
+
+            // Large input: > compaction-trigger rows that all sort before the 0xFF row, which is
+            // appended last (scanned last). After compaction sets a threshold the 0xFF row is
+            // rejected on its valid 'z...' prefix before any full encode, so the query succeeds.
+            execute("CREATE TABLE big (id INT, v VARCHAR)");
+            execute("INSERT INTO big SELECT x, 'aaaa' FROM long_sequence(5000)");
+            try (TableWriter writer = getWriter("big")) {
+                Utf8StringSink sink = new Utf8StringSink();
+                sink.put("zzzzzzzzzz"); // 10 valid bytes sorting after every 'aaaa', then a 0xFF
+                sink.putAny((byte) 0xFF);
+                TableWriter.Row row = writer.newRow();
+                row.putInt(0, 99_999);
+                row.putVarchar(1, sink);
+                row.append();
+                writer.commit();
+            }
+            assertQuery("SELECT v FROM big ORDER BY v LIMIT 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\naaaa\naaaa\naaaa\naaaa\naaaa\n");
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharKeyHeapBudget() throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 4096);
+            node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 4096);
+            // few entries, large strings: the key heap, not the entry array, busts the budget
+            execute("CREATE TABLE x AS (SELECT rnd_varchar(1000, 1000, 0) v FROM long_sequence(100))");
+            assertQuery("SELECT * FROM x ORDER BY v")
+                    .noLeakCheck()
+                    .failsWith("memory exceeded in EncodedSort");
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharPrefixBoundaryLengths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, v VARCHAR)");
+            // encoded segments of 15-18 bytes cross the 16-byte inline prefix
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, 'aaaaaaaaaaaaa'),
+                            (2, 'aaaaaaaaaaaaaa'),
+                            (3, 'aaaaaaaaaaaaab'),
+                            (4, 'aaaaaaaaaaaaaaa'),
+                            (5, 'aaaaaaaaaaaaaaaa')"""
+            );
+            assertQuery("SELECT id FROM x ORDER BY v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id
+                            1
+                            2
+                            4
+                            5
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharUnionFullSort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, v VARCHAR)");
+            execute("CREATE TABLE y (id INT, v VARCHAR)");
+            execute("INSERT INTO x VALUES (1, 'c'), (2, 'a'), (3, NULL)");
+            execute("INSERT INTO y VALUES (4, 'b'), (5, 'a'), (6, '')");
+            assertQuery("SELECT * FROM (SELECT * FROM x UNION ALL SELECT * FROM y) ORDER BY v, id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv
+                            3\t
+                            6\t
+                            2\ta
+                            5\ta
+                            4\tb
+                            1\tc
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharUnionKeyHeapBudget() throws Exception {
+        // UNION ALL has no random access, so this routes through the non-light
+        // EncodedSortRecordCursor, whose variable-key heap budget is separate from
+        // the light cursor's. Large strings bust the key budget there too.
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 4096);
+            execute("CREATE TABLE x AS (SELECT rnd_varchar(1000, 1000, 0) v FROM long_sequence(50))");
+            execute("CREATE TABLE y AS (SELECT rnd_varchar(1000, 1000, 0) v FROM long_sequence(50))");
+            assertQuery("SELECT * FROM (SELECT * FROM x UNION ALL SELECT * FROM y) ORDER BY v")
+                    .noLeakCheck()
+                    .failsWith("memory exceeded in EncodedSort");
+        });
     }
 
     @Test
