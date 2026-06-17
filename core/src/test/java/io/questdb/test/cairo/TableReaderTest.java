@@ -1629,7 +1629,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     Assert.assertFalse(ff.wasCalled());
                     try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
-                        job.run(0);
+                        job.run();
                     }
 
                     checkColumnPurgeRemovesFiles(counterRef, ff, 1);
@@ -5033,7 +5033,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertFalse(ff.wasCalled());
         counterRef.set(0);
         try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
-            job.run(0);
+            job.run();
         }
         int actual = ff.called();
         Assert.assertTrue("Expected at least " + removeCallsExpected + " file removals, but got " + actual, actual >= removeCallsExpected);

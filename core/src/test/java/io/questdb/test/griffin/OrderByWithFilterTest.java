@@ -587,7 +587,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Sort light lo: 10 partiallySorted: true
+                                Encode sort light lo: 10 partiallySorted: true
                                   keys: [ts, key]
                                     Async JIT Filter workers: 1
                                       filter: key is not null

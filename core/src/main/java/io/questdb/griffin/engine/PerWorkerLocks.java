@@ -68,11 +68,11 @@ public class PerWorkerLocks {
         }
     }
 
-    public int acquireSlot(int workerId, ExecutionCircuitBreaker circuitBreaker) {
-        workerId = workerId == -1 ? rnd.nextInt(workerCount) : workerId;
+    public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
+        carrierId = carrierId == -1 ? rnd.nextInt(workerCount) : carrierId;
         while (!circuitBreaker.checkIfTripped()) {
             for (int i = 0; i < workerCount; i++) {
-                int id = (i + workerId) % workerCount;
+                int id = (i + carrierId) % workerCount;
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
                     return id;
                 }

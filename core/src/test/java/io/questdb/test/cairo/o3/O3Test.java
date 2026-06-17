@@ -8531,7 +8531,7 @@ public class O3Test extends AbstractO3Test {
                     private boolean toRun = true;
 
                     @Override
-                    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                    public boolean run(@NotNull WorkerContext workerContext) {
                         if (toRun) {
                             try {
                                 toRun = false;
@@ -8555,7 +8555,7 @@ public class O3Test extends AbstractO3Test {
                         private boolean toRun = true;
 
                         @Override
-                        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                        public boolean run(@NotNull WorkerContext workerContext) {
                             if (toRun) {
                                 try {
                                     toRun = false;

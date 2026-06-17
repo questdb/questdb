@@ -1644,7 +1644,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             engine.getTableSequencerAPI().releaseInactive();
             final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            checkWalTransactionsJob.run(0);
+            checkWalTransactionsJob.run();
 
             execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
