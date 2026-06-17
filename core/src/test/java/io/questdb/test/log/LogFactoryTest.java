@@ -157,7 +157,7 @@ public class LogFactoryTest {
                 }
 
                 @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                public boolean run(@NotNull WorkerContext workerContext) {
                     long cursor = seq.next();
                     if (cursor > -1) {
                         counter.incrementAndGet();
@@ -177,7 +177,7 @@ public class LogFactoryTest {
                 }
 
                 @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                public boolean run(@NotNull WorkerContext workerContext) {
                     throw new UnsupportedOperationException();
                 }
             }));
@@ -331,7 +331,7 @@ public class LogFactoryTest {
                 }
 
                 @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                public boolean run(@NotNull WorkerContext workerContext) {
                     return seq.consumeAll(ring, this::log);
                 }
 

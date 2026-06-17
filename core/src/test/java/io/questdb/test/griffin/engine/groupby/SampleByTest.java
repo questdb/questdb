@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
@@ -17755,12 +17756,17 @@ public class SampleByTest extends AbstractCairoTest {
                         for (int i = 0; i < threadCount; i++) {
                             final int finalI = i;
                             new Thread(() -> {
-                                TestUtils.await(barrier);
+                                // SqlExecutionContext is not thread-safe (it carries a single
+                                // reader-pool supervisor slot, among other per-query state), so
+                                // every thread runs against its own context. Sharing one context
+                                // across threads cross-wires the supervisor slot and leaks readers.
+                                try (SqlExecutionContext threadCtx =
+                                             TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                    TestUtils.await(barrier);
 
-                                try {
                                     final RecordCursorFactory factory = factories[finalI];
                                     while (!writerDone.get()) {
-                                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                        try (RecordCursor cursor = factory.getCursor(threadCtx)) {
                                             TestUtils.drainCursor(cursor);
                                         } catch (Throwable e) {
                                             e.printStackTrace(System.out);

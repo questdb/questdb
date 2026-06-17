@@ -92,6 +92,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
+    private final int sharedQueryWorkerCount;
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
@@ -104,6 +105,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
@@ -119,10 +121,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     @Override
+    public Job cloneInstance() {
+        return new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
+    }
+
+    @Override
     public void close() {
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
         Misc.free(blockFileWriter);
+    }
+
+    @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
+    public void recycleInstance() {
+        mvRefreshTask.clear();
+        lastAttemptSeqTxn = 0L;
+        lastCommittedRows = 0L;
     }
 
     private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
@@ -340,7 +362,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             OperationExecutor operationExecutor,
             Path tempPath,
-            RunStatus runStatus,
+            WorkerContext runStatus,
             TableWriterPressureControl pressureControl
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
@@ -940,7 +962,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @NotNull TableToken tableToken,
             CairoEngine engine,
             OperationExecutor operationExecutor,
-            Job.RunStatus runStatus
+            WorkerContext runStatus
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
@@ -1006,7 +1028,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final TableToken tableToken;
         try {
             final WalTxnNotificationTask task = queue.get(cursor);
@@ -1016,7 +1038,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        applyWal(tableToken, engine, operationExecutor, runStatus);
+        applyWal(tableToken, engine, operationExecutor, workerContext);
         return true;
     }
 

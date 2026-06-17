@@ -31,7 +31,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
@@ -104,6 +106,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelWindowJoinEnabled;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
+    private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
@@ -304,6 +307,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public ResourcePoolSupervisor<TableReader> getReaderPoolSupervisor() {
+        return readerPoolSupervisor;
+    }
+
+    @Override
     public long getRequestFd() {
         return requestFd;
     }
@@ -436,6 +444,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
         this.validationSecurityContext = null;
+        // Defensive: a query reusing this per-connection context must never inherit a
+        // stale supervisor from a prior query. QueryProgress restores it in the finally of
+        // cursor open; reset() is a backstop for reused per-connection contexts if that
+        // restore is ever bypassed.
+        this.readerPoolSupervisor = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
@@ -530,6 +543,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setRandom(Rnd rnd) {
         this.random = rnd;
+    }
+
+    @Override
+    public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+        this.readerPoolSupervisor = supervisor;
     }
 
     @Override

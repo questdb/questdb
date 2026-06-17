@@ -207,7 +207,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             // runSerially() executes under the SynchronizedJob lock with
             // closed=true, confirming no concurrent access to shared resources.
             while (!closedAcknowledged) {
-                this.run(0);
+                this.run();
                 Os.pause();
             }
 

@@ -841,6 +841,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return 1_000L;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }
@@ -1361,6 +1366,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull TextConfiguration getTextConfiguration() {
         return textConfiguration;
+    }
+
+    @Override
+    public int getTimerShardCount() {
+        return Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4));
     }
 
     @Override
