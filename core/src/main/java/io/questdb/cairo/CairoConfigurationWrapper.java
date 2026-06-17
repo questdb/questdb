@@ -1608,6 +1608,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRefreshBlocked(CharSequence viewName) {
+        return getDelegate().isMatViewRefreshBlocked(viewName);
+    }
+
+    @Override
     public boolean isMatViewRefreshMissingWalFilesFatal() {
         return getDelegate().isMatViewRefreshMissingWalFilesFatal();
     }

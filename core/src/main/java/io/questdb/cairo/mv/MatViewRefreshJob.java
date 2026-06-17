@@ -708,6 +708,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (isRefreshBlocked(viewToken)) {
+            LOG.info().$("skipping materialized view full refresh, view is in the refresh block list [view=").$(viewToken).I$();
+            return false;
+        }
+
         if (!viewState.tryLock()) {
             // Someone is refreshing the view, so we're going for another attempt.
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
@@ -1322,6 +1327,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         stateStore.notifyBaseInvalidated(baseTableToken);
     }
 
+    /**
+     * Returns true if the materialized view is in the configured refresh block list
+     * ({@code cairo.mat.view.refresh.block.list}). Blocked views are skipped by every refresh path -
+     * incremental, full, and range - without being invalidated. This is an operator escape hatch for
+     * a view whose refresh keeps crashing the database: blocking it lets the database start and stay
+     * up. The tradeoff is that a blocked view never advances its last refreshed base txn, so it can
+     * pin the base table's WAL retention until it is dropped or removed from the block list.
+     */
+    private boolean isRefreshBlocked(TableToken viewToken) {
+        return configuration.isMatViewRefreshBlocked(viewToken.getTableName());
+    }
+
     private void invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState != null && !viewState.isDropped() && !viewState.isInvalid()) {
@@ -1403,6 +1420,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
+            return false;
+        }
+
+        if (isRefreshBlocked(viewToken)) {
+            LOG.info().$("skipping materialized view range refresh, view is in the refresh block list [view=").$(viewToken).I$();
             return false;
         }
 
@@ -1516,6 +1538,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final TableToken viewToken = childViewSink.get(v);
             final MatViewState viewState = stateStore.getViewState(viewToken);
             if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
+                if (isRefreshBlocked(viewToken)) {
+                    // View is in the configured refresh block list (e.g. its refresh keeps crashing);
+                    // skip it without invalidating. The base table WAL retention can stay pinned at
+                    // this view's un-advanced last refreshed txn until it is dropped or unblocked.
+                    LOG.debug().$("skipping materialized view refresh, view is in the refresh block list [view=").$(viewToken).I$();
+                    continue;
+                }
                 final MatViewDefinition viewDefinition = viewState.getViewDefinition();
                 if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                     // The refresh is not immediate, i.e. it's either manual or timer.
@@ -1627,6 +1656,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewStateStore stateStore, long refreshTriggerTimestamp) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
+            return false;
+        }
+
+        if (isRefreshBlocked(viewToken)) {
+            LOG.info().$("skipping materialized view incremental refresh, view is in the refresh block list [view=").$(viewToken).I$();
             return false;
         }
 

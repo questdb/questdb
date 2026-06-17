@@ -82,6 +82,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -344,6 +345,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int matViewMaxRefreshRetries;
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
+    private final LowerCaseCharSequenceHashSet matViewRefreshBlockList = new LowerCaseCharSequenceHashSet();
     private final long matViewRefreshBusyRetryTimeout;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final int matViewRefreshBusyRetryLimit;
@@ -1499,6 +1501,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
             this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
+            parseMatViewRefreshBlockList(getString(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST, ""));
             // Do not use shared write pool by default for mat-view-refresh, use same worker count as wal-apply
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
@@ -2986,6 +2989,23 @@ public class PropServerConfiguration implements ServerConfiguration {
             allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
+    }
+
+    private void parseMatViewRefreshBlockList(String value) {
+        matViewRefreshBlockList.clear();
+        if (value == null) {
+            return;
+        }
+        for (String name : value.split(",")) {
+            final String trimmed = name.trim();
+            if (!trimmed.isEmpty()) {
+                matViewRefreshBlockList.add(trimmed);
+            }
+        }
+        if (matViewRefreshBlockList.size() > 0) {
+            log.advisory().$("materialized view refresh block list configured [count=").$(matViewRefreshBlockList.size())
+                    .I$();
+        }
     }
 
     protected void getUrls(
@@ -5193,6 +5213,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewParallelSqlEnabled() {
             return matViewParallelExecutionEnabled;
+        }
+
+        @Override
+        public boolean isMatViewRefreshBlocked(CharSequence viewName) {
+            return matViewRefreshBlockList.size() > 0 && matViewRefreshBlockList.contains(viewName);
         }
 
         @Override

@@ -1006,6 +1006,19 @@ public interface CairoConfiguration {
 
     boolean isMatViewParallelSqlEnabled();
 
+    /**
+     * Returns true if the materialized view with the given name is in the configured refresh block
+     * list ({@code cairo.mat.view.refresh.block.list}). The refresh job skips such views entirely -
+     * it neither refreshes nor invalidates them. This is an operator escape hatch for a view whose
+     * refresh keeps crashing the database: blocking it lets the database start and stay up. Because a
+     * blocked view never advances its last refreshed base txn, it can pin the base table's WAL
+     * retention (most acutely for immediate views, which do not otherwise cache refresh intervals)
+     * until it is dropped or removed from the block list.
+     */
+    default boolean isMatViewRefreshBlocked(CharSequence viewName) {
+        return false;
+    }
+
     boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
