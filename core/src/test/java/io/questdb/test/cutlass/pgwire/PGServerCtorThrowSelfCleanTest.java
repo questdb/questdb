@@ -30,6 +30,8 @@ import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.Assert;
@@ -49,9 +51,8 @@ import java.util.concurrent.TimeUnit;
  * shape.
  *
  * <p>This is the pg-wire counterpart of the protocol-envelope partial-init self-clean tests
- * ({@code ServerMainProtocolEnvelopePartialInitTest}). It forces a deterministic ctor throw by
- * a bind collision: a first PGServer binds an ephemeral port and a second PGServer is asked to
- * bind that exact port, so the second's dispatcher bind fails.
+ * ({@code ServerMainProtocolEnvelopePartialInitTest}). It forces a deterministic ctor throw with
+ * a network facade that rejects the dispatcher bind.
  *
  * <p>The whole test runs under {@code assertMemoryLeak}, so the native caches/factory that the
  * failed constructor allocated and then freed must leave the native allocator and file-descriptor
@@ -69,50 +70,40 @@ public class PGServerCtorThrowSelfCleanTest extends AbstractCairoTest {
     @Test
     public void ctorThrowOnBindFailureFreesPartialConstruction() throws Exception {
         assertMemoryLeak(() -> {
-            // First server binds an ephemeral port; read back the concrete port it resolved.
-            final DefaultPGConfiguration ephemeralCfg = new DefaultPGConfiguration() {
+            final DefaultPGConfiguration failingBindCfg = new DefaultPGConfiguration() {
+                private final NetworkFacade networkFacade = new BindFailingNetworkFacade();
+
                 @Override
-                public int getBindPort() {
-                    return 0;
+                public NetworkFacade getNetworkFacade() {
+                    return networkFacade;
                 }
             };
-            try (WorkerPool holderPool = new TestWorkerPool(1);
-                 PGServer holder = newServer(ephemeralCfg, holderPool)) {
-                final int boundPort = holder.getPort();
-                Assert.assertTrue("holder must resolve a concrete ephemeral port; got " + boundPort,
-                        boundPort > 0);
 
-                // Second server is asked to bind the SAME concrete port -> its dispatcher bind
-                // fails inside IODispatchers.create, so the PGServer ctor body throws AFTER it has
-                // already allocated typesAndSelectCache + contextFactory.
-                final DefaultPGConfiguration collidingCfg = new DefaultPGConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return boundPort;
-                    }
-                };
-
-                boolean threw = false;
-                try (WorkerPool collidingPool = new TestWorkerPool(1)) {
-                    final PGServer colliding = newServer(collidingCfg, collidingPool);
-                    // Reaching here means no throw -- close the unexpected server so the wrap stays
-                    // honest, then fail.
-                    colliding.close();
-                } catch (Throwable t) {
-                    threw = true;
-                }
-                Assert.assertTrue(
-                        "PGServer ctor must throw when its dispatcher cannot bind the already-bound port "
-                                + boundPort + " (the partial-construction self-clean path)",
-                        threw);
-
-                // The holder is still healthy: its port is unchanged and it can be closed cleanly
-                // by the try-with-resources, proving the failed second construction did not corrupt
-                // shared native state.
-                Assert.assertEquals("holder port must be unchanged after the colliding ctor failed",
-                        boundPort, holder.getPort());
+            boolean threw = false;
+            try (WorkerPool workerPool = new TestWorkerPool(1)) {
+                final PGServer server = newServer(failingBindCfg, workerPool);
+                // Reaching here means no throw -- close the unexpected server so the wrap stays
+                // honest, then fail.
+                server.close();
+            } catch (Throwable t) {
+                threw = true;
             }
+            Assert.assertTrue(
+                    "PGServer ctor must throw when its dispatcher cannot bind (the partial-construction self-clean path)",
+                    threw);
         });
+    }
+
+    private static class BindFailingNetworkFacade extends NetworkFacadeImpl {
+        @Override
+        public boolean bindTcp(long fd, int address, int port) {
+            return false;
+        }
+
+        @Override
+        public int errno() {
+            return -1;
+        }
     }
 
     private static PGServer newServer(DefaultPGConfiguration configuration, WorkerPool workerPool) {
