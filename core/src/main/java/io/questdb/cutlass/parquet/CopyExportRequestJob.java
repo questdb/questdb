@@ -46,6 +46,7 @@ import java.util.concurrent.Callable;
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
     private final CopyExportContext copyContext;
+    private final CairoEngine engine;
     private final @NotNull MicrosecondClock microsecondClock;
     @TestOnly
     private @Nullable Callable<Exception> callback;
@@ -54,6 +55,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
     public CopyExportRequestJob(final CairoEngine engine) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
+        this.engine = engine;
         microsecondClock = engine.getConfiguration().getMicrosecondClock();
         localTaskCopy = new CopyExportRequestTask();
         try {
@@ -72,13 +74,27 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     @Override
+    public io.questdb.mp.Job cloneInstance() {
+        return new CopyExportRequestJob(engine);
+    }
+
+    @Override
     public void close() {
         this.serialExporter = Misc.free(serialExporter);
         this.localTaskCopy = Misc.free(localTaskCopy);
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
+        final int carrierId = workerContext.carrierId();
         try {
             CopyExportRequestTask task = queue.get(cursor);
             // Transfer ownership of selectFactory and createOp out of the
@@ -130,7 +146,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
         CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         try {
-            entry.setStartTime(microsecondClock.getTicks(), workerId);
+            entry.setStartTime(microsecondClock.getTicks(), carrierId);
             SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
             CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
 

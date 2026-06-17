@@ -237,6 +237,7 @@ public class Decimal256 implements Sinkable, Decimal {
     private long hl;    // High 64 bits (bits 128-191)
     private long lh;    // Mid 64 bits (bits 64-127)
     private long ll;    // Low 64 bits (bits 0-63)
+    private int[] ryuE10;
     private int scale;  // Number of decimal places
     // @formatter:on
 
@@ -1723,6 +1724,14 @@ public class Decimal256 implements Sinkable, Decimal {
             of(hh, hl, lh, ll, scale);
             throw e;
         }
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     /**

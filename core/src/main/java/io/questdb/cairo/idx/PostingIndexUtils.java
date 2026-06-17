@@ -421,6 +421,15 @@ public final class PostingIndexUtils {
             long pos = packedDataAddr;
             for (int b = 0; b < firstWord; b++) {
                 int count = Unsafe.getByte(valueCountsAddr + b) & 0xFF;
+                // A valid block holds at most BLOCK_CAPACITY values; the unpack below writes its
+                // count-1 deltas into the fixed BLOCK_CAPACITY-long blockDeltasAddr scratch, so a
+                // corrupt count above BLOCK_CAPACITY would overrun it (the decodeKeyToNative twin
+                // guards the same invariant). Reject before any write.
+                if (count > BLOCK_CAPACITY) {
+                    throw CairoException.critical(0)
+                            .put("corrupt posting index: block value count exceeds capacity [block=").put(b)
+                            .put(", count=").put(count).put(", max=").put(BLOCK_CAPACITY).put(']');
+                }
                 int bitWidth = Unsafe.getByte(bitWidthsAddr + b) & 0xFF;
                 int numDeltas = count - 1;
                 long firstValue = Unsafe.getLong(firstValuesAddr + (long) b * Long.BYTES);
@@ -491,8 +500,23 @@ public final class PostingIndexUtils {
      * Two-pass: (1) SIMD bulk-unpack low bits, (2) scan high bits and merge.
      */
     public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
+        decodeKeyEFToNative(srcAddr, destAddr, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Bounded variant: {@code maxValues} caps the values written to
+     * {@code destAddr}. The encoded count is read from the block itself, so a
+     * corrupt block could otherwise overflow a buffer the caller sized to the
+     * gen-dir count; validate it before any write.
+     */
+    public static void decodeKeyEFToNative(long srcAddr, long destAddr, int maxValues) {
         long pos = srcAddr + 4; // skip sentinel
         int n = Unsafe.getInt(pos);
+        if (n < 0 || n > maxValues) {
+            throw CairoException.critical(0)
+                    .put("corrupt posting index: EF value count out of range [count=").put(n)
+                    .put(", capacity=").put(maxValues).put(']');
+        }
         pos += 4;
         int L = Unsafe.getByte(pos) & 0xFF;
         pos += 1;
@@ -533,17 +557,25 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Decodes all values for a key from delta-encoded data directly into native memory,
-     * using pre-allocated workspace arrays from the provided context.
+     * Decodes all values for a key from delta-encoded data directly into native
+     * memory, using pre-allocated workspace arrays from the provided context.
+     * <p>
+     * {@code maxValues} caps the number of longs written to {@code destAddr}.
+     * Each block carries its own value count, so a corrupt or mismatched gen
+     * whose block-internal counts exceed the gen-dir count the caller sized its
+     * buffer to would otherwise overflow {@code destAddr}. This sums the
+     * block-internal counts and throws before any value is written when the
+     * total exceeds {@code maxValues}.
      *
-     * @param srcAddr  address of the encoded data for this key
-     * @param destAddr native memory destination address (must have room for totalCount longs)
-     * @param ctx      reusable decode context (call ensureCapacity first)
+     * @param srcAddr   address of the encoded data for this key
+     * @param destAddr  native memory destination address (must have room for maxValues longs)
+     * @param ctx       reusable decode context (call ensureCapacity first)
+     * @param maxValues cap on the number of longs written to destAddr
      */
-    public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx) {
+    public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx, int maxValues) {
         int firstWord = Unsafe.getInt(srcAddr);
         if (firstWord == EF_FORMAT_SENTINEL) {
-            decodeKeyEFToNative(srcAddr, destAddr);
+            decodeKeyEFToNative(srcAddr, destAddr, maxValues);
             return;
         }
         if (firstWord < 0 || firstWord > MAX_BLOCK_COUNT) {
@@ -558,8 +590,37 @@ public final class PostingIndexUtils {
         long bitWidthsAddr = ctx.bitWidthsAddr;
         long blockDeltasAddr = ctx.blockDeltasAddr;
 
+        long blockInternalTotal = 0;
         for (int b = 0; b < firstWord; b++) {
-            Unsafe.putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getByte(pos + b) & 0xFF);
+            int c = Unsafe.getByte(pos + b) & 0xFF;
+            // A valid block always holds at least its first value, so the encoder never emits a
+            // zero-count block. The decode loop below writes that first value unconditionally
+            // (firstValues[b]) regardless of count, so a crafted/corrupt block of zero-count
+            // entries would write one long per block while contributing 0 to blockInternalTotal,
+            // defeating the bound and overrunning a destination sized to blockInternalTotal. Reject
+            // it here so the checked total equals the number of longs actually written.
+            if (c == 0) {
+                throw CairoException.critical(0)
+                        .put("corrupt posting index: zero-count block [block=").put(b).put(']');
+            }
+            // The encoder splits a key into blocks of at most BLOCK_CAPACITY values, and the decode
+            // loop below unpacks each block's count-1 deltas into blockDeltasAddr -- a fixed
+            // BLOCK_CAPACITY-long scratch buffer that DecodeContext never grows (a valid block can
+            // never need more). The blockInternalTotal <= maxValues check below bounds destAddr but
+            // NOT that scratch, so a corrupt count above BLOCK_CAPACITY would overrun blockDeltasAddr
+            // (the bitWidth==0 arm writes count-1 longs unconditionally). Reject it here too.
+            if (c > BLOCK_CAPACITY) {
+                throw CairoException.critical(0)
+                        .put("corrupt posting index: block value count exceeds capacity [block=").put(b)
+                        .put(", count=").put(c).put(", max=").put(BLOCK_CAPACITY).put(']');
+            }
+            Unsafe.putInt(valueCountsAddr + (long) b * Integer.BYTES, c);
+            blockInternalTotal += c;
+        }
+        if (blockInternalTotal > maxValues) {
+            throw CairoException.critical(0)
+                    .put("corrupt posting index: decoded value count exceeds buffer [decoded=").put(blockInternalTotal)
+                    .put(", capacity=").put(maxValues).put(']');
         }
         pos += firstWord;
 

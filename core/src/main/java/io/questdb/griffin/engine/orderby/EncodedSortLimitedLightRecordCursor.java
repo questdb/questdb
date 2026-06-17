@@ -86,7 +86,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         EncodedTopKBuffer entriesInit = null;
         try {
             encoderInit = new SortKeyEncoder(metadata, sortColumnFilter);
-            entriesInit = new EncodedTopKBuffer(configuration);
+            entriesInit = new EncodedTopKBuffer(configuration, true);
         } catch (Throwable th) {
             Misc.free(encoderInit);
             Misc.free(entriesInit);
@@ -186,6 +186,11 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
         entries.of(keyType, isFirstN, limit);
+        // Variable-length keys spill into the buffer's key heap; the encoder
+        // writes the full key bytes there during the build pass.
+        if (keyType.isVariable()) {
+            encoder.setKeyHeap(entries.getKeyHeap());
+        }
         circuitBreaker = executionContext.getCircuitBreaker();
         isBuilt = false;
         currentAddr = 0;
@@ -282,8 +287,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            encodeCurrentRow();
-            entries.endAppend();
+            encoder.encodeTopK(baseRecord, baseRecord.getRowId(), entries);
         }
     }
 
@@ -316,6 +320,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             } else {
                 rowsSoFar += rowsInGroup;
                 if (rowsSoFar > limit) {
+                    entries.discardLastAppend();
                     return;
                 }
                 groupKey = currentKey;
