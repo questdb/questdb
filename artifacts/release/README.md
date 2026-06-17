@@ -27,15 +27,25 @@ mvn release:clean
 ## Perform release
 
 This step will do the following:
-- create tag in `git` repo
+- create the release tag in the `git` repo and push it
 - roll the versions on your branch from one snapshot to the next, e.g. from 7.1.1-SNAPSHOT to 7.1.2-SNAPSHOT
-- publish `jar` to maven central
 
-Note: you will need write access to git repo and maven central.
+It deliberately does NOT publish the `jar` to Maven Central. The Rust native
+library (`libquestdbr`) is no longer committed and is compiled per host
+platform, so a single-host `mvn deploy` would publish a core jar carrying only
+the build host's native library, which then fails to start on every other
+platform. The release therefore stops at tagging; pushing the tag triggers the
+[Github Release - Binaries](https://github.com/questdb/questdb/actions/workflows/github-binaries-release.yml)
+workflow, which builds the per-platform binaries (see below).
+
+Note: you will need write access to the git repo.
 
 ```bash
-mvn -B release:prepare release:perform
+mvn -B release:prepare
 ```
+
+Do NOT run `release:perform`: that is the Maven Central deploy step, and it is
+intentionally skipped.
 
 Note that `-B` flag will make assumptions about release version. Use it if your release is routine. When releasing
 a special version, for example `8.0` you will want to remove `-B` and answer questions about versions in interactive
@@ -117,10 +127,6 @@ git checkout tags/7.1.1
 mvn package -DskipTests -DskipNative -P build-web-console,build-binaries
 ```
 
-## Release Java Library
-
-Logging into https://oss.sonatype.org/ to release the library
-
 ## Release AMI
 
 Our current AMI version has to be bumped with every release we do. This might change in the future, but for now
@@ -129,10 +135,6 @@ please follow these interactive steps to bump AMI:
 https://questdb.slab.com/posts/how-to-release-a-new-aws-ami-w7rkjimy
 
 ## Update demo.questdb.io
-
-You need to SSH to the demo box. Either from your desktop, or AWS console via web browser:
-
-https://questdb.slab.com/posts/update-demo-airbus-and-telemetry-box-kyyl1mnw
 
 ## Release helm chart
 
