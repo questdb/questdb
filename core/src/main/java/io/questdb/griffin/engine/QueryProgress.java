@@ -32,7 +32,6 @@ import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
@@ -65,7 +64,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
-public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<ReaderPool.R> {
+public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<TableReader> {
     // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
@@ -290,25 +289,28 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
+            // Install this factory as the reader-pool supervisor for the duration of cursor
+            // open, so every table reader the query borrows while building the cursor is
+            // attributed to it for leak detection. The supervisor lives on the
+            // SqlExecutionContext (not a carrier/thread local) so it survives a continuation
+            // that parks inside base.getCursor() and resumes on a different worker -- the
+            // displaced value is restored relative to the same context object regardless of
+            // which carrier finishes the open. Open runs synchronously per connection (a
+            // parked open does not let another statement open a cursor on the same context),
+            // so this set/restore is strictly nested and is safe on the shared per-connection
+            // context. Readers opened later, during fetch, are not supervised here -- the
+            // same limitation as before this change -- because fetch can interleave across
+            // PGWire portals, which a single context supervisor slot cannot model.
+            final ResourcePoolSupervisor<TableReader> prevSupervisor = executionContext.getReaderPoolSupervisor();
+            executionContext.setReaderPoolSupervisor(this);
             try {
-                // Configure this factory to be the supervisor for all open table readers.
-                // We are assuming that all readers will be open on the same thread, which is
-                // typically before cursor is fetched. Readers open after fetch has begun can go
-                // unreported and may still leak.
-                //
-                // As a context, when cursor is being fetched it starts being dependent on the IO to
-                // the network client that is receiving the data. As this client slows down, the server
-                // may start throwing this cursor to another thread. This happens by virtue of parking the
-                // unresponsive client and resuming it on a random thread when this client wishes to
-                // continue receiving the data.
-                executionContext.getCairoEngine().configureThreadLocalReaderPoolSupervisor(this);
                 final RecordCursor baseCursor = base.getCursor(executionContext);
-                executionContext.getCairoEngine().removeThreadLocalReaderPoolSupervisor();
                 cursor.of(baseCursor); // this should not fail, it is just variable assignment
             } catch (Throwable th) {
-                executionContext.getCairoEngine().removeThreadLocalReaderPoolSupervisor();
                 cursor.close0(th);
                 throw th;
+            } finally {
+                executionContext.setReaderPoolSupervisor(prevSupervisor);
             }
         }
         return cursor;
@@ -333,15 +335,18 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
+            // See getCursor: supervise only the synchronous cursor-open window, on the
+            // context so it survives a cont park/resume, and restore on return.
+            final ResourcePoolSupervisor<TableReader> prevSupervisor = executionContext.getReaderPoolSupervisor();
+            executionContext.setReaderPoolSupervisor(this);
             try {
-                executionContext.getCairoEngine().configureThreadLocalReaderPoolSupervisor(this);
                 final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
-                executionContext.getCairoEngine().removeThreadLocalReaderPoolSupervisor();
                 pageFrameCursor.of(baseCursor);
             } catch (Throwable th) {
-                executionContext.getCairoEngine().removeThreadLocalReaderPoolSupervisor();
                 pageFrameCursor.close0(th);
                 throw th;
+            } finally {
+                executionContext.setReaderPoolSupervisor(prevSupervisor);
             }
         }
         return pageFrameCursor;
@@ -373,21 +378,23 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
-    public void onResourceBorrowed(ReaderPool.R resource) {
-        assert resource.getSupervisor() != null;
+    public void onResourceBorrowed(TableReader resource) {
         readers.add(resource);
     }
 
     @Override
-    public void onResourceReturned(ReaderPool.R resource) {
+    public void onResourceReturned(TableReader resource) {
         int index = readers.remove(resource);
-        // do not freak out if reader is not in the list after our cursor has been closed
+        // After our cursor closes, unregisterAndCleanup() has already cleared the list, so a
+        // late return naturally finds nothing -- expected, do not log it.
         if (index < 0 && (cursor.isOpen || pageFrameCursor.isOpen)) {
-            // when this happens, it could be down to a race condition
-            // where readers list is cleared before borrowed resources are returned.
-            // Last time, this occurred when pool entry was released before readers were cleared.
-            // In this scenario, the returned pool entry got used by another query and
-            // readers.clear() came in tangentially to this query.
+            // Still open but the reader is untracked: our leak bookkeeping is inconsistent.
+            // This is NOT pool-entry reuse (a previous hypothesis): R.close() detaches the
+            // supervisor (sets it to null) before returnToPool, so a recycled entry cannot
+            // deliver a stale return into this query. In practice it means a reader was
+            // attributed to this query and then removed out of band -- e.g. unsupported
+            // concurrent use of one SqlExecutionContext across statements, which routes
+            // another query's borrows through this supervisor slot. Log it as a diagnostic.
             LOG.critical().$("returned reader is not in supervisor's list [tableName=")
                     .$(resource.getTableToken()).I$();
         }
@@ -446,7 +453,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // to cleaned up circuit breaker.
                 registry.unregister(sqlId, executionContext);
                 if (executionContext.getCairoEngine().getConfiguration().freeLeakedReaders()) {
-                    Misc.freeObjListAndClear(readers);
+                    // Each leaked reader still references this QueryProgress as its pool supervisor,
+                    // so closing it re-enters onResourceReturned() -> readers.remove(). A fixed-index
+                    // walk (Misc.freeObjListAndClear) would resize the list mid-iteration and skip
+                    // every other reader. Detach each entry from the list BEFORE freeing it, so the
+                    // re-entrant remove() is a harmless no-op and no leaked reader is missed.
+                    while (readers.size() > 0) {
+                        int last = readers.size() - 1;
+                        TableReader reader = readers.getQuick(last);
+                        readers.remove(last);
+                        Misc.free(reader);
+                    }
                 } else {
                     // just clearing readers should fail leak test
                     readers.clear();

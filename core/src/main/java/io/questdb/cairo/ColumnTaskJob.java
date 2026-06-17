@@ -66,7 +66,7 @@ public class ColumnTaskJob extends AbstractQueueConsumerJob<ColumnTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         ColumnTask task = queue.get(cursor);
         processColumnTask(task, cursor, subSeq);
         return true;

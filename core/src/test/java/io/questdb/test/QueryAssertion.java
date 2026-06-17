@@ -782,14 +782,14 @@ public class QueryAssertion {
     private static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
         drainWalQueue0(walApplyJob);
-        if (checkWalTransactionsJob.run(0)) {
+        if (checkWalTransactionsJob.run()) {
             drainWalQueue0(walApplyJob);
         }
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     private static void drainWalQueue0(ApplyWal2TableJob walApplyJob) {
-        while (walApplyJob.run(0)) ;
+        while (walApplyJob.run()) ;
     }
 
     private static void releaseInactive(CairoEngine engine) {

@@ -29,9 +29,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMutable, Utf16Sink {
-
     private char[] buffer;
     private int pos;
+    private int[] ryuE10;
 
     public StringSink() {
         this(16);
@@ -64,8 +64,7 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
 
     @Override
     public boolean equals(Object obj) {
-        if (obj instanceof CharSequence) {
-            CharSequence cs = (CharSequence) obj;
+        if (obj instanceof CharSequence cs) {
             int len = cs.length();
             if (len == pos) {
                 for (int i = 0; i < len; i++) {
@@ -159,6 +158,14 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
                 buffer[i] = to;
             }
         }
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     public void setCharAt(int index, char ch) {
