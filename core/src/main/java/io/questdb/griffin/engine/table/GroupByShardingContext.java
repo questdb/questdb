@@ -143,11 +143,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         Misc.freeObjList(destShards);
     }
 
-    public int maybeAcquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1 && owner) {
+    public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
+        if (carrierId == -1 && owner) {
             return -1;
         }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+        return perWorkerLocks.acquireSlot(carrierId, circuitBreaker);
     }
 
     public void mergeShard(int slotId, int shardIndex) {

@@ -141,7 +141,7 @@ public class FuzzRunner {
 
     public static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
-            purgeJob.run(0);
+            purgeJob.run();
             reloadReader(reloadRnd, rdr1, "1");
             reloadReader(reloadRnd, rdr2, "2");
         }
@@ -1196,7 +1196,7 @@ public class FuzzRunner {
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+            while (walApplyJob.run() || checkWalTransactionsJob.run()) {
                 forceReleaseTableWriter(applyRnd);
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
             }
@@ -1282,7 +1282,7 @@ public class FuzzRunner {
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.loadFence();
-                    while (job.run(0) || checkJob.run(0)) {
+                    while (job.run() || checkJob.run()) {
                         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
                         // where it can be fully closed before continuing the WAL application Test TableWriter closures.
                         forceReleaseTableWriter(applyRnd);
@@ -1291,7 +1291,7 @@ public class FuzzRunner {
                     checkNoSuspendedTables(tableTokenBucket);
                     i++;
                 }
-                while (job.run(0) || checkJob.run(0)) {
+                while (job.run() || checkJob.run()) {
                     forceReleaseTableWriter(applyRnd);
                 }
                 i++;

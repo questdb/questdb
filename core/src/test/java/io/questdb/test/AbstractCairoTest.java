@@ -696,8 +696,31 @@ public abstract class AbstractCairoTest extends AbstractTest {
             } finally {
                 try {
                     CLOSEABLE.forEach(Misc::free);
+                    // Catch held (unreleased) readers/writers at the SOURCE test. The clear()
+                    // below "goodbye"s a leaked tenant but RETAINS it for reuse, so without this
+                    // check a leak silently pollutes later tests -- surfacing far away as a stale
+                    // schema/version mismatch or a hang. Capture before clear() resets the counts;
+                    // the "table is left behind" log lines name the offending table.
+                    final StringSink leakSink = new StringSink();
+                    forEachNode(node -> {
+                        final int busyReaders = node.getEngine().getBusyReaderCount();
+                        final int busyWriters = node.getEngine().getBusyWriterCount();
+                        if (busyReaders != 0 || busyWriters != 0) {
+                            leakSink.put("[busyReaders=").put(busyReaders).put(", busyWriters=").put(busyWriters).put("] ");
+                        }
+                    });
                     forEachNode(node -> node.getEngine().clear());
                     AbstractCairoTest.ff = ffBefore;
+                    if (!leakSink.isEmpty()) {
+                        final AssertionError leakErr = new AssertionError(
+                                "test leaked unreleased resources " + leakSink
+                                        + "(see 'table is left behind' log lines for table names)");
+                        if (th1 == null) {
+                            th1 = leakErr;
+                        } else {
+                            th1.addSuppressed(leakErr);
+                        }
+                    }
                 } catch (Throwable th) {
                     LOG.error().$("Exception in assertMemoryLeak finally ").$(th).$();
                     if (th1 == null) {
@@ -975,7 +998,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void tickWalQueue(int ticks) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
             for (int i = 0; i < ticks; i++) {
-                walApplyJob.run(0);
+                walApplyJob.run();
             }
         }
     }

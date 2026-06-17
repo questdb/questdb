@@ -1409,20 +1409,18 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     final AtomicInteger mismatches = new AtomicInteger();
                     final AtomicReference<String> sampleWrongValue = new AtomicReference<>(null);
 
-                    // Each thread needs its own SqlExecutionContext: the per-query memory
-                    // tracker is a single slot on the context, so sharing one across threads
-                    // corrupts its accounting and aborts the JVM on a double free.
-                    final int workerCount = sqlExecutionContext.getSharedQueryWorkerCount();
                     for (int t = 0; t < CONTENTION_THREADS; t++) {
                         final int threadId = t;
                         new Thread(() -> {
-                            try {
-                                TestUtils.await(barrier); // rendezvous before building the context
-                                try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
-                                    for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
-                                        mismatches.addAndGet(countKeyedSparklineMismatches(
-                                                engine, ctx, expected, sampleWrongValue));
-                                    }
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
+                                for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
+                                    mismatches.addAndGet(countKeyedSparklineMismatches(
+                                            engine, threadCtx, expected, sampleWrongValue));
                                 }
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
@@ -1622,21 +1620,21 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     final AtomicInteger threadsThatSawMismatches = new AtomicInteger();
                     final AtomicReference<String> sampleWrongValue = new AtomicReference<>(null);
 
-                    // Each thread needs its own SqlExecutionContext; see the keyed variant.
-                    final int workerCount = sqlExecutionContext.getSharedQueryWorkerCount();
                     for (int t = 0; t < CONTENTION_THREADS; t++) {
                         final int threadId = t;
                         new Thread(() -> {
                             int localMismatches = 0;
-                            try {
-                                TestUtils.await(barrier); // rendezvous before building the context
-                                try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
-                                    for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
-                                        String observed = runSparkline(engine, ctx, sql);
-                                        if (!expected.equals(observed)) {
-                                            localMismatches++;
-                                            sampleWrongValue.compareAndSet(null, observed);
-                                        }
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
+                                for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
+                                    String observed = runSparkline(engine, threadCtx, sql);
+                                    if (!expected.equals(observed)) {
+                                        localMismatches++;
+                                        sampleWrongValue.compareAndSet(null, observed);
                                     }
                                 }
                             } catch (Throwable th) {

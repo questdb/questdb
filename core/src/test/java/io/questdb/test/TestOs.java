@@ -76,34 +76,52 @@ public class TestOs {
             } catch (URISyntaxException e) {
                 throw new RuntimeException(e);
             }
-            if (Os.isWindows() && absolutePathPreCompiled.charAt(0) == '/') {
-                // Remove forward /
-                absolutePathPreCompiled = absolutePathPreCompiled.substring(1);
-            }
-            String sourcesPath = absolutePathPreCompiled.substring(0, absolutePathPreCompiled.indexOf("/target/"));
-            Path absoluteDevReleasePath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/release/" + rustLibName).toAbsolutePath();
-            Path absoluteDevDebugPath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/debug/" + rustLibName).toAbsolutePath();
-            Path absolutePrdPath = Paths.get(absolutePathPreCompiled);
-
-            FileTime tsDevRel = getLastModifiedTime(absoluteDevReleasePath);
-            FileTime tsDevDeb = getLastModifiedTime(absoluteDevDebugPath);
-            FileTime tsPrd = getLastModifiedTime(absolutePrdPath);
-
-            Path rustLibPath;
-            if (tsDevRel.compareTo(tsPrd) > 0 && tsDevRel.compareTo(tsDevDeb) > 0) {
-                System.err.println("Loading DEV release sqllogictest library: " + absoluteDevReleasePath);
-                rustLibPath = absoluteDevReleasePath;
-            } else if (tsDevDeb.compareTo(tsPrd) > 0) {
-                System.err.println("Loading DEV debug sqllogictest library: " + absoluteDevDebugPath);
-                rustLibPath = absoluteDevDebugPath;
+            // When the resource lives inside a jar (e.g. questdb test-jar consumed from a dependent
+            // project), the URL is `jar:file:.../questdb-tests.jar!/io/questdb/bin/...` and
+            // toURI().getPath() returns null. In that case skip the dev-path lookup and stream the
+            // library straight out of the jar.
+            if (absolutePathPreCompiled == null) {
+                try (InputStream is = resource.openStream()) {
+                    Os.loadLib(rustLibName, is);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             } else {
-                rustLibPath = absolutePrdPath;
-            }
+                if (Os.isWindows() && absolutePathPreCompiled.charAt(0) == '/') {
+                    // Remove forward /
+                    absolutePathPreCompiled = absolutePathPreCompiled.substring(1);
+                }
+                int targetIndex = absolutePathPreCompiled.indexOf("/target/");
+                String sourcesPath;
+                if (targetIndex == -1) {
+                    sourcesPath = System.getProperty("user.dir");
+                } else {
+                    sourcesPath = absolutePathPreCompiled.substring(0, targetIndex);
+                }
+                Path absoluteDevReleasePath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/release/" + rustLibName).toAbsolutePath();
+                Path absoluteDevDebugPath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/debug/" + rustLibName).toAbsolutePath();
+                Path absolutePrdPath = Paths.get(absolutePathPreCompiled);
 
-            try (InputStream is = Files.newInputStream(rustLibPath)) {
-                Os.loadLib(rustLibPath.toString(), is);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+                FileTime tsDevRel = getLastModifiedTime(absoluteDevReleasePath);
+                FileTime tsDevDeb = getLastModifiedTime(absoluteDevDebugPath);
+                FileTime tsPrd = getLastModifiedTime(absolutePrdPath);
+
+                Path rustLibPath;
+                if (tsDevRel.compareTo(tsPrd) > 0 && tsDevRel.compareTo(tsDevDeb) > 0) {
+                    System.err.println("Loading DEV release sqllogictest library: " + absoluteDevReleasePath);
+                    rustLibPath = absoluteDevReleasePath;
+                } else if (tsDevDeb.compareTo(tsPrd) > 0) {
+                    System.err.println("Loading DEV debug sqllogictest library: " + absoluteDevDebugPath);
+                    rustLibPath = absoluteDevDebugPath;
+                } else {
+                    rustLibPath = absolutePrdPath;
+                }
+
+                try (InputStream is = Files.newInputStream(rustLibPath)) {
+                    Os.loadLib(rustLibPath.toString(), is);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
         }
     }

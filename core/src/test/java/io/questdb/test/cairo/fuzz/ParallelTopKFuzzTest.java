@@ -61,7 +61,10 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
-    private static final String[] WIDE_COLUMNS = {"col_dec128", "col_dec256"};
+    // Variable-length sort keys: encoded parallel top-K spills these into a key heap.
+    private static final String[] VAR_COLUMNS = {"col_str", "col_varchar"};
+    // Wide fixed keys (> 8 bytes): FIXED_16 / FIXED_32 encoded entries.
+    private static final String[] WIDE_COLUMNS = {"col_dec128", "col_dec256", "col_uuid", "col_long256", "col_long128"};
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelTopK;
@@ -161,6 +164,20 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                                 assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
                             }
                         }
+                        // Variable-length keys (STRING/VARCHAR) take the encoded key-heap top-K path.
+                        // The single-column projection keeps the LIMIT cut tie-safe: tied rows share
+                        // the projected value, so the result is identical regardless of which survive.
+                        for (String col : VAR_COLUMNS) {
+                            for (int d = 0; d < 2; d++) {
+                                final String desc = d == 1 ? " DESC" : "";
+                                final int k = 1 + rnd.nextInt(200);
+                                assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            }
+                        }
+
+                        // A fixed multi-column key wider than 32 bytes spills onto the key-heap
+                        // (variable) path; the unique col_id makes the cut total and deterministic.
+                        assertTopKMatch(engine, ctx, "SELECT col_long256, col_id FROM tab ORDER BY col_long256, col_id LIMIT " + (1 + rnd.nextInt(200)));
 
                         // Unique keys make the full emitted rows deterministic.
                         assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id LIMIT " + (1 + rnd.nextInt(200)));
@@ -205,14 +222,19 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                                 ctx
                         );
                         engine.execute("ALTER TABLE tab_top ADD COLUMN col_top DOUBLE", ctx);
+                        // col_top_v exercises the variable-key column-top fallback: encodeVarcharBatch
+                        // declines the colAddr==0 frames of the original rows, so they take the per-row path.
+                        engine.execute("ALTER TABLE tab_top ADD COLUMN col_top_v VARCHAR", ctx);
                         engine.execute(
-                                "INSERT INTO tab_top(ts, col_top, col_id) SELECT" +
-                                        " ((1_000_000L + x) * 1_000_000L)::timestamp, rnd_double(2), " + rowCount + "L + x" +
+                                "INSERT INTO tab_top(ts, col_top, col_top_v, col_id) SELECT" +
+                                        " ((1_000_000L + x) * 1_000_000L)::timestamp, rnd_double(2), rnd_varchar(1, 24, 2), " + rowCount + "L + x" +
                                         " FROM long_sequence(5_000)",
                                 ctx
                         );
                         assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top LIMIT " + (1 + rnd.nextInt(200)));
                         assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top DESC LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top_v FROM tab_top ORDER BY col_top_v LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top_v FROM tab_top ORDER BY col_top_v DESC LIMIT " + (1 + rnd.nextInt(200)));
 
                         // A volume large enough that each of the 4 workers crosses the 4096-entry
                         // compaction trigger, so per-worker sort-and-truncate plus threshold rejection
@@ -270,6 +292,37 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                         1970-02-10T09:36:00.000000Z\tk0\t4040.0\t4040\t4040.0
                         """
         );
+    }
+
+    @Test
+    public void testParallelTopKVarcharSplitPrefixCollision() throws Exception {
+        // Regression for the prefix-6 reject: 'aaaaaa' (6 bytes, inlined) dominates so each
+        // worker's top-K boundary becomes a 6-byte key once it compacts, while the longer
+        // 'aaaaaazzzzzz' (12 bytes, split storage) shares those six prefix bytes and sorts
+        // above it under DESC. The split-VARCHAR reject only sees the six inline prefix bytes,
+        // so it must defer such a candidate to the full compare rather than drop it on the
+        // masked-prefix tie. The 30k rows make every worker cross the 4096 compaction trigger
+        // and the collisions are spread past it so they hit the reject with the boundary set.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+                        engine.execute(
+                                "CREATE TABLE vt AS (SELECT" +
+                                        " CASE WHEN x % 600 = 0 THEN 'aaaaaazzzzzz' ELSE 'aaaaaa' END v," +
+                                        " (x * 1_000_000L)::timestamp ts" +
+                                        " FROM long_sequence(30_000)) TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+                        assertTopKMatch(engine, ctx, "SELECT v FROM vt ORDER BY v DESC LIMIT 100");
+                        assertTopKMatch(engine, ctx, "SELECT v FROM vt ORDER BY v LIMIT 100");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -335,6 +388,11 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                         " rnd_decimal(18, 4, 2) col_dec64," +
                         " rnd_decimal(38, 5, 2) col_dec128," +
                         " rnd_decimal(76, 6, 2) col_dec256," +
+                        " rnd_uuid4() col_uuid," +
+                        " rnd_long256() col_long256," +
+                        " to_long128(rnd_long(), rnd_long()) col_long128," +
+                        " rnd_str(1, 24, 2) col_str," +
+                        " rnd_varchar(1, 24, 2) col_varchar," +
                         " x col_id," +
                         " timestamp_sequence(0, 1_000_000) ts" +
                         " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts) PARTITION BY HOUR",

@@ -113,7 +113,11 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
                         final int threadId = t;
                         new Thread(() -> {
                             int localInversions = 0;
-                            try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
                                     localInversions += countInversions(engine, threadCtx, query);

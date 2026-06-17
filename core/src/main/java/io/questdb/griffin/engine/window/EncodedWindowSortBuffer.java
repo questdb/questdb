@@ -26,10 +26,13 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyType;
@@ -38,6 +41,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
@@ -45,6 +49,7 @@ import org.jetbrains.annotations.Nullable;
 final class EncodedWindowSortBuffer implements WindowSortBuffer {
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
+    private final MemoryCARW keyHeap;
     private final long maxEntryMemBytes;
     private final long parallelThreshold;
     private long count;
@@ -52,6 +57,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
     private long endAddr;
     private int entrySize;
     private boolean isOpen;
+    private boolean isVariable;
     private SortKeyType keyType;
     private int longsPerEntry;
     private long maxEntries;
@@ -65,6 +71,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
     ) {
         this.encoder = new SortKeyEncoder(chainMetadata, sortColumnFilter);
         DirectLongList mem = null;
+        MemoryCARW heap = null;
         try {
             mem = new DirectLongList(
                     Math.max(configuration.getSqlWindowTreeKeyPageSize() / Long.BYTES, 1),
@@ -79,11 +86,20 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
                     configuration.getSqlWindowTreeKeyMaxBytes(),
                     configuration.getSqlWindowRowIdMaxBytes()
             );
+            final int keyHeapPageSize = configuration.getSqlWindowTreeKeyPageSize();
+            heap = new MemoryCARWImpl(
+                    keyHeapPageSize,
+                    (int) Math.min(Integer.MAX_VALUE, maxEntryMemBytes / Numbers.ceilPow2(keyHeapPageSize) + 1),
+                    MemoryTag.NATIVE_DEFAULT,
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES.getPropertyPath()
+            );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.entryMem = mem;
+            this.keyHeap = heap;
             this.isOpen = true;
         } catch (Throwable th) {
             Misc.free(mem);
+            Misc.free(heap);
             Misc.free(encoder);
             throw th;
         }
@@ -95,18 +111,19 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             isOpen = false;
             Misc.free(encoder);
             Misc.free(entryMem);
+            Misc.free(keyHeap);
         }
     }
 
     @Override
     public void finishPut(SqlExecutionCircuitBreaker circuitBreaker) {
         if (count > 1) {
-            Vect.sortEncodedEntries(
-                    entryMem.getAddress(),
-                    count,
-                    keyType.keyLength() / Long.BYTES,
-                    parallelThreshold
-            );
+            if (isVariable) {
+                long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
+                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
+            } else {
+                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
+            }
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
         startAddr = entryMem.getAddress() + rowIdOffset;
@@ -129,6 +146,11 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
     public void of(RecordCursor cursor, long expectedRows) {
         keyType = encoder.init(cursor);
         assert keyType != SortKeyType.UNSUPPORTED;
+        isVariable = keyType.isVariable();
+        if (isVariable) {
+            encoder.setKeyHeap(keyHeap);
+            keyHeap.jumpTo(0);
+        }
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
         longsPerEntry = entrySize / Long.BYTES;
@@ -152,18 +174,16 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
         // can legitimately leave maxEntries == 0, which falls through to the overflow below.
         assert keyType != null : "put() called before of()";
         if (count >= maxEntries) {
-            throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes)
-                    .put(" memory exceeded in window encoded sort (raise ")
-                    .put(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES.getPropertyPath())
-                    .put(" / ")
-                    .put(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES.getPropertyPath())
-                    .put(')');
+            throw windowSortOverflow();
         }
         entryMem.ensureCapacity(longsPerEntry);
         long entryAddr = entryMem.getAppendAddress();
         encoder.encode(record, entryAddr, rowId);
         entryMem.skip(longsPerEntry);
         count++;
+        if (isVariable && count * entrySize + keyHeap.getAppendOffset() > maxEntryMemBytes) {
+            throw windowSortOverflow();
+        }
     }
 
     @Override
@@ -184,5 +204,14 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
     public void toTop() {
         currentAddr = startAddr;
         endAddr = startAddr + count * entrySize;
+    }
+
+    private CairoException windowSortOverflow() {
+        return LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes)
+                .put(" memory exceeded in window encoded sort (raise ")
+                .put(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES.getPropertyPath())
+                .put(" / ")
+                .put(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES.getPropertyPath())
+                .put(')');
     }
 }

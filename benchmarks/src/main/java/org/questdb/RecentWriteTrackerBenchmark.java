@@ -25,6 +25,7 @@
 package org.questdb;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.std.CarrierLocal;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -66,7 +67,7 @@ public class RecentWriteTrackerBenchmark {
     // Shared state for all approaches
     private final ConcurrentHashMap<TableToken, WriteStats> map = new ConcurrentHashMap<>();
     // For non-capturing approach: thread-local state holder
-    private final ThreadLocal<WriteContext> writeContextThreadLocal = ThreadLocal.withInitial(WriteContext::new);
+    private final CarrierLocal<WriteContext> writeContextCarrierLocal = CarrierLocal.withInitial(WriteContext::new);
     private int index;
     private TableToken[] tableTokens;
 
@@ -171,13 +172,13 @@ public class RecentWriteTrackerBenchmark {
         long timestamp = System.nanoTime();
         long rowCount = index * 100L;
 
-        WriteContext ctx = writeContextThreadLocal.get();
+        WriteContext ctx = writeContextCarrierLocal.get();
         ctx.timestamp = timestamp;
         ctx.rowCount = rowCount;
 
         // This lambda doesn't capture local variables - it accesses ThreadLocal
         map.compute(tableToken, (key, existing) -> {
-            WriteContext c = writeContextThreadLocal.get();
+            WriteContext c = writeContextCarrierLocal.get();
             if (existing == null) {
                 return new WriteStats(c.timestamp, c.rowCount);
             } else {

@@ -427,6 +427,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
+    private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpEgressForcedZstdLevel;
@@ -553,6 +554,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
+    private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
     private final int sqlViewLexerPoolCapacity;
@@ -1850,6 +1852,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlLegacyUnionColumnPropagation = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
+            this.sqlTimerShardCount = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_TIMER_SHARDS,
+                    Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4))));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
 
             // telemetry config
@@ -2172,6 +2176,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
+            this.queryContinuationWakeIntervalMillis = Math.max(1, getMillis(properties, env, PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, 1_000));
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + writeWorkers + networkPoolWorkerCount);
 
@@ -4444,6 +4449,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getQueryContinuationWakeIntervalMillis() {
+            return queryContinuationWakeIntervalMillis;
+        }
+
+        @Override
         public long getQueryMemoryLimitBytes() {
             return queryMemoryLimitBytes;
         }
@@ -4971,6 +4981,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull TextConfiguration getTextConfiguration() {
             return textConfiguration;
+        }
+
+        @Override
+        public int getTimerShardCount() {
+            return sqlTimerShardCount;
         }
 
         @Override

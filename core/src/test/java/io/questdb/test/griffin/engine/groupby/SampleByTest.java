@@ -17756,10 +17756,15 @@ public class SampleByTest extends AbstractCairoTest {
                         for (int i = 0; i < threadCount; i++) {
                             final int finalI = i;
                             new Thread(() -> {
-                                TestUtils.await(barrier);
+                                // SqlExecutionContext is not thread-safe (it carries a single
+                                // reader-pool supervisor slot, among other per-query state), so
+                                // every thread runs against its own context. Sharing one context
+                                // across threads cross-wires the supervisor slot and leaks readers.
+                                try (SqlExecutionContext threadCtx =
+                                             TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                    TestUtils.await(barrier);
 
-                                final RecordCursorFactory factory = factories[finalI];
-                                try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine)) {
+                                    final RecordCursorFactory factory = factories[finalI];
                                     while (!writerDone.get()) {
                                         try (RecordCursor cursor = factory.getCursor(threadCtx)) {
                                             TestUtils.drainCursor(cursor);
