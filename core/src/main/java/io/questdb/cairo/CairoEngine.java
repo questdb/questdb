@@ -1922,6 +1922,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @TestOnly
+    public void setClosing(boolean closing) {
+        this.closing = closing;
+    }
+
     public void setConfigReloader(@NotNull ConfigReloader configReloader) {
         this.configReloader = configReloader;
     }

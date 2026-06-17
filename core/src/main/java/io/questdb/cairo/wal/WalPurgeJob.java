@@ -176,6 +176,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void broadSweep(int tableId, final TableToken tableToken, long lastTxn) {
+        if (engine.isClosing()) {
+            // The engine is tearing down its sequencer/metadata mappings. Stop sweeping rather than
+            // racing the teardown into an evicted file descriptor. The next purge pass (if any) is a
+            // no-op once the engine is closed; the close path bounds its own wait, so it never blocks
+            // on this worker.
+            return;
+        }
         try {
             this.tableToken = tableToken;
             this.logic.reset(tableToken);
@@ -404,16 +411,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private boolean fetchSequencerPairs() {
         setTxnPath(tableToken);
+        if (engine.isClosing()) {
+            // The engine is being torn down (for example during a primary->replica demote). It frees the
+            // sequencer and metadata mappings underneath this worker, so opening a TxReader / sequencer cursor
+            // here would touch already-evicted file descriptors and double-unmap a sequencer tx-log region.
+            // Bail cleanly and let the sweep stop, mirroring how this job already skips a table dropped
+            // underneath it. The close path bounds its own wait, so it never blocks on this worker.
+            return false;
+        }
         if (!engine.isTableDropped(tableToken)) {
             try {
                 try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
                     txReader.ofRO(path.$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
                     TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                 } catch (CairoException | NullPointerException ex) {
-                    if (engine.isTableDropped(tableToken)) {
-                        // This is ok, table dropped while we tried to read the txn.
-                        // A concurrent drop can cause CairoException or NPE (when the
-                        // metadata pool tenant's txFile is closed during refresh).
+                    if (engine.isTableDropped(tableToken) || engine.isClosing()) {
+                        // This is ok, the table was dropped, or the engine started closing, while we tried to
+                        // read the txn. A concurrent drop can cause CairoException or NPE (when the metadata
+                        // pool tenant's txFile is closed during refresh); a concurrent engine close can do the
+                        // same as it frees the sequencer/metadata mappings underneath this worker.
                         return false;
                     }
                     throw ex;
@@ -444,6 +460,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     if (e.isTableDropped()) {
                         // there was a race, we lost
                         return true;
+                    } else if (engine.isClosing()) {
+                        // The engine started closing while we read the sequencer cursor; it frees the
+                        // sequencer mappings underneath this worker. Bail cleanly instead of surfacing
+                        // the teardown as a purge error.
+                        return false;
                     } else {
                         throw e;
                     }

@@ -498,6 +498,74 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGracefulBailWhenEngineClosing() throws Exception {
+        // Regression test for a teardown race: during a primary->replica demote, ServerMain.close()
+        // signals the engine closing, bounds the worker-pool halt, then frees the sequencer/metadata
+        // mappings even if a WalPurgeJob worker is still mid-sweep. A worker that opens a TxReader on
+        // the sequencer tx-log while the engine concurrently tears it down closes an already-evicted fd
+        // and double-unmaps a tx-log region, which trips the FD_PARANOIA assert / the native-mem
+        // counter under -ea.
+        //
+        // The fix makes fetchSequencerPairs() bail cleanly once engine.isClosing() is observed, mirroring
+        // how the same job already skips a table that was dropped underneath it. This test sets the engine
+        // closing flag and asserts the sweep does NOT open the table _txn reader (the crash site). It also
+        // asserts the sweep does not throw. Before the fix the sweep opens the _txn reader; after the fix
+        // it skips it. The closing flag is reset in a finally so the shared engine stays usable.
+        final String tableName = testName.getMethodName();
+        final String tableDirName = tableName + "~1";
+        final AtomicInteger txnReaderOpens = new AtomicInteger();
+        final FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                // The crash-site reader: WalPurgeJob.setTxnPath builds <dbRoot>/<table>/_txn (NOT under
+                // the sequencer SEQ_DIR). Count only that open.
+                if (Utf8s.containsAscii(path, tableDirName)
+                        && !Utf8s.containsAscii(path, SEQ_DIR)
+                        && Utf8s.endsWithAscii(path, TXN_FILE_NAME)) {
+                    txnReaderOpens.incrementAndGet();
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            // Sanity: with the engine NOT closing the sweep opens the _txn reader, proving the test's
+            // matcher actually catches the crash-site open (otherwise the closing-case assertion below
+            // would pass vacuously).
+            txnReaderOpens.set(0);
+            TestUtils.drainPurgeJob(engine, testFf);
+            Assert.assertTrue(
+                    "control: a normal sweep must open the table _txn reader for the matcher to be valid",
+                    txnReaderOpens.get() > 0
+            );
+
+            // Now flip the engine to the closing state and sweep again. The fixed sweep must bail before
+            // opening the _txn reader (the torn-down mapping). The unfixed sweep opens it -> RED.
+            txnReaderOpens.set(0);
+            engine.setClosing(true);
+            try {
+                TestUtils.drainPurgeJob(engine, testFf);
+            } finally {
+                engine.setClosing(false);
+            }
+            Assert.assertEquals(
+                    "WAL purge sweep must not open the sequencer tx-log reader once the engine is closing"
+                            + " -- it would race the engine teardown into an evicted file descriptor",
+                    0,
+                    txnReaderOpens.get()
+            );
+        });
+    }
+
+    @Test
     public void testInterval() throws Exception {
         AtomicInteger counter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
