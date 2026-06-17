@@ -2353,6 +2353,89 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Single-column ORDER BY ... LIMIT over a lazily var-to-fixed converted parquet column.
+     * Unlike {@link #testAsyncTopKOverAlteredParquetColumn()} (a two-column key that routes to
+     * {@code SortKeyEncoder.encodeGeneric}, i.e. the per-row converting record path), a
+     * single-column fixed-width sort key takes the batch path
+     * {@code SortKeyEncoder.encodeFixed8Batch}/{@code encodeFixedWideBatch}/{@code encodeStringBatch},
+     * which read {@code frameMemory.getPageAddress(...)} raw and only fall back on a column top
+     * ({@code colAddr == 0}). {@code AsyncTopKRecordCursorFactory} gates only its filter on
+     * {@code frameMemory.hasColumnTypeCasts()}, not the {@code encoder.encodeFrame(...)} call, so
+     * the batch reads the VARCHAR_SLICE source buffer as raw longs and the top-K diverges from the
+     * native control. Only {@code encodeVarcharBatch} guards on {@code PartitionFormat.PARQUET}; the
+     * fixed/wide/string batch siblings do not.
+     */
+    @Test
+    public void testAsyncTopKSingleKeyOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryStrToFixedParity(
+                "LONG",
+                "SELECT val FROM $T WHERE other > 50 ORDER BY val DESC LIMIT 10"
+        ));
+    }
+
+    /**
+     * Sibling of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()} for the STRING key
+     * shape: a single-column ORDER BY ... LIMIT over a lazily fixed-to-STRING converted parquet
+     * column routes through {@code SortKeyEncoder.encodeStringBatch}. For a natively-stored STRING
+     * that batch reads {@code frameMemory.getPageAddress(...)} plus the aux page straight, but with
+     * an INT-to-STRING lazy cast the parquet still stores INT, so the data page holds raw INT bytes
+     * rather than a native STRING layout. The batch must fall back to the per-row converting path.
+     */
+    @Test
+    public void testAsyncTopKSingleKeyFixedToStrParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryFixedToVarParity(
+                "STRING",
+                "SELECT val FROM $T WHERE other > 50 ORDER BY val DESC LIMIT 10"
+        ));
+    }
+
+    /**
+     * Sibling of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()} for the wide-fixed key
+     * shape: a single-column ORDER BY ... LIMIT over a lazily STRING-to-UUID converted parquet
+     * column routes through {@code SortKeyEncoder.encodeFixedWideBatch}. The parquet keeps the
+     * STRING storage, so the column page is a VARCHAR_SLICE buffer; reading it as raw 16-byte UUID
+     * values yields garbage. The batch must fall back to the per-row converting path.
+     */
+    @Test
+    public void testAsyncTopKSingleKeyStrToUuidParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryStrToUuidParity(
+                "SELECT val FROM $T WHERE other > 50 ORDER BY val DESC LIMIT 10"
+        ));
+    }
+
+    /**
+     * No-filter variant of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()}: with no
+     * WHERE predicate the async top-K routes through {@code findTopK} rather than
+     * {@code filterAndFindTopK}, so {@code SortKeyEncoder.encodeFrame} runs with a null
+     * {@code rows} list (the whole-frame scan). This pins the {@code rows == null} branch of the
+     * lazy-cast fallback in the fixed-width batch path.
+     */
+    @Test
+    public void testAsyncTopKSingleKeyNoFilterOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryStrToFixedParity(
+                "LONG",
+                "SELECT val FROM $T ORDER BY val DESC LIMIT 10"
+        ));
+    }
+
+    /**
+     * Sibling of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()} for the VARCHAR key
+     * shape: a single-column ORDER BY ... LIMIT over a lazily fixed-to-VARCHAR converted parquet
+     * column routes through {@code SortKeyEncoder.encodeVarcharBatch}. Unlike the fixed/string/wide
+     * siblings, that batch already special-cases parquet, and for an INT-to-VARCHAR cast the parquet
+     * keeps the INT storage so the column has no aux page ({@code auxAddr == 0}); the batch declines
+     * and the per-row converting path runs. This pins that contract for the one batch shape the fix
+     * leaves unchanged.
+     */
+    @Test
+    public void testAsyncTopKSingleKeyFixedToVarcharParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryFixedToVarParity(
+                "VARCHAR",
+                "SELECT val FROM $T WHERE other > 50 ORDER BY val DESC LIMIT 10"
+        ));
+    }
+
+    /**
      * The async JIT-filtered factory. When parquet needs a lazy conversion, the JIT'ed
      * filter cannot be applied directly to the parquet page bytes -- the factory must
      * fall back to scalar filter evaluation through {@code PageFrameMemoryRecord}.
@@ -2659,6 +2742,44 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             drainWalQueue();
             execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
             execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            assertSqlCursors(
+                    queryTemplate.replace("$T", "nt"),
+                    queryTemplate.replace("$T", "pt")
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    /**
+     * Mirror of {@link #assertAsyncFactoryStrToFixedParity(String, String)} for a wide-fixed
+     * target ({@code UUID}): {@code val} starts as STRING holding canonical UUID text, the
+     * partition is converted to parquet, then {@code val} is ALTERed to UUID. On {@code pt} the
+     * parquet keeps the STRING storage, so a single-column {@code ORDER BY val ... LIMIT} routes
+     * through the wide-fixed batch path {@code SortKeyEncoder.encodeFixedWideBatch}, exercising
+     * its lazy var-to-fixed fallback. {@code nt} seeds the random UUIDs and {@code pt} copies them
+     * so both tables hold identical data.
+     */
+    private void assertAsyncFactoryStrToUuidParity(String queryTemplate) throws Exception {
+        try {
+            execute("CREATE TABLE nt (val STRING, other LONG, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val STRING, other LONG, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO nt
+                    SELECT rnd_uuid4()::STRING AS val,
+                           (x * 7)::LONG AS other,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000) AS ts
+                    FROM long_sequence(200)""");
+            drainWalQueue();
+            execute("INSERT INTO pt SELECT * FROM nt");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE UUID");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
             drainWalQueue();
             assertSqlCursors(
                     queryTemplate.replace("$T", "nt"),
