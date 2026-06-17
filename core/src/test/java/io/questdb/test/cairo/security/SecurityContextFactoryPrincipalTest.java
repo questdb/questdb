@@ -238,6 +238,22 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testForPrincipalWithNullCurrentPrincipalDoesNotThrow() {
+        // forPrincipal compares the requested principal against getPrincipal(); a subclass that reports
+        // a null principal must not NPE (Chars.equals is @NotNull). It derives a context for the
+        // requested principal instead of matching the singleton.
+        AllowAllSecurityContext nullPrincipal = new AllowAllSecurityContext() {
+            @Override
+            public CharSequence getPrincipal() {
+                return null;
+            }
+        };
+        SecurityContext derived = nullPrincipal.forPrincipal("foo");
+        Assert.assertNotSame(nullPrincipal, derived);
+        TestUtils.assertEquals("foo", derived.getPrincipal());
+    }
+
+    @Test
     public void testReadOnlyFactoryReportsConfiguredPrincipal() {
         SecurityContext context = ReadOnlySecurityContextFactory.INSTANCE.getInstance(principal("foo"), SecurityContextFactory.HTTP);
         Assert.assertNotSame(ReadOnlySecurityContext.INSTANCE, context);

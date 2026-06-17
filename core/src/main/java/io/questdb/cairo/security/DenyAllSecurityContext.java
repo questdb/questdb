@@ -31,7 +31,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class DenyAllSecurityContext extends ReadOnlySecurityContext {
+public class DenyAllSecurityContext extends AbstractReadOnlySecurityContext {
     public static final DenyAllSecurityContext INSTANCE = new DenyAllSecurityContext();
 
     protected DenyAllSecurityContext() {
