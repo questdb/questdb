@@ -11171,25 +11171,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // so the chain walk is not the recovery path here.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                         indexer.getWriter().commit();
-                        indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
-                        unmapCoveringColumns(coverCount);
-                        // Same pattern as sealPostingIndexesForO3Partitions: drop
-                        // the borrowed read-side mappings but keep the covering
-                        // schema (coverCount, sidecarMems) so the next commit on
-                        // this writer still publishes a chain entry with a
-                        // correct cover footer. clearCovering() would zero
-                        // coverCount and the next captureCoverEndOffsets would
-                        // short-circuit, dropping the footer.
-                        indexer.releaseCoveredColumnReadMappings();
+                        // Publish staged seal-purge entries even when commit()'s
+                        // MAX_GEN_COUNT auto-seal threw post-switch (poisoning the
+                        // writer and staging an orphan purge): the distress close
+                        // drops an unpublished outbox, leaking the staged .pv/.pc.
+                        // Idempotent no-op on an empty outbox. Nested so the
+                        // covering-column unmap still runs if the publish throws.
+                        try {
+                            indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                        } finally {
+                            unmapCoveringColumns(coverCount);
+                            // Same pattern as sealPostingIndexesForO3Partitions: drop
+                            // the borrowed read-side mappings but keep the covering
+                            // schema (coverCount, sidecarMems) so the next commit on
+                            // this writer still publishes a chain entry with a
+                            // correct cover footer. clearCovering() would zero
+                            // coverCount and the next captureCoverEndOffsets would
+                            // short-circuit, dropping the footer.
+                            indexer.releaseCoveredColumnReadMappings();
+                        }
                     }
                     continue;
                 }
                 // Non-covering branch of the WAL fast-lag path. See the
                 // covering branch above for why getTxn() (not getTxn()+1L).
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
-                indexer.getWriter().commit();
-                indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                try {
+                    indexer.getWriter().commit();
+                } finally {
+                    // Publish staged seal-purge entries even when commit()'s
+                    // MAX_GEN_COUNT auto-seal threw post-switch; see the covering
+                    // branch. Idempotent no-op on an empty outbox.
+                    indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                }
             }
         } finally {
             if (coveringPathLen != -1) {
@@ -12792,19 +12807,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // remains available to T-pinned readers and recovery.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         indexer.rebuildSidecars();
-                        deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                     } finally {
-                        unmapCoveringColumns(coverCount);
-                        // Drop the writer's reference to o3SealAddrs so that
-                        // a subsequent close() -> seal() cannot dereference the
-                        // unmapped addresses. Keep the covering schema
-                        // (coverCount, sidecarMems) intact so a subsequent
-                        // commit() between seals still publishes a chain
-                        // entry with a correct cover footer; clearCovering()
-                        // would zero coverCount and the next
-                        // captureCoverEndOffsets would short-circuit, dropping
-                        // the footer.
-                        indexer.releaseCoveredColumnReadMappings();
+                        // Publish staged seal-purge entries even when the reseal
+                        // above threw post-switch (poisoning the writer and staging
+                        // an orphan purge): the distress close drops an unpublished
+                        // outbox, leaking the staged .pv/.pc. Idempotent no-op on an
+                        // empty outbox. Mirrors the O3/parquet finally. Nested so the
+                        // covering-column unmap still runs if the publish throws.
+                        try {
+                            deferPendingPostingSealPurges(indexer, txWriter.getTxn());
+                        } finally {
+                            unmapCoveringColumns(coverCount);
+                            // Drop the writer's reference to o3SealAddrs so that
+                            // a subsequent close() -> seal() cannot dereference the
+                            // unmapped addresses. Keep the covering schema
+                            // (coverCount, sidecarMems) intact so a subsequent
+                            // commit() between seals still publishes a chain
+                            // entry with a correct cover footer; clearCovering()
+                            // would zero coverCount and the next
+                            // captureCoverEndOffsets would short-circuit, dropping
+                            // the footer.
+                            indexer.releaseCoveredColumnReadMappings();
+                        }
                     }
                 } else {
                     indexer.configureFollowerAndWriter(
@@ -12812,28 +12836,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             getPrimaryColumn(colIdx), columnTop,
                             partitionTimestamp, partitionNameTxn
                     );
-                    // Same getTxn()+1 convention as O3CopyJob and the
-                    // covering branch above. See comment there.
-                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
-                    indexer.mergeTentativeIntoActiveIfAny();
-                    if (canSkipRebuild) {
-                        // See pure-append fast-path comment in the covering branch above.
-                        indexer.getWriter().rollbackConditionally(partitionSize);
-                        // Defer compaction to switchPartition's threshold rather than seal eagerly:
-                        // pool writer's sparse gens are already the correct final state for a pure-append O3.
-                        indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
-                    } else {
-                        // See rebuild-from-data comment in the covering branch.
-                        indexer.getWriter().discardForRebuild();
-                        long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
-                        try {
-                            indexer.index(ff, dataFd, columnTop, partitionSize);
-                        } finally {
-                            ff.close(dataFd);
+                    try {
+                        // Same getTxn()+1 convention as O3CopyJob and the
+                        // covering branch above. See comment there.
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.mergeTentativeIntoActiveIfAny();
+                        if (canSkipRebuild) {
+                            // See pure-append fast-path comment in the covering branch above.
+                            indexer.getWriter().rollbackConditionally(partitionSize);
+                            // Defer compaction to switchPartition's threshold rather than seal eagerly:
+                            // pool writer's sparse gens are already the correct final state for a pure-append O3.
+                            indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
+                        } else {
+                            // See rebuild-from-data comment in the covering branch.
+                            indexer.getWriter().discardForRebuild();
+                            long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
+                            try {
+                                indexer.index(ff, dataFd, columnTop, partitionSize);
+                            } finally {
+                                ff.close(dataFd);
+                            }
+                            indexer.getWriter().commitDense();
                         }
-                        indexer.getWriter().commitDense();
+                    } finally {
+                        // Publish staged seal-purge entries even on a post-switch
+                        // throw; see the covering branch / O3 path. Idempotent no-op
+                        // on an empty outbox.
+                        deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                     }
-                    deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                 }
             }
         } finally {
@@ -13442,9 +13472,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 writer.setNextTxnAtSeal(publishTxn);
                 writer.commit();
                 writer.sealIfMultiGen(sealThreshold);
-                deferPendingPostingSealPurges(indexer, txWriter.getTxn());
             } catch (CairoException e) {
                 throwDistressException(e);
+            } finally {
+                // Publish staged seal-purge entries even when commit()/sealIfMultiGen()
+                // threw post-switch (poisoning the writer and staging an orphan purge):
+                // the distress close drops an unpublished outbox, leaking the staged
+                // .pv/.pc. Idempotent no-op on an empty outbox. Mirrors the O3 path.
+                deferPendingPostingSealPurges(indexer, txWriter.getTxn());
             }
         }
         txWriter.switchPartitions(timestamp);
