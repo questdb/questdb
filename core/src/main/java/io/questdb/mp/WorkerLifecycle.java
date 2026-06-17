@@ -22,30 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.mp;
 
-import java.io.Closeable;
-
-public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
-    private final ObjectFactory<T> factory;
-
-    public ThreadLocal(ObjectFactory<T> factory) {
-        this.factory = factory;
-    }
-
-    @Override
-    public void close() {
-        Misc.freeIfCloseable(super.get());
-        remove();
-    }
-
-    @Override
-    public T get() {
-        T val = super.get();
-        if (val == null) {
-            val = factory.newInstance();
-            set(val);
-        }
-        return val;
-    }
+public enum WorkerLifecycle {
+    BORN, RUNNING, HALTED
 }

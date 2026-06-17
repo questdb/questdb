@@ -370,6 +370,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
+        // Pin the window sort caps to the server's unbounded default (Long.MAX_VALUE); summing the
+        // two operands must not overflow to a negative budget that collapses maxEntries to 0.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tv\trow_number\n" +
+                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
+        });
+    }
+
+    @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType.getTypeName());
@@ -486,27 +507,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
-        // Pin the window sort caps to the server's unbounded default (Long.MAX_VALUE); summing the
-        // two operands must not overflow to a negative budget that collapses maxEntries to 0.
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, Long.MAX_VALUE);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, Long.MAX_VALUE);
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, v long) timestamp(ts)");
-            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
-            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns("ts\tv\trow_number\n" +
-                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
-                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
-        });
-    }
-
-    @Test
     public void testCachedWindowLightCumeDistTwoPassUnderLightFactory() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
@@ -540,7 +540,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("SELECT row_number() OVER (ORDER BY d1, d2, d3) FROM tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[d1, d2, d3] => [row_number()]]
                                 PageFrame
                                     Row forward scan
@@ -580,6 +580,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x from long_sequence(5_000)");
+            try {
+                assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
+                Assert.fail("expected LimitOverflowException");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "memory exceeded in window encoded sort");
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightEncodedSortVarcharKeyHeapOverflow() throws Exception {
+        // A VARCHAR window ORDER BY takes the variable encoded path: the key bytes spill into
+        // EncodedWindowSortBuffer's key heap (setKeyHeap + sortEncodedVarEntries). Pin the window
+        // sort caps tiny and feed long strings so the key heap, not the entry array, busts the
+        // combined budget, exercising the variable path's overflow guard. Subsequent runs of the
+        // cursor must not leak native memory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 4096);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, rnd_varchar(1000, 1000, 0) from long_sequence(100)");
             try {
                 assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
                 Assert.fail("expected LimitOverflowException");
@@ -815,22 +837,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowLightVarcharOrderByFallsBackToNonLight() throws Exception {
-        // VARCHAR sort keys cannot fit the encoded sort buffer, so the LIGHT dispatch gate
-        // refuses them and the query falls through to the non-light factory regardless of
-        // cairo.sql.window.cached.light.enabled. Plan label must be plain CachedWindow.
+    public void testCachedWindowLightVarcharOrderBy() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
             assertQuery("SELECT row_number() OVER (ORDER BY v) FROM tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[v] => [row_number()]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
                             """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightVarcharOrderByReturnsSortedRows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 'banana'), (2, 'apple'), (3, NULL), (4, 'cherry'), (5, '')");
+            final String expected = """
+                    v\trn
+                    \t1
+                    \t2
+                    apple\t3
+                    banana\t4
+                    cherry\t5
+                    """;
+            final String query = "SELECT v, row_number() OVER (ORDER BY v) rn FROM tab ORDER BY v";
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 

@@ -1,0 +1,97 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp.continuation;
+
+import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.Job;
+import io.questdb.mp.Queue;
+import io.questdb.mp.ValueHolder;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.CarrierLocal;
+
+/**
+ * Holds an MPMC queue of {@link WorkerContinuation} objects waiting to be remounted on
+ * a worker. Implements {@link ContinuationSink} so a continuation captures the
+ * queue at construction via {@code resumeSink::put}, and pushes itself in via
+ * {@link WorkerContinuation#scheduleResume()} when fired or cancelled.
+ *
+ * <p>This class is not a {@link Job}. The drain is driven by each worker's outer
+ * driver between continuation mounts (see {@code Worker.run}). It cannot be a
+ * regular job because invoking {@link WorkerContinuation#run} on a parked cont
+ * requires the calling thread to NOT already be carrying a cont in the same
+ * scope -- a constraint that holds in the worker's outer driver but not inside a
+ * mounted worker-loop body.
+ *
+ * <p>Owned by a {@link WorkerPool}; pushes go onto this queue from any thread
+ * (firing thread, timeout sweep, etc.); workers of the owning pool drain it.
+ */
+public final class ContinuationQueue implements ContinuationSink {
+    private final Queue<ResumeTask> queue = ConcurrentQueue.createConcurrentQueue(ResumeTask::new);
+    private final CarrierLocal<ResumeTask> producerScratch = CarrierLocal.withInitial(ResumeTask::new);
+
+    @Override
+    public void put(WorkerContinuation cont) {
+        ResumeTask t = producerScratch.get();
+        t.cont = cont;
+        queue.enqueue(t);
+        t.cont = null;
+    }
+
+    /**
+     * Pop one parked continuation off the queue without running it. Returns
+     * {@code null} if the queue is empty. The caller is responsible for
+     * eventually remounting the returned cont via {@link WorkerContinuation#run()}.
+     *
+     * <p>The {@code scratch} is a caller-managed buffer used by the queue's
+     * value-holder copy protocol; passing it in (rather than having the queue
+     * fetch a thread-local) lets the JVM escape-analyze and scalar-replace it
+     * when the caller allocates it on its own stack frame.
+     *
+     * <p>Safe to call from inside a mounted continuation: this is just a queue
+     * dequeue, no remount happens here.
+     */
+    public WorkerContinuation tryDequeue(ResumeTask scratch) {
+        if (!queue.tryDequeue(scratch)) {
+            return null;
+        }
+        WorkerContinuation cont = scratch.cont;
+        scratch.cont = null;
+        return cont;
+    }
+
+    public static final class ResumeTask implements ValueHolder<ResumeTask> {
+        public WorkerContinuation cont;
+
+        @Override
+        public void clear() {
+            cont = null;
+        }
+
+        @Override
+        public void copyTo(ResumeTask dest) {
+            dest.cont = cont;
+        }
+    }
+}

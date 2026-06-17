@@ -33,6 +33,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
+    // Fixed-width sort key columns. Wide fixed types (UUID, LONG256, LONG128) push the
+    // multi-column key past 8 bytes and, when summed past 32 bytes, onto the variable path.
     private static final Column[] COLUMNS = {
             new Column("col_bool", 1),
             new Column("col_byte", 1),
@@ -56,7 +58,21 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
             new Column("col_dec64", 8),
             new Column("col_dec128", 16),
             new Column("col_dec256", 32),
+            new Column("col_uuid", 16),
+            new Column("col_long256", 32),
+            new Column("col_long128", 16),
             new Column("ts", 8),
+    };
+
+    // Variable-length sort key columns. byteWidth is 0 so selectColumns ignores them in
+    // the fixed-budget accounting; a query mixes them with fixed columns to force the
+    // variable key path.
+    private static final Column[] VAR_COLUMNS = {
+            new Column("col_str", 0),
+            new Column("col_str_long", 0),
+            new Column("col_varchar", 0),
+            new Column("col_varchar_long", 0),
+            new Column("col_sym", 0),
     };
 
     @Override
@@ -72,7 +88,7 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
             int rowCount = 50 + rnd.nextInt(4951);
             createFuzzTable("fuzz_sort", rowCount, rnd.nextBoolean());
 
-            int[] targetMaxBytes = {8, 16, 24, 32};
+            int[] targetMaxBytes = {8, 16, 24, 32, 40, 48, 64};
 
             // Light path
             for (int targetMax : targetMaxBytes) {
@@ -105,6 +121,35 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                             "non-light"
                     );
                 }
+            }
+
+            // Variable-length keys: random fixed columns mixed with string columns
+            for (int attempt = 0; attempt < 10; attempt++) {
+                ObjList<Column> selected = selectColumns(rnd, COLUMNS, 8 + rnd.nextInt(57));
+                selected.add(VAR_COLUMNS[rnd.nextInt(VAR_COLUMNS.length)]);
+                if (rnd.nextBoolean()) {
+                    selected.add(VAR_COLUMNS[rnd.nextInt(VAR_COLUMNS.length)]);
+                }
+                shuffleColumns(rnd, selected);
+                long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
+                StringSink orderByClause = buildOrderByClause(rnd, selected);
+                assertSortMatch(orderByClause, "SELECT * FROM fuzz_sort ORDER BY ", -1, "light variable");
+            }
+
+            for (int attempt = 0; attempt < 5; attempt++) {
+                ObjList<Column> selected = selectColumns(rnd, COLUMNS, 8 + rnd.nextInt(57));
+                selected.add(VAR_COLUMNS[rnd.nextInt(VAR_COLUMNS.length)]);
+                shuffleColumns(rnd, selected);
+                long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
+                StringSink orderByClause = buildOrderByClause(rnd, selected);
+                assertSortMatch(
+                        orderByClause,
+                        "SELECT * FROM (fuzz_sort UNION ALL SELECT * FROM fuzz_sort WHERE false) ORDER BY ",
+                        -1,
+                        "non-light variable"
+                );
             }
         });
     }
@@ -143,6 +188,22 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                     appendLimitClause(rnd, query, rowCount);
                     assertQueryMatch(query, "limit");
                 }
+            }
+
+            // Variable-length keys with LIMIT exercise the encoded top-K key heap.
+            // ts trails the key so the order is total and the LIMIT cut is
+            // deterministic across the encoded and legacy engines despite ties.
+            for (int attempt = 0; attempt < 8; attempt++) {
+                ObjList<Column> selected = selectColumns(rnd, nonTsColumns, rnd.nextInt(33));
+                selected.add(VAR_COLUMNS[rnd.nextInt(VAR_COLUMNS.length)]);
+                shuffleColumns(rnd, selected);
+                long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
+                StringSink query = new StringSink();
+                query.put("SELECT * FROM fuzz_sort_limit ORDER BY ")
+                        .put(buildOrderByClause(rnd, selected)).put(", ts ");
+                appendLimitClause(rnd, query, rowCount);
+                assertQueryMatch(query, "limit variable");
             }
         });
     }
@@ -308,6 +369,15 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
         return selected;
     }
 
+    private static void shuffleColumns(Rnd rnd, ObjList<Column> columns) {
+        for (int i = columns.size() - 1; i > 0; i--) {
+            int j = rnd.nextInt(i + 1);
+            Column tmp = columns.getQuick(i);
+            columns.setQuick(i, columns.getQuick(j));
+            columns.setQuick(j, tmp);
+        }
+    }
+
     private void assertQueryMatch(CharSequence query, String path) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
         StringSink expected = new StringSink();
@@ -330,7 +400,8 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
     ) throws Exception {
         StringSink query = new StringSink();
         query.put(queryPrefix).put(orderByClause);
-        assertQueryMatch(query, path + " (target key <= " + targetMax + " bytes)");
+        final String label = targetMax > 0 ? path + " (target key <= " + targetMax + " bytes)" : path;
+        assertQueryMatch(query, label);
     }
 
     private void createFuzzTable(String tableName, int rowCount, boolean isParquet) throws Exception {
@@ -358,7 +429,13 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                         " rnd_decimal(18, 4, 2) col_dec64," +
                         " rnd_decimal(38, 5, 2) col_dec128," +
                         " rnd_decimal(76, 6, 2) col_dec256," +
-                        " rnd_varchar(3, 12, 2) col_vch," +
+                        " rnd_uuid4() col_uuid," +
+                        " rnd_long256() col_long256," +
+                        " to_long128(rnd_long(), rnd_long()) col_long128," +
+                        " rnd_str(1, 24, 2) col_str," +
+                        " rnd_str(16, 64, 2) col_str_long," +
+                        " rnd_varchar(1, 24, 2) col_varchar," +
+                        " rnd_varchar(16, 64, 2) col_varchar_long," +
                         " rnd_double_array(2) col_arr," +
                         " timestamp_sequence(0, 1_000_000) ts" +
                         " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts)" +

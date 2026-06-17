@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -95,7 +96,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     private static final int KEY_SCRATCH_SIZE = 64;
     // Per-thread scratch so the accept-key computation runs with zero byte[] allocs
     // under sustained reconnect load.
-    private static final ThreadLocal<byte[]> KEY_SCRATCH = ThreadLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
+    private static final CarrierLocal<byte[]> KEY_SCRATCH = CarrierLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
     private static final byte[] MISDIRECTED_REQUEST_PREFIX =
             ("""
                     HTTP/1.1 421 Misdirected Request\r
@@ -123,9 +124,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     private static final byte[] RESPONSE_ROLE_PREFIX = "\r\nX-QuestDB-Role: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
-    private static final ThreadLocal<byte[]> BASE64_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
+    private static final CarrierLocal<byte[]> BASE64_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
-    private static final ThreadLocal<MessageDigest> SHA1_DIGEST = ThreadLocal.withInitial(() -> {
+    private static final CarrierLocal<MessageDigest> SHA1_DIGEST = CarrierLocal.withInitial(() -> {
         try {
             return MessageDigest.getInstance("SHA-1");
         } catch (NoSuchAlgorithmException e) {
@@ -136,7 +137,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // (ceil(20/3)*4 = 28, with no padding needed for inputs divisible by 3... but 20
     // is not, so one '=' padding byte lands in slot 27). The exact 28 matches both.
     private static final int SHA1_DIGEST_SIZE = 20;
-    private static final ThreadLocal<byte[]> HASH_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
+    private static final CarrierLocal<byte[]> HASH_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
     // Precomputed X-QWP-Version digit bytes indexed by version number. Lets the
     // handshake response writer skip per-call Integer.toString + getBytes
     // allocations. QWP runs at a single version today; the table stays indexed by
