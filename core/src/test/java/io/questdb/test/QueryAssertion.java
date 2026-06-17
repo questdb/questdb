@@ -735,14 +735,14 @@ public class QueryAssertion {
     private static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
         drainWalQueue0(walApplyJob);
-        if (checkWalTransactionsJob.run(0)) {
+        if (checkWalTransactionsJob.run()) {
             drainWalQueue0(walApplyJob);
         }
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     private static void drainWalQueue0(ApplyWal2TableJob walApplyJob) {
-        while (walApplyJob.run(0)) ;
+        while (walApplyJob.run()) ;
     }
 
     private static void releaseInactive(CairoEngine engine) {
@@ -1088,7 +1088,7 @@ public class QueryAssertion {
 
             cursor.toTop();
             counter.set(count + 1);
-            cursor.skipRows(counter);
+            cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
             Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
             Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
 
@@ -1096,7 +1096,7 @@ public class QueryAssertion {
                 skip = rnd.nextInt(countReducedToInt / 2);
                 counter.set(skip);
                 cursor.toTop();
-                cursor.skipRows(counter);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                 Assert.assertEquals("skipRows(lessThanRowCount) didn't bring the counter to 0", 0, counter.get());
                 long remaining = 0;
                 String countMethod;

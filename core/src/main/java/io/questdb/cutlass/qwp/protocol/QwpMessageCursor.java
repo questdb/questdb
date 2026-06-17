@@ -63,6 +63,7 @@ public class QwpMessageCursor implements Mutable {
     // Message state
     private long payloadAddress;
     private long payloadEnd;
+    private boolean symbolDictRedefined;
     private int tableCount;
 
     public QwpMessageCursor() {
@@ -85,6 +86,7 @@ public class QwpMessageCursor implements Mutable {
         gorillaEnabled = false;
         deltaSymbolDictEnabled = false;
         connectionSymbolDict = null;
+        symbolDictRedefined = false;
     }
 
     /**
@@ -92,6 +94,18 @@ public class QwpMessageCursor implements Mutable {
      */
     public boolean hasNextTable() {
         return currentTableIndex + 1 < tableCount;
+    }
+
+    /**
+     * Returns whether this message's delta symbol dictionary remapped an
+     * existing client symbol ID to a different string (e.g. orphan-adoption
+     * replay of another sender's dict-from-0). When true, the per-connection
+     * clientSymbolId -&gt; tableSymbolId cache must be invalidated, since its
+     * watermark-based invalidation cannot detect a remap that introduces no
+     * new table symbols.
+     */
+    public boolean isSymbolDictRedefined() {
+        return symbolDictRedefined;
     }
 
     /**
@@ -141,6 +155,7 @@ public class QwpMessageCursor implements Mutable {
             ObjList<String> connectionSymbolDict
     ) throws QwpParseException {
         this.connectionSymbolDict = connectionSymbolDict;
+        this.symbolDictRedefined = false;
 
         // Parse message header
         messageHeader.parse(messageAddress, messageLength);
@@ -262,8 +277,18 @@ public class QwpMessageCursor implements Mutable {
             String symbol = Utf8s.stringFromUtf8Bytes(address, address + symbolLen);
             address += symbolLen;
 
-            // Store in dictionary
-            connectionSymbolDict.setQuick(deltaStartId + i, symbol);
+            // Store in dictionary. Flag a redefinition when an existing client
+            // symbol ID is remapped to a different string: orphan-adoption
+            // replays a prior sender's dict-from-0 ahead of this sender's own,
+            // so the same client symbol IDs are reused with different strings.
+            // Re-sending an identical dict (the common dict-from-0 case within
+            // one sender) overwrites with equal values and is not a redefinition.
+            int dictIndex = deltaStartId + i;
+            String previous = connectionSymbolDict.getQuick(dictIndex);
+            if (previous != null && !previous.equals(symbol)) {
+                symbolDictRedefined = true;
+            }
+            connectionSymbolDict.setQuick(dictIndex, symbol);
         }
 
         return address;

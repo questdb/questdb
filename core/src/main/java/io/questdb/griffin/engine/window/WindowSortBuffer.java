@@ -22,30 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.window;
 
-import java.io.Closeable;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.QuietCloseable;
 
-public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
-    private final ObjectFactory<T> factory;
+interface WindowSortBuffer extends QuietCloseable, Reopenable {
+    void finishPut(SqlExecutionCircuitBreaker circuitBreaker);
 
-    public ThreadLocal(ObjectFactory<T> factory) {
-        this.factory = factory;
-    }
+    boolean hasNext();
 
-    @Override
-    public void close() {
-        Misc.freeIfCloseable(super.get());
-        remove();
-    }
+    long next();
 
-    @Override
-    public T get() {
-        T val = super.get();
-        if (val == null) {
-            val = factory.newInstance();
-            set(val);
-        }
-        return val;
-    }
+    void of(RecordCursor cursor, long expectedRows);
+
+    void put(Record record, long rowId);
+
+    void toTop();
 }

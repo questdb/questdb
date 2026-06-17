@@ -139,7 +139,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
             public CharSequence getStrA(int col) {
                 switch (col) {
                     case TABLE_NAME_COLUMN_INDEX:
-                        return tableToken.getTableName();
+                        return tableToken != null ? tableToken.getTableName() : null;
                     case OWNERSHIP_REASON_COLUMN_INDEX:
                         return ownershipReason;
                     default:

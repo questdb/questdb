@@ -135,6 +135,7 @@ import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
@@ -263,6 +264,7 @@ import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -326,6 +328,7 @@ import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -2808,6 +2811,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert fromTag == UUID;
                         castFunctions.add(UuidColumn.newInstance(i));
                         break;
+                    case LONG128:
+                        assert fromTag == LONG128;
+                        castFunctions.add(Long128Column.newInstance(i));
+                        break;
                     case TIMESTAMP:
                         switch (fromTag) {
                             case DATE:
@@ -3478,6 +3485,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             default:
                                 assert false;
                         }
+                        break;
+                    default:
+                        assert false;
                 }
             }
         }
@@ -5628,6 +5638,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("splice join doesn't support full fat mode");
                                     }
                                 }
+                                // the splice join result carries fully qualified column names, so a
+                                // subsequent join must not re-apply the master alias
+                                masterAlias = null;
                                 break;
                             case IQueryModel.JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -7462,6 +7475,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
+                final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
+                        && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
@@ -7543,6 +7558,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
+                        if (isEncodedSortSupported) {
+                            return new EncodedSortLimitedLightRecordCursorFactory(
+                                    configuration,
+                                    orderedMetadata,
+                                    recordCursorFactory,
+                                    loFunc,
+                                    hiFunc,
+                                    listColumnFilterA.copy(),
+                                    baseCursorTimestampIndex
+                            );
+                        }
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
@@ -7554,7 +7580,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseCursorTimestampIndex
                         );
                     } else {
-                        if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                        if (isEncodedSortSupported) {
                             return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
@@ -7625,7 +7651,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when base record cursor does not support random access
                 // we have to copy entire record into ordered structure
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
-                if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                if (isEncodedSortSupported) {
                     return new EncodedSortRecordCursorFactory(
                             configuration,
                             orderedMetadata,
@@ -9801,21 +9827,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // after all columns are processed we can re-insert deferred metadata
+            boolean isAllWindowOutputFixedWidth = true;
             for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
                 TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
                 if (m != null) {
                     chainTypes.add(i, m.getColumnType());
                     factoryMetadata.add(i, m);
+                    isAllWindowOutputFixedWidth &= !isVarSize(m.getColumnType());
                 }
             }
 
             final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
+            final boolean isSortEnabled = configuration.isSqlOrderBySortEnabled();
+            boolean isAllGroupsEncodedEligible = isSortEnabled;
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.newInstance(chainMetadata, e.key));
+                final boolean isEncodedEligible = isSortEnabled && SortKeyEncoder.isSupported(chainMetadata, e.key);
+                final RecordComparator comparator = isEncodedEligible
+                        ? null
+                        : recordComparatorCompiler.newInstance(chainMetadata, e.key);
+                windowComparators.add(comparator);
                 functionGroups.add(e.value);
                 keys.add(e.key);
+                isAllGroupsEncodedEligible &= isEncodedEligible;
+            }
+
+            // LIGHT path is restricted to queries where every ordered group can use the encoded
+            // sort buffer. Tree-fallback in LIGHT would do O(N log N) random base reads per
+            // compare, which can regress 10-100x on cold/partitioned bases.
+            // It also requires every window-output column to be fixed-width: the narrow chain
+            // never initializes var-size aux pointers, so a var-size output column would read
+            // uninitialized offsets and crash. No window function returns a var-size type today;
+            // this guard keeps the path safe if one is ever added.
+            if (configuration.isSqlWindowCachedLightEnabled()
+                    && base.recordCursorSupportsRandomAccess()
+                    && isAllGroupsEncodedEligible
+                    && isAllWindowOutputFixedWidth) {
+                final IntList sourceMap = new IntList();
+                final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
+                int narrowIdx = 0;
+                for (int c = 0, chainColCount = chainTypes.getColumnCount(); c < chainColCount; c++) {
+                    final TableColumnMetadata m = deferredWindowMetadata.getQuiet(c);
+                    if (m != null) {
+                        sourceMap.add(-narrowIdx - 1);
+                        narrowChainTypes.add(m.getColumnType());
+                        narrowIdx++;
+                    } else {
+                        sourceMap.add(columnIndexes.getQuick(c));
+                    }
+                }
+                return new CachedWindowLightRecordCursorFactory(
+                        configuration,
+                        base,
+                        factoryMetadata,
+                        narrowChainTypes,
+                        functionGroups,
+                        naturalOrderFunctions,
+                        columnIndexes,
+                        keys,
+                        chainMetadata,
+                        sourceMap
+                );
             }
 
             final RecordSink recordSink = RecordSinkFactory.getInstance(

@@ -132,4 +132,5 @@ open module io.questdb {
     exports io.questdb.cutlass.parquet;
     exports io.questdb.cairo.view;
     exports io.questdb.cairo.idx;
+    exports io.questdb.mp.continuation;
 }

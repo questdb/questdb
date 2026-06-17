@@ -359,7 +359,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
-                purgeJob.run(0);
+                purgeJob.run();
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .expectSize()
@@ -1105,7 +1105,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
-                purgeJob.run(0);
+                purgeJob.run();
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .expectSize()
@@ -1464,9 +1464,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
         engine.releaseInactive();
         setCurrentMicros(currentMicros + 10L * iteration++);
-        purgeJob.run(0);
+        purgeJob.run();
         setCurrentMicros(currentMicros + 10L * iteration++);
-        purgeJob.run(0);
+        purgeJob.run();
     }
 
     private void update(String updateSql) throws SqlException {

@@ -86,7 +86,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 execute("checkpoint create");
                 execute("alter table testPurge alter column sym2 drop index");
 
-                purgeJob.run(0);
+                purgeJob.run();
                 String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
                 String[] files = {"sym2.k", "sym2.v"};
                 assertFilesExist(partitions, "testPurge", files, "", true);
@@ -619,9 +619,9 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
         engine.releaseInactive();
         setCurrentMicros(currentMicros + 10L * iteration++);
-        purgeJob.run(0);
+        purgeJob.run();
         setCurrentMicros(currentMicros + 10L * iteration++);
-        purgeJob.run(0);
+        purgeJob.run();
     }
 
     private void runTableVacuum(String tableName) throws SqlException {

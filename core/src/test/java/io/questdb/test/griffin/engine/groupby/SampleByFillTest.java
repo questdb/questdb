@@ -12,7 +12,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
@@ -119,7 +118,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY city")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort
+                            Encode sort
                               keys: [city]
                                 Sample By Fill
                                   stride: '1h'
@@ -180,7 +179,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts, city")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort
+                            Encode sort
                               keys: [ts, city]
                                 Sample By Fill
                                   stride: '1h'
