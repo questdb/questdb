@@ -57,7 +57,9 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectBitSet;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -70,6 +72,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
@@ -104,6 +108,77 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // e.g. leaving a superseded .pv unreclaimed, or making a saturation assertion
         // see no room. Draining here makes each test independent of the prior one.
         drainPostingSealPurgeQueue();
+    }
+
+    @Test
+    public void testCloseNoTruncateSkipsSealOnPoisonedWriter() throws Exception {
+        // SymbolMapWriter's emergency closeNoTruncate() runs a best-effort seal().
+        // On a poisoned writer that seal() would throw via checkNotPoisoned() out
+        // of cleanup, masking the original rebuild failure. The fix skips the seal
+        // when poisoned; the finally still frees every resource. Pre-fix this test
+        // fails with the poison CairoException propagating out of closeNoTruncate().
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "close_no_truncate_poisoned";
+            final long fakeColBytes = 32L << 3; // 32 rows * 8 bytes (LONG cover)
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                boolean closeNoTruncateRan = false;
+                try {
+                    // Two sparse gens so seal() runs sealFull and actually switches.
+                    for (int v = 0; v < 16; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(15);
+                    writer.commit();
+                    for (int v = 16; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.commit();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcSync.arm();
+                    try {
+                        writer.seal();
+                        Assert.fail("expected post-switch .pc sync failure during seal");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+                    // The seal poisoned the writer and staged the newSealTxn orphan.
+                    Assert.assertEquals("seal must have poisoned the writer and staged the orphan",
+                            1, writer.getPendingPurgesSizeForTesting());
+
+                    // The fix under test: emergency close must not throw on a
+                    // poisoned writer. closeNoTruncate frees every resource in its
+                    // finally (even on a throw), so it doubles as the writer's close.
+                    closeNoTruncateRan = true;
+                    writer.closeNoTruncate();
+                } finally {
+                    // Only re-close on a setup failure before closeNoTruncate ran;
+                    // a closeNoTruncate that threw already freed everything, so we
+                    // let the throw surface the regression rather than double-close.
+                    if (!closeNoTruncateRan) {
+                        writer.close();
+                    }
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     /**
@@ -193,6 +268,206 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             ts\tsym\tprice
                             2024-01-01T00:00:00.000000Z\tA\t1.0
                             """);
+        });
+    }
+
+    /**
+     * The bounded {@code decodeKeyEFToNative(maxValues)} overload must reject an
+     * EF block whose encoded value count exceeds the caller's buffer capacity (a
+     * corrupt or mismatched generation whose block count disagrees with the
+     * gen-dir count the buffer was sized to) BEFORE writing past the buffer, and
+     * must pass a valid block whose count fits exactly. This is the shared guard
+     * the streaming-seal / rollback decode paths
+     * ({@code decodeDenseGenSingleKey}, {@code filterCountsForRollback}) rely on
+     * to bound writes against the gen-dir count -- without coverage an off-by-one
+     * in the {@code maxKeyCount - decodedTotal} capacity math would go unnoticed.
+     */
+    @Test
+    public void testDecodeKeyEFToNativeRejectsValueCountAboveCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 200;
+            final long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long encMaxBytes = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long blockAddr = Unsafe.malloc(encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+            final long destAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
+                long acc = 0;
+                for (int i = 0; i < count; i++) {
+                    acc += 1L + (i & 7); // strictly ascending, distinct -> valid EF input
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, acc);
+                }
+                ctx.ensureCapacity(count);
+                int size = PostingIndexUtils.encodeKeyEF(srcAddr, count, blockAddr, ctx);
+                Assert.assertTrue(size > 0);
+                Assert.assertEquals("expected an EF block",
+                        PostingIndexUtils.EF_FORMAT_SENTINEL, Unsafe.getInt(blockAddr));
+
+                // Valid: capacity == the encoded count -> decodes and round-trips.
+                PostingIndexUtils.decodeKeyEFToNative(blockAddr, destAddr, count);
+                for (int i = 0; i < count; i++) {
+                    Assert.assertEquals("round-trip mismatch at " + i,
+                            Unsafe.getLong(srcAddr + (long) i * Long.BYTES),
+                            Unsafe.getLong(destAddr + (long) i * Long.BYTES));
+                }
+
+                // Corruption: the block's count (200) exceeds the buffer capacity
+                // (199) -> must throw BEFORE writing rather than overflow destAddr.
+                try {
+                    PostingIndexUtils.decodeKeyEFToNative(blockAddr, destAddr, count - 1);
+                    Assert.fail("decodeKeyEFToNative must reject a count above capacity");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "EF value count out of range");
+                }
+            } finally {
+                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(blockAddr, encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * The bounded {@code decodeKeyToNative(maxValues)} overload sizes the caller's
+     * destAddr from the summed block counts, but each block's {@code count-1} deltas
+     * are unpacked into the separate fixed {@code BLOCK_CAPACITY}-long
+     * {@code blockDeltasAddr} scratch that {@code DecodeContext} never grows. A valid
+     * encoder splits a key into blocks of at most {@code BLOCK_CAPACITY}, so a
+     * crafted/corrupt single block whose count exceeds {@code BLOCK_CAPACITY} would
+     * unpack more longs than that 64-long scratch holds and overrun it -- a native heap
+     * OOB write the {@code summed-count <= maxValues} guard cannot catch, because it
+     * bounds destAddr only, not the scratch. The decode must reject a block count above
+     * {@code BLOCK_CAPACITY} before writing.
+     */
+    @Test
+    public void testDecodeKeyToNativeRejectsBlockCountAboveCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            final int firstWord = 1; // single block
+            // One past the largest count whose count-1 deltas still fit the 64-long
+            // blockDeltasAddr scratch (count=BLOCK_CAPACITY+1 fills it exactly): the
+            // unguarded decode writes one long past the scratch.
+            final int corruptCount = PostingIndexUtils.BLOCK_CAPACITY + 2;
+            final long blockBytes = 256; // generous; zeroed
+            final long blockAddr = Unsafe.malloc(blockBytes, MemoryTag.NATIVE_DEFAULT);
+            final int cap = 256; // > corruptCount, so the summed-count <= maxValues guard passes
+            final long destAddr = Unsafe.malloc((long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.DecodeContext dctx = new PostingIndexUtils.DecodeContext()) {
+                for (long o = 0; o < blockBytes; o += Long.BYTES) {
+                    Unsafe.putLong(blockAddr + o, 0L);
+                }
+                Unsafe.putInt(blockAddr, firstWord);
+                Assert.assertTrue("crafted block must not collide with the EF sentinel",
+                        firstWord != PostingIndexUtils.EF_FORMAT_SENTINEL);
+                // Single-block DELTA layout for firstWord==1:
+                //   [0..3] firstWord | [4] valueCounts[0] | [5..12] firstValues[0]
+                //   | [13..20] minDeltas[0] | [21] bitWidths[0]  (no packedOffsets when firstWord==1)
+                Unsafe.putByte(blockAddr + 4, (byte) corruptCount); // > BLOCK_CAPACITY
+                Unsafe.putByte(blockAddr + 21, (byte) 0);           // bitWidth 0 -> unconditional delta writes
+                try {
+                    PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, cap);
+                    Assert.fail("decodeKeyToNative must reject a block count above BLOCK_CAPACITY before writing");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "block value count exceeds capacity");
+                }
+            } finally {
+                Unsafe.free(blockAddr, blockBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * The bounded {@code decodeKeyToNative(maxValues)} overload must reject a
+     * DELTA (delta+FoR) block whose summed block-internal counts exceed the
+     * caller's buffer capacity BEFORE writing any value, and pass a valid block
+     * whose total fits. Same shared corruption guard as the EF variant, exercised
+     * on the non-EF decode path (the path {@code decodeDenseGenSingleKey} takes
+     * for delta-encoded strides).
+     */
+    @Test
+    public void testDecodeKeyToNativeRejectsValueCountAboveCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 200; // > BLOCK_CAPACITY (64) -> several internal blocks
+            final long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long encMaxBytes = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long blockAddr = Unsafe.malloc(encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+            final long destAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext ectx = new PostingIndexUtils.EncodeContext();
+                 PostingIndexUtils.DecodeContext dctx = new PostingIndexUtils.DecodeContext()) {
+                long acc = 0;
+                for (int i = 0; i < count; i++) {
+                    acc += 1L + (i & 15);
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, acc);
+                }
+                ectx.ensureCapacity(count);
+                int size = PostingIndexUtils.encodeKeyNativeDeltaFoR(srcAddr, count, blockAddr, ectx);
+                Assert.assertTrue(size > 0);
+                Assert.assertTrue("expected a non-EF (delta) block",
+                        Unsafe.getInt(blockAddr) != PostingIndexUtils.EF_FORMAT_SENTINEL);
+
+                // Valid: capacity == the encoded total -> decodes and round-trips.
+                PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, count);
+                for (int i = 0; i < count; i++) {
+                    Assert.assertEquals("round-trip mismatch at " + i,
+                            Unsafe.getLong(srcAddr + (long) i * Long.BYTES),
+                            Unsafe.getLong(destAddr + (long) i * Long.BYTES));
+                }
+
+                // Corruption: the summed block counts (200) exceed the buffer
+                // capacity (199) -> must throw BEFORE writing rather than overflow.
+                try {
+                    PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, count - 1);
+                    Assert.fail("decodeKeyToNative must reject a count above capacity");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "decoded value count exceeds buffer");
+                }
+            } finally {
+                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(blockAddr, encMaxBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * The bounded {@code decodeKeyToNative(maxValues)} guard sums the per-block
+     * declared counts, but the decode writes each block's first value
+     * UNCONDITIONALLY (one long per block) before its {@code count-1} deltas -- so it
+     * actually writes {@code max(count, 1)} longs per block. A valid encoder never
+     * emits a zero-count block, but a crafted/corrupt block containing one writes more
+     * longs than the summed count: {@code [2, 0, 2]} sums to 4 yet writes 5,
+     * overrunning a destination sized to the summed count. The guard must reject a
+     * zero-count block before writing any value.
+     */
+    @Test
+    public void testDecodeKeyToNativeRejectsZeroCountBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            final int firstWord = 3;
+            final long blockBytes = 256; // generous; zeroed so an unfixed decode would do a clean +1 OOB write
+            final long blockAddr = Unsafe.malloc(blockBytes, MemoryTag.NATIVE_DEFAULT);
+            final int cap = 4; // == sum([2,0,2]); the old sum-only guard would pass this
+            final long destAddr = Unsafe.malloc((long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.DecodeContext dctx = new PostingIndexUtils.DecodeContext()) {
+                for (long o = 0; o < blockBytes; o += Long.BYTES) {
+                    Unsafe.putLong(blockAddr + o, 0L);
+                }
+                Unsafe.putInt(blockAddr, firstWord);
+                Assert.assertTrue("crafted block must not collide with the EF sentinel",
+                        firstWord != PostingIndexUtils.EF_FORMAT_SENTINEL);
+                // valueCounts[] = [2, 0, 2]: sums to cap (passes the old sum-only guard)
+                // but the unconditional per-block first-value write emits 5 longs.
+                Unsafe.putByte(blockAddr + 4, (byte) 2);
+                Unsafe.putByte(blockAddr + 5, (byte) 0);
+                Unsafe.putByte(blockAddr + 6, (byte) 2);
+                try {
+                    PostingIndexUtils.decodeKeyToNative(blockAddr, destAddr, dctx, cap);
+                    Assert.fail("decodeKeyToNative must reject a zero-count block before writing");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "zero-count block");
+                }
+            } finally {
+                Unsafe.free(blockAddr, blockBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, (long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
         });
     }
 
@@ -750,6 +1025,114 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReopenEvictionThenIncrementalSealRebuildsVarSidecar() throws Exception {
+        // Same reopen-eviction rollback as the DOUBLE case above, but the
+        // covered column is VAR-SIZE (VARCHAR). The streaming rollback must
+        // rebuild the .pc sidecar through the per-key var-size path, so the
+        // covered reads keep serving the committed tags.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rb_evict_var (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag),
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbol keys -> two key strides (DENSE_STRIDE = 256).
+            // Each row's covered tag is DISTINCT ('tag_' || x), so a scrambled
+            // per-key var-size offset surfaces as a wrong/duplicate value rather
+            // than hiding behind an all-identical payload.
+            execute("""
+                    INSERT INTO t_rb_evict_var
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000_000L), 'k' || (x % 300), 'tag_' || x
+                    FROM long_sequence(3_000)
+                    """);
+            // O3 merge commit seals the posting index in the rewritten partition.
+            // Distinct namespace ('tag2_') so the merged rows never collide with
+            // the base insert's tags.
+            execute("""
+                    INSERT INTO t_rb_evict_var
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L), 'k' || (x % 300), 'tag2_' || x
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            TableToken token = engine.verifyTableName("t_rb_evict_var");
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            // Plant index values beyond the committed transient row count
+            // (3_100 rows are committed) so the reopen forces a real discard.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                try (PostingIndexWriter planted = new PostingIndexWriter(configuration)) {
+                    planted.of(path, "sym", COLUMN_NAME_TXN_NONE, partitionTs, partitionNameTxn);
+                    for (int i = 0; i < 5; i++) {
+                        planted.add(0, 3_100 + i);
+                    }
+                    planted.setMaxValue(3_104);
+                    planted.commit();
+                }
+            }
+
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                // Opening the writer ran rollbackConditionally(3_100): the real
+                // discard streamed the var-size covered sidecar rebuild for the
+                // survivors. Covered reads must still serve the committed tags.
+                assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .withPlanContaining("CoveringIndex on: sym")
+                        .returns("""
+                                c\tct\tcd\tmn\tmx
+                                10\t10\t10\ttag_1200\ttag_900
+                                """);
+
+                // O3 append touching only key 'k0': one stride dirty, the
+                // other clean, so the seal goes incremental and reads the
+                // clean stride from the rollback-rebuilt sealed var sidecar.
+                long base = MicrosFormatUtils.parseTimestamp("2024-01-01T01:00:00.000000Z");
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row r = writer.newRow(base + (49 - i) * 1_000_000L);
+                    r.putSym(1, "k0");
+                    // Distinct per-row tag so the incremental seal's rebuilt var
+                    // sidecar must preserve each offset, not just a shared payload.
+                    r.putVarchar(2, new Utf8String("tagO3_" + i));
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k0'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
+                    .returns("""
+                            c\tct\tcd\tmn\tmx
+                            60\t60\t60\ttagO3_0\ttag_900
+                            """);
+            // 'k1' lives in the stride the post-rollback commit left clean; its
+            // covered var-size values come from the sidecar the rollback rebuilt.
+            // 11 rows, each with a distinct tag -> count_distinct must be 11.
+            assertQuery("SELECT count() c, count(tag) ct, count_distinct(tag) cd, min(tag) mn, max(tag) mx FROM t_rb_evict_var WHERE sym = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
+                    .returns("""
+                            c\tct\tcd\tmn\tmx
+                            11\t11\t11\ttag2_1\ttag_901
+                            """);
+        });
+    }
+
     /**
      * Defense-in-depth check for the snapshot validation in {@code seal()}:
      * a published sealTxn whose {@code .pc} sidecar is missing on disk is
@@ -907,6 +1290,197 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             count\tsum
                             10\t16500.0
                             """);
+        });
+    }
+
+    /**
+     * End-to-end guard for the bounded {@code mergeKeyValues} decode (the M-1
+     * hardening). The incremental seal sizes its per-stride merge buffer from
+     * each generation's stored per-key counts, then decodes every generation's
+     * encoded block into it. If a sparse generation's stored count is smaller
+     * than what its block actually decodes to -- a corrupt or mismatched gen --
+     * the bounded decode must throw BEFORE overflowing the exactly-sized buffer,
+     * not scribble past it into native heap.
+     * <p>
+     * Reproducer: seal a dense gen 0 over 300 keys (2 strides), append a sparse
+     * gen 1 for the hot key only (so its stride is the single dirty one, keeping
+     * the seal on the incremental branch), then shrink gen 1's stored count for
+     * that key on disk below what its block encodes. The next seal's merge must
+     * reject it rather than overflow. Restores the count afterwards so close()'s
+     * auto-seal re-compacts cleanly.
+     */
+    @Test
+    public void testIncrementalSealRejectsCorruptSparseGenBlockCountOverflow() throws Exception {
+        final int numKeys = 300;        // > 256 -> 2 strides; one dirty stride keeps the incremental branch
+        final int hotKey = 0;
+        final int gen1HotRows = 1_000;  // sparse gen 1 holds this many rows for the hot key
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "corrupt_sparse_gen";
+                final FilesFacade rawFf = configuration.getFilesFacade();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    // Phase 1: one row per key, sealed into a dense gen 0 over every key.
+                    long row = 0;
+                    for (int k = 0; k < numKeys; k++) {
+                        writer.add(k, row++);
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                    Assert.assertEquals("phase 1 must leave a single dense gen 0", 1, writer.getGenCount());
+
+                    // Phase 2: more rows for the hot key only -> sparse gen 1, dirty stride 0.
+                    for (int i = 0; i < gen1HotRows; i++) {
+                        writer.add(hotKey, row++);
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    Assert.assertEquals("phase 2 must append a sparse gen 1", 2, writer.getGenCount());
+
+                    // Resolve sparse gen 1's file offset and active key count from the chain head.
+                    final long gen1FileOffset;
+                    final int gen1ActiveKeyCount;
+                    final long curSealTxn;
+                    final long pkLen = rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                            rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(pk);
+                        PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                        chain.loadHeadEntry(pk, head);
+                        Assert.assertEquals("expected gen 0 + sparse gen 1", 2, head.genCount);
+                        curSealTxn = head.sealTxn;
+                        long gen1Dir = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 1);
+                        gen1FileOffset = pk.getLong(gen1Dir + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+                        int genKeyCount = pk.getInt(gen1Dir + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                        Assert.assertTrue("gen 1 must be sparse (negative KEY_COUNT), got " + genKeyCount, genKeyCount < 0);
+                        gen1ActiveKeyCount = -genKeyCount;
+                    }
+
+                    // Sparse gen layout in .pv: [keyIds: n ints][counts: n ints][...]. Phase 2 wrote
+                    // only the hot key, so it is index 0. Shrink its stored count below the block's.
+                    final long countsBase = gen1FileOffset + (long) gen1ActiveKeyCount * Integer.BYTES;
+                    final long pvLen = rawFf.length(PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn));
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        Assert.assertEquals("gen 1's first key must be the hot key", hotKey, pv.getInt(gen1FileOffset));
+                        Assert.assertEquals("gen 1's stored hot-key count must equal the phase 2 row count",
+                                gen1HotRows, pv.getInt(countsBase));
+                        pv.putInt(countsBase, gen1HotRows / 2); // corrupt: stored count < the block's real count
+                    }
+
+                    // The incremental seal merges gen 0 + gen 1 for the dirty stride; the bounded
+                    // decode must reject the over-long block rather than overflow the merge buffer.
+                    try {
+                        writer.seal();
+                        Assert.fail("incremental seal must reject a sparse gen whose block exceeds its stored count");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "corrupt posting index");
+                    }
+
+                    // Restore the count so the try-with-resources close()'s auto-seal re-compacts
+                    // cleanly -- leaving the corruption would re-throw out of close() and mask the above.
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        pv.putInt(countsBase, gen1HotRows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackRejectsNegativeDenseFlatPrefixCount() throws Exception {
+        // decodeDenseGenSingleKey guards count < 0, the partner of its
+        // count > capacity guard. A non-monotonic FLAT prefix-counts array
+        // (corruption) yields a negative per-key count; unguarded it would
+        // drive a negative destination offset and write out of bounds. Build a
+        // dense FLAT gen 0, corrupt the prefix so one key's count goes negative,
+        // then roll back -- filterCountsForRollback decodes that key and must
+        // throw rather than read/write out of bounds. The existing corrupt-gen
+        // tests only cover the count > capacity / over-decode direction.
+        final int numKeys = 200;  // 200 keys x 1 row -> stride 0 picks FLAT (see testSizeFastPathOnDenseFlatStride)
+        final int badKey = 100;   // mid-stride, so prefix[badKey] and prefix[badKey + 1] are interior slots
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "corrupt_flat_prefix";
+                final FilesFacade rawFf = configuration.getFilesFacade();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    long row = 0;
+                    for (int k = 0; k < numKeys; k++) {
+                        writer.add(k, row++);
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                    Assert.assertEquals("seal must leave a single dense gen 0", 1, writer.getGenCount());
+
+                    // Resolve gen 0's file offset, key count and the live sealTxn from the chain head.
+                    final long gen0FileOffset;
+                    final int gen0KeyCount;
+                    final long curSealTxn;
+                    final long pkLen = rawFf.length(PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    try (MemoryCMARWImpl pk = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE),
+                            rawFf.getPageSize(), pkLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(pk);
+                        PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                        chain.loadHeadEntry(pk, head);
+                        Assert.assertEquals("expected a single dense gen 0", 1, head.genCount);
+                        curSealTxn = head.sealTxn;
+                        long gen0Dir = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0);
+                        gen0FileOffset = pk.getLong(gen0Dir + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+                        int genKeyCount = pk.getInt(gen0Dir + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                        Assert.assertEquals("gen 0 must be dense and cover every key", numKeys, genKeyCount);
+                        gen0KeyCount = genKeyCount;
+                    }
+
+                    // FLAT stride layout in .pv: [mode][baseValue][prefix counts: ks + 1 ints]...
+                    // count[badKey] = prefix[badKey + 1] - prefix[badKey]; make prefix[badKey + 1]
+                    // smaller than prefix[badKey] so that difference goes negative.
+                    final long pvLen = rawFf.length(PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn));
+                    int origPrefixNext = 0;
+                    long prefixNextSlot = 0;
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        int siSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
+                        long stride0Off = pv.getLong(gen0FileOffset); // stride index entry 0
+                        long strideAddr = gen0FileOffset + siSize + stride0Off;
+                        Assert.assertEquals("stride 0 must be FLAT to exercise the FLAT prefix guard",
+                                PostingIndexUtils.STRIDE_MODE_FLAT, pv.getByte(strideAddr));
+                        long prefixBase = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                        prefixNextSlot = prefixBase + (long) (badKey + 1) * Integer.BYTES;
+                        int prefixCur = pv.getInt(prefixBase + (long) badKey * Integer.BYTES);
+                        origPrefixNext = pv.getInt(prefixNextSlot);
+                        pv.putInt(prefixNextSlot, prefixCur - 1); // count[badKey] = (prefixCur - 1) - prefixCur = -1
+                    }
+
+                    // Roll back keeping badKey's row id (100 <= 189): filterCountsForRollback
+                    // decodes badKey from the corrupt FLAT stride and the count < 0 guard fires.
+                    try {
+                        writer.rollbackValues(numKeys - 11L); // keep rows <= 189; badKey's row (100) survives
+                        Assert.fail("rollback must reject a negative dense FLAT prefix count");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "corrupt posting index");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "dense FLAT key count");
+                    }
+
+                    // Restore the prefix so the try-with-resources close()'s auto-seal re-compacts
+                    // cleanly -- leaving the corruption would re-throw out of close() and mask the above.
+                    try (MemoryCMARWImpl pv = new MemoryCMARWImpl(rawFf,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, curSealTxn),
+                            rawFf.getPageSize(), pvLen, MemoryTag.MMAP_DEFAULT, 0)) {
+                        pv.putInt(prefixNextSlot, origPrefixNext);
+                    }
+                }
+            }
         });
     }
 
@@ -4447,6 +5021,133 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Deterministic cover for the addr-based (O3) cover rollback branch
+     * ({@code reencodeAllGenerations}'s {@code else if (coverCount > 0)} arm),
+     * which only the probabilistic O3 fuzz reaches otherwise. An addr-based
+     * cover (configured via the native-address {@code configureCovering}
+     * overload, so {@code coveredColumnNames} and {@code coveredPartitionPath}
+     * stay empty) commits two generations, then a rollback at a SURVIVING cutoff
+     * ({@code newKeyCount > 0}) drives the streaming reencode through that arm:
+     * it asserts {@code coveredColumnNames.size() == 0}, calls
+     * {@code closeSidecarMems()} WITHOUT reopening (the addr-based reencode
+     * writes no sidecar bytes -- the O3 flow re-seals afterwards to rebuild the
+     * .pc), and re-encodes only the surviving rowids.
+     * <p>
+     * The rollback must take the per-key streaming path (asserted via
+     * {@code isLastRollbackStreamingForTesting}, distinguishing this branch from
+     * the {@code newKeyCount == 0} truncate path) and the surviving rowids must
+     * read back exactly. This differs from the existing addr-based
+     * {@code rollbackValues(0)} cases (poisoned-writer rejection asserts that
+     * throw at the entry guard and never reach this arm) by using a healthy
+     * writer and a cutoff that keeps a strict subset of rows.
+     */
+    @Test
+    public void testRollbackAddrBasedCoverStreamsAndRoundTrips() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "rollback_addr_based_cover";
+            final int keys = 4;
+            final int gen0RowsPerKey = 20;
+            final int gen1RowsPerKey = 20;
+            final int totalRows = keys * (gen0RowsPerKey + gen1RowsPerKey);
+            // Keep the lower half of the rowids; the cutoff leaves survivors on
+            // every key (newKeyCount stays at the full key count > 0).
+            final long cutoff = totalRows / 2 - 1;
+
+            // Addr-based LONG cover backing buffer: one 8-byte slot per rowid
+            // (the reencode reads coveredColumnAddrs[rowid << shift]).
+            final int shift = 3;
+            final long colBytes = (long) totalRows << shift;
+            long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < totalRows; i++) {
+                    Unsafe.putLong(colAddr + ((long) i << shift), 1000L + i);
+                }
+
+                final ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keys; k++) {
+                    oracle.add(new LongList());
+                }
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        long[] addrs = {colAddr};
+                        long[] tops = {0L};
+                        int[] shifts = {shift};
+                        int[] indices = {1};
+                        int[] types = {ColumnType.LONG};
+
+                        // Gen 0: re-supply the addr-based cover per op (mirrors the
+                        // O3 flow), commit a sparse gen.
+                        writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                        long row = 0;
+                        for (int r = 0; r < gen0RowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row);
+                                if (row <= cutoff) {
+                                    oracle.getQuick(k).add(row);
+                                }
+                                row++;
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+
+                        // Gen 1: a second sparse gen so the rollback streams across
+                        // >= 2 generations.
+                        writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                        for (int r = 0; r < gen1RowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row);
+                                if (row <= cutoff) {
+                                    oracle.getQuick(k).add(row);
+                                }
+                                row++;
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        Assert.assertEquals("setup must leave two sparse gens before the rollback",
+                                2, writer.getGenCount());
+
+                        writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                        writer.rollbackValues(cutoff);
+
+                        // The cutoff keeps a strict subset, so the rollback took the
+                        // per-key streaming reencode (the addr-based cover arm), not
+                        // the newKeyCount == 0 truncate path.
+                        Assert.assertTrue("addr-based cover rollback must take the per-key streaming reencode path",
+                                writer.isLastRollbackStreamingForTesting());
+                        Assert.assertEquals("rollback must lower maxValue to the cutoff",
+                                cutoff, writer.getMaxValue());
+                    }
+
+                    // The surviving rowids read back exactly. The addr-based cover
+                    // wrote no .pc on the rollback (rebuilt by a later reseal in the
+                    // O3 flow), so we validate the rowid postings only.
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name,
+                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            LongList actual = new LongList();
+                            try (RowCursor cursor = reader.getCursor(k, 0L, Long.MAX_VALUE)) {
+                                while (cursor.hasNext()) {
+                                    actual.add(cursor.next());
+                                }
+                            }
+                            TestUtils.assertEquals(expected, actual);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
      * {@code rollbackConditionally(0)} routes to {@code truncate()}, whose
      * path-based branch rewrites the .pk header pages ({@code initKeyMemory})
      * and queues the superseded .pv for purge. {@code PostingSealPurgeOperator}
@@ -4550,7 +5251,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     /**
      * A real-discard rollback (indexed rowids above the rollback point) runs
-     * {@code reencodeMonolithic}: it syncs the new .pv, publishes the new
+     * the streaming rollback re-encoder (reencodeWithPerKeyStreaming): it syncs
+     * the new .pv, publishes the new
      * sealTxn's chain entry into .pk and returns, and
      * {@code rollbackToMaxValue} immediately queues the superseded .pv/.pc
      * for purge. {@code PostingSealPurgeOperator} unlinks queued files with
@@ -4597,7 +5299,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackRealDiscardSidecarSyncFailureUnlinksStagedSealFiles() throws Exception {
+    public void testRollbackRealDiscardSidecarSyncFailureSchedulesStagedSealFilePurge() throws Exception {
         final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
         ff = pcSync;
         assertMemoryLeak(ff, () -> {
@@ -4647,15 +5349,650 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals("test must fail exactly one staged .pc sync", 1, pcSync.failureCount());
 
+                    // The .pc sync fails AFTER reencodeWithPerKeyStreaming switched
+                    // valueMem onto the new .pv (post-switch), so the staged files
+                    // are mapped -- an immediate unlink would fail on Windows. The
+                    // catch defers them to the purge job instead (matching the seal
+                    // path's rebuildSidecarsByCopy). The chain still references the
+                    // old .pv, so the staged files stay on disk until the deferred
+                    // purge runs, and exactly one orphan purge is queued.
+                    Assert.assertEquals("post-switch failure must queue exactly one orphan purge",
+                            1, writer.getPendingPurgesSizeForTesting());
+
                     LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
-                    Assert.assertFalse("staged rollback .pv must be unlinked [path=" + pv + ']',
+                    Assert.assertTrue("staged rollback .pv stays until the deferred purge [path=" + pv + ']',
                             configuration.getFilesFacade().exists(pv));
 
                     LPSZ pc = PostingIndexUtils.coverDataFileName(
                             path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1);
-                    Assert.assertFalse("staged rollback .pc must be unlinked [path=" + pc + ']',
+                    Assert.assertTrue("staged rollback .pc stays until the deferred purge [path=" + pc + ']',
                             configuration.getFilesFacade().exists(pc));
+
+                    // C1: the post-switch failure left the writer internally
+                    // inconsistent (chain head at the old sealTxn, valueMem at the
+                    // staged one), so it is poisoned -- any further rollback / seal
+                    // / commit must throw rather than re-drive the poisoned state
+                    // (which could append a chain entry at the staged sealTxn and
+                    // let the deferred [0, MAX) purge delete the now-live file).
+                    try {
+                        writer.rollbackValues(30);
+                        Assert.fail("poisoned writer must reject further rollbacks");
+                    } catch (CairoException poisoned) {
+                        TestUtils.assertContains(poisoned.getFlyweightMessage(), "poisoned");
+                    }
+                    // A poisoned writer must also reject commit -- it would otherwise
+                    // flush + publishToChain at the staged sealTxn.
+                    try {
+                        writer.commit();
+                        Assert.fail("poisoned writer must reject commit");
+                    } catch (CairoException poisoned) {
+                        TestUtils.assertContains(poisoned.getFlyweightMessage(), "poisoned");
+                    }
                 }
+            }
+        });
+    }
+
+    /**
+     * A pre-switch failure: the staged .pv msync (reencodeWithPerKeyStreaming,
+     * before switchToSealedValueFile) fails, so the value file was never
+     * switched into valueMem. The catch's not-switched branch frees the staging
+     * map, unlinks the staged .pv, and restores keyCount/valueMemSize -- no
+     * orphan purge is queued (nothing was published) and the writer stays
+     * usable. Guards C2 (reencodeStarted set before the sidecar staging) and C3
+     * (valueMemSize restored on the pre-switch path).
+     */
+    @Test
+    public void testRollbackPreSwitchValueSyncFailureCleansUpAndKeepsWriterUsable() throws Exception {
+        final PvSyncFailingFacade pvSync = new PvSyncFailingFacade();
+        ff = pvSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_pre_switch_pv_sync_fail";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 100; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    final int keyCountBefore = writer.getKeyCount();
+
+                    pvSync.arm();
+                    try {
+                        writer.rollbackValues(49);
+                        Assert.fail("expected staged .pv sync failure");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "[test] staged .pv sync failed");
+                    } finally {
+                        pvSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one staged .pv sync", 1, pvSync.failureCount());
+
+                    // Not-switched cleanup: nothing was published, so no orphan
+                    // purge is queued and the staged .pv is unlinked directly.
+                    Assert.assertEquals("pre-switch failure must NOT queue an orphan purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pv must be unlinked on the pre-switch path [path=" + pv + ']',
+                            configuration.getFilesFacade().exists(pv));
+
+                    // keyCount and maxValue restored -- the failed rollback left no trace.
+                    Assert.assertEquals("keyCount must be restored after a pre-switch failure",
+                            keyCountBefore, writer.getKeyCount());
+                    Assert.assertEquals("maxValue must be unchanged after a pre-switch failure",
+                            99L, writer.getMaxValue());
+
+                    // Pre-switch failures do NOT poison the writer (unlike
+                    // post-switch), so a retried rollback succeeds.
+                    writer.rollbackValues(49);
+                    Assert.assertEquals("retried rollback must succeed", 49L, writer.getMaxValue());
+                }
+            }
+        });
+    }
+
+    /**
+     * C2: a covered rollback stages fresh .pc sidecar targets via openSidecarFiles
+     * BEFORE reencodeWithPerKeyStreaming switches the value file. If that open
+     * itself throws (ENOSPC/EMFILE), isReencodeStarted is already set -- it is
+     * hoisted ahead of the staging -- so the catch's not-switched branch runs:
+     * restore keyCount/valueMemSize, drop the staged files, queue no purge (nothing
+     * switched or published). The writer is not poisoned, so a retried rollback
+     * succeeds. Without the hoist the catch is skipped and the writer is left with a
+     * shrunken keyCount against an unchanged chain. The existing pre-switch test
+     * faults the .pv sync on a NON-covered rollback, which never reaches
+     * openSidecarFiles; this covers the .pc open fault specifically.
+     */
+    @Test
+    public void testRollbackCoveredSidecarOpenFailureCleansUpAndKeepsWriterUsable() throws Exception {
+        final PcOpenFailingFacade pcOpen = new PcOpenFailingFacade();
+        ff = pcOpen;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rollback_sidecar_open_fail";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    writer.setNextTxnAtSeal(1L);
+                    for (int v = 0; v < 96; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    // A trailing high key (id 7) whose rows all sit above the rollback
+                    // cutoff (49): the rollback drops it, so filterCountsForRollback
+                    // SHRINKS keyCount to 4. The catch's keyCount restore is then
+                    // observable -- without the isReencodeStarted hoist, the failed
+                    // rollback leaves keyCount at the shrunken 4 against an 8-key chain.
+                    writer.add(7, 96);
+                    writer.add(7, 97);
+                    writer.add(7, 98);
+                    writer.add(7, 99);
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    final int keyCountBefore = writer.getKeyCount();
+
+                    pcOpen.arm();
+                    try {
+                        writer.rollbackValues(49);
+                        Assert.fail("expected the covered rollback's .pc open to fail");
+                    } catch (CairoException expected) {
+                        // openSidecarFiles' mem.of() throws on the injected -1 fd
+                    } finally {
+                        pcOpen.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one .pc0 open", 1, pcOpen.failureCount());
+
+                    // The open failed BEFORE the value-file switch, so the catch's
+                    // not-switched branch queued no purge and restored the writer.
+                    Assert.assertEquals("a pre-switch open failure must NOT queue an orphan purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+                    Assert.assertEquals("keyCount must be restored after the failed rollback",
+                            keyCountBefore, writer.getKeyCount());
+                    Assert.assertEquals("maxValue must be unchanged after the failed rollback",
+                            99L, writer.getMaxValue());
+
+                    // Not poisoned (nothing switched): the retried rollback succeeds.
+                    writer.rollbackValues(49);
+                    Assert.assertEquals("retried rollback must succeed", 49L, writer.getMaxValue());
+                }
+            }
+        });
+    }
+
+    /**
+     * A post-publish failure inside rebuildSidecarsByCopy: the chain entry is
+     * already published (the new sealTxn is the live head and the writer is
+     * fully consistent -- chain head, valueMem and sealTxn all at newSealTxn),
+     * and only the trailing .pk sync fails. The catch must be a no-op -- it must
+     * NOT schedule an orphan purge for the now-live sealTxn or poison the
+     * consistent writer. Guards the isPublished flag that mirrors the rollback
+     * path; without it the post-publish .pk-sync failure queues a purge for the
+     * live file (deleted but for the publishPendingPurges liveness guard) and
+     * wrongly poisons the writer.
+     */
+    @Test
+    public void testRebuildSidecarsPostPublishKeySyncFailureKeepsLiveFilesAndWriterUsable() throws Exception {
+        final PkSyncFailingFacade pkSync = new PkSyncFailingFacade();
+        ff = pkSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rebuild_sidecars_post_publish_pk_fail";
+            final long fakeColBytes = 32L << 3; // 32 rows * 8 bytes (LONG cover)
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Production O3 covering reseal shape: commitDense (dense gen 0,
+                    // no covers) -> configureCovering -> rebuildSidecars (by-copy).
+                    for (int v = 0; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.commitDense();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pkSync.arm();
+                    try {
+                        writer.rebuildSidecars();
+                        Assert.fail("expected post-publish .pk sync failure");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "[test] .pk sync failed");
+                    } finally {
+                        pkSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one post-publish .pk sync", 1, pkSync.failureCount());
+
+                    // The failure is AFTER publishToChain, so newSealTxn is the live
+                    // chain head and the writer is consistent. The catch must not
+                    // queue an orphan purge for the live sealTxn...
+                    Assert.assertEquals("a post-publish failure must NOT queue an orphan purge for the live sealTxn",
+                            0, writer.getPendingPurgesSizeForTesting());
+
+                    // ...nor poison the writer -- a follow-on commit succeeds.
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * rebuildSidecarsByCopy POST-switch, pre-publish failure (the staged .pc sync
+     * fails after switchToSealedValueFile but before publishToChain): the catch must
+     * orphan-purge the staged newSealTxn files over [0, MAX), leave the live
+     * oldSealTxn alone, and poison the writer. Mirrors the seal/rollback post-switch
+     * branches.
+     */
+    @Test
+    public void testRebuildSidecarsByCopyPostSwitchSidecarSyncFailurePoisonsWriter() throws Exception {
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rebuild_post_switch_pc_fail";
+            final long fakeColBytes = 32L << 3;
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.commitDense();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcSync.arm();
+                    try {
+                        writer.rebuildSidecars();
+                        Assert.fail("expected post-switch .pc sync failure during the covering rebuild");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+                    Assert.assertEquals("staged newSealTxn must be orphan-purged",
+                            1, writer.getPendingPurgesSizeForTesting());
+                    Assert.assertEquals("orphan purge spans the full txn window",
+                            Long.MAX_VALUE, writer.getPendingPurgeToTxnForTesting(0));
+                    assertPoisonedRejects("commit", writer::commit);
+                    assertPoisonedRejects("seal", writer::seal);
+                    assertPoisonedRejects("rollbackValues", () -> writer.rollbackValues(0));
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * rebuildSidecarsByCopy PRE-switch failure (the staged .pc open faults before
+     * switchToSealedValueFile): the catch must unlink the staged files directly,
+     * queue no purge, and leave the writer usable (nothing switched, no poison).
+     */
+    @Test
+    public void testRebuildSidecarsByCopyPreSwitchSidecarOpenFailureCleansUpAndKeepsWriterUsable() throws Exception {
+        final PcOpenFailingFacade pcOpen = new PcOpenFailingFacade();
+        ff = pcOpen;
+        assertMemoryLeak(ff, () -> {
+            final String name = "rebuild_pre_switch_pc_open_fail";
+            final long fakeColBytes = 32L << 3;
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.commitDense();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcOpen.arm();
+                    try {
+                        writer.rebuildSidecars();
+                        Assert.fail("expected pre-switch .pc open failure during the covering rebuild");
+                    } catch (CairoException expected) {
+                        // openSidecarFiles' mem.of() throws on the injected -1 fd
+                    } finally {
+                        pcOpen.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one .pc0 open", 1, pcOpen.failureCount());
+
+                    // Pre-switch: the staged .pv is unlinked directly, no purge queued.
+                    final FilesFacade ff2 = configuration.getFilesFacade();
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pv unlinked on a pre-switch rebuild failure [path=" + pv + ']', ff2.exists(pv));
+                    Assert.assertEquals("pre-switch rebuild failure queues no purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+
+                    // Not poisoned (nothing switched): the retried rebuild succeeds.
+                    writer.rebuildSidecars();
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * The seal path must be poison-symmetric with rollback / rebuildSidecarsByCopy.
+     * A post-switch (sealTxn advanced to newSealTxn) but pre-publish (.pc sync)
+     * failure leaves valueMem at newSealTxn while the chain head still references
+     * oldSealTxn, so the writer is inconsistent. seal() must poison it and
+     * orphan-purge the staged newSealTxn files -- and must NOT queue a purge for
+     * the still-live oldSealTxn chain head (the isSealed gate). Without the fix the
+     * writer stays usable and seal()'s finally records a purge for the live file.
+     */
+    @Test
+    public void testSealPostSwitchSidecarSyncFailurePoisonsWriterAndOrphanPurgesStagedFiles() throws Exception {
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "seal_post_switch_pc_fail";
+            final long fakeColBytes = 32L << 3; // 32 rows * 8 bytes (LONG cover)
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Two sparse gens so seal() runs sealFull -- a single dense gen 0
+                    // would early-return as already-sealed and never switch.
+                    for (int v = 0; v < 16; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(15);
+                    writer.commit();
+                    for (int v = 16; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.commit();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    pcSync.arm();
+                    try {
+                        writer.seal();
+                        Assert.fail("expected post-switch .pc sync failure during seal");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pc sync failed");
+                    } finally {
+                        pcSync.disarm();
+                    }
+
+                    // The staged newSealTxn files are orphaned and queued for purge;
+                    // the still-live oldSealTxn chain head is NOT (the isSealed gate).
+                    Assert.assertEquals("staged newSealTxn must be orphan-purged, live oldSealTxn must not",
+                            1, writer.getPendingPurgesSizeForTesting());
+                    // The orphan purge covers the full [0, MAX) txn window -- the staged
+                    // files are unconditionally dead. A chain-derived recordPostingSealPurge
+                    // for the live oldSealTxn (the unfixed behaviour) records a bounded
+                    // window instead, so MAX_VALUE here proves it is the orphan purge.
+                    Assert.assertEquals("orphan purge must span the full txn window",
+                            Long.MAX_VALUE, writer.getPendingPurgeToTxnForTesting(0));
+
+                    // All eleven mutating entry points reject the poisoned writer
+                    // (checkNotPoisoned runs before commitDense's covers assert).
+                    assertPoisonedRejects("add", () -> writer.add(0, 100));
+                    assertPoisonedRejects("commit", writer::commit);
+                    assertPoisonedRejects("commitDense", writer::commitDense);
+                    assertPoisonedRejects("discardForRebuild", writer::discardForRebuild);
+                    assertPoisonedRejects("rebuildSidecars", writer::rebuildSidecars);
+                    assertPoisonedRejects("rollbackConditionally", () -> writer.rollbackConditionally(0));
+                    assertPoisonedRejects("rollbackValues", () -> writer.rollbackValues(0));
+                    assertPoisonedRejects("seal", writer::seal);
+                    assertPoisonedRejects("setMaxValue", () -> writer.setMaxValue(100));
+                    assertPoisonedRejects("sync", () -> writer.sync(false));
+                    assertPoisonedRejects("truncate", writer::truncate);
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchPartitionResealPostSwitchFailurePublishesStagedOrphanPurge() throws Exception {
+        // M1: switchPartition()'s native reseal (commit() + sealIfMultiGen()) on a
+        // post-switch .pc sync failure poisons the writer and stages the failed
+        // sealTxn's orphan purge. deferPendingPostingSealPurges must run in a
+        // finally so the propagating distress does not drop the unpublished outbox
+        // and leak the staged .pv/.pc. Pre-fix the orphan is never published
+        // (no deferred-purge-log row); with the fix it is published.
+        final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
+        ff = pcSync;
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 35));
+
+            // Drain purges queued by setup so the deferred-purge-log baseline for
+            // the index column is empty.
+            drainPostingSealPurgeQueue();
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            Assert.assertNotNull("table must exist", engine.getTableTokenIfExists(tableName));
+            final long partitionTs = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+            final int baselineValueFiles = countPostingValueFiles(tableName, indexColumnName, partitionTs);
+            Assert.assertTrue("setup must leave the live .pv on disk", baselineValueFiles >= 1);
+
+            boolean distressed = false;
+            TableWriter writer = TestUtils.getWriter(engine, tableName);
+            try {
+                // Pending rows in the 2022-02-25 partition so switchPartition's
+                // commit() flushes a 2nd gen and sealIfMultiGen(1) actually seals.
+                for (int i = 35; i < 40; i++) {
+                    TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp(timestampAtMinute(i)));
+                    row.putSym(1, "XPHI");
+                    row.putSym(2, "S");
+                    row.putLong(3, i);
+                    row.append();
+                }
+                pcSync.arm();
+                try {
+                    // Cross into a new partition -> switchPartition reseals
+                    // 2022-02-25; the staged .pc sync fails post-switch.
+                    TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-02-26T00:00:00.000000Z"));
+                    row.putSym(1, "next");
+                    row.putSym(2, "S");
+                    row.putLong(3, 200);
+                    row.append();
+                    writer.commit();
+                } catch (Throwable th) {
+                    distressed = true;
+                } finally {
+                    pcSync.disarm();
+                }
+            } finally {
+                try {
+                    writer.close();
+                } catch (Throwable ignore) {
+                    // a distressed writer may throw on close
+                }
+                engine.releaseAllWriters();
+            }
+            Assert.assertTrue("the partition-switch reseal must fail post-switch and distress the writer", distressed);
+
+            // The failed reseal staged its new sealTxn's .pv before the .pc sync
+            // failed, leaving it on disk pending purge.
+            Assert.assertTrue("the failed reseal must leave a staged orphan .pv on disk",
+                    countPostingValueFiles(tableName, indexColumnName, partitionTs) > baselineValueFiles);
+
+            // The fix: deferPendingPostingSealPurges ran in the switchPartition
+            // finally, publishing the staged orphan to the purge queue despite the
+            // propagating distress, so the purge job reclaims it. Pre-fix the
+            // distress close drops the unpublished outbox and the orphan .pv leaks
+            // permanently (this final count would stay at baseline + 1).
+            engine.releaseAllReaders();
+            try (PostingSealPurgeJob reclaimJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(reclaimJob);
+            }
+            Assert.assertEquals("the staged orphan .pv must be published and reclaimed, not leaked",
+                    baselineValueFiles, countPostingValueFiles(tableName, indexColumnName, partitionTs));
+        });
+    }
+
+    /**
+     * The seal path must clean up staged files on a PRE-switch failure, mirroring
+     * the rollback path -- otherwise the staged .pv/.pc leak permanently (the
+     * caller close()s a failed-seal writer, and no writer-open scan reclaims
+     * never-published sealTxn files). Here the staged .pv msync fails BEFORE
+     * switchToSealedValueFile advances sealTxn, so the writer is still consistent
+     * (chain + valueMem at oldSealTxn): the catch must unlink the staged .pv/.pc,
+     * queue no purge, and leave the writer usable (not poisoned).
+     */
+    @Test
+    public void testSealPreSwitchValueSyncFailureUnlinksStagedFilesAndKeepsWriterUsable() throws Exception {
+        final PvSyncFailingFacade pvSync = new PvSyncFailingFacade();
+        ff = pvSync;
+        assertMemoryLeak(ff, () -> {
+            final String name = "seal_pre_switch_pv_fail";
+            final long fakeColBytes = 64L << 3; // 64 rows (32 indexed + room for the post-failure append)
+            long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < 16; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(15);
+                    writer.commit();
+                    for (int v = 16; v < 32; v++) {
+                        writer.add(v & 3, v);
+                    }
+                    writer.setMaxValue(31);
+                    writer.commit();
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+                    writer.setNextTxnAtSeal(1L);
+
+                    // The encode advances valueMemSize to the staged compacted size
+                    // before the pre-switch .pv sync; the catch must restore it
+                    // (else the next gen appends at a stale genOffset = valueMemSize
+                    // into live bytes).
+                    final long valueMemSizeBefore = writer.getValueMemSizeForTesting();
+
+                    pvSync.arm();
+                    try {
+                        writer.seal();
+                        Assert.fail("expected pre-switch .pv sync failure during seal");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "staged .pv sync failed");
+                    } finally {
+                        pvSync.disarm();
+                    }
+                    Assert.assertEquals("test must fail exactly one staged .pv sync", 1, pvSync.failureCount());
+
+                    // The failure is BEFORE the switch, so the writer is consistent and
+                    // the catch must unlink the staged files directly (nothing is mapped
+                    // post-switch) and queue no purge.
+                    final FilesFacade ff2 = configuration.getFilesFacade();
+                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pv must be unlinked on a pre-switch seal failure [path=" + pv + ']', ff2.exists(pv));
+                    LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("staged .pc must be unlinked on a pre-switch seal failure [path=" + pc + ']', ff2.exists(pc));
+                    Assert.assertEquals("pre-switch seal failure must queue no purge",
+                            0, writer.getPendingPurgesSizeForTesting());
+
+                    // valueMemSize must be back to its pre-seal value: the encode
+                    // advanced it to the staged compacted size before the throw, and
+                    // a continued writer appends its next gen at this offset.
+                    Assert.assertEquals("pre-switch seal failure must restore valueMemSize",
+                            valueMemSizeBefore, writer.getValueMemSizeForTesting());
+
+                    // Consume valueMemSize to prove the restore: commit appends a new
+                    // gen at genOffset = valueMemSize, so a stale value would write
+                    // into live bytes and corrupt the read-back. Re-sealing alone
+                    // cannot catch this (seal() recomputes valueMemSize before
+                    // consuming it). Key 0 held rowids 0,4,...,28 (8 rows); append a
+                    // 9th (row 32 -- globally ascending, in the cover's 64-row range).
+                    writer.add(0, 32);
+                    writer.setMaxValue(32);
+                    writer.commit();
+                    writer.seal();
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name,
+                            COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                        long iterated = 0;
+                        try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                            while (cursor.hasNext()) {
+                                cursor.next();
+                                iterated++;
+                            }
+                        }
+                        Assert.assertEquals("key 0 must read back its 8 original rows plus the appended one",
+                                9, iterated);
+                    }
+                }
+            } finally {
+                Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -8418,6 +9755,38 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         + "\n");
     }
 
+    private int countPostingValueFiles(String tableName, String indexColumnName, long partitionTimestamp) {
+        TableToken token = engine.getTableTokenIfExists(tableName);
+        Assert.assertNotNull("table must exist", token);
+        long partitionNameTxn = -1L;
+        try (TableReader reader = engine.getReader(token)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                    partitionNameTxn = reader.getTxFile().getPartitionNameTxn(i);
+                    break;
+                }
+            }
+        }
+        final int[] count = {0};
+        final String prefix = indexColumnName + ".pv.";
+        final StringSink fileName = new StringSink();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            configuration.getFilesFacade().iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (type != Files.DT_FILE && type != Files.DT_UNKNOWN) {
+                    return;
+                }
+                fileName.clear();
+                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+                if (Chars.startsWith(fileName, prefix)) {
+                    count[0]++;
+                }
+            });
+        }
+        return count[0];
+    }
+
     // Shared single-key covered sum/count concurrent-reader workload. Seeds
     // dayCount days of 'A' rows (price = row index), optionally converts them all to
     // parquet, then runs reader threads asserting the covered count/sum stay
@@ -8681,6 +10050,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             long size = ff.length(keyFile);
             Assert.assertTrue(".pk must exist, path=" + keyFile, size > 0);
             return size;
+        }
+    }
+
+    private static void assertPoisonedRejects(String op, Runnable action) {
+        try {
+            action.run();
+            Assert.fail(op + ": expected the poisoned writer to reject the operation");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "poisoned");
         }
     }
 
@@ -9098,6 +10476,34 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    private static class PcOpenFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (armed.get() && name != null && Utf8s.containsAscii(name, ".pc0")) {
+                armed.set(false);
+                failures.incrementAndGet();
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        int failureCount() {
+            return failures.get();
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+    }
+
     private static class PcSyncFailingFacade extends TestFilesFacadeImpl {
         private final AtomicBoolean armed = new AtomicBoolean(false);
         private final AtomicInteger failures = new AtomicInteger(0);
@@ -9254,6 +10660,168 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         boolean hasPkMapping() {
             return !pkMappings.isEmpty();
+        }
+    }
+
+    /**
+     * Fails the first .pk (key file) msync that fires while armed, by throwing.
+     * Tracks the .pk file's mappings via openRW/mmap/mremap/munmap so msync can
+     * be attributed to it. Used to fail the post-publish .pk sync inside
+     * rebuildSidecarsByCopy (the sync that runs after publishToChain).
+     */
+    private static class PkSyncFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pkFds = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pkMappings = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            pkFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && pkFds.containsKey(fd)) {
+                pkMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pkMappings.remove(addr) != null && newAddr != -1) {
+                pkMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pkMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armed.set(false);
+                        failures.incrementAndGet();
+                        throw CairoException.critical(0).put("[test] .pk sync failed");
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pkMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pk")) {
+                pkFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        int failureCount() {
+            return failures.get();
+        }
+    }
+
+    /**
+     * Fails the staged .pv msync (the {@code sealValueMem.sync} inside
+     * reencodeWithPerKeyStreaming, BEFORE switchToSealedValueFile) the first
+     * time it fires while armed. Tracks only the .pv files opened while armed --
+     * the new sealTxn's staged value file -- so the pre-existing committed .pv
+     * (opened before arming) is left alone. Drives the pre-switch cleanup
+     * branch of the rollback catch.
+     */
+    private static class PvSyncFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final AtomicInteger failures = new AtomicInteger(0);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Long> pvMappings = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> stagedPvFds = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            stagedPvFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && stagedPvFds.containsKey(fd)) {
+                pvMappings.put(addr, len);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (pvMappings.remove(addr) != null && newAddr != -1) {
+                pvMappings.put(newAddr, newSize);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (armed.get()) {
+                for (var mapping : pvMappings.entrySet()) {
+                    long base = mapping.getKey();
+                    if (addr >= base && addr < base + mapping.getValue()) {
+                        armed.set(false);
+                        failures.incrementAndGet();
+                        throw CairoException.critical(0).put("[test] staged .pv sync failed");
+                    }
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            pvMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            if (fd != -1 && armed.get() && name != null && Utf8s.containsAscii(name, ".pv")) {
+                stagedPvFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm() {
+            failures.set(0);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        int failureCount() {
+            return failures.get();
         }
     }
 
