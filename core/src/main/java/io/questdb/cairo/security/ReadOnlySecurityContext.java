@@ -29,21 +29,30 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class ReadOnlySecurityContext implements SecurityContext {
-    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false);
-    public static final ReadOnlySecurityContext SETTINGS_READ_ONLY = new ReadOnlySecurityContext(true);
+    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false, Constants.USER_NAME);
+    public static final ReadOnlySecurityContext SETTINGS_READ_ONLY = new ReadOnlySecurityContext(true, Constants.USER_NAME);
 
-    private final boolean settingsReadOnly;
+    protected final boolean settingsReadOnly;
+
+    // the reported principal; the singletons seed it with Constants.USER_NAME ("admin"), which is also
+    // the value forPrincipal treats as the default/anonymous case (it returns the shared singleton)
+    private final CharSequence principal;
+    private volatile SecurityContext principalContextCache;
 
     protected ReadOnlySecurityContext() {
-        this(false);
+        this(false, Constants.USER_NAME);
     }
 
-    private ReadOnlySecurityContext(boolean settingsReadOnly) {
+    protected ReadOnlySecurityContext(boolean settingsReadOnly, CharSequence principal) {
         this.settingsReadOnly = settingsReadOnly;
+        this.principal = principal;
     }
 
     @Override
@@ -289,9 +298,38 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public void checkEntityEnabled() {
     }
 
+    /**
+     * Returns a read-only context that reports the given principal, so that
+     * {@code current_user()} and session handling reflect the authenticated user rather
+     * than the hardcoded default. Returns {@code this} when the principal is null (anonymous)
+     * or already matches, to keep the singleton path allocation-free.
+     * <p>
+     * The HTTP authentication path re-derives the security context on every request (see
+     * {@code HttpConnectionContext.configureSecurityContext}), so the last derived context is
+     * cached to avoid allocating a context and copying the principal on every request when the
+     * principal does not change. The cache holds only the most recently derived context, which fits
+     * the common case of a single configured user; a varying principal degrades to allocate-per-call.
+     * <p>
+     * The method is {@code final} and routes instance creation through
+     * {@link #newPrincipalContext(CharSequence)} so subclasses preserve their runtime type
+     * instead of being silently downgraded to a plain {@code ReadOnlySecurityContext}.
+     */
+    public final SecurityContext forPrincipal(@Transient @Nullable CharSequence principal) {
+        if (principal == null || principal.isEmpty() || Chars.equals(this.principal, principal)) {
+            return this;
+        }
+        final SecurityContext cached = principalContextCache;
+        if (cached != null && Chars.equals(cached.getPrincipal(), principal)) {
+            return cached;
+        }
+        final SecurityContext context = newPrincipalContext(Chars.toString(principal));
+        principalContextCache = context;
+        return context;
+    }
+
     @Override
     public CharSequence getPrincipal() {
-        return Constants.USER_NAME;
+        return principal;
     }
 
     @Override
@@ -302,5 +340,20 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public boolean isSystemAdmin() {
         return true;
+    }
+
+    /**
+     * Creates the concrete context returned by {@link #forPrincipal(CharSequence)} for a new
+     * principal. The {@code principal} is already a stable copy. Subclasses must override this
+     * to return their own type so {@code forPrincipal} does not downgrade them.
+     * <p>
+     * The derived context overrides only the reported principal; {@code getAuthType()} and
+     * {@code isExternal()} keep their read-only defaults ({@code AUTH_TYPE_NONE} / not external).
+     * These contexts model identity only and are used when ACL is not enforced; the full
+     * authentication metadata is modelled by the ACL-enforcing security contexts.
+     */
+    protected SecurityContext newPrincipalContext(CharSequence principal) {
+        assert getClass() == ReadOnlySecurityContext.class : "subclass must override newPrincipalContext to avoid being downgraded";
+        return new ReadOnlySecurityContext(settingsReadOnly, principal);
     }
 }

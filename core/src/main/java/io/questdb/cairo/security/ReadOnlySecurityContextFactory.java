@@ -33,6 +33,6 @@ public final class ReadOnlySecurityContextFactory implements SecurityContextFact
 
     @Override
     public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
-        return ReadOnlySecurityContext.INSTANCE;
+        return ReadOnlySecurityContext.INSTANCE.forPrincipal(principalContext.getPrincipal());
     }
 }
