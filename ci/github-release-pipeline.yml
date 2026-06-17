@@ -34,6 +34,10 @@ stages:
             lfs: false
             submodules: true
 
+          # Activates the local-client profile when core/pom.xml references a
+          # -SNAPSHOT client version (sets the CLIENT_PROFILE variable).
+          - template: templates/detect-local-client.yml
+
           # --- GraalVM CE 25.0.2 install + SHA256 verify (Linux) ---
           - bash: |
               set -eux
@@ -107,7 +111,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               goals: "package"
-              options: "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
+              options: "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries $(CLIENT_PROFILE)"
               javaHomeOption: 'Path'
               jdkDirectory: '$(GRAALVM_HOME)'
 
