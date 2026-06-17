@@ -97,17 +97,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         desc.startOffset = newAddress - memory.getPageAddress(0);
     }
 
-    /**
-     * Reads a value-window function's argument as a native long. A DATE argument is read as
-     * milliseconds; everything else (TIMESTAMP ticks, or a SYMBOL/STRING/VARCHAR parsed to a
-     * timestamp) goes through getTimestamp(). The max/min/first_value/last_value/nth_value value
-     * functions store and write this native long, and report getType() = arg.getType(), so the
-     * cached chain column reads it back at the right scale for both DATE and TIMESTAMP results.
-     */
-    static long readArgValue(Function arg, Record rec) {
-        return ColumnType.tagOf(arg.getType()) == ColumnType.DATE ? arg.getDate(rec) : arg.getTimestamp(rec);
-    }
-
     protected boolean supportNullsDesc() {
         return false;
     }

@@ -75,12 +75,14 @@ public final class FuzzConfig {
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
         // On by default, like fault injection: parallel fault injection runs
-        // FUNCTION-fault queries with parallel SQL execution enabled so the
+        // fault-injected queries with parallel SQL execution enabled so the
         // parallel filter / GROUP BY / top-K reduce error paths get exercised by
-        // the crash-and-recover oracle. FILE / MALLOC faults stay serial regardless
-        // of this knob (they leak into background jobs or are process-global; see
-        // the runFuzz fault branch). Pass -Dquestdb.fuzz.fault.parallel=false to
-        // run every fault serially.
+        // the crash-and-recover oracle. All three fault types run in parallel: the
+        // query loop halts the writer pool, so no background job competes (FUNCTION
+        // is data-scoped, FILE is scoped to the query execution, and MALLOC's
+        // process-global RSS ceiling can only be tripped by the query's own
+        // allocations; see the runFuzz fault branch). Pass
+        // -Dquestdb.fuzz.fault.parallel=false to run every fault serially.
         this.isParallelFaultEnabled = Boolean.parseBoolean(System.getProperty(FAULT_PARALLEL_PROP, "true"));
         // On by default, like fault injection: window-function shapes still
         // surface unfixed window-function defects, so the run goes red on the

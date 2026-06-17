@@ -512,7 +512,7 @@ public class MaxMinWindowFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
-            value = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            value = readArgValue(record);
         }
 
         @Override
@@ -561,7 +561,7 @@ public class MaxMinWindowFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
             if (l != Numbers.LONG_NULL) {
                 partitionByRecord.of(record);
                 MapKey key = map.withKey();
@@ -675,7 +675,7 @@ public class MaxMinWindowFunctionFactoryHelper {
             long dequeStartIndex = 0;
             long dequeEndIndex = 0;
             long timestamp = record.getTimestamp(timestampIndex);
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -980,7 +980,7 @@ public class MaxMinWindowFunctionFactoryHelper {
 
             long loIdx; //current index of lo frame value ('oldest')
             long startOffset;
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
 
             long dequeStartOffset = 0;
             long dequeStartIndex = 0;
@@ -1202,7 +1202,7 @@ public class MaxMinWindowFunctionFactoryHelper {
         @Override
         public void computeNext(Record record) {
             long timestamp = record.getTimestamp(timestampIndex);
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
 
             long newFirstIdx = firstIdx;
             if (frameLoBounded) {
@@ -1473,7 +1473,7 @@ public class MaxMinWindowFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
 
             //compute value using top frame element (that could be current or previous row)
             long hiValue = l;
@@ -1616,7 +1616,7 @@ public class MaxMinWindowFunctionFactoryHelper {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
 
             if (l != Numbers.LONG_NULL) {
                 MapValue value = key.createValue();
@@ -1678,7 +1678,7 @@ public class MaxMinWindowFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
             if (l != Numbers.LONG_NULL && (maxMin == Numbers.LONG_NULL || comparator.compare(l, maxMin))) {
                 maxMin = l;
             }
@@ -1744,7 +1744,7 @@ public class MaxMinWindowFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            long l = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long l = readArgValue(record);
             if (l != Numbers.LONG_NULL && (maxMin == Numbers.LONG_NULL || comparator.compare(l, maxMin))) {
                 maxMin = l;
             }

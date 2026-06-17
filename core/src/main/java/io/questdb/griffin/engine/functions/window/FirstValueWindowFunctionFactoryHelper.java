@@ -752,7 +752,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             if (key.findValue() == null) {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (d != Numbers.LONG_NULL) {
                     MapValue value = key.createValue();
                     value.putTimestamp(0, d);
@@ -864,7 +864,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (mapValue.isNew()) {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -922,7 +922,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                     }
                 }
                 firstIdx = newFirstIdx;
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (d != Numbers.LONG_NULL) {
                     if (size == capacity) { //buffer full
                         memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
@@ -1055,7 +1055,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                     return;
                 }
 
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (firstNotNullIdx == -1 && d != Numbers.LONG_NULL) {
                     firstNotNullIdx = count;
                     memory.putLong(startOffset, d);
@@ -1066,7 +1066,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 value.putLong(2, firstNotNullIdx);
                 value.putLong(3, count + 1);
             } else {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (firstNotNullIdx != -1 && memory.getLong(startOffset + loIdx * Long.BYTES) != Numbers.LONG_NULL) {
                     firstNotNullIdx = -1;
                 }
@@ -1148,7 +1148,7 @@ public class FirstValueWindowFunctionFactoryHelper {
          * - Otherwise, scans the buffer from {@code firstIdx} to drop elements older than {@code maxDiff}
          * relative to the current timestamp and locates the first element that satisfies {@code |timestamp - ts| >= minDiff}
          * to set {@code firstValue}.
-         * - Retrieves the current row value via {@code AbstractWindowFunctionFactory.readArgValue(arg, record)}; if non-null, appends it to the ring buffer,
+         * - Retrieves the current row value via {@code readArgValue(record)}; if non-null, appends it to the ring buffer,
          * expanding and realigning the underlying memory when capacity is reached.
          * - If no qualifying first value was found during the scan, sets {@code firstValue} to the current row's value
          * when the frame includes the current row, otherwise to {@code Numbers.LONG_NULL}.</p>
@@ -1195,7 +1195,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 }
             }
             firstIdx = newFirstIdx;
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
             if (d != Numbers.LONG_NULL) {
                 if (size == capacity) { //buffer full
                     long newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
@@ -1281,7 +1281,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                     return;
                 }
 
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (firstNotNullIdx == -1 && d != Numbers.LONG_NULL) {
                     firstNotNullIdx = count;
                     buffer.putLong(0, d);
@@ -1291,7 +1291,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 }
                 count++;
             } else {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (firstNotNullIdx != -1 && buffer.getLong((long) loIdx * Long.BYTES) != Numbers.LONG_NULL) {
                     firstNotNullIdx = -1;
                 }
@@ -1409,7 +1409,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             if (mapValue != null) {
                 this.value = mapValue.getTimestamp(0);
             } else {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (d != Numbers.LONG_NULL) {
                     mapValue = key.createValue();
                     mapValue.putLong(0, d);
@@ -1457,7 +1457,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         @Override
         public void computeNext(Record record) {
             if (!found) {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (d != Numbers.LONG_NULL) {
                     this.value = d;
                     this.found = true;
@@ -1494,7 +1494,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (!found) {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 if (d != Numbers.LONG_NULL) {
                     this.value = d;
                     this.found = true;
@@ -1569,7 +1569,7 @@ public class FirstValueWindowFunctionFactoryHelper {
          */
         @Override
         public void computeNext(Record record) {
-            value = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            value = readArgValue(record);
         }
 
         /**
@@ -1655,7 +1655,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             MapValue value = key.createValue();
 
             if (value.isNew()) {
-                firstValue = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                firstValue = readArgValue(record);
                 value.putLong(0, firstValue);
             } else {
                 firstValue = value.getTimestamp(0);
@@ -1806,7 +1806,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             long firstIdx;
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -2101,7 +2101,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             long loIdx;//current index of lo frame value ('oldest')
             long startOffset;
             long count;
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             if (value.isNew()) {
                 loIdx = 0;
@@ -2334,7 +2334,7 @@ public class FirstValueWindowFunctionFactoryHelper {
          *
          * @param record the current input row used to advance the window frame; its timestamp is read
          *               using the function's configured timestampIndex and the associated argument
-         *               function (AbstractWindowFunctionFactory.readArgValue(arg, record))
+         *               function (readArgValue(record))
          */
         @Override
         public void computeNext(Record record) {
@@ -2344,7 +2344,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             }
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             long newFirstIdx = firstIdx;
 
@@ -2606,7 +2606,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 return;
             }
 
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             if (count > bufferSize - frameSize) {//we've some elements in the frame
                 firstValue = buffer.getLong((loIdx + bufferSize - count) % bufferSize * Long.BYTES);
@@ -2786,7 +2786,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             MapValue mapValue = key.createValue();
 
             if (mapValue.isNew()) {
-                long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                long d = readArgValue(record);
                 mapValue.putLong(0, d);
                 value = d;
             } else {
@@ -2883,7 +2883,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         @Override
         public void computeNext(Record record) {
             if (!found) {
-                this.value = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                this.value = readArgValue(record);
                 this.found = true;
             }
         }

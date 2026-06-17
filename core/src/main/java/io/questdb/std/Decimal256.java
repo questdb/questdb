@@ -921,15 +921,28 @@ public class Decimal256 implements Sinkable, Decimal {
      * @param b      the value to subtract, interpreted using two's-complement semantics
      */
     public static void uncheckedSubtract(Decimal256 result, Decimal256 b) {
-        // Two's-complement negation of b, then raw 256-bit add.
-        long bLL = ~b.ll + 1;
-        long carry = bLL == 0L ? 1L : 0L;
-        long bLH = ~b.lh + carry;
-        carry = (carry == 1L && bLH == 0L) ? 1L : 0L;
-        long bHL = ~b.hl + carry;
-        carry = (carry == 1L && bHL == 0L) ? 1L : 0L;
-        long bHH = ~b.hh + carry;
-        uncheckedAdd(result, bHH, bHL, bLH, bLL);
+        // Raw 256-bit subtract with borrow: result -= b, limb by limb. This mirrors the
+        // uncheckedAdd carry chain (a borrow where uncheckedAdd has a carry), so a value
+        // removed from a sliding frame cancels exactly the limbs uncheckedAdd contributed,
+        // without first negating all four limbs of b. hasCarry(a, sum) reports sum < a
+        // unsigned, so hasCarry(subtrahend, minuend) detects the borrow out of each limb.
+        long r = result.ll - b.ll;
+        long borrow = hasCarry(b.ll, result.ll) ? 1L : 0L;
+        result.ll = r;
+
+        long t = result.lh - borrow;
+        borrow = hasCarry(borrow, result.lh) ? 1L : 0L;
+        r = t - b.lh;
+        borrow |= hasCarry(b.lh, t) ? 1L : 0L;
+        result.lh = r;
+
+        t = result.hl - borrow;
+        borrow = hasCarry(borrow, result.hl) ? 1L : 0L;
+        r = t - b.hl;
+        borrow |= hasCarry(b.hl, t) ? 1L : 0L;
+        result.hl = r;
+
+        result.hh = result.hh - borrow - b.hh;
     }
 
     /**

@@ -505,7 +505,7 @@ public class NthValueWindowFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
-            value = n == 1 ? AbstractWindowFunctionFactory.readArgValue(arg, record) : Numbers.LONG_NULL;
+            value = n == 1 ? readArgValue(record) : Numbers.LONG_NULL;
         }
 
         @Override
@@ -563,7 +563,7 @@ public class NthValueWindowFunctionFactoryHelper {
 
             if (value.isNew()) {
                 if (n == 1) {
-                    value.putLong(0, AbstractWindowFunctionFactory.readArgValue(arg, record));
+                    value.putLong(0, readArgValue(record));
                 } else {
                     value.putLong(0, Numbers.LONG_NULL);
                 }
@@ -572,7 +572,7 @@ public class NthValueWindowFunctionFactoryHelper {
                 long count = value.getLong(1) + 1;
                 value.putLong(1, count);
                 if (count == n) {
-                    value.putLong(0, AbstractWindowFunctionFactory.readArgValue(arg, record));
+                    value.putLong(0, readArgValue(record));
                 }
             }
         }
@@ -659,7 +659,7 @@ public class NthValueWindowFunctionFactoryHelper {
             long firstIdx;
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -880,7 +880,7 @@ public class NthValueWindowFunctionFactoryHelper {
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             long loIdx;
             long startOffset;
@@ -1022,7 +1022,7 @@ public class NthValueWindowFunctionFactoryHelper {
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
             long count;
             if (mapValue.isNew()) {
                 count = 0;
@@ -1140,7 +1140,7 @@ public class NthValueWindowFunctionFactoryHelper {
             }
 
             long timestamp = record.getTimestamp(timestampIndex);
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             long newFirstIdx = firstIdx;
 
@@ -1317,7 +1317,7 @@ public class NthValueWindowFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
 
             long effectiveCount = Math.min(count, bufferSize);
             long currentFrameElements;
@@ -1439,7 +1439,7 @@ public class NthValueWindowFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
-            long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+            long d = readArgValue(record);
             totalCount++;
             if (totalCount == n) {
                 lockedValue = d;
@@ -1526,7 +1526,7 @@ public class NthValueWindowFunctionFactoryHelper {
 
             if (mapValue.isNew()) {
                 if (n == 1) {
-                    long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                    long d = readArgValue(record);
                     mapValue.putLong(0, d);
                     value = d;
                 } else {
@@ -1543,7 +1543,7 @@ public class NthValueWindowFunctionFactoryHelper {
                     count++;
                     mapValue.putLong(1, count);
                     if (count == n) {
-                        long d = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                        long d = readArgValue(record);
                         mapValue.putLong(0, d);
                         value = d;
                     } else {
@@ -1599,7 +1599,7 @@ public class NthValueWindowFunctionFactoryHelper {
             if (!isFound) {
                 count++;
                 if (count == n) {
-                    value = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                    value = readArgValue(record);
                     isFound = true;
                 }
             }
@@ -1673,7 +1673,7 @@ public class NthValueWindowFunctionFactoryHelper {
             if (!isFound) {
                 count++;
                 if (count == n) {
-                    value = AbstractWindowFunctionFactory.readArgValue(arg, record);
+                    value = readArgValue(record);
                     isFound = true;
                 }
             }
