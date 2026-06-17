@@ -41,6 +41,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private long o3MaxLag;
     private int partitionBy;
     private int symbolMapCount;
+    private int tableFormat;
     private int tableId;
     private TableToken tableToken;
     private int ttlHoursOrMonths;
@@ -115,6 +116,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getTableFormat() {
+        return tableFormat;
+    }
+
+    @Override
     public int getTableId() {
         return tableId;
     }
@@ -157,6 +163,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.tableFormat = TableUtils.getTableFormat(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -230,12 +237,16 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = o3MaxLagUs;
     }
 
-    public void setTxReader(TxReader txReader) {
-        this.txReader = txReader;
+    public void setTableFormat(int tableFormat) {
+        this.tableFormat = tableFormat;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setTxReader(TxReader txReader) {
+        this.txReader = txReader;
     }
 
     public void updateTableToken(TableToken tableToken) {

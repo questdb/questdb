@@ -55,6 +55,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     private GroupByAllocator allocator;
     private AsciiCharSequence asciiCharSequence;
     private long ptr;
+    private int[] ryuE10;
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -134,6 +135,14 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     @Override
     public Utf8Sink putNonAscii(long lo, long hi) {
         throw new UnsupportedOperationException("not implemented");
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     public void setAllocator(GroupByAllocator allocator) {

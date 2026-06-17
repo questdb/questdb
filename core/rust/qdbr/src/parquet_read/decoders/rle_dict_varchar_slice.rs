@@ -8,7 +8,7 @@
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::dictionary::BaseVarDictDecoder;
-use crate::parquet_read::decoders::{RepeatN, RleIterator};
+use crate::parquet_read::decoders::{try_reserve_dict_values, RepeatN, RleIterator};
 use crate::parquet_read::page::DictPage;
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::varchar::SLICE_NULL_HEADER;
@@ -37,7 +37,13 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
     ) -> ParquetResult<Self> {
         let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
 
-        let mut dict_aux = Vec::with_capacity(dict_decoder.dict_values.len());
+        // dict_values.len() is bounded by BaseVarDictDecoder's num_values guard
+        // (<= dict buffer.len()/4), but for a multi-GiB decompressed dict page
+        // that is still ~4x the buffer (16 bytes per aux entry); reserve fallibly
+        // so an oversized dict surfaces a recoverable OutOfMemory error instead of
+        // aborting the JVM via an infallible Vec::with_capacity.
+        let mut dict_aux: Vec<[u64; 2]> =
+            try_reserve_dict_values(dict_decoder.dict_values.len(), "dictionary aux entries")?;
         for &value in &dict_decoder.dict_values {
             if value.len() >= (1usize << 28) {
                 return Err(fmt_err!(
@@ -414,6 +420,7 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers_size: 0,
             page_buffers: Vec::new(),
             column_top: 0,
         }
@@ -1659,8 +1666,17 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let result = RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true);
-        // BaseVarDictDecoder catches the short buffer before we reach the 28-bit check
-        assert!(result.is_err());
+        // The buffer is sized to match the declared length (2^28), so
+        // BaseVarDictDecoder accepts it; the 28-bit header-capacity check in
+        // RleDictVarcharSliceDecoder::try_new is what rejects the oversized value.
+        // Assert that exact error so the test can't pass for the wrong reason.
+        let err = result
+            .err()
+            .expect("a dict value length >= 2^28 must error");
+        assert!(
+            err.to_string().contains("exceeds 28-bit header capacity"),
+            "expected the 28-bit header-capacity error, got: {err}"
+        );
     }
 
     // push_slice detects OOB value via the RleIterator::Rle path.
@@ -2067,5 +2083,40 @@ mod tests {
         assert_eq!(entries[3][1], 0);
         assert_eq!(entries[6][1], 0);
         assert_eq!(entries[7][1], 0);
+    }
+
+    #[test]
+    fn test_bitwidth_over_32_errors() {
+        // A foreign RLE_DICTIONARY page whose index bit width (40) exceeds the
+        // 32-bit u32 the indices unpack into. bitpacked::Decoder::<u32> only
+        // generates unpack arms for 0..=32; a wider width would reach
+        // unreachable!("invalid num_bits 40") and abort the JVM across JNI.
+        // The decode must surface a clean error instead. Wire format:
+        // [40 = bit width, 0x03 = bitpacked indicator (1 group of 8 indices),
+        // then 40 data bytes = 8 * 40 bits].
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+
+        let dict_strings: &[&[u8]] = &[b"aaa", b"bbb", b"ccc"];
+        let dict_buf = build_dict_page_buffer(dict_strings);
+        let dict_page = make_dict_page(&dict_buf, dict_strings.len());
+
+        let mut encoded = vec![40u8, 0x03];
+        encoded.extend(std::iter::repeat_n(0u8, 40));
+
+        let mut decoder =
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
+        decoder.reserve(8).unwrap();
+        let err = decoder.push().unwrap_err();
+        assert!(
+            format!("{err}").contains("exceeds"),
+            "expected a clean bit-width error, got: {err}"
+        );
+        // The rejected decode must free everything it allocated on the way to the
+        // error: no leak across JNI on the abort-class path it replaces.
+        drop(decoder);
+        drop(buffers);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
     }
 }

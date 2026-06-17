@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.SwarUtils;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.Utf8StringObjHashMap;
@@ -50,7 +50,7 @@ public final class Utf8s {
     private static final long ASCII_MASK = 0x8080808080808080L;
     private static final long DOT_WORD = SwarUtils.broadcast((byte) '.');
     private static final char[] HEX_CHARS = "0123456789ABCDEF".toCharArray();
-    private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private Utf8s() {
     }

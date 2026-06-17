@@ -19,7 +19,7 @@ use crate::parquet_write::encoders::helpers::{
 };
 use crate::parquet_write::encoders::numeric::{build_statistics, SimdEncodable, StatsUpdater};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::schema::Column;
+use crate::parquet_write::schema::{Column, TimestampValues};
 use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, MaxMin, SimdMaxMin,
 };
@@ -59,6 +59,118 @@ where
             )
         },
     )
+}
+
+/// Plain-encode a designated-timestamp column whose primary data is a
+/// 16-byte-strided merge index: `[(i64 ts, i64 rowId); N]`. Used by the
+/// QuestDB O3 commit paths (`writeFreshParquetFromO3`, `copyO3ToRowGroup`)
+/// to hand the merge index directly to the encoder without an intermediate
+/// scatter to a flat `[i64]` vector.
+///
+/// Invariants (debug-asserted): single column per call, no column top, full
+/// row range. Designated timestamps cannot have nulls (Required) or tops (the
+/// sort key is present in every row), so those degrees of freedom don't
+/// apply.
+///
+/// The inner page writer is monomorphized over the iterator type, so the
+/// per-row loop sees a concrete `slice::Iter<[i64; 2]>::map(...)` — no
+/// dispatch on data layout.
+pub fn encode_designated_timestamp_strided(
+    columns: &[Column],
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<Vec<Page>> {
+    debug_assert_eq!(columns.len(), 1);
+    let column = &columns[0];
+    debug_assert!(column.strided_timestamp_16);
+    debug_assert_eq!(column.column_top, 0);
+
+    let slice: &[[i64; 2]] = match column.timestamp_values() {
+        TimestampValues::Strided16(s) => s,
+        TimestampValues::Contiguous(_) => {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "encode_designated_timestamp_strided called on contiguous column"
+            ));
+        }
+    };
+
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type).max(1);
+    let mut bloom_guard =
+        crate::parquet_write::encoders::helpers::lock_bloom_set(bloom_set.as_ref())?;
+    let mut bloom = bloom_guard.as_deref_mut();
+    let mut pages = Vec::with_capacity(column.row_count.div_ceil(rows_per_page));
+
+    for chunk in slice.chunks(rows_per_page) {
+        pages.push(write_required_i64_page(
+            chunk.iter().map(|pair| pair[0]),
+            options,
+            primitive_type.clone(),
+            bloom.as_deref_mut(),
+        )?);
+    }
+
+    Ok(pages)
+}
+
+/// Encode one Plain page of Required i64 values. Monomorphized over the
+/// iterator type by every caller, so the inner loop sees a concrete (often
+/// inlinable) `next()` implementation rather than an enum branch.
+#[inline]
+fn write_required_i64_page<I>(
+    values: I,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page>
+where
+    I: ExactSizeIterator<Item = i64>,
+{
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "write_required_i64_page expected Required repetition type"
+        ));
+    }
+
+    let num_rows = values.len();
+    let mut buffer = Vec::with_capacity(size_of::<i64>() * num_rows);
+    let mut statistics = MaxMin::<i64>::new();
+    let write_stats = options.write_statistics;
+
+    for v in values {
+        buffer.extend_from_slice(&v.to_le_bytes());
+        if write_stats {
+            statistics.update(v);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(v));
+        }
+    }
+
+    let stats = if write_stats {
+        Some(build_statistics(
+            Some(0),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        0,
+        0,
+        stats,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        true,
+    )
+    .map(Page::Data)
 }
 
 /// Encode a notnull integer (Byte, Short, Char) as Plain pages.

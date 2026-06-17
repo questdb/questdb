@@ -102,6 +102,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final ObjList<Utf8StringSink> varcharSinks = new ObjList<>();
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
+    // Pool bind generation captured when boundPool was stamped. The pool bumps its
+    // generation when it closes buffers that records may still alias (failed decode,
+    // bulk release), so a stale generation forces a rebind instead of a freed read.
+    protected long boundGeneration;
     // Pool that owns the parquet buffers this record currently points at, or null.
     // PageFrameMemoryPool.navigateTo() uses it to early-return only when the record
     // is still bound to that pool's live buffers for the requested frame.
@@ -182,6 +186,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         pageSizes = null;
         auxPageSizes = null;
         boundPool = null;
+        boundGeneration = 0;
         columnTops = null;
         // Reset the type-cast gate and its backing data symmetrically: in steady state
         // the gate is what protects readers from a stale sourceColumnTypes, but clearing
@@ -294,6 +299,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return Unsafe.getByte(address + rowIndex) == 1;
         }
         return NullMemoryCMR.INSTANCE.getBool(0);
+    }
+
+    public long getBoundGeneration() {
+        return boundGeneration;
     }
 
     public PageFrameMemoryPool getBoundPool() {
@@ -820,6 +829,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         // reduce task's) that later frees its buffers leaves boundPool != the
         // navigating pool, forcing a safe rebind.
         this.boundPool = frameMemory.getPool();
+        this.boundGeneration = boundPool != null ? boundPool.getBindGeneration() : 0;
     }
 
     @Override
@@ -832,8 +842,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.symbolTableSource = symbolTableSource;
     }
 
-    public void setBoundPool(PageFrameMemoryPool boundPool) {
+    public void setBoundPool(PageFrameMemoryPool boundPool, long boundGeneration) {
         this.boundPool = boundPool;
+        this.boundGeneration = boundGeneration;
     }
 
     /**

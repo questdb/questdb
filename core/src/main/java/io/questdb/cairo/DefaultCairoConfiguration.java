@@ -841,6 +841,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return 1_000L;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }
@@ -1168,8 +1173,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return 8;
+    public long getSqlParquetCacheMemorySize() {
+        return 256L * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -1361,6 +1366,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull TextConfiguration getTextConfiguration() {
         return textConfiguration;
+    }
+
+    @Override
+    public int getTimerShardCount() {
+        return Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4));
     }
 
     @Override
@@ -1679,6 +1689,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlWindowCachedLightEnabled() {
         return true;
     }
 

@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -38,7 +38,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class QwpParseException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final ThreadLocal<QwpParseException> tlException = new ThreadLocal<>(QwpParseException::new);
+    private static final CarrierLocal<QwpParseException> tlException = new CarrierLocal<>(QwpParseException::new);
     private final StringSink messageSink = new StringSink();
     private ErrorCode errorCode;
 
@@ -147,14 +147,11 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         HEADER_TOO_SHORT,
         PAYLOAD_TOO_LARGE,
         INVALID_COLUMN_TYPE,
-        SCHEMA_NOT_FOUND,
         INSUFFICIENT_DATA,
         BIT_READ_OVERFLOW,
         UNSUPPORTED_VERSION,
         INVALID_TABLE_NAME,
         INVALID_COLUMN_NAME,
-        INVALID_SCHEMA_MODE,
-        INVALID_SCHEMA_ID,
         SCHEMA_MISMATCH,
         COLUMN_COUNT_EXCEEDED,
         ROW_COUNT_EXCEEDED,

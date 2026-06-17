@@ -207,7 +207,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             // runSerially() executes under the SynchronizedJob lock with
             // closed=true, confirming no concurrent access to shared resources.
             while (!closedAcknowledged) {
-                this.run(0);
+                this.run();
                 Os.pause();
             }
 
@@ -352,7 +352,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
         int datagramState = 0;
         try {
-            messageCursor.of(address, (int) totalLength, null, null);
+            messageCursor.of(address, (int) totalLength, null);
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
@@ -456,11 +456,6 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         @Override
         public int getQwpMaxRowsPerTable() {
             return configuration.getMaxRowsPerTable();
-        }
-
-        @Override
-        public int getQwpMaxSchemasPerConnection() {
-            return QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION;
         }
 
         @Override

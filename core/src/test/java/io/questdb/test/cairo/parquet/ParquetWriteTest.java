@@ -2856,6 +2856,126 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupRowGroupBoundary() throws Exception {
+        // A single timestamp value (11:58:00) straddles the boundary between two
+        // parquet row groups: with row group size 5750 and 8 symbols per minute, the
+        // 8000-row first commit writes the 2020-02-27 partition as two row groups and
+        // splits minute 718 (11:58) across them - 6 symbols in rg0, 2 in rg1. The
+        // second commit re-inserts all 8 symbols at 11:58 as out-of-order data; they
+        // are known dedup keys, so the row count must stay 8000 with no (ts, s)
+        // duplicates. The merge must deduplicate the boundary symbols that live in rg1.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5750);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (ts timestamp, s symbol index) " +
+                            "timestamp(ts) partition by day format parquet wal " +
+                            "dedup upsert keys(ts, s)"
+            );
+
+            // Commit 1: 8000 in-order rows (1000 minutes x 8 symbols) -> Feb 27
+            // partition written as parquet with two row groups, minute 718
+            // (11:58:00) split across the boundary.
+            execute(
+                    "insert into tab " +
+                            "select dateadd('m', a.m, '2020-02-27T00:00:00.000000Z'::TIMESTAMP) ts, ('sym' || b.sy) s " +
+                            "from (select x::INT - 1 m from long_sequence(1000)) a " +
+                            "cross join (select x::INT - 1 sy from long_sequence(8)) b " +
+                            "order by ts, s"
+            );
+            drainWalQueue();
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8000\n");
+
+            // Commit 2: re-insert all 8 symbols at the boundary timestamp as
+            // out-of-order data. They are all known dedup keys, so the row count
+            // must stay 8000 and no (ts, s) duplicates may appear.
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T11:58:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(8)"
+            );
+            drainWalQueue();
+
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8000\n");
+            // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
+            // materialized group-by rather than count() over a filtered subquery, which
+            // trips an unrelated count fast-path bug (questdb/questdb#7201).
+            assertQuery("select max(c) from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("max\n1\n");
+        });
+    }
+
+    @Test
+    public void testDedupSameTimestampSpansThreeRowGroups() throws Exception {
+        // Degraded variant of testDedupRowGroupBoundary: a single timestamp value
+        // is large enough to span THREE parquet row groups. With row group size 4,
+        // 12 rows that all share timestamp 12:00 are written as 3 row groups, each
+        // with min == max == 12:00. A second commit re-inserts the same 12 keys as
+        // out-of-order data.
+        //
+        // computeMergeActions assigns ALL 12 O3 rows to the first row group (the
+        // overlap test o3Ts <= rgMax matches rg0, then o3Cursor advances past the
+        // whole run). mergeRowGroup must deduplicate them against every tied row
+        // group, not just rg0, so the keys living in rg1/rg2 are not duplicated.
+        // Correct behaviour: the row count stays 12 with no (ts, s) duplicates.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (ts timestamp, s symbol index) " +
+                            "timestamp(ts) partition by day format parquet wal " +
+                            "dedup upsert keys(ts, s)"
+            );
+
+            // Commit 1: 12 rows at a single timestamp -> 3 row groups, all [12:00, 12:00].
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
+
+            // Commit 2: re-insert the same 12 keys at the same timestamp as
+            // out-of-order data. All are known dedup keys, so the count must stay 12
+            // and no (ts, s) duplicates may appear.
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
+            // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
+            // materialized group-by rather than count() over a filtered subquery, which
+            // trips an unrelated count fast-path bug (questdb/questdb#7201).
+            assertQuery("select max(c) from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("max\n1\n");
+        });
+    }
+
+    @Test
     public void testFooterCacheUsedInUpdateMode() throws Exception {
         // Small row group size to produce multiple row groups.
         // Disable rewrite: ratio=1.0 (impossible to exceed), max_bytes=Long.MAX_VALUE.
@@ -3233,6 +3353,61 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns(expected01);
+        });
+    }
+
+    @Test
+    public void testNonDedupSameTimestampSpansThreeRowGroups() throws Exception {
+        // Non-deduplicating counterpart of testDedupSameTimestampSpansThreeRowGroups with
+        // identical data: 12 rows all sharing timestamp 12:00 are written as 3 row groups
+        // (row group size 4), then the same 12 rows are re-inserted as out-of-order data.
+        //
+        // Without dedup, computeMergeActions must NOT coalesce the tied row groups (the
+        // coalesceBoundaryTies gate is false), so the O3 batch merges through the ordinary
+        // per-row-group path and no full-partition rewrite is forced. All 24 rows must
+        // survive: every (ts, s) appears exactly twice.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (ts timestamp, s symbol index) " +
+                            "timestamp(ts) partition by day format parquet wal"
+            );
+
+            // Commit 1: 12 rows at a single timestamp -> 3 row groups, all [12:00, 12:00].
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
+
+            // Commit 2: re-insert the same 12 rows at the same timestamp as out-of-order
+            // data. No dedup, so every row is kept: the count doubles to 24.
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n24\n");
+            // 12 distinct (ts, s) groups, each appearing exactly twice: max == min == 2.
+            // (max()/min() over the materialized group-by avoids the count() fast-path bug
+            // that a filtered count subquery trips -- questdb/questdb#7201.)
+            assertQuery("select max(c) mx, min(c) mn from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("mx\tmn\n2\t2\n");
         });
     }
 
@@ -5570,6 +5745,34 @@ public class ParquetWriteTest extends AbstractCairoTest {
             }
         }
         Assert.fail("should find parquet partition");
+    }
+
+    // DEBUG helper: copies the on-disk data.parquet for a partition out to an absolute
+    // path so it can be inspected with third-party tools (pyarrow/duckdb/parquet-tools).
+    private void dumpParquetPartition(String tableName, String partitionDayPrefix, String dstPath) throws Exception {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        File tableDir = new File(engine.getConfiguration().getDbRoot().toString(), tableToken.getDirName());
+        File[] dirs = tableDir.listFiles((dir, name) ->
+                name.equals(partitionDayPrefix) || name.startsWith(partitionDayPrefix + "."));
+        File srcFile = null;
+        if (dirs != null) {
+            for (File d : dirs) {
+                File p = new File(d, "data.parquet");
+                if (p.exists()) {
+                    srcFile = p;
+                    break;
+                }
+            }
+        }
+        if (srcFile == null) {
+            String listing = dirs == null ? "<none>" : java.util.Arrays.toString(dirs);
+            Assert.fail("data.parquet not found for " + partitionDayPrefix + " under " + tableDir + ", partition dirs: " + listing);
+        }
+        File dst = new File(dstPath);
+        //noinspection ResultOfMethodCallIgnored
+        dst.getParentFile().mkdirs();
+        java.nio.file.Files.copy(srcFile.toPath(), dst.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        System.out.println("[DUMP] " + srcFile.getAbsolutePath() + " -> " + dst.getAbsolutePath() + " size=" + srcFile.length());
     }
 
     private long getPartitionNameTxn(long partitionTimestamp) {

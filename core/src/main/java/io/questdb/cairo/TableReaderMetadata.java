@@ -58,6 +58,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private int partitionBy;
     private Path path;
     private int plen;
+    private int tableFormat;
     private int tableId;
     private TableToken tableToken;
     private TableReaderMetadataTransitionIndex transitionIndex;
@@ -127,6 +128,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         maxUncommittedRows = 0;
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
+        tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
         writerColumnCount = 0;
     }
 
@@ -199,6 +201,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getSymbolCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getSymbolCapacity();
+    }
+
+    @Override
+    public int getTableFormat() {
+        return tableFormat;
     }
 
     @Override
@@ -315,6 +322,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
+        this.tableFormat = TableUtils.getTableFormat(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -385,6 +393,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = newMetaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
+        this.tableFormat = TableUtils.getTableFormat(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

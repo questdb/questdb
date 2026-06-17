@@ -40,7 +40,6 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 
 
@@ -169,6 +168,22 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int rowHi, // high row index within the row group, exclusive
             DirectLongList filteredRows
     ) {
+        decodeRowGroupWithRowFilterFillNulls(
+                rowGroupBuffers, columnOffset, columns, rowGroupIndex, rowLo, rowHi,
+                filteredRows.getAddress(), filteredRows.size()
+        );
+    }
+
+    public void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi, // high row index within the row group, exclusive
+            long filteredRowsAddr,
+            long filteredRowsCount
+    ) {
         assert ptr != 0;
         if (decodeContextPtr == 0) {
             // lazy init
@@ -184,8 +199,8 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
                 rowGroupIndex,
                 rowLo,
                 rowHi,
-                filteredRows.getAddress(),
-                filteredRows.size()
+                filteredRowsAddr,
+                filteredRowsCount
         );
     }
 

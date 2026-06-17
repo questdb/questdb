@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
@@ -49,10 +48,16 @@ public class O3ParquetMergeContext implements Closeable {
     private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private IntList activeColIndices;
     private IntList activeToDecodeIdx;
+    private DirectIntList bloomFilterColumns;
     private PartitionDescriptor chunkDescriptor;
     private Decimal128 decimal128Buf;
     private Decimal256 decimal256Buf;
     private Decimal64 decimal64Buf;
+    // Non-owning descriptor for the O3-only writers (writeFreshParquetFromO3 +
+    // copyO3ToRowGroup). Column pointers reference already-sorted/deduped O3
+    // source buffers — and the merge index for the designated timestamp — so
+    // nothing in this descriptor needs to be freed by the descriptor itself.
+    private PartitionDescriptor freshPartitionDescriptor;
     private LongList gapO3Ranges;
     private LongList mergeDstBufs;
     private LongList nullBufs;
@@ -60,7 +65,6 @@ public class O3ParquetMergeContext implements Closeable {
     private DirectIntList parquetColumns;
     private ParquetMetaFileReader parquetMetaReader;
     private ParquetPartitionDecoder partitionDecoder;
-    private OwnedMemoryPartitionDescriptor partitionDescriptor;
     private PartitionUpdater partitionUpdater;
     private LongList rgO3Ranges;
     private LongList rowGroupBounds;
@@ -75,10 +79,12 @@ public class O3ParquetMergeContext implements Closeable {
         actionsBuf = new ObjList<>();
         activeColIndices = new IntList();
         activeToDecodeIdx = new IntList();
+        bloomFilterColumns = new DirectIntList(16, MemoryTag.NATIVE_O3);
         chunkDescriptor = new PartitionDescriptor();
         decimal128Buf = new Decimal128();
         decimal256Buf = new Decimal256();
         decimal64Buf = new Decimal64();
+        freshPartitionDescriptor = new PartitionDescriptor();
         gapO3Ranges = new LongList();
         mergeDstBufs = new LongList();
         nullBufs = new LongList();
@@ -86,7 +92,6 @@ public class O3ParquetMergeContext implements Closeable {
         parquetColIdToIdx = new IntIntHashMap();
         parquetMetaReader = new ParquetMetaFileReader();
         partitionDecoder = new ParquetPartitionDecoder();
-        partitionDescriptor = new OwnedMemoryPartitionDescriptor();
         partitionUpdater = new PartitionUpdater();
         rgO3Ranges = new LongList();
         rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
@@ -101,14 +106,15 @@ public class O3ParquetMergeContext implements Closeable {
     public void clear() {
         activeColIndices.clear();
         activeToDecodeIdx.clear();
+        bloomFilterColumns.clear();
         chunkDescriptor.clear();
+        freshPartitionDescriptor.clear();
         gapO3Ranges.clear();
         mergeDstBufs.clear();
         nullBufs.clear();
         parquetColIdToIdx.clear();
         parquetColumns.clear();
         parquetMetaReader.clear();
-        partitionDescriptor.clear();
         rgO3Ranges.clear();
         rowGroupBounds.clear();
         srcPtrs.clear();
@@ -120,10 +126,12 @@ public class O3ParquetMergeContext implements Closeable {
         actionsBuf = null;
         activeColIndices = null;
         activeToDecodeIdx = null;
+        bloomFilterColumns = Misc.free(bloomFilterColumns);
         chunkDescriptor = Misc.free(chunkDescriptor);
         decimal128Buf = null;
         decimal256Buf = null;
         decimal64Buf = null;
+        freshPartitionDescriptor = Misc.free(freshPartitionDescriptor);
         gapO3Ranges = null;
         // Each list stores [addr, size, addr, size] per column; the per-row-group
         // finally blocks normally free these, but on abnormal shutdown (worker
@@ -141,7 +149,6 @@ public class O3ParquetMergeContext implements Closeable {
             parquetMetaReader = null;
         }
         partitionDecoder = Misc.free(partitionDecoder);
-        partitionDescriptor = Misc.free(partitionDescriptor);
         partitionUpdater = Misc.free(partitionUpdater);
         rgO3Ranges = null;
         rowGroupBuffers = Misc.free(rowGroupBuffers);
@@ -166,6 +173,10 @@ public class O3ParquetMergeContext implements Closeable {
         return activeToDecodeIdx;
     }
 
+    public DirectIntList getBloomFilterColumns() {
+        return bloomFilterColumns;
+    }
+
     public PartitionDescriptor getChunkDescriptor() {
         return chunkDescriptor;
     }
@@ -180,6 +191,10 @@ public class O3ParquetMergeContext implements Closeable {
 
     public Decimal64 getDecimal64Buf() {
         return decimal64Buf;
+    }
+
+    public PartitionDescriptor getFreshPartitionDescriptor() {
+        return freshPartitionDescriptor;
     }
 
     public LongList getGapO3Ranges() {
@@ -215,10 +230,6 @@ public class O3ParquetMergeContext implements Closeable {
 
     public ParquetPartitionDecoder getPartitionDecoder() {
         return partitionDecoder;
-    }
-
-    public OwnedMemoryPartitionDescriptor getPartitionDescriptor() {
-        return partitionDescriptor;
     }
 
     public PartitionUpdater getPartitionUpdater() {

@@ -4,7 +4,7 @@ use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
 use crate::parquet_read::column_sink::var::fixup_varchar_slice_spill_pointers;
 use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
-    page_row_count, sliced_page_row_count,
+    page_row_count, resize_decompress_buffer, sliced_page_row_count,
 };
 use crate::parquet_read::decoders::{
     F32_MAX_SAFE_FOR_I32, F32_MAX_SAFE_FOR_I64, F64_MAX_SAFE_FOR_I64,
@@ -12,8 +12,8 @@ use crate::parquet_read::decoders::{
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
-    FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL,
-    FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
+    VarcharSliceBufGuard, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
+    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
@@ -1254,8 +1254,11 @@ pub(super) fn decompress_varchar_slice_dict<'bufs>(
         (dict_page.buffer.as_ptr(), dict_page.buffer.len())
     } else {
         let mut buf = buf_pool.pop().unwrap_or_default();
+        // The grow-only resize_decompress_buffer won't zero a reused pool buffer;
+        // clear so a malformed under-filling dict page can't expose stale tail bytes
+        // (aux entries retain pointers into this dict for the whole column-chunk decode).
         buf.clear();
-        buf.resize(dict_page.uncompressed_size, 0);
+        resize_decompress_buffer(&mut buf, dict_page.uncompressed_size)?;
         parquet2::compression::decompress(dict_page.compression, dict_page.buffer, &mut buf)?;
         let ptr = buf.as_ptr();
         let len = buf.len();
@@ -1308,6 +1311,11 @@ impl ParquetDecoder {
         row_group_lo: u32,
         row_group_hi: u32,
     ) -> ParquetResult<usize> {
+        // Release the varchar-slice reuse pool and scratch vecs on every exit
+        // path, including the error returns below: buffers stranded in the
+        // context after a failed decode are invisible to the Java cache budget.
+        let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+        let ctx = ctx_guard.ctx();
         if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -1476,6 +1484,11 @@ impl ParquetDecoder {
         row_group_hi: u32,
         rows_filter: &[i64],
     ) -> ParquetResult<usize> {
+        // Release the varchar-slice reuse pool and scratch vecs on every exit
+        // path, including the error returns below: buffers stranded in the
+        // context after a failed decode are invisible to the Java cache budget.
+        let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+        let ctx = ctx_guard.ctx();
         if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -1698,8 +1711,8 @@ impl ParquetDecoder {
         column_chunk_bufs.reset();
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
-        // allocation per column chunk. Clear at the top in case a prior call returned
-        // early (the normal end-of-chunk path drains both via append).
+        // allocation per column chunk. Defensive clear: the end-of-chunk append and the
+        // row-group-level VarcharSliceBufGuard normally leave both empty already.
         varchar_slice_page_bufs.clear();
         varchar_slice_dict_bufs.clear();
 
@@ -1978,8 +1991,8 @@ impl ParquetDecoder {
         column_chunk_bufs.reset();
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
-        // allocation per column chunk. Clear at the top in case a prior call returned
-        // early (the normal end-of-chunk path drains both via append).
+        // allocation per column chunk. Defensive clear: the end-of-chunk append and the
+        // row-group-level VarcharSliceBufGuard normally leave both empty already.
         varchar_slice_page_bufs.clear();
         varchar_slice_dict_bufs.clear();
 
@@ -3624,6 +3637,7 @@ mod multi_dict_tests {
                 aux_size: 0,
                 aux_ptr: std::ptr::null_mut(),
                 aux_vec: AcVec::new_in(allocator.clone()),
+                page_buffers_size: 0,
                 page_buffers: Vec::new(),
                 column_top: 0,
             };
@@ -3668,6 +3682,7 @@ mod multi_dict_tests {
                 aux_size: 0,
                 aux_ptr: std::ptr::null_mut(),
                 aux_vec: AcVec::new_in(allocator.clone()),
+                page_buffers_size: 0,
                 page_buffers: Vec::new(),
                 column_top: 0,
             };
@@ -3711,5 +3726,37 @@ mod multi_dict_tests {
         assert_ne!(page1_view.as_ptr(), page2.buffer.as_ptr());
         // Uncompressed pages do not allocate, so persistent stays empty.
         assert!(persistent.is_empty());
+    }
+
+    /// Pins the load-bearing `buf.clear()` in `decompress_varchar_slice_dict`:
+    /// because `resize_decompress_buffer` is grow-only it never re-zeroes a reused
+    /// pool buffer, so a malformed dict page whose codec under-fills the buffer
+    /// would otherwise expose stale bytes from a previous page -- and the varchar
+    /// aux entries hold pointers into this dict buffer for the whole column-chunk
+    /// decode. Snappy writes only the real decompressed length and leaves the rest
+    /// of the output untouched, so an over-claimed `uncompressed_size` under-fills.
+    #[test]
+    fn compressed_dict_clears_pooled_buffer_before_decompress() {
+        let payload: Vec<u8> = (0..16u8).collect();
+        let compressed = snappy_compress(&payload);
+
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        // A dirty pooled buffer longer than the page's uncompressed_size: the
+        // grow-only resize truncates it in place without re-zeroing, so absent the
+        // clear() its tail would still read back as these stale 0xAB bytes.
+        let mut pool: Vec<Vec<u8>> = vec![vec![0xABu8; 64]];
+
+        // uncompressed_size (32) over-claims the real decompressed length (16), so
+        // the codec under-fills: it writes 16 bytes and never touches the last 16.
+        let dict_page = make_snappy_dict(&compressed, 32, 4);
+        let page = decompress_varchar_slice_dict(dict_page, &mut persistent, &mut pool).unwrap();
+
+        assert_eq!(page.buffer.len(), 32);
+        assert_eq!(&page.buffer[..payload.len()], payload.as_slice());
+        assert!(
+            page.buffer[payload.len()..].iter().all(|&b| b == 0),
+            "the under-filled tail must be zeroed by clear(), not stale pool bytes: {:?}",
+            &page.buffer[payload.len()..]
+        );
     }
 }

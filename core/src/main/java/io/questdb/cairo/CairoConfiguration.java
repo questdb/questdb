@@ -36,6 +36,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -499,26 +501,6 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
-    default double getPostingIndexAlignedBitWidthThreshold() {
-        return 0.0;
-    }
-
-    /**
-     * Maximum bytes the posting index writer's per-key spill buffers may hold
-     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
-     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
-     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
-     * negative value disables the back-pressure entirely (legacy behaviour:
-     * accumulate until {@code seal()}). Default is 256 MiB.
-     */
-    default long getPostingIndexerSpillBytesMax() {
-        return 256L << 20;
-    }
-
-    default byte getPostingIndexRowIdEncoding() {
-        return PostingIndexUtils.ENCODING_ADAPTIVE;
-    }
-
     /**
      * Threshold at which the adaptive posting-index row-id encoder forces
      * DELTA instead of running the size-only EF-vs-DELTA race. When a key has
@@ -539,19 +521,40 @@ public interface CairoConfiguration {
         return 2000;
     }
 
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Maximum bytes the posting index writer's per-key spill buffers may hold
+     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
+     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
+     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
+     * negative value disables the back-pressure entirely (legacy behaviour:
+     * accumulate until {@code seal()}). Default is 256 MiB.
+     */
+    default long getPostingIndexerSpillBytesMax() {
+        return 256L << 20;
+    }
+
     int getPostingSealGenThreshold();
 
     /**
      * Hard cap on the per-writer in-memory outbox of superseded posting-seal
      * generations awaiting publish to the global purge queue. When the cap
      * is reached the writer evicts the oldest entry and emits a critical
-     * log message — the file the entry pointed at is recovered later by the
-     * writer-open orphan scan.
+     * log message -- the file the entry pointed at is then left on disk (a
+     * bounded leak); no writer-open scan reclaims it.
      * <p>
      * Sized for steady-state operation where the purge queue is healthy. If
      * the queue is saturated for an extended period (e.g. background job
-     * disabled) the outbox saturates, oldest entries are dropped, and the
-     * orphan scan picks up the slack on the next reopen.
+     * disabled) the outbox saturates and oldest entries are dropped, leaking
+     * their files until the partition is rewritten -- keep the purge job
+     * running to avoid this.
      */
     default int getPostingSealPurgeOutboxMax() {
         return 8192;
@@ -560,6 +563,8 @@ public interface CairoConfiguration {
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
+
+    long getQueryContinuationWakeIntervalMillis();
 
     int getQueryRegistryPoolSize();
 
@@ -774,7 +779,7 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
-    int getSqlParquetFrameCacheCapacity();
+    long getSqlParquetCacheMemorySize();
 
     int getSqlPivotMaxProducedColumns();
 
@@ -865,6 +870,14 @@ public interface CairoConfiguration {
 
     @NotNull
     TextConfiguration getTextConfiguration();
+
+    /**
+     * Number of {@link TimerShards} shards (one daemon thread each) used
+     * to fire timer-based wakeups for parked SQL continuations and other
+     * {@link DelayedFireable} entries. Higher values reduce
+     * {@code DelayQueue} lock contention but cost one always-on thread per shard.
+     */
+    int getTimerShardCount();
 
     int getTxnScoreboardEntryCount();
 
@@ -1030,6 +1043,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
+
+    boolean isSqlWindowCachedLightEnabled();
 
     boolean isTableTypeConversionEnabled();
 

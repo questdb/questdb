@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -78,8 +79,8 @@ public class AsyncFilterContext implements Closeable {
             @Nullable ObjList<Function> perWorkerFilters,
             int slotCount,
             int filteredMemoryRecordCount,
-            int ownerMemoryPoolCapacity,
-            int perWorkerMemoryPoolCapacity
+            long ownerMemoryPoolMaxBytes,
+            long perWorkerMemoryPoolMaxBytes
     ) {
         this.compiledFilter = compiledFilter;
         this.bindVarMemory = bindVarMemory;
@@ -89,7 +90,7 @@ public class AsyncFilterContext implements Closeable {
         this.perWorkerFilters = perWorkerFilters;
 
         try {
-            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolCapacity);
+            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolMaxBytes);
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -105,7 +106,7 @@ public class AsyncFilterContext implements Closeable {
             perWorkerAuxAddresses = new ObjList<>(slotCount);
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolCapacity));
+                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolMaxBytes));
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 if (compiledFilter != null) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
@@ -135,6 +136,18 @@ public class AsyncFilterContext implements Closeable {
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        // Shrink the row-id and column-address lists back to initial capacity,
+        // mirroring the per-task reset in PageFrameReduceTask.clear(). Under a JIT
+        // filter the row-id lists grow to a full page frame (up to
+        // cairo.sql.page.frame.max.rows longs = 8 MB each) and only ever grow, so an
+        // idle or cached factory would otherwise pin peak-sized NATIVE_OFFLOAD buffers
+        // until eviction.
+        resetCapacity(ownerFilteredRows);
+        resetCapacity(ownerDataAddresses);
+        resetCapacity(ownerAuxAddresses);
+        resetCapacity(perWorkerFilteredRows);
+        resetCapacity(perWorkerDataAddresses);
+        resetCapacity(perWorkerAuxAddresses);
     }
 
     @Override
@@ -251,9 +264,13 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache) {
-        ownerMemoryPool.of(pageFrameAddressCache);
+        initMemoryPools(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
+    }
+
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, ParquetDecodeHint ownerHint) {
+        ownerMemoryPool.of(pageFrameAddressCache, ownerHint);
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
-            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache);
+            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
     }
 
@@ -269,5 +286,21 @@ public class AsyncFilterContext implements Closeable {
 
     public void toPlan(PlanSink sink) {
         sink.val(ownerFilter);
+    }
+
+    private static void resetCapacity(@Nullable DirectLongList list) {
+        // Skip closed lists: resetCapacity() on a capacity-0 list would re-malloc
+        // (resurrect) it. clear() can run after close() on the horizon-join error path.
+        if (list != null && list.getCapacity() > 0) {
+            list.resetCapacity();
+        }
+    }
+
+    private static void resetCapacity(@Nullable ObjList<DirectLongList> lists) {
+        if (lists != null) {
+            for (int i = 0, n = lists.size(); i < n; i++) {
+                resetCapacity(lists.getQuick(i));
+            }
+        }
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.MetadataCacheWriter;
 import org.junit.Test;
 
 public class ViewsFunctionTest extends AbstractViewTest {
@@ -53,6 +54,37 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createTable(TABLE1);
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create view test as (" + query + ")");
+            assertQuery("show create view test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE VIEW 'test' AS (\s
+                            select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowCreateViewBeforeStartupHydration() throws Exception {
+        // Regression: SHOW CREATE VIEW resolves the token from the synchronously
+        // loaded table registry but reads the lazily hydrated metadata cache. Plain
+        // views have no _meta file, are skipped by the startup hydrator, and
+        // hydrateTableOnDemand() no-ops on views, so only the async ViewCompilerJob
+        // ever caches them. In the post-restart / embedded window (cache not yet
+        // (re)hydrated) the command must not report a registered view as missing.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create view test as (" + query + ")");
+            drainWalAndViewQueues();
+
+            // Simulate the window: registry knows the view, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
             assertQuery("show create view test")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -147,7 +179,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -176,7 +208,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 SelectedRecord
                                     materialized_views()
@@ -222,7 +254,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [name]
                                 wal_tables()
                             """
@@ -244,7 +276,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [table_name]
                                 all_tables()
                             """
@@ -268,7 +300,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -300,7 +332,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -321,7 +353,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -338,7 +370,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """

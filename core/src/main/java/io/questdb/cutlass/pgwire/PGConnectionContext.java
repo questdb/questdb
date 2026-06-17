@@ -1656,6 +1656,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private class ResponseUtf8Sink implements PGResponseSink, Mutable {
         private long bookmarkPtr = -1;
+        private int[] ryuE10;
 
         public ResponseUtf8Sink() {
         }
@@ -1876,6 +1877,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         public void resetToBookmark(long address) {
             sendBufferPtr = address;
             bookmarkPtr = -1;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         @Override

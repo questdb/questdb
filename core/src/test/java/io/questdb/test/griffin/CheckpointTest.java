@@ -116,7 +116,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.*;
 
@@ -799,6 +801,223 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreDrainInterruptThrowsAndRestoresStatus() throws Exception {
+        // finalizeParallelTasks must not abandon a still-running rebuild task
+        // when the draining thread is interrupted: freeing the shared
+        // native-backed readers under a live task would be a use-after-free, so
+        // it keeps draining. get() swallows the interrupt status, so the method
+        // restores it on the way out, and - with no task failure - reports the
+        // interruption as a "parallel task interrupted" CairoException.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z')
+                    """);
+
+            TableToken token = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+
+            engine.clear();
+
+            // The bitmap index rebuild task for sym blocks in openRO until the
+            // test releases it, so the drain is parked in Future.get() when the
+            // interrupt is delivered.
+            final SOCountDownLatch taskRunning = new SOCountDownLatch(1);
+            final AtomicBoolean releaseTask = new AtomicBoolean();
+            final FilesFacade blockingFf = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, "sym.d")) {
+                        taskRunning.countDown();
+                        while (!releaseTask.get()) {
+                            Os.pause();
+                        }
+                    }
+                    return super.openRO(name);
+                }
+            };
+            CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return blockingFf;
+                }
+            };
+
+            final AtomicReference<Throwable> thrown = new AtomicReference<>();
+            final AtomicBoolean interruptStatusRestored = new AtomicBoolean();
+            final Thread restoreThread = new Thread(() -> {
+                try (
+                        TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig);
+                        Path tablePath = new Path().of(dbRoot).concat(token).slash()
+                ) {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                } catch (Throwable th) {
+                    thrown.set(th);
+                    interruptStatusRestored.set(Thread.currentThread().isInterrupted());
+                }
+            }, "restore-drain-interrupt");
+            restoreThread.start();
+
+            taskRunning.await();
+            restoreThread.interrupt();
+            // Let the interrupt land in the parked Future.get() before the held
+            // task is released, so the drain takes its interrupt arm; the
+            // awaitDone interrupt check makes this robust either way.
+            Os.sleep(100);
+            releaseTask.set(true);
+            restoreThread.join();
+
+            final Throwable th = thrown.get();
+            Assert.assertNotNull("rebuildTableFiles should have thrown", th);
+            Assert.assertTrue("expected CairoException, got: " + th, th instanceof CairoException);
+            TestUtils.assertContains(((CairoException) th).getFlyweightMessage(), "parallel task interrupted");
+            Assert.assertTrue("the draining thread's interrupt status must be restored", interruptStatusRestored.get());
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreDrainsParallelTasksOnTaskFailure() throws Exception {
+        // When a parallel rebuild task fails, rebuildTableFiles() must reach
+        // quiescence before rethrowing: the enterprise backup restore
+        // quarantine-renames the failed table's directory and reloads the
+        // shared native-backed tableMetadata, columnVersionReader and txWriter
+        // objects for the next table, so abandoning still-running tasks is a
+        // use-after-free risk. The same agent must then fully process the next
+        // table: a stale abort flag would make its tasks silently skip their
+        // work.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fail (
+                        val DOUBLE,
+                        sym_fail SYMBOL INDEX,
+                        sym_slow SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fail VALUES
+                    (1.0, 'A', 'X', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', 'Y', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', 'X', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    CREATE TABLE t_next (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_next VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            sink.clear();
+            printSql("SELECT count() FROM t_next WHERE sym = 'A'");
+            final String expectedNextCount = sink.toString();
+
+            TableToken failToken = engine.verifyTableName("t_fail");
+            TableToken nextToken = engine.verifyTableName("t_next");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File failPartDir = findNativePartitionDir(new File(dbRoot, failToken.getDirName()), "2024-01-01", "sym_fail.d");
+
+            engine.clear();
+
+            // Delete sym_fail's data file from the first partition: the bitmap
+            // index rebuild task for it fails on opening the .d file while the
+            // sym_slow rebuild tasks are still held up in openRO below.
+            Assert.assertTrue("failed to delete sym_fail.d", new File(failPartDir, "sym_fail.d").delete());
+
+            final AtomicInteger slowOpensStarted = new AtomicInteger();
+            final AtomicInteger slowOpensFinished = new AtomicInteger();
+            final FilesFacade slowFf = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, "sym_slow.d")) {
+                        slowOpensStarted.incrementAndGet();
+                        Os.sleep(300);
+                        long fd = super.openRO(name);
+                        slowOpensFinished.incrementAndGet();
+                        return fd;
+                    }
+                    if (Utf8s.endsWithAscii(name, "sym_fail.d")) {
+                        // Let sym_fail's bitmap rebuild fail only once a
+                        // sym_slow rebuild task is in flight, so the drain has a
+                        // genuine in-flight task to await. Without this gate the
+                        // failure can be rethrown before any sym_slow task even
+                        // starts (it then short-circuits at its top-of-task
+                        // abort check), which left the finished > 0 assertion
+                        // racing the scheduler. The wait is bounded so a small
+                        // recovery pool cannot hang the test; super.openRO then
+                        // returns -1 for the deleted file and the rebuild fails.
+                        for (int i = 0; i < 5_000 && slowOpensStarted.get() == 0; i++) {
+                            Os.sleep(1);
+                        }
+                    }
+                    return super.openRO(name);
+                }
+            };
+            CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return slowFf;
+                }
+            };
+
+            try (TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig)) {
+                try (Path tablePath = new Path().of(dbRoot).concat(failToken).slash()) {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "error in parallel task");
+                    // The task's exception must not be attached as the cause:
+                    // it is the worker's thread-local-reused CairoException
+                    // (overwritable while the drain completes), and initCause()
+                    // on the rethrown thread-local instance succeeds only once
+                    // per thread, so the next failed table would hit
+                    // IllegalStateException instead of a CairoException.
+                    Assert.assertNull("parallel task failure must not retain the reused cause", e.getCause());
+                    // The sym_fail.d gate guarantees at least one sym_slow task
+                    // was in flight when the failure fired, so the drain must
+                    // have let it finish: started == finished proves no
+                    // abandon-on-first-failure, and finished > 0 proves the
+                    // drain actually waited for the in-flight task rather than
+                    // rethrowing past it.
+                    final int started = slowOpensStarted.get();
+                    final int finished = slowOpensFinished.get();
+                    Assert.assertEquals(
+                            "rebuildTableFiles threw with parallel tasks still in flight [started=" + started + ", finished=" + finished + ']',
+                            started,
+                            finished
+                    );
+                    Assert.assertTrue("no sym_slow rebuild task completed before the failure was rethrown", finished > 0);
+                }
+
+                AtomicInteger nextSymbolFiles = new AtomicInteger();
+                try (Path tablePath = new Path().of(dbRoot).concat(nextToken).slash()) {
+                    restoreAgent.rebuildTableFiles(tablePath, nextSymbolFiles, true);
+                }
+                Assert.assertEquals("symbol rebuild tasks of the next table did not run", 1, nextSymbolFiles.get());
+            }
+
+            assertQuery("SELECT count() FROM t_next WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedNextCount);
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreFailsOnMissingParquetFile() throws Exception {
         // When both _pm and data.parquet are missing, rebuildTableFiles()
         // should throw CairoException from generateMissingParquetMetaFiles().
@@ -837,7 +1056,57 @@ public class CheckpointTest extends AbstractCairoTest {
                     restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot open parquet file for _pm generation");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read size of restored parquet file");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsOnMissingParquetFileWithPmPresent() throws Exception {
+        // A parquet partition with no data.parquet must fail the restore even
+        // when the _pm sidecar exists: an existing _pm used to short-circuit
+        // the partition before any validation, so the missing file surfaced
+        // only at query time instead of failing the restore.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            Assert.assertTrue("failed to delete data.parquet", new File(partDir, "data.parquet").delete());
+            Assert.assertTrue("_pm must exist for this scenario", new File(partDir, "_pm").exists());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read size of restored parquet file");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
         });
@@ -899,6 +1168,8 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot create _pm file");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
         });
@@ -1990,6 +2261,285 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRegeneratesStalePmSidecar() throws Exception {
+        // A _pm sidecar from a different parquet generation resolves no footer
+        // at the committed size from _txn: in-place parquet regeneration (the
+        // O3 update path) rewrites data.parquet and _pm together, so a copy can
+        // pair _txn and data.parquet from one generation with _pm from another.
+        // The restore must detect the unresolvable sidecar and regenerate it
+        // from data.parquet instead of deferring the failure to the first read
+        // of the partition.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-02T06:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T12:00:00.000000Z'),
+                    (6.0, 'B', '2024-01-02T18:00:00.000000Z'),
+                    (7.0, 'A', '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            sink.clear();
+            printSql("SELECT count() FROM t WHERE sym = 'A'");
+            final String expectedCount = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File part1Dir = findParquetPartitionDir(tableDir, "2024-01-01");
+            File part2Dir = findParquetPartitionDir(tableDir, "2024-01-02");
+
+            engine.clear();
+
+            // The stale-sidecar simulation relies on the partitions having
+            // different committed parquet sizes; with equal sizes the foreign
+            // _pm would resolve and the test would assert nothing.
+            File dataParquet1 = new File(part1Dir, "data.parquet");
+            File dataParquet2 = new File(part2Dir, "data.parquet");
+            Assert.assertNotEquals(
+                    "partitions must differ in parquet size for this scenario",
+                    dataParquet1.length(),
+                    dataParquet2.length()
+            );
+
+            // Replace partition 1's _pm with partition 2's: a structurally
+            // valid sidecar whose footer chain resolves only partition 2's
+            // parquet size.
+            File pm1 = new File(part1Dir, "_pm");
+            File pm2 = new File(part2Dir, "_pm");
+            java.nio.file.Files.copy(pm2.toPath(), pm1.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            long pm2SizeBefore = pm2.length();
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("part1 _pm not regenerated", pm1.exists());
+            Assert.assertTrue("part1 _pm is empty", pm1.length() > 0);
+            Assert.assertEquals("part2 _pm was modified", pm2SizeBefore, pm2.length());
+            // The indexed query reads both parquet partitions through their
+            // _pm sidecars; a surviving stale sidecar would fail to resolve
+            // the footer at query time.
+            assertQuery("SELECT count() FROM t WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedCount);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesStalePmSidecarWithoutIndexRebuild() throws Exception {
+        // Same stale-sidecar scenario, but with rebuildPartitionColumnIndexes
+        // disabled (the checkpoint recovery default). The bitmap index rebuild
+        // pass that would otherwise trip over the bad _pm never runs, so the
+        // generateMissingParquetMetaFiles validation is the only restore-time
+        // protection against deferring the failure to query time.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-02T06:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T12:00:00.000000Z'),
+                    (6.0, 'B', '2024-01-02T18:00:00.000000Z'),
+                    (7.0, 'A', '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            // sum(val) reads column data from every partition, forcing the
+            // reader to open the parquet partitions through their _pm
+            // sidecars; count() would be answered from _txn row counts
+            // without ever touching _pm.
+            sink.clear();
+            printSql("SELECT sum(val) FROM t");
+            final String expectedSum = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File part1Dir = findParquetPartitionDir(tableDir, "2024-01-01");
+            File part2Dir = findParquetPartitionDir(tableDir, "2024-01-02");
+
+            engine.clear();
+
+            File dataParquet1 = new File(part1Dir, "data.parquet");
+            File dataParquet2 = new File(part2Dir, "data.parquet");
+            Assert.assertNotEquals(
+                    "partitions must differ in parquet size for this scenario",
+                    dataParquet1.length(),
+                    dataParquet2.length()
+            );
+
+            File pm1 = new File(part1Dir, "_pm");
+            File pm2 = new File(part2Dir, "_pm");
+            java.nio.file.Files.copy(pm2.toPath(), pm1.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+
+            Assert.assertTrue("part1 _pm not regenerated", pm1.exists());
+            Assert.assertTrue("part1 _pm is empty", pm1.length() > 0);
+            assertQuery("SELECT sum(val) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedSum);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesTruncatedPmSidecar() throws Exception {
+        // A truncated _pm (torn copy: the header still claims the full
+        // committed size, but the file holds fewer bytes) must be regenerated
+        // during restore. Opening it throws rather than returning a resolve
+        // failure, so this pins the exception arm of the validation.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            // sum(val) reads column data from every partition, forcing the
+            // reader to open the parquet partitions through their _pm
+            // sidecars; count() would be answered from _txn row counts
+            // without ever touching _pm.
+            sink.clear();
+            printSql("SELECT sum(val) FROM t");
+            final String expectedSum = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File parquetMetaFile = new File(partDir, "_pm");
+            long pmSizeBefore = parquetMetaFile.length();
+            Assert.assertTrue("_pm too small to truncate", pmSizeBefore > 16);
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(parquetMetaFile, "rw")) {
+                raf.setLength(pmSizeBefore / 2);
+            }
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            Assert.assertTrue("_pm still truncated", parquetMetaFile.length() > pmSizeBefore / 2);
+            assertQuery("SELECT sum(val) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedSum);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesZeroLengthPmSidecar() throws Exception {
+        // A zero-length _pm is exactly what a crashed restore leaves behind:
+        // generateMissingParquetMetaFiles creates the file with openRW before
+        // writing any content, so a crash between creation and fsync orphans
+        // an empty sidecar. The retry must regenerate it instead of trusting
+        // bare existence.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            // sum(val) reads column data from every partition, forcing the
+            // reader to open the parquet partitions through their _pm
+            // sidecars; count() would be answered from _txn row counts
+            // without ever touching _pm.
+            sink.clear();
+            printSql("SELECT sum(val) FROM t");
+            final String expectedSum = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File parquetMetaFile = new File(partDir, "_pm");
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(parquetMetaFile, "rw")) {
+                raf.setLength(0);
+            }
+            Assert.assertEquals("_pm must be empty for this scenario", 0, parquetMetaFile.length());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            Assert.assertTrue("_pm is empty", parquetMetaFile.length() > 0);
+            assertQuery("SELECT sum(val) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedSum);
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRejectsTruncatedParquetFile() throws Exception {
         // If data.parquet on disk is SHORTER than _txn's recorded committed
         // size, the snapshot is truncated and the restore must fail with a
@@ -2036,6 +2586,61 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("should have thrown CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "restored parquet file is shorter than committed size");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRejectsTruncatedParquetFileWithPmPresent() throws Exception {
+        // The committed-size check must fire even when the _pm sidecar was
+        // restored alongside the partition: a snapshot can pair _txn with a
+        // stale or truncated data.parquet (plus its matching old _pm), and
+        // skipping the check would let the partition read garbage at query
+        // time instead of failing the restore.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File dataParquet = new File(partDir, "data.parquet");
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(dataParquet, "rw")) {
+                raf.setLength(Math.max(0, dataParquet.length() - 32));
+            }
+
+            Assert.assertTrue("_pm must exist for this scenario", new File(partDir, "_pm").exists());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "restored parquet file is shorter than committed size");
+                    // The diagnostic must name the failing partition, not just the table root.
+                    TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
             }
         });
@@ -3719,6 +4324,18 @@ public class CheckpointTest extends AbstractCairoTest {
 
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    private static File findNativePartitionDir(File tableDir, String partitionPrefix, String requiredFile) {
+        File[] dirs = tableDir.listFiles((_, name) -> name.startsWith(partitionPrefix));
+        Assert.assertNotNull("no directories matching " + partitionPrefix, dirs);
+        for (File dir : dirs) {
+            if (new File(dir, requiredFile).exists()) {
+                return dir;
+            }
+        }
+        Assert.fail("no partition directory with " + requiredFile + " for " + partitionPrefix);
+        return null; // unreachable
     }
 
     private static File findParquetPartitionDir(File tableDir, String partitionPrefix) {

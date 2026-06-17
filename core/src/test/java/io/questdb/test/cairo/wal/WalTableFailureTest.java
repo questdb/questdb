@@ -225,8 +225,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param', 'ttl' or 'type' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param', 'ttl' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param', 'ttl', 'format' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param', 'ttl', 'format' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass", "'wal' expected");
@@ -1644,7 +1644,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             engine.getTableSequencerAPI().releaseInactive();
             final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            checkWalTransactionsJob.run(0);
+            checkWalTransactionsJob.run();
 
             execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();

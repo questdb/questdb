@@ -513,8 +513,10 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
     @Override
     protected void _close() {
-        Misc.free(frameSequence);
+        // Free cursor before frameSequence: a cursor left half-open by a failed
+        // getCursor() still references frameSequence and reset()s it on close().
         Misc.free(cursor);
+        Misc.free(frameSequence);
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(horizonJoinMetadata);
