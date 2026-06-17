@@ -166,6 +166,20 @@ public interface TableNameRegistry extends Closeable {
     void rebaseSwap(TableToken oldToken, TableToken newToken);
 
     /**
+     * Undoes a {@link #rebaseSwap(TableToken, TableToken)} when the rebase fails AFTER the swap has
+     * committed (the empty-seed commit that follows the swap does real I/O and can throw on a full disk).
+     * Repoints the logical name back from {@code newToken} to {@code oldToken}, restores the old dir's
+     * reverse-map entry to live, removes the new dir's reverse-map entry, re-hydrates the old token in
+     * the metadata cache, and logs a compensating DROP(new)/ADD(old) pair so a replay restores the name
+     * to the old dir. The caller must invoke this BEFORE removing the new dir from disk, so the logical
+     * name resolves to the intact old dir at all times.
+     *
+     * @param newToken the token the name currently resolves to (the failed rebase target)
+     * @param oldToken the original token (old dir), same logical name, to restore
+     */
+    void rebaseSwapBack(TableToken newToken, TableToken oldToken);
+
+    /**
      * Tests consistency of the internal data structures. This is test-only method
      */
     void reconcile();

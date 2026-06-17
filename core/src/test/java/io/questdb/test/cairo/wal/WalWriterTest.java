@@ -5207,6 +5207,80 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalSeedFailureLeavesTableIntactOnOldDir() throws Exception {
+        // REBASE WAL commits the registry name swap (t -> new dir, old dir marked dropped) and only then
+        // seeds the new sequencer with an empty first transaction - the seed must follow the swap so the
+        // WAL apply job it wakes sees the table live under its new name. That seed (getWalWriter on the new
+        // dir plus commitRebaseSeed) does real I/O and can fail on a full disk or a transient FS error.
+        // A seed failure after the swap must roll the swap back: the logical name must keep resolving to
+        // the intact old dir, the data must survive, and a name-registry reload (what a restart does) must
+        // still find the table - never leave it unresolvable with the old dir reclaimable by the purge job
+        // (data loss). The failure is injected by refusing to open the new segment's _event file, which is
+        // the only _event file opened during a rebase and only after the swap has committed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+
+        final AtomicBoolean failSeed = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failSeed.get() && Utf8s.endsWithAscii(name, EVENT_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+
+            // Arm the seed failure, then rebase: the swap commits, the empty-seed commit then throws.
+            failSeed.set(true);
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected the seed I/O failure to abort the rebase");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), EVENT_FILE_NAME);
+            } finally {
+                failSeed.set(false);
+            }
+
+            // The aborted rebase must NOT have left the logical name pointing at the discarded new dir.
+            // The swap-back restored it, so it resolves to the original (intact) dir and the data is all there.
+            final TableToken afterToken = engine.verifyTableName("t");
+            Assert.assertEquals(oldToken.getDirName(), afterToken.getDirName());
+            Assert.assertEquals(oldToken.getTableId(), afterToken.getTableId());
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            // A name-registry reload (what a restart does) must still find the table on the old dir. The
+            // new dir was removed, so the compensating DROP(new)/ADD(old) the swap-back logged must restore
+            // the name to the old dir; a botched abort would instead leave it unresolvable - data loss.
+            engine.releaseInactive();
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+            final TableToken afterReload = engine.verifyTableName("t");
+            Assert.assertEquals(oldToken.getDirName(), afterReload.getDirName());
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            // The recovered table is still functional: resume and keep ingesting on the old sequencer.
+            execute("alter table t resume wal");
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
     public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {

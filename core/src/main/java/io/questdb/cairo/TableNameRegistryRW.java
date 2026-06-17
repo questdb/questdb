@@ -131,6 +131,34 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
+    public void rebaseSwapBack(TableToken newToken, TableToken oldToken) {
+        assert Chars.equals(oldToken.getTableName(), newToken.getTableName());
+        final String tableName = oldToken.getTableName();
+        // Lock the logical name while we restore it, so no concurrent create/drop/rename grabs it.
+        if (!tableNameToTableTokenMap.replace(tableName, newToken, LOCKED_DROP_TOKEN)) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
+        // Compensate the ADD(new)/DROP(old) that rebaseSwap logged: log DROP(new) then ADD(old) so a
+        // replay (the new dir is about to be removed) restores the name to the old dir, never loses it.
+        nameStore.logDropTable(newToken);
+        nameStore.logAddTable(oldToken);
+
+        // Old dir becomes live again; the new dir's entry is dropped (the caller removes the dir next).
+        // This must happen BEFORE re-hydrating metadata: hydrateTable() skips tables it sees as dropped.
+        dirNameToTableTokenMap.put(oldToken.getDirName(), ReverseTableMapItem.of(oldToken));
+        dirNameToTableTokenMap.remove(newToken.getDirName());
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.dropTable(newToken);
+            metadataRW.hydrateTable(oldToken);
+        }
+
+        // Repoint the logical name back to the old token (table queryable from the old dir again).
+        boolean swappedBack = tableNameToTableTokenMap.replace(tableName, LOCKED_DROP_TOKEN, oldToken);
+        assert swappedBack;
+    }
+
+    @Override
     public void registerName(TableToken tableToken) {
         String tableName = tableToken.getTableName();
         if (tableNameToTableTokenMap.get(tableName) != LOCKED_TOKEN) {

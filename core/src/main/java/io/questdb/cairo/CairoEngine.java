@@ -2389,6 +2389,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             } catch (Throwable th) {
                 try {
+                    // The swap commits before the fallible seed (getWalWriter + commitRebaseSeed do real
+                    // I/O and throw on a full disk; the seed must follow the swap so the apply job it wakes
+                    // sees the table live under its new name). If the seed threw after the swap, roll the
+                    // swap back FIRST so the logical name resolves to the intact old dir again before the
+                    // new dir is removed. Otherwise the name would keep pointing at the about-to-be-deleted
+                    // new dir and the old dir would stay marked dropped - leaving the table unresolvable and
+                    // the old dir reclaimable by the purge job (permanent data loss).
+                    if (swapped) {
+                        tableNameRegistry.rebaseSwapBack(newToken, oldToken);
+                    }
                     if (preRegistered) {
                         try {
                             tableSequencerAPI.dropTable(newToken, true);
