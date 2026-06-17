@@ -5862,13 +5862,11 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [lead(v256, 1, NULL) over (partition by [grp])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """)
+                    .withPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            "  unorderedFunctions: [lead(v256, 1, NULL) over (partition by [grp])]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n")
                     .returns("""
                             ts\tgrp\tl256
                             2024-01-01T00:00:00.000000Z\ta\t8
@@ -5883,13 +5881,11 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [lead(v128, 1, NULL) over (partition by [grp])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """)
+                    .withPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            "  unorderedFunctions: [lead(v128, 1, NULL) over (partition by [grp])]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n")
                     .returns("""
                             ts\tgrp\tl128
                             2024-01-01T00:00:00.000000Z\ta\t8.000000
