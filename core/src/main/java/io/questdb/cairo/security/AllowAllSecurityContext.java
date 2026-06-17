@@ -275,7 +275,9 @@ public class AllowAllSecurityContext implements SecurityContext {
      * instead of being silently downgraded to a plain {@code AllowAllSecurityContext}.
      */
     public final SecurityContext forPrincipal(@Transient @Nullable CharSequence principal) {
-        if (principal == null || principal.isEmpty() || Chars.equals(this.principal, principal)) {
+        // compare against getPrincipal(), not the raw field, so a subclass that overrides getPrincipal()
+        // is matched consistently here and in the cache check below
+        if (principal == null || principal.isEmpty() || Chars.equals(getPrincipal(), principal)) {
             return this;
         }
         final SecurityContext cached = principalContextCache;
