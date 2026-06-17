@@ -63,6 +63,70 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredRefreshWaitsForBackoffDeadline() throws Exception {
+        // 1s backoff so the deferred refresh is not eligible immediately.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+        failBaseReader.set(false);
+        baseTableName = "base_price";
+        assertMemoryLeak(() -> {
+            try {
+                execute(
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL;"
+                );
+                execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+                drainWalAndMatViewQueues();
+
+                execute(
+                        "create materialized view price_1h as (" +
+                                "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                                ") partition by day"
+                );
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid");
+                assertViewRowCount(1);
+
+                // Second bucket lands in the base table.
+                execute("insert into base_price values('a', 2.0, '2020-01-01T01:00:00.000000Z')");
+                drainWalQueue();
+
+                // Pin the clock so the retry deadline (now + 1s) is deterministic.
+                final long t0 = 1_700_000_000_000_000L;
+                setCurrentMicros(t0);
+
+                // Refresh hits "table busy" and gets deferred with a 1s backoff.
+                failBaseReader.set(true);
+                drainMatViewQueue(engine);
+                assertNoInvalidViews();
+                assertViewStatus("retrying");
+                assertViewRowCount(1);
+
+                // A single long-lived timer job, mirroring production: the RETRY task lowers its
+                // watermark once and the same instance re-drives the view when it comes due.
+                final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+
+                // Clear the failure, but the backoff has NOT elapsed yet (now == t0 < t0 + 1s):
+                // the watermark gate must keep the deferred refresh on hold.
+                failBaseReader.set(false);
+                drainMatViewTimerQueue(timerJob);
+                drainWalAndMatViewQueues();
+                assertViewStatus("retrying"); // backoff not elapsed: still deferred
+                assertViewRowCount(1); // still behind
+
+                // Advance past the backoff deadline; the same timer job now re-drives the refresh.
+                setCurrentMicros(t0 + 1_000_000L);
+                drainMatViewTimerQueue(timerJob);
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid");
+                assertViewRowCount(2);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testReaderPoolExhaustionDefersRefreshInsteadOfInvalidating() throws Exception {
         // 0 backoff so the timer sweep re-drives the deferred refresh on the very next tick.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
@@ -98,9 +162,10 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
             failBaseReader.set(true);
             drainMatViewQueue(engine);
 
-            // The transient failure must NOT invalidate the view (it stays pending/refreshing), and
-            // the view must not have caught up yet (still one bucket).
+            // The transient failure must NOT invalidate the view (it reports "retrying"), and the
+            // view must not have caught up yet (still one bucket).
             assertNoInvalidViews();
+            assertViewStatus("retrying");
             assertViewRowCount(1);
 
             // Clear the transient failure and let the timer job re-drive the deferred refresh.

@@ -242,6 +242,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final long avgScanSampleNanos = state != null ? state.getAvgScanSampleNanos() : 0L;
                         final long avgScanRangeTsUnits = state != null ? state.getAvgScanRangeTsUnits() : 0L;
                         final long commitGapThresholdTsUnits = state != null ? state.getCommitGapThresholdTsUnits() : 0L;
+                        // A pending retry deadline (in-memory only) means an incremental refresh was
+                        // deferred after a transient "table busy" or out-of-memory error.
+                        final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
 
                         record.of(
                                 viewDefinition,
@@ -263,7 +266,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgCommitNanos,
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
-                                commitGapThresholdTsUnits
+                                commitGapThresholdTsUnits,
+                                retrying
                         );
                         viewIndex++;
                         return true;
@@ -306,6 +310,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private int periodLength;
                 private char periodLengthUnit;
                 private int refreshLimitHoursOrMonths;
+                private boolean retrying;
                 private int timerInterval;
                 private char timerIntervalUnit;
                 private long timerStart;
@@ -398,7 +403,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgCommitNanos,
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
-                        long commitGapThresholdTsUnits
+                        long commitGapThresholdTsUnits,
+                        boolean retrying
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -421,11 +427,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanSampleNanos = avgScanSampleNanos;
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
+                    this.retrying = retrying;
                 }
 
                 private CharSequence getViewStatus() {
                     if (invalid) {
                         return "invalid";
+                    }
+                    if (retrying) {
+                        return "retrying";
                     }
                     return (lastRefreshStartTimestamp != Numbers.LONG_NULL && lastRefreshStartTimestamp > lastRefreshFinishTimestamp)
                             ? "refreshing"

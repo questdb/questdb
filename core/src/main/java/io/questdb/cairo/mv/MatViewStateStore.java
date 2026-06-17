@@ -78,6 +78,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // and wants to send refresh job an incremental refresh message.
     void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn);
 
+    // Called by refresh job once it deferred a refresh after a transient "table busy" error.
+    // Wakes up the timer job at the given deadline to re-drive the deferred refresh.
+    void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros);
+
     void removeViewState(TableToken matViewToken);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);

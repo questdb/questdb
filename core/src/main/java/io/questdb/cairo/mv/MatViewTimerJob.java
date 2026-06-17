@@ -66,6 +66,11 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final PriorityQueue<Timer> timerQueue = new PriorityQueue<>(INITIAL_QUEUE_CAPACITY, timerComparator);
     private final MatViewTimerTask timerTask = new MatViewTimerTask();
     private final Queue<MatViewTimerTask> timerTaskQueue;
+    // Soonest pending refresh-retry deadline, or Long.MAX_VALUE when none is pending.
+    // MatViewRefreshJob lowers it via a RETRY timer task; processRefreshRetries recomputes
+    // it from view state on each scan. Accessed only from runSerially() (under the
+    // SynchronizedJob lock), so a plain long is safe.
+    private long earliestRetryDeadlineUs = Long.MAX_VALUE;
     private String filteredDirName; // temporary value used by filterByDirName
 
     public MatViewTimerJob(CairoEngine engine) {
@@ -283,7 +288,14 @@ public class MatViewTimerJob extends SynchronizedJob {
      * that wakes up immediate views, which have no timer of their own.
      */
     private boolean processRefreshRetries(long nowMicros) {
+        // Fast path: nothing is due yet. The common case has zero pending retries, so this is a
+        // single long compare that avoids the full-fleet scan below on every tick. A RETRY timer
+        // task (drained in runSerially) lowers earliestRetryDeadlineUs when a refresh is deferred.
+        if (nowMicros < earliestRetryDeadlineUs) {
+            return false;
+        }
         boolean ran = false;
+        long newEarliest = Long.MAX_VALUE;
         retrySink.clear();
         matViewGraph.getViews(retrySink);
         for (int i = 0, n = retrySink.size(); i < n; i++) {
@@ -293,14 +305,23 @@ public class MatViewTimerJob extends SynchronizedJob {
                 continue;
             }
             final long retryAfter = state.getRefreshRetryAfterMicros();
-            if (retryAfter != Numbers.LONG_NULL && nowMicros >= retryAfter) {
+            if (retryAfter == Numbers.LONG_NULL) {
+                continue;
+            }
+            if (nowMicros >= retryAfter) {
                 // Clear before enqueue so a refresh that fails busy again can re-arm a fresh backoff.
                 state.clearRefreshRetry();
                 matViewStateStore.enqueueIncrementalRefresh(viewToken);
                 LOG.info().$("re-driving deferred materialized view refresh [view=").$(viewToken).I$();
                 ran = true;
+            } else {
+                // Still in backoff; track it so the fast path reopens exactly when it comes due.
+                newEarliest = Math.min(newEarliest, retryAfter);
             }
         }
+        // Authoritative recompute from view state. Any retry armed concurrently with this scan that
+        // we missed here is still queued as a RETRY task and lowers the watermark on the next tick.
+        earliestRetryDeadlineUs = newEarliest;
         return ran;
     }
 
@@ -337,6 +358,11 @@ public class MatViewTimerJob extends SynchronizedJob {
                     if (removeTimers(viewToken)) {
                         addTimers(viewToken, nowUs);
                     }
+                    break;
+                case MatViewTimerTask.RETRY:
+                    // A refresh was deferred after a transient "table busy" error. Lower the retry
+                    // watermark so processRefreshRetries re-drives the view once the backoff elapses.
+                    earliestRetryDeadlineUs = Math.min(earliestRetryDeadlineUs, timerTask.getRetryAfterMicros());
                     break;
                 default:
                     LOG.error().$("unknown refresh timer operation [op=").$(timerTask.getOperation()).I$();

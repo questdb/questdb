@@ -91,6 +91,10 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros) {
+    }
+
+    @Override
     public void removeViewState(TableToken matViewToken) {
     }
 

@@ -131,6 +131,10 @@ public class MatViewState implements QuietCloseable {
     // (e.g. base table reader pool exhausted). The view stays valid; MatViewTimerJob re-drives an
     // incremental refresh once the deadline elapses. Numbers.LONG_NULL means no pending retry.
     private volatile long refreshRetryAfterMicros = Numbers.LONG_NULL;
+    // Number of consecutive transient refresh failures that were deferred without an intervening
+    // success. MatViewRefreshJob invalidates the view once this exceeds the configured limit, which
+    // releases base-table WAL retention. Mutated only under this.latch, so a plain increment is safe.
+    private volatile int refreshRetryCount = 0;
     private volatile MatViewDefinition viewDefinition;
 
     public MatViewState(
@@ -430,6 +434,10 @@ public class MatViewState implements QuietCloseable {
         return refreshRetryAfterMicros;
     }
 
+    public int getRefreshRetryCount() {
+        return refreshRetryCount;
+    }
+
     public long getRefreshSeq() {
         return refreshSeq.get();
     }
@@ -507,13 +515,33 @@ public class MatViewState implements QuietCloseable {
         this.invalid = false;
         this.pendingInvalidation = false;
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+        this.refreshRetryCount = 0;
     }
 
     /**
-     * Clears any pending transient-refresh retry, marking the view eligible for refresh now.
+     * Clears any pending transient-refresh retry deadline, marking the view eligible for refresh now.
+     * Keeps the consecutive-failure counter so a re-driven refresh that fails again still counts
+     * toward the retry limit. {@link MatViewTimerJob} calls this just before re-enqueueing a refresh.
      */
     public void clearRefreshRetry() {
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Bumps and returns the consecutive transient-failure counter. Called under this.latch when a
+     * refresh is deferred after a retriable error.
+     */
+    public int incrementRefreshRetryCount() {
+        return ++refreshRetryCount;
+    }
+
+    /**
+     * Resets the deferred-refresh retry state after a successful refresh: clears both the pending
+     * retry deadline and the consecutive-failure counter that caps retries before invalidation.
+     */
+    public void resetRefreshRetry() {
+        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+        this.refreshRetryCount = 0;
     }
 
     /**

@@ -557,6 +557,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshBusyRetryLimit() {
+        return 10;
+    }
+
+    @Override
     public long getMatViewRefreshBusyRetryTimeout() {
         return 1000;
     }

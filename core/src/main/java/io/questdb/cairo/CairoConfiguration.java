@@ -361,6 +361,8 @@ public interface CairoConfiguration {
 
     long getMatViewMaxRefreshStepUs();
 
+    int getMatViewRefreshBusyRetryLimit();
+
     long getMatViewRefreshBusyRetryTimeout();
 
     long getMatViewRefreshIntervalsUpdatePeriod();
