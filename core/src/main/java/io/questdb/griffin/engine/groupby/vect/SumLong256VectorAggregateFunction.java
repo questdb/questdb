@@ -34,7 +34,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
@@ -44,7 +44,7 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
-    private static final ThreadLocal<Long256Impl> partialSums = new ThreadLocal<>(Long256Impl::new);
+    private static final CarrierLocal<Long256Impl> partialSums = new CarrierLocal<>(Long256Impl::new);
     private final int columnIndex;
     private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;

@@ -35,14 +35,14 @@ public class MemoryUsageLogJobTest {
         final boolean[] enabled = {true};
         final MemoryUsageLogJob job = new MemoryUsageLogJob(() -> ticks[0], () -> enabled[0], () -> 1000);
 
-        Assert.assertTrue(job.run(0));
+        Assert.assertTrue(job.run());
 
         enabled[0] = false;
         ticks[0] = 5_000_000;
-        Assert.assertFalse(job.run(0));
+        Assert.assertFalse(job.run());
 
         enabled[0] = true;
-        Assert.assertTrue(job.run(0));
+        Assert.assertTrue(job.run());
     }
 
     @Test
@@ -51,17 +51,17 @@ public class MemoryUsageLogJobTest {
         final long[] intervalMillis = {1000};
         final MemoryUsageLogJob job = new MemoryUsageLogJob(() -> ticks[0], () -> true, () -> intervalMillis[0]);
 
-        Assert.assertTrue(job.run(0));
+        Assert.assertTrue(job.run());
 
         intervalMillis[0] = 10;
         ticks[0] = 10_000;
-        Assert.assertTrue(job.run(0));
+        Assert.assertTrue(job.run());
 
         ticks[0] = 19_999;
-        Assert.assertFalse(job.run(0));
+        Assert.assertFalse(job.run());
 
         ticks[0] = 20_000;
-        Assert.assertTrue(job.run(0));
+        Assert.assertTrue(job.run());
     }
 
     @Test
@@ -69,13 +69,13 @@ public class MemoryUsageLogJobTest {
         final long[] ticks = {0};
         final MemoryUsageLogJob job = new MemoryUsageLogJob(() -> ticks[0], () -> true, () -> 1000);
 
-        Assert.assertTrue(job.run(0));
-        Assert.assertFalse(job.run(0));
+        Assert.assertTrue(job.run());
+        Assert.assertFalse(job.run());
 
         ticks[0] = 999_999;
-        Assert.assertFalse(job.run(0));
+        Assert.assertFalse(job.run());
 
         ticks[0] = 1_000_000;
-        Assert.assertTrue(job.run(0));
+        Assert.assertTrue(job.run());
     }
 }

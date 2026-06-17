@@ -258,7 +258,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         commitWalRows(tableToken, 200, "2022-02-24T15", "2022-02-24T18");
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             // Force 1 by 1 commit application
-            walApplyJob.run(0);
+            walApplyJob.run();
         }
 
         try (TableWriter writer = getWriter(tableToken)) {

@@ -6502,7 +6502,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [abs(row_number),row_number]
-                                CachedWindow
+                                CachedWindowLight
                                   orderedFunctions: [[x] => [row_number()]]
                                     PageFrame
                                         Row forward scan
@@ -6543,7 +6543,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [abs(row_number)+abs(row_number),row_number]
-                                CachedWindow
+                                CachedWindowLight
                                   orderedFunctions: [[x] => [row_number()]]
                                     PageFrame
                                         Row forward scan
@@ -6774,7 +6774,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertQuery(q6)
                 .noLeakCheck()
                 .assertsPlan("""
-                        CachedWindow
+                        CachedWindowLight
                           unorderedFunctions: [row_number() over (partition by [hostname]),rank() over (partition by [hostname]),lead(usage_system, 1, NULL) over (partition by [hostname]),lag(usage_system, 1, NULL) over (partition by [hostname]),dense_rank() over (partition by [hostname])]
                             PageFrame
                                 Row backward scan

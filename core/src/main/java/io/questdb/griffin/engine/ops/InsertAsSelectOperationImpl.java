@@ -110,6 +110,13 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                             // used "old" table name in SQL text
                             || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
             ) {
+                LOG.error().$("insert-as-select table reference out of date [table=").$(tableToken.getTableName())
+                        .$(", compileTableId=").$(tableToken.getTableId())
+                        .$(", writerTableId=").$(writer.getTableToken().getTableId())
+                        .$(", writerTableName=").$(writer.getTableToken().getTableName())
+                        .$(", compileMetaVersion=").$(metadataVersion)
+                        .$(", writerMetaVersion=").$(writer.getMetadataVersion())
+                        .$(']').$();
                 writer.close();
                 throw TableReferenceOutOfDateException.of(tableToken.getTableName());
             }

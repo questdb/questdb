@@ -54,6 +54,55 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTest {
 
+    @Test
+    public void testFlushAndGetSequenceReturnsNegativeOneWhenNothingPublished() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("empty_flush")
+                        .longColumn("v", 1L)
+                        .at(1_000_000L, ChronoUnit.MICROS);
+                long fsn1 = sender.flushAndGetSequence();
+                Assert.assertEquals("first flush returns FSN", 0L, fsn1);
+
+                long fsn2 = sender.flushAndGetSequence();
+                Assert.assertEquals("empty flush returns -1", -1L, fsn2);
+            }
+            drainWalQueue();
+        });
+    }
+
+    /**
+     * Validates the key scenario from issue #7142: {@code drain()} after a
+     * prior {@code flush()} with unacked frames must still wait for the
+     * server to acknowledge those frames, even though the inner
+     * {@code flushAndGetSequence()} returns {@code -1} (nothing published
+     * by the empty flush). Without the watermark-based {@code drain()}
+     * override, the default implementation would short-circuit immediately.
+     */
+    @Test
+    public void testDrainWaitsForPriorUnackedFrames() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Publish data via flush (not drain), so ACK may be in-flight.
+                sender.table("drain_prior")
+                        .longColumn("v", 1L)
+                        .at(1_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Now drain() with no new data buffered. The inner
+                // flushAndGetSequence() returns -1, but drain() must still
+                // wait for the prior publish to be acknowledged.
+                boolean drained = sender.drain(10_000L);
+                Assert.assertTrue("drain() must wait for prior unacked frames", drained);
+
+                // Verify the server actually processed it.
+                long ackedFsn = sender.getAckedFsn();
+                Assert.assertTrue("ackedFsn must be >= 0 after drain", ackedFsn >= 0L);
+            }
+            drainWalQueue();
+        });
+    }
+
     /**
      * Exercises {@link QwpWebSocketSender#getActiveBackgroundDrainers()}.
      */

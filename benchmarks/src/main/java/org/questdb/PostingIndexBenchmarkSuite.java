@@ -363,7 +363,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + s.batchRows + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -434,7 +434,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + WalLargePartitionState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -462,7 +462,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + WalLargePartitionO3AppendState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -490,7 +490,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + WalLargePartitionO3State.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -522,7 +522,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + WalLargePartitionO3SpillState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -1915,7 +1915,7 @@ public class PostingIndexBenchmarkSuite {
                     "FROM long_sequence(" + PRELOAD_ROWS + ")";
             engine.execute(preloadSql, ctx);
             applyJob.drain(0);
-            checkJob.run(0);
+            checkJob.run();
             applyJob.drain(0);
 
             // Drive the chain to the target unsealed gen count. Each
@@ -1931,7 +1931,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + PREBUILD_BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
 
@@ -2045,7 +2045,7 @@ public class PostingIndexBenchmarkSuite {
                     "FROM long_sequence(" + PRELOAD_ROWS + ")";
             engine.execute(preloadSql, ctx);
             applyJob.drain(0);
-            checkJob.run(0);
+            checkJob.run();
             applyJob.drain(0);
 
             // Sample distinct symbols from the preloaded data for the read
@@ -2165,7 +2165,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
 
@@ -2176,7 +2176,7 @@ public class PostingIndexBenchmarkSuite {
                     sentinelExtraValues() + ")";
             engine.execute(sentinelSql, ctx);
             applyJob.drain(0);
-            checkJob.run(0);
+            checkJob.run();
             applyJob.drain(0);
         }
 
@@ -2292,7 +2292,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
         }
@@ -2402,7 +2402,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
         }
@@ -2530,7 +2530,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
 

@@ -66,6 +66,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -75,6 +76,8 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.List;
+
+import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> FRAME_FUNCTIONS;
@@ -136,10 +139,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
     };
     private static final List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
+    private final boolean isCacheLightWindowEnabled;
     private final TestTimestampType timestampType;
 
     public WindowFunctionTest() {
-        this.timestampType = TestUtils.getTimestampType();
+        Rnd rnd = generateRandom(LOG);
+        this.timestampType = TestUtils.getTimestampType(rnd);
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
+        super.setUp();
     }
 
     @Test
@@ -358,6 +370,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
+        // Pin the window sort caps to the server's unbounded default (Long.MAX_VALUE); summing the
+        // two operands must not overflow to a negative budget that collapses maxEntries to 0.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tv\trow_number\n" +
+                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
+        });
+    }
+
+    @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType.getTypeName());
@@ -439,6 +472,445 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000Z\t1\t1.6666666666666667\t3\t2\t1
                             1970-01-01T00:00:00.000000Z\t1\t1.5\t4\t2\t1
                             """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightAcceptsAllEligibleSortKeyTypes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("create table tab (" +
+                    "ts TIMESTAMP, " +
+                    "vBool BOOLEAN, vByte BYTE, vShort SHORT, vInt INT, " +
+                    "vLong LONG, vFloat FLOAT, vDouble DOUBLE, vChar CHAR, " +
+                    "vIPv4 IPv4, vDate DATE, " +
+                    "vGeoB GEOHASH(5b), vGeoS GEOHASH(10b), vGeoI GEOHASH(20b), vGeoL GEOHASH(40b), " +
+                    "vDec8 DECIMAL(2,0), vDec16 DECIMAL(4,0), vDec32 DECIMAL(8,0), " +
+                    "vDec64 DECIMAL(16,0), vDec128 DECIMAL(30,0), vDec256 DECIMAL(60,0)" +
+                    ") timestamp(ts)");
+            final String[] orderCols = {
+                    "vBool", "vByte", "vShort", "vInt", "vLong", "vFloat", "vDouble",
+                    "vChar", "vIPv4", "vDate",
+                    "vGeoB", "vGeoS", "vGeoI", "vGeoL",
+                    "vDec8", "vDec16", "vDec32", "vDec64", "vDec128", "vDec256"
+            };
+            for (String col : orderCols) {
+                assertQuery("SELECT row_number() OVER (ORDER BY " + col + ") FROM tab")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindowLight\n" +
+                                "  orderedFunctions: [[" + col + "] => [row_number()]]\n" +
+                                "    PageFrame\n" +
+                                "        Row forward scan\n" +
+                                "        Frame forward scan on: tab\n");
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightCumeDistTwoPassUnderLightFactory() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 30), (5, 40)");
+            assertQuery("SELECT ts, v, cume_dist() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\tv\tcume_dist
+                            1970-01-01T00:00:00.000001Z\t10\t0.2
+                            1970-01-01T00:00:00.000002Z\t20\t0.4
+                            1970-01-01T00:00:00.000003Z\t30\t0.8
+                            1970-01-01T00:00:00.000004Z\t30\t0.8
+                            1970-01-01T00:00:00.000005Z\t40\t1.0
+                            """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightDecimalWideSortKeyFallsBackToNonLight() throws Exception {
+        // Three DECIMAL128 sort columns total 48 bytes of key, exceeding the encoded
+        // sort buffer's 32-byte limit. Dispatch must route to non-light.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, d1 DECIMAL(20,2), d2 DECIMAL(20,2), d3 DECIMAL(20,2)) timestamp(ts)",
+                    timestampType.getTypeName()
+            );
+            assertQuery("SELECT row_number() OVER (ORDER BY d1, d2, d3) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CachedWindowLight
+                              orderedFunctions: [[d1, d2, d3] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightDisabledRoutesToNonLight() throws Exception {
+        // With cairo.sql.window.cached.light.enabled=false the dispatcher must skip the LIGHT
+        // factory regardless of base capabilities and sort-key eligibility.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, false);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertQuery("SELECT row_number() OVER (ORDER BY v) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CachedWindow
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightEncodedSortLimitOverflow() throws Exception {
+        // Pin the window sort caps so tiny that EncodedWindowSortBuffer's maxEntries is exceeded by
+        // the row count, exercising the LimitOverflowException path. The encoded buffer keys its
+        // budget off the window tree/rowid caps (the same keys the tree path uses), not the global
+        // sort caps. Subsequent runs of the cursor must not leak native memory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 4096);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x from long_sequence(5_000)");
+            try {
+                assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
+                Assert.fail("expected LimitOverflowException");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "memory exceeded in window encoded sort");
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightEncodedSortVarcharKeyHeapOverflow() throws Exception {
+        // A VARCHAR window ORDER BY takes the variable encoded path: the key bytes spill into
+        // EncodedWindowSortBuffer's key heap (setKeyHeap + sortEncodedVarEntries). Pin the window
+        // sort caps tiny and feed long strings so the key heap, not the entry array, busts the
+        // combined budget, exercising the variable path's overflow guard. Subsequent runs of the
+        // cursor must not leak native memory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 4096);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, rnd_varchar(1000, 1000, 0) from long_sequence(100)");
+            try {
+                assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
+                Assert.fail("expected LimitOverflowException");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "memory exceeded in window encoded sort");
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightFallsBackWhenOrderBySortDisabled() throws Exception {
+        // cairo.sql.orderby.sort.enabled=false flips allGroupsEncodedEligible to false
+        // in the LIGHT dispatcher. LIGHT must be skipped even when its own flag is on.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertQuery("SELECT row_number() OVER (ORDER BY v) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CachedWindow
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightLagAndAggregateShareOrderedGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertQuery("SELECT lag(v, 1) OVER (ORDER BY ts DESC), sum(v) OVER (ORDER BY ts DESC) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[ts desc] => [lag(v, 1, NULL) over (),sum(v) over (rows between unbounded preceding and current row)]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightLeadZeroOffsetReturnsTypedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts TIMESTAMP, d DATE) timestamp(ts)");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000Z')");
+            assertQuery("SELECT typeOf(lead(ts, 0) OVER ()) lead_ts_type, typeOf(lead(d, 0) OVER ()) lead_d_type FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            lead_ts_type\tlead_d_type
+                            TIMESTAMP\tDATE
+                            """);
+            assertQuery("SELECT typeOf(lag(ts, 0) OVER ()) lag_ts_type, typeOf(lag(d, 0) OVER ()) lag_d_type FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            lag_ts_type\tlag_d_type
+                            TIMESTAMP\tDATE
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightNoRandomAccessBaseFallsBackToNonLight() throws Exception {
+        // UNION ALL produces a base cursor that does not support random access, so the
+        // dispatch gate must skip the LIGHT factory even with an encoded-eligible sort key.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertQuery("SELECT row_number() OVER (ORDER BY v) FROM (SELECT v FROM tab UNION ALL SELECT v FROM tab)")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CachedWindow
+                              orderedFunctions: [[v] => [row_number()]]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightNullSortKeyOrdering() throws Exception {
+        // NULL long encodes as Long.MIN_VALUE, so ascending order places NULLs first; the two
+        // NULL rows tie-break by ascending base-scan order (dense rowIndex), as the tree path does.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, null), (2, 30), (3, 10), (4, null), (5, 20)");
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts	v	row_number
+                            1970-01-01T00:00:00.000001Z	null	1
+                            1970-01-01T00:00:00.000002Z	30	5
+                            1970-01-01T00:00:00.000003Z	10	3
+                            1970-01-01T00:00:00.000004Z	null	2
+                            1970-01-01T00:00:00.000005Z	20	4
+                            """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightParallelEncodedSortBranch() throws Exception {
+        // Set the parallel-sort threshold below the row count so Vect.sortEncodedEntries
+        // takes the parallel branch when finishPut runs under the LIGHT factory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 100);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x from long_sequence(1_000)");
+            assertQuery("select min(rn) min, max(rn) max, count() cnt from (SELECT row_number() OVER (ORDER BY v) rn FROM tab)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("min\tmax\tcnt\n1\t1000\t1000\n");
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightParallelEncodedSortPreservesOrder() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 16);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, (65 - x) from long_sequence(64)");
+            assertQuery("SELECT v, row_number FROM (SELECT v, row_number() OVER (ORDER BY v) FROM tab) " +
+                    "WHERE v <= 5 OR v >= 62 ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\trow_number
+                            1\t1
+                            2\t2
+                            3\t3
+                            4\t4
+                            5\t5
+                            62\t62
+                            63\t63
+                            64\t64
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightPositivePlanForEncodedEligible() throws Exception {
+        // Every LIGHT gate satisfied: random-access base, encoded-eligible single-LONG sort key,
+        // window cached.light.enabled on, orderby sort enabled. Plan must be CachedWindowLight.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertQuery("SELECT row_number() OVER (ORDER BY v) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CachedWindowLight
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightReuseCloseAndReopen() throws Exception {
+        // Re-executing the same LIGHT factory exercises cursor.close() -> of() reuse:
+        // EncodedWindowSortBuffer.reopen() must re-allocate entryMem, and encoder.init()
+        // must resurrect rankMap DirectIntLists via setCapacity on closed lists.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30)");
+
+            final String expected = replaceTimestampSuffix("""
+                    ts\tv\trow_number
+                    1970-01-01T00:00:00.000001Z\t10\t1
+                    1970-01-01T00:00:00.000002Z\t20\t2
+                    1970-01-01T00:00:00.000003Z\t30\t3
+                    """, timestampType.getTypeName());
+            final String query = "SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab";
+
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightReuseSymbolRebuildsRankMaps() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts TIMESTAMP, s SYMBOL) timestamp(ts)");
+            execute("insert into tab values " +
+                    "(1, 'B'), (2, 'A'), (3, 'C'), (4, 'A'), (5, 'B'), (6, 'C')");
+            final String expected = """
+                    ts\ts\trow_number
+                    1970-01-01T00:00:00.000002Z\tA\t1
+                    1970-01-01T00:00:00.000004Z\tA\t2
+                    1970-01-01T00:00:00.000001Z\tB\t3
+                    1970-01-01T00:00:00.000005Z\tB\t4
+                    1970-01-01T00:00:00.000003Z\tC\t5
+                    1970-01-01T00:00:00.000006Z\tC\t6
+                    """;
+            final String query = "SELECT ts, s, row_number() OVER (ORDER BY s) FROM tab ORDER BY s, ts";
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightVarcharOrderBy() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            assertQuery("SELECT row_number() OVER (ORDER BY v) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CachedWindowLight
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightVarcharOrderByReturnsSortedRows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 'banana'), (2, 'apple'), (3, NULL), (4, 'cherry'), (5, '')");
+            final String expected = """
+                    v\trn
+                    \t1
+                    \t2
+                    apple\t3
+                    banana\t4
+                    cherry\t5
+                    """;
+            final String query = "SELECT v, row_number() OVER (ORDER BY v) rn FROM tab ORDER BY v";
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightWindowLightRecordReadsExoticColumnTypes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("create table tab (" +
+                    "ts TIMESTAMP, vSort LONG, " +
+                    "vGeoB GEOHASH(5b), vGeoS GEOHASH(10b), vGeoI GEOHASH(20b), vGeoL GEOHASH(40b), " +
+                    "vL256 LONG256, vUuid UUID, vBin BINARY, vArr DOUBLE[]" +
+                    ") timestamp(ts)");
+            execute("insert into tab values (" +
+                    "1, 10, " +
+                    "'u', 'u3', 'u3qd', 'u3qd1mhg7', " +
+                    "'0x01'::long256, '00000000-0000-0000-0000-000000000001', " +
+                    "rnd_bin(2, 2, 0), ARRAY[1.0, 2.0]" +
+                    ")");
+            assertQuery("SELECT row_number() OVER (ORDER BY vSort), vGeoB, vGeoS, vGeoI, vGeoL, " +
+                    "vL256, vUuid, vBin, vArr FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            CachedWindowLight
+                              orderedFunctions: [[vSort] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
+            assertQuery("SELECT count() cnt FROM (" +
+                    "SELECT row_number() OVER (ORDER BY vSort), vGeoB, vGeoS, vGeoI, vGeoL, " +
+                    "vL256, vUuid, vBin, vArr FROM tab)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -1362,42 +1834,42 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // ORDER BY designated timestamp -> dismissOrder=true path.
             assertQuery("SELECT cume_dist() OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [cume_dist() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             // ORDER BY non-timestamp column -> dismissOrder=false path (the previously-broken one).
             assertQuery("SELECT cume_dist() OVER (ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT cume_dist() OVER (PARTITION BY i ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 
@@ -6061,14 +6533,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            ts	i	j	d	lead	lag	lead_ignore_nulls	lag_ignore_nulls	lead1	lag1	lead2	lag2	lead_ignore_nulls1	lag_ignore_nulls1	lead3	lag3	lead4	lag4	lead_ignore_nulls2	lag_ignore_nulls2	lead5	lag5	lead6	lag6	lead_ignore_nulls3	lag_ignore_nulls3	lead7	lag7
+                            1970-01-01T00:00:00.000001Z	0	1	1.0	1	1	1	1	1	1	1.0	1.0	1.0	1.0	1.0	1.0	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z	0	2	2.0	2	2	2	2	2	2	2.0	2.0	2.0	2.0	2.0	2.0	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z	0	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z	1	4	4.0	4	4	4	4	4	4	4.0	4.0	4.0	4.0	4.0	4.0	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z	1	0	0.0	0	0	0	0	0	0	0.0	0.0	0.0	0.0	0.0	0.0	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z	1	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z	1	2	2.0	2	2	2	2	2	2	2.0	2.0	2.0	2.0	2.0	2.0	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z
                             """));
 
             assertQuery("select ts, i, j, d, " +
@@ -6221,14 +6693,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            ts	i	j	d	lead	lag	lead_ignore_nulls	lag_ignore_nulls	lead1	lag1	lead2	lag2	lead_ignore_nulls1	lag_ignore_nulls1	lead3	lag3	lead4	lag4	lead_ignore_nulls2	lag_ignore_nulls2	lead5	lag5	lead6	lag6	lead_ignore_nulls3	lag_ignore_nulls3	lead7	lag7
+                            1970-01-01T00:00:00.000001Z	0	1	1.0	1	1	1	1	1	1	1	1	1	1	1	1	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z	0	2	2.0	2	2	2	2	2	2	2	2	2	2	2	2	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z	0	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z	1	4	4.0	4	4	4	4	4	4	4	4	4	4	4	4	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z	1	0	0.0	0	0	0	0	0	0	0	0	0	0	0	0	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z	1	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z	1	2	2.0	2	2	2	2	2	2	2	2	2	2	2	2	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z
                             """));
 
             assertQuery("select ts, i, j, d, " +
@@ -6381,14 +6853,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead1\tlag1\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead2\tlag2\tlead_ignore_nulls4\tlag_ignore_nulls4\tlead_ignore_nulls5\tlag_ignore_nulls5\tlead3\tlag3\tlead_ignore_nulls6\tlag_ignore_nulls6\tlead_ignore_nulls7\tlag_ignore_nulls7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            ts	i	j	d	lead	lag	lead_ignore_nulls	lag_ignore_nulls	lead_ignore_nulls1	lag_ignore_nulls1	lead1	lag1	lead_ignore_nulls2	lag_ignore_nulls2	lead_ignore_nulls3	lag_ignore_nulls3	lead2	lag2	lead_ignore_nulls4	lag_ignore_nulls4	lead_ignore_nulls5	lag_ignore_nulls5	lead3	lag3	lead_ignore_nulls6	lag_ignore_nulls6	lead_ignore_nulls7	lag_ignore_nulls7
+                            1970-01-01T00:00:00.000001Z	0	1	1.0	1	1	1	1	1	1	1.0	1.0	1.0	1.0	1.0	1.0	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z	0	2	2.0	2	2	2	2	2	2	2.0	2.0	2.0	2.0	2.0	2.0	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z	0	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z	1	4	4.0	4	4	4	4	4	4	4.0	4.0	4.0	4.0	4.0	4.0	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z	1	0	0.0	0	0	0	0	0	0	0.0	0.0	0.0	0.0	0.0	0.0	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z	1	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z	1	2	2.0	2	2	2	2	2	2	2.0	2.0	2.0	2.0	2.0	2.0	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z
                             """));
 
             assertQuery("select ts, i, j, d, " +
@@ -6541,14 +7013,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            ts	i	j	d	lead	lag	lead_ignore_nulls	lag_ignore_nulls	lead1	lag1	lead2	lag2	lead_ignore_nulls1	lag_ignore_nulls1	lead3	lag3	lead4	lag4	lead_ignore_nulls2	lag_ignore_nulls2	lead5	lag5	lead6	lag6	lead_ignore_nulls3	lag_ignore_nulls3	lead7	lag7
+                            1970-01-01T00:00:00.000001Z	0	1	1.0	1	1	1	1	1	1	1.0	1.0	1.0	1.0	1.0	1.0	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.000001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z	0	2	2.0	2	2	2	2	2	2	2.0	2.0	2.0	2.0	2.0	2.0	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.000002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z	1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z	0	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.000003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z	1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z	1	4	4.0	4	4	4	4	4	4	4.0	4.0	4.0	4.0	4.0	4.0	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.000004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z	1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z	1	0	0.0	0	0	0	0	0	0	0.0	0.0	0.0	0.0	0.0	0.0	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.000005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z	1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z	1	null	null	null	null	null	null	null	null	null	null	null	null	null	null	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.000006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z	1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z	1	2	2.0	2	2	2	2	2	2	2.0	2.0	2.0	2.0	2.0	2.0	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.000007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z	1970-01-01T00:00:00.007Z
                             """));
 
             assertQuery("select ts, i, j, d, " +
@@ -6623,6 +7095,35 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagOverDescDuplicateTimestampRegression() throws Exception {
+        // The LAG<->LEAD swap rewrite (rewriteLagLeadForBaseScan) turns
+        // LAG(v, n) OVER (ORDER BY ts DESC) into LEAD(v, n) OVER (ORDER BY ts ASC)
+        // and dismisses the sort, relying on the identity "previous in DESC order ==
+        // next in base order". That identity only holds when the designated timestamp
+        // is unique. With duplicate timestamps the engine breaks ties in ascending
+        // rowId order in both sort directions, so a genuine ts DESC sort keeps tie
+        // groups ascending - it is not the mirror image of base order. The expected
+        // column below is the genuine ts DESC ordering [30, 20, 21, 22, 10] with
+        // ascending-rowId tie-break, which is what an unrewritten DESC sort (and
+        // master) produces.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("insert into tab values (1, 10), (2, 20), (2, 21), (2, 22), (3, 30)");
+            assertQuery("SELECT v, LAG(v, 1) OVER (ORDER BY ts DESC) lg FROM tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            v\tlg
+                            10\t22
+                            20\t30
+                            21\t20
+                            22\t21
+                            30\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLeadException() throws Exception {
         executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
         assertQuery("select lead() over () from tab")
@@ -6683,6 +7184,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     assertQuery("select ts, ts_ns, lead(ts, 2, ts_ns) over(), lead(ts_ns, 2, ts) over(), lag(ts, 2, ts_ns) over(), lag(ts_ns, 2, ts) over() from x;")
                             .timestamp("ts")
                             .expectSize()
+                            .noLeakCheck()
                             .returns("""
                                     ts\tts_ns\tlead\tlead1\tlag\tlag1
                                     1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z
@@ -6693,6 +7195,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     """);
                 }
         );
+    }
+
+    @Test
+    public void testLeadOffsetZeroOnDateAndTimestampReturnsTypedValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, m date) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x::date from long_sequence(3)");
+
+            assertQuery("SELECT ts, " +
+                    "lead(ts, 0) OVER () AS lead_ts, " +
+                    "lag(ts, 0) OVER () AS lag_ts, " +
+                    "lead(m, 0) OVER () AS lead_m, " +
+                    "lag(m, 0) OVER () AS lag_m " +
+                    "FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tlead_ts\tlag_ts\tlead_m\tlag_m
+                            1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.003Z
+                            """);
+        });
     }
 
     @Test
@@ -9835,6 +10362,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 FROM long_sequence(10)
                 limit -10""")
                 .expectSize()
+                .noLeakCheck()
                 .returns("""
                         x\trow_number
                         1\t1
@@ -10185,51 +10713,51 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQuery("SELECT ts, ntile(3) OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [ntile(3) over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ts, ntile(2) OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             assertQuery("SELECT ts, cume_dist() OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [cume_dist() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ts, cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             assertQuery("SELECT ts, nth_value(val, 2) OVER (PARTITION BY i) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 
@@ -11755,13 +12283,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
             assertQuery("select ts, nth_value(val, 2) over () from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, nth_value(val, 2) over (order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -11798,13 +12326,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i) from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -15066,13 +15594,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
             assertQuery("select ts, nth_value(val, 2) over () from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, nth_value(val, 2) over (order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -15109,13 +15637,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Frame forward scan on: tab\n");
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i) from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -15314,13 +15842,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // NthValueOverWholeResultSetFunction
             assertQuery("select ts, nth_value(val, 2) over () from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             // NthValueOverUnboundedRowsFrameFunction (default frame with order by)
             assertQuery("select ts, nth_value(val, 2) over (order by ts) from tab")
                     .noLeakCheck()
@@ -15363,13 +15891,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // NthValueOverPartitionFunction (whole partition)
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i) from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             // NthValueOverUnboundedPartitionFrameFunction, RANGE variant -- default frame
             // for "partition by x order by y" is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
             assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab")
@@ -15905,58 +16433,58 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQuery("SELECT ntile(3) OVER () FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [ntile(3) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [ntile(3) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [ntile(3) over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i ORDER BY ts) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
             assertQuery("SELECT ntile(3) OVER (PARTITION BY i ORDER BY val) FROM tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 
@@ -16468,13 +16996,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                CachedWindow
-                                  orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),dense_rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]
-                                  unorderedFunctions: [row_number() over (partition by [i])]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """);
+                            """ +
+                            (this.isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
+                            """
+                                          orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),dense_rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]
+                                          unorderedFunctions: [row_number() over (partition by [i])]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                    """);
 
             assertQuery("select row_number() over (partition by i order by ts asc), " +
                     "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -17176,13 +17706,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(true)
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns(expectedResult1);
 
             String expectedResult = replaceTimestampSuffix("""
@@ -17213,13 +17743,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(true)
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns(expectedResult);
         });
     }
@@ -18857,13 +19387,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan(replacePlanTimestamp("""
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """))
+                    .withPlan(replacePlanTimestamp((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """))
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n");
 
             assertQuery("select ts, i, j, first_value(j) over(), first_value(j) ignore nulls over(), last_value(j) over(), last_value(j) ignore nulls over(), avg(j) over (), sum(j) over (), count(*) over (), count(j) over (), count(sym) over (), count(c) over (), " +
@@ -18872,13 +19402,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """)
+                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -18899,13 +19429,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -18926,13 +19456,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """)
+                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -18953,13 +19483,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """)
+                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -18980,13 +19510,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan("""
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """)
+                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
             assertQuery("select ts, i, j, " +
@@ -19188,13 +19718,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                CachedWindow
-                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: sym deferred: true
-                                          filter: sym='X'
-                                        Frame forward scan on: tab
-                            """)
+                            """ +
+                            (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
+                            """
+                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
             // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
@@ -19205,13 +19737,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                CachedWindow
-                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index backward scan on: sym deferred: true
-                                          filter: sym='X'
-                                        Frame backward scan on: tab
-                            """)
+                            """ +
+                            (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
+                            """
+                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index backward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Frame backward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
             // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
@@ -19224,16 +19758,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .withPlan("""
                             SelectedRecord
                                 SelectedRecord
-                                    CachedWindow
-                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                        FilterOnValues symbolOrder: asc
-                                            Cursor-order scan
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='X'
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='Y'
-                                            Frame forward scan on: tab
-                            """)
+                            """ +
+                            (isCacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
+                            """
+                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                                FilterOnValues symbolOrder: asc
+                                                    Cursor-order scan
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='X'
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='Y'
+                                                    Frame forward scan on: tab
+                                    """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
         });
     }
@@ -19721,7 +20257,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts desc rows between 1 preceding and current row) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", "1"))
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n" +
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    PageFrame\n" +
                                 "        Row forward scan\n" +
@@ -19729,7 +20265,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc".replace("#FUNCT_NAME", func).replace("#COLUMN", "1"))
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n" +
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                 "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    PageFrame\n" +
                                 "        Row backward scan\n" +
@@ -19748,7 +20284,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "              filter: sym='A'\n" +
                                 "        Frame forward scan on: tab\n"
                                 :
-                                "CachedWindow\n" +
+                                (this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                         "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    FilterOnValues symbolOrder: desc\n" +
                                 "        Cursor-order scan\n" +
@@ -19760,7 +20296,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'".replace("#FUNCT_NAME", func).replace("#COLUMN", "1"))
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n" +
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    DeferredSingleSymbolFilterPageFrame\n" +
                                 "        Index forward scan on: sym deferred: true\n" +
