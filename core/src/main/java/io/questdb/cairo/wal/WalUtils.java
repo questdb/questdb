@@ -70,6 +70,8 @@ public class WalUtils {
     public static final int SEG_MAX_ID = SEG_NONE_ID - 1;
     public static final String SEQ_DIR = "txn_seq";
     public static final String SEQ_DIR_DEPRECATED = "seq";
+    public static final long SEQ_META_COVERING_COLUMN_CHECKSUM_SALT = 0x434F5652; // COVR
+    public static final long SEQ_META_INDEX_TYPE_CHECKSUM_SALT = 0x494E4458; // INDX
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
     public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
@@ -78,8 +80,6 @@ public class WalUtils {
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
     public static final long SEQ_META_SUSPENDED = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
-    public static final long SEQ_META_INDEX_TYPE_CHECKSUM_SALT = 0x494E4458; // INDX
-    public static final long SEQ_META_COVERING_COLUMN_CHECKSUM_SALT = 0x434F5652; // COVR
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
@@ -150,85 +150,6 @@ public class WalUtils {
             return ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$());
         } finally {
             tableDirPath.trimTo(len);
-        }
-    }
-
-    /**
-     * Creates the {@link #REBASE_NEW_FILE_NAME} marker in the table dir. Idempotent.
-     *
-     * @param tableDirPath path positioned at the table directory; restored on return.
-     */
-    public static void writeRebaseNewMarker(FilesFacade ff, Path tableDirPath) {
-        final int len = tableDirPath.size();
-        try {
-            if (!ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$())) {
-                ff.touch(tableDirPath.$());
-            }
-        } finally {
-            tableDirPath.trimTo(len);
-        }
-    }
-
-    /**
-     * Creates the {@link #REBASE_SOURCE_FILE_NAME} marker in the table dir. Idempotent.
-     *
-     * @param tableDirPath path positioned at the table directory; restored on return.
-     */
-    public static void writeRebaseSourceMarker(FilesFacade ff, Path tableDirPath) {
-        final int len = tableDirPath.size();
-        try {
-            if (!ff.exists(tableDirPath.concat(REBASE_SOURCE_FILE_NAME).$())) {
-                ff.touch(tableDirPath.$());
-            }
-        } finally {
-            tableDirPath.trimTo(len);
-        }
-    }
-
-    public static void writeSequencerMetadataOptionalSections(
-            MemoryMARW metaMem,
-            int columnCount,
-            long checkSum,
-            RecordMetadata metadata,
-            IntList readColumnOrder
-    ) {
-        metaMem.putLong(checkSum);
-        if (readColumnOrder != null && readColumnOrder.size() > 0) {
-            metaMem.putInt(readColumnOrder.size());
-            for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
-                metaMem.putInt(readColumnOrder.getQuick(i));
-            }
-        } else {
-            metaMem.putInt(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                metaMem.putInt(i);
-            }
-        }
-
-        metaMem.putLong(checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT);
-        metaMem.putInt(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            metaMem.putByte(metadata.getColumnMetadata(i).getIndexType());
-        }
-
-        metaMem.putLong(checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT);
-        int coveringColumnCount = 0;
-        for (int i = 0; i < columnCount; i++) {
-            IntList indices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
-            if (indices != null && indices.size() > 0) {
-                coveringColumnCount++;
-            }
-        }
-        metaMem.putInt(coveringColumnCount);
-        for (int i = 0; i < columnCount; i++) {
-            IntList indices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
-            if (indices != null && indices.size() > 0) {
-                metaMem.putInt(i);
-                metaMem.putInt(indices.size());
-                for (int j = 0, n = indices.size(); j < n; j++) {
-                    metaMem.putInt(indices.getQuick(j));
-                }
-            }
         }
     }
 
@@ -319,6 +240,85 @@ public class WalUtils {
             }
         }
         return false;
+    }
+
+    /**
+     * Creates the {@link #REBASE_NEW_FILE_NAME} marker in the table dir. Idempotent.
+     *
+     * @param tableDirPath path positioned at the table directory; restored on return.
+     */
+    public static void writeRebaseNewMarker(FilesFacade ff, Path tableDirPath) {
+        final int len = tableDirPath.size();
+        try {
+            if (!ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$())) {
+                ff.touch(tableDirPath.$());
+            }
+        } finally {
+            tableDirPath.trimTo(len);
+        }
+    }
+
+    /**
+     * Creates the {@link #REBASE_SOURCE_FILE_NAME} marker in the table dir. Idempotent.
+     *
+     * @param tableDirPath path positioned at the table directory; restored on return.
+     */
+    public static void writeRebaseSourceMarker(FilesFacade ff, Path tableDirPath) {
+        final int len = tableDirPath.size();
+        try {
+            if (!ff.exists(tableDirPath.concat(REBASE_SOURCE_FILE_NAME).$())) {
+                ff.touch(tableDirPath.$());
+            }
+        } finally {
+            tableDirPath.trimTo(len);
+        }
+    }
+
+    public static void writeSequencerMetadataOptionalSections(
+            MemoryMARW metaMem,
+            int columnCount,
+            long checkSum,
+            RecordMetadata metadata,
+            IntList readColumnOrder
+    ) {
+        metaMem.putLong(checkSum);
+        if (readColumnOrder != null && readColumnOrder.size() > 0) {
+            metaMem.putInt(readColumnOrder.size());
+            for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
+                metaMem.putInt(readColumnOrder.getQuick(i));
+            }
+        } else {
+            metaMem.putInt(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                metaMem.putInt(i);
+            }
+        }
+
+        metaMem.putLong(checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putByte(metadata.getColumnMetadata(i).getIndexType());
+        }
+
+        metaMem.putLong(checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT);
+        int coveringColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            IntList indices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
+                coveringColumnCount++;
+            }
+        }
+        metaMem.putInt(coveringColumnCount);
+        for (int i = 0; i < columnCount; i++) {
+            IntList indices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
+                metaMem.putInt(i);
+                metaMem.putInt(indices.size());
+                for (int j = 0, n = indices.size(); j < n; j++) {
+                    metaMem.putInt(indices.getQuick(j));
+                }
+            }
+        }
     }
 
     private static boolean processTransaction(
