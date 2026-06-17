@@ -179,7 +179,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -208,7 +208,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 SelectedRecord
                                     materialized_views()
@@ -254,7 +254,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [name]
                                 wal_tables()
                             """
@@ -276,7 +276,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [table_name]
                                 all_tables()
                             """
@@ -300,7 +300,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -332,7 +332,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -353,7 +353,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -370,7 +370,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """

@@ -119,7 +119,8 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 perWorkerRecordsB.extendAndSet(i, new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER));
             }
 
-            this.isEncoded = SortKeyEncoder.isSupported(orderByMetadata, orderByFilter);
+            this.isEncoded = configuration.isSqlOrderBySortEnabled()
+                    && SortKeyEncoder.isSupported(orderByMetadata, orderByFilter);
             if (isEncoded) {
                 this.rankMaps = null;
                 this.ownerComparator = null;
@@ -127,12 +128,14 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 this.perWorkerComparators = null;
                 this.perWorkerChains = null;
                 this.ownerEncoder = new SortKeyEncoder(orderByMetadata, orderByFilter);
-                this.ownerTopK = new EncodedTopKBuffer(configuration);
+                // Reduce runs on the shared worker pool; keep buffer sort/compaction
+                // single-threaded so it does not nest parallelism onto those workers.
+                this.ownerTopK = new EncodedTopKBuffer(configuration, false);
                 this.perWorkerEncoders = new ObjList<>(workerCount);
                 this.perWorkerTopK = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
                     perWorkerEncoders.extendAndSet(i, new SortKeyEncoder(orderByMetadata, orderByFilter, ownerEncoder));
-                    perWorkerTopK.extendAndSet(i, new EncodedTopKBuffer(configuration));
+                    perWorkerTopK.extendAndSet(i, new EncodedTopKBuffer(configuration, false));
                 }
                 this.sortKeyColumnIndexes = SortKeyEncoder.extractSortKeyColumnIndexes(orderByFilter);
                 if (filterUsedColumnIndexes != null) {
@@ -302,11 +305,22 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             keyType = ownerEncoder.init(symbolTableSource);
             assert keyType != SortKeyType.UNSUPPORTED;
             ownerTopK.of(keyType, true, lo);
+            // Fixed-width keys encode inline; variable-length keys spill into a
+            // per-buffer key heap that the encoder must write into.
+            final boolean isVariable = keyType.isVariable();
+            if (isVariable) {
+                ownerEncoder.setKeyHeap(ownerTopK.getKeyHeap());
+            }
             for (int i = 0; i < workerCount; i++) {
                 // Rank map building sorts the whole symbol dictionary; workers
                 // borrow the owner's maps instead of rebuilding identical ones.
-                perWorkerEncoders.getQuick(i).initFrom(ownerEncoder);
-                perWorkerTopK.getQuick(i).of(keyType, true, lo);
+                final SortKeyEncoder workerEncoder = perWorkerEncoders.getQuick(i);
+                final EncodedTopKBuffer workerTopK = perWorkerTopK.getQuick(i);
+                workerEncoder.initFrom(ownerEncoder);
+                workerTopK.of(keyType, true, lo);
+                if (isVariable) {
+                    workerEncoder.setKeyHeap(workerTopK.getKeyHeap());
+                }
             }
         } else {
             buildRankMaps(symbolTableSource);
