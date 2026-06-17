@@ -62,6 +62,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final Predicate<Timer> filterByDirName;
     private final MatViewGraph matViewGraph;
     private final MatViewStateStore matViewStateStore;
+    private final ObjList<TableToken> retrySink = new ObjList<>();
     private final PriorityQueue<Timer> timerQueue = new PriorityQueue<>(INITIAL_QUEUE_CAPACITY, timerComparator);
     private final MatViewTimerTask timerTask = new MatViewTimerTask();
     private final Queue<MatViewTimerTask> timerTaskQueue;
@@ -275,6 +276,34 @@ public class MatViewTimerJob extends SynchronizedJob {
         return ran;
     }
 
+    /**
+     * Re-drives materialized views whose incremental refresh was deferred after a transient "table
+     * busy" error (see {@link MatViewRefreshJob}). Once the per-view backoff deadline elapses, an
+     * incremental refresh is enqueued instead of the view being invalidated. This is the only path
+     * that wakes up immediate views, which have no timer of their own.
+     */
+    private boolean processRefreshRetries(long nowMicros) {
+        boolean ran = false;
+        retrySink.clear();
+        matViewGraph.getViews(retrySink);
+        for (int i = 0, n = retrySink.size(); i < n; i++) {
+            final TableToken viewToken = retrySink.getQuick(i);
+            final MatViewState state = matViewStateStore.getViewState(viewToken);
+            if (state == null || state.isDropped() || state.isInvalid() || state.isPendingInvalidation()) {
+                continue;
+            }
+            final long retryAfter = state.getRefreshRetryAfterMicros();
+            if (retryAfter != Numbers.LONG_NULL && nowMicros >= retryAfter) {
+                // Clear before enqueue so a refresh that fails busy again can re-arm a fresh backoff.
+                state.clearRefreshRetry();
+                matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                LOG.info().$("re-driving deferred materialized view refresh [view=").$(viewToken).I$();
+                ran = true;
+            }
+        }
+        return ran;
+    }
+
     private boolean removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
         try {
@@ -315,6 +344,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             ran = true;
         }
         ran |= processExpiredTimers(clock.getTicks());
+        ran |= processRefreshRetries(clock.getTicks());
         return ran;
     }
 

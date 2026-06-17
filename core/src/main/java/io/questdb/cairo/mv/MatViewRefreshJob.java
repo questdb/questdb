@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -80,6 +81,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // lossy clusters on the next cache write and survive across restarts.
     private final LongList clusteredIntervals = new LongList();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
+    private final long busyRetryTimeoutUs;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final StringSink errorMsgSink = new StringSink();
@@ -111,6 +113,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration);
             this.microsecondClock = configuration.getMicrosecondClock();
+            this.busyRetryTimeoutUs = configuration.getMatViewRefreshBusyRetryTimeout() * 1000;
         } catch (Throwable th) {
             close();
             throw th;
@@ -793,6 +796,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
+    /**
+     * Returns true if the throwable is a transient "table busy" error (e.g. the base table reader
+     * pool or the view's WAL writer pool is exhausted). Such errors are non-critical and should be
+     * retried later instead of invalidating the materialized view.
+     */
+    private static boolean isTableBusy(Throwable th) {
+        return th instanceof EntryUnavailableException;
+    }
+
+    /**
+     * Schedules a deferred incremental refresh retry for a view that hit a transient "table busy"
+     * error, instead of invalidating it. {@link MatViewTimerJob} re-drives the refresh once the
+     * backoff elapses. Returns true if the error was transient and a retry was scheduled.
+     */
+    private boolean tryScheduleBusyRetry(MatViewState viewState, TableToken viewToken, Throwable th) {
+        if (!isTableBusy(th)) {
+            return false;
+        }
+        viewState.scheduleRefreshRetry(microsecondClock.getTicks() + busyRetryTimeoutUs);
+        LOG.info().$("materialized view refresh deferred, table busy [view=").$(viewToken)
+                .$(", reason=").$(((EntryUnavailableException) th).getReason())
+                .$(", retryInMs=").$(busyRetryTimeoutUs / 1000)
+                .I$();
+        return true;
+    }
+
     private boolean handleErrorRetryRefresh(
             Throwable th,
             TableToken viewToken,
@@ -1114,6 +1143,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (Throwable th) {
             Misc.free(factory);
+            if (th instanceof EntryUnavailableException) {
+                // Transient: base table reader pool exhausted mid-refresh. The interval loop already
+                // rolled the WAL writer back before rethrowing, so propagate to the caller, which (for
+                // incremental refresh) schedules a retry instead of invalidating the view.
+                throw (EntryUnavailableException) th;
+            }
             int errno = Integer.MIN_VALUE;
             if (th instanceof CairoException e) {
                 if (e.isInterruption() && engine.isClosing()) {
@@ -1453,6 +1488,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     continue;
                 }
 
+                if (!viewState.isRefreshDue(microsecondClock.getTicks())) {
+                    // View is in a transient-refresh backoff window (e.g. base table was busy);
+                    // skip it this pass. MatViewTimerJob re-drives it once the backoff elapses.
+                    continue;
+                }
+
                 if (!viewState.tryLock()) {
                     LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
                     stateStore.enqueueIncrementalRefresh(viewToken);
@@ -1468,11 +1509,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 ? Math.min(minExaminedToTxn, examinedBaseTxn)
                                 : examinedBaseTxn;
                     } catch (Throwable th) {
-                        refreshFailState(viewDefinition, viewState, walWriter, th);
+                        if (!tryScheduleBusyRetry(viewState, viewToken, th)) {
+                            refreshFailState(viewDefinition, viewState, walWriter, th);
+                        }
                     }
                 } catch (Throwable th) {
                     if (handleErrorRetryRefresh(th, viewToken, stateStore, null)) {
                         // Incremental refresh is re-scheduled.
+                        continue;
+                    }
+                    if (tryScheduleBusyRetry(viewState, viewToken, th)) {
+                        // The view's WAL writer pool was exhausted; retry later instead of invalidating.
                         continue;
                     }
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
@@ -1546,6 +1593,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (!viewState.isRefreshDue(microsecondClock.getTicks())) {
+            // View is in a transient-refresh backoff window; skip. MatViewTimerJob will re-drive it.
+            return false;
+        }
+
         if (!viewState.tryLock()) {
             LOG.debug().$("could not lock materialized view for incremental refresh, will retry [view=").$(viewToken).I$();
             stateStore.enqueueIncrementalRefresh(viewToken);
@@ -1570,6 +1622,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
                 return (result & 1L) != 0;
             } catch (Throwable th) {
+                if (tryScheduleBusyRetry(viewState, viewToken, th)) {
+                    return false;
+                }
                 LOG.error()
                         .$("could not perform incremental refresh [view=").$(viewToken)
                         .$(", baseTableToken=").$(baseTableToken)
@@ -1581,6 +1636,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             if (handleErrorRetryRefresh(th, viewToken, stateStore, null)) {
                 // Incremental refresh is re-scheduled.
+                return false;
+            }
+            if (tryScheduleBusyRetry(viewState, viewToken, th)) {
+                // The view's WAL writer pool was exhausted; retry later instead of invalidating.
                 return false;
             }
 

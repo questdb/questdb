@@ -533,6 +533,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshBusyRetryTimeout() {
+        return getDelegate().getMatViewRefreshBusyRetryTimeout();
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }

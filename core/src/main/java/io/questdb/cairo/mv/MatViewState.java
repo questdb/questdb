@@ -127,6 +127,10 @@ public class MatViewState implements QuietCloseable {
     // Protected by this.latch.
     // Base table txn that corresponds to refreshIntervals.
     private volatile long refreshIntervalsBaseTxn = -1;
+    // Wall-clock micros before which the view must not be refreshed after a transient failure
+    // (e.g. base table reader pool exhausted). The view stays valid; MatViewTimerJob re-drives an
+    // incremental refresh once the deadline elapses. Numbers.LONG_NULL means no pending retry.
+    private volatile long refreshRetryAfterMicros = Numbers.LONG_NULL;
     private volatile MatViewDefinition viewDefinition;
 
     public MatViewState(
@@ -422,6 +426,10 @@ public class MatViewState implements QuietCloseable {
         return refreshIntervalsSeq.get();
     }
 
+    public long getRefreshRetryAfterMicros() {
+        return refreshRetryAfterMicros;
+    }
+
     public long getRefreshSeq() {
         return refreshSeq.get();
     }
@@ -466,6 +474,15 @@ public class MatViewState implements QuietCloseable {
         return latch.get();
     }
 
+    /**
+     * Returns true if the view is not currently inside a transient-refresh backoff window,
+     * i.e. it is eligible to be refreshed now. See {@link #scheduleRefreshRetry(long)}.
+     */
+    public boolean isRefreshDue(long nowMicros) {
+        final long retryAfter = refreshRetryAfterMicros;
+        return retryAfter == Numbers.LONG_NULL || nowMicros >= retryAfter;
+    }
+
     public boolean isPendingInvalidation() {
         return pendingInvalidation;
     }
@@ -489,6 +506,23 @@ public class MatViewState implements QuietCloseable {
     public void markAsValid() {
         this.invalid = false;
         this.pendingInvalidation = false;
+        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Clears any pending transient-refresh retry, marking the view eligible for refresh now.
+     */
+    public void clearRefreshRetry() {
+        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Schedules a deferred incremental refresh retry after a transient failure (e.g. base table
+     * reader pool exhausted) instead of invalidating the view. The view stays valid in the meantime;
+     * {@link MatViewTimerJob} re-drives an incremental refresh once {@code retryAfterMicros} elapses.
+     */
+    public void scheduleRefreshRetry(long retryAfterMicros) {
+        this.refreshRetryAfterMicros = retryAfterMicros;
     }
 
     public void rangeRefreshSuccess(
