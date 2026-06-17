@@ -108,6 +108,40 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testForPrincipalConcurrentAlternatingPrincipalsNeverLeak() throws Exception {
+        // every thread alternates between two principals, forcing constant eviction of the single-entry
+        // cache on the shared singleton. Even with a context for the other principal mid-publish in the
+        // cache slot, every call must return a context reporting exactly its own requested principal.
+        final int threadCount = 4;
+        final int iterations = 50_000;
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final AtomicInteger errors = new AtomicInteger();
+        final ObjList<Thread> threads = new ObjList<>();
+        for (int t = 0; t < threadCount; t++) {
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        final String principal = (i & 1) == 0 ? "alice" : "bob";
+                        SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
+                        if (!Chars.equals(principal, context.getPrincipal())) {
+                            errors.incrementAndGet();
+                        }
+                    }
+                } catch (Throwable th) {
+                    errors.incrementAndGet();
+                }
+            });
+            threads.add(thread);
+            thread.start();
+        }
+        for (int t = 0; t < threadCount; t++) {
+            threads.getQuick(t).join();
+        }
+        Assert.assertEquals(0, errors.get());
+    }
+
+    @Test
     public void testForPrincipalConcurrentReportsOwnPrincipal() throws Exception {
         // the single-entry cache on the shared singleton is updated without a lock; under contention
         // every caller must still get a context reporting its own principal, never another thread's
@@ -124,6 +158,45 @@ public class SecurityContextFactoryPrincipalTest {
                     for (int i = 0; i < iterations; i++) {
                         SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
                         if (!Chars.equals(principal, context.getPrincipal())) {
+                            errors.incrementAndGet();
+                        }
+                    }
+                } catch (Throwable th) {
+                    errors.incrementAndGet();
+                }
+            });
+            threads.add(thread);
+            thread.start();
+        }
+        for (int t = 0; t < threadCount; t++) {
+            threads.getQuick(t).join();
+        }
+        Assert.assertEquals(0, errors.get());
+    }
+
+    @Test
+    public void testForPrincipalConcurrentSamePrincipalReusesCachedContext() throws Exception {
+        // all threads request the same principal: once the single-entry cache is warmed it is never evicted
+        // (no other principal is ever requested), so every concurrent caller must hit the cache and get back
+        // the very same derived instance, which must always report that principal. This exercises the
+        // cache-hit path under contention, which the distinct-principal test never takes.
+        final String principal = "shared";
+        final SecurityContext warmed = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
+        Assert.assertNotSame(AllowAllSecurityContext.INSTANCE, warmed);
+
+        final int threadCount = 4;
+        final int iterations = 50_000;
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final AtomicInteger errors = new AtomicInteger();
+        final ObjList<Thread> threads = new ObjList<>();
+        for (int t = 0; t < threadCount; t++) {
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
+                        // the warmed entry is never evicted, so the same cached instance must come back
+                        if (context != warmed || !Chars.equals(principal, context.getPrincipal())) {
                             errors.incrementAndGet();
                         }
                     }
